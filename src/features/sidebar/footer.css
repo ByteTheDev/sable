@@ -1,0 +1,23 @@
+/* The account row in the sidebar footer: the plan leads, the email follows quietly. */
+
+.account-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.account-plan {
+  flex-shrink: 0;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.account-email-dim {
+  min-width: 0;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+}
