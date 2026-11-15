@@ -1,0 +1,1905 @@
+/**
+ * The light field behind Sable's surfaces: evaluated on the CPU from two precomputed noise
+ * tables (no WebGL), drawn in one of two textures:
+ *
+ * - `dither`: one pixel per cell, ordered-dithered to a few levels and scaled up without
+ *   smoothing. Large stages get coarser cells so a frame stays under 24k cells.
+ * - `ascii`: the same field on a glyph grid, one Geist Mono character per cell picked from
+ *   a brightness ramp and tinted with the cell's colour. Glyphs are blitted from a small white
+ *   atlas into a persistent mask, and only cells whose glyph changed are redrawn; colour is
+ *   applied in one composite pass.
+ * - `halftone`: the glyph machinery with a ramp of round dots (drawn here) on a square grid.
+ * - `soft`: no texture: the dither renderer without quantization, scaled up smoothly. With an
+ *   image it is the image itself, cover-fitted and dimmed (`softImageRenderer`).
+ *
+ * An image (`FieldEngine.setImage`) replaces the pattern: its brightness drives every texture,
+ * coloured by the palette or by its own colours. `Look.spot` confines the light around a point
+ * with a smooth falloff applied before quantization, so its edge is dithered like the rest.
+ *
+ * This module has no DOM dependencies, so it runs both in `field.worker.ts` on an
+ * OffscreenCanvas (the normal path) and on the main thread as a fallback. `FieldEngine` owns
+ * the clock and frame loop; whoever hosts it decides when it runs.
+ */
+
+export type DitherVariant = 'streaks' | 'aurora' | 'streak' | 'bloom' | 'tubes' | 'tiles';
+export type DitherPalette = 'ember' | 'iris' | 'forest' | 'mint' | 'amber' | 'spectrum' | 'mono' | 'custom';
+export type DitherTexture = 'dither' | 'ascii' | 'halftone' | 'soft';
+
+export interface Look {
+  /**
+   * Confines the light around a point: [x, y] 0..1 across the stage, and reach 0..1 (1 = even,
+   * no falloff). Absent means no falloff beyond the variant's own.
+   */
+  spot?: [number, number, number] | null;
+  /** Direction of streaks and of the sweep / tubes' wave, in degrees. Absent: the built-in drift. */
+  angle?: number;
+  /** The 'custom' palette: hue 0..360 and saturation 0..1. */
+  hue?: number;
+  sat?: number;
+  /** With an image: its own colours instead of the palette. */
+  imageColour?: boolean;
+  variant: DitherVariant;
+  palette: DitherPalette;
+  focus: [number, number];
+  gain: number;
+  speed: number;
+  seed: number;
+  /** A full-bleed backdrop: even light edge to edge, darkened softly behind the centre column, capped well below white. */
+  full: boolean;
+  /** Where the pointer is, -0.5..0.5 across the field; the vanishing point eases a few percent toward it. */
+  pointer?: [number, number] | null;
+}
+
+/** What the host measured: CSS size, device pixel ratio, and the requested cell size (dither). */
+export interface Metrics {
+  width: number;
+  height: number;
+  dpr: number;
+  cell: number;
+}
+
+type RGB = [number, number, number];
+
+const hex = (h: string): RGB => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+
+/** shadow → body → light → hot */
+const PALETTES: Record<DitherPalette, [RGB, RGB, RGB, RGB]> = {
+  // The shadow stop is the stage colour (--sheet), so the field melts into the surface.
+  ember: [hex('#0c0c0e'), hex('#7a2608'), hex('#f2702e'), hex('#ffe2bc')],
+  iris: [hex('#0c0c0e'), hex('#262c84'), hex('#6c88ff'), hex('#e2ebff')],
+  // Sunlit foliage: deep green through yellow-green to pale cream.
+  forest: [hex('#0c0c0e'), hex('#174a1e'), hex('#9cc23e'), hex('#f3efc8')],
+  mint: [hex('#0c0c0e'), hex('#0b6444'), hex('#45dc98'), hex('#e4ffec')],
+  // --amber: waiting on you.
+  amber: [hex('#0c0c0e'), hex('#7a5206'), hex('#ecc064'), hex('#fff3d6')],
+  spectrum: [hex('#0c0c0e'), hex('#3a1a66'), hex('#e0649e'), hex('#ffe6c8')],
+  mono: [hex('#0c0c0e'), hex('#2c2c30'), hex('#909096'), hex('#f2f2f0')],
+  // Replaced by customPalette() from the look's hue and saturation.
+  custom: [hex('#0c0c0e'), hex('#2c2c30'), hex('#909096'), hex('#f2f2f0')],
+};
+
+function hsl(h: number, s: number, l: number): RGB {
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => Math.round((l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))) * 255);
+  return [f(0), f(8), f(4)];
+}
+
+let customKey = '';
+let customStops: [RGB, RGB, RGB, RGB] = PALETTES.custom;
+/** A palette from one hue: the same shadow, a deep body, a clear light and a pale, less saturated hot end. */
+function customPalette(hue = 28, sat = 0.7): [RGB, RGB, RGB, RGB] {
+  const key = `${hue}/${sat}`;
+  if (key !== customKey) {
+    customKey = key;
+    customStops = [PALETTES.mono[0], hsl(hue, sat * 0.9, 0.2), hsl(hue, sat, 0.56), hsl(hue, sat * 0.5, 0.9)];
+  }
+  return customStops;
+}
+
+const paletteOf = (s: Look) => (s.palette === 'custom' ? customPalette(s.hue, s.sat) : PALETTES[s.palette]);
+
+/** An image as the field samples it: cover-fitted to the stage, brightness and colour per pixel (0..1). */
+interface ImagePixels {
+  w: number;
+  h: number;
+  aspect: number;
+  lum: Float32Array;
+  rgb: Float32Array;
+}
+
+/** Rows an image is sampled at; finer than any texture's rows, so cells never see its pixels. */
+const IMAGE_ROWS = 240;
+
+function rasterize(src: CanvasImageSource & { width: number; height: number }, aspect: number): ImagePixels | null {
+  const h = IMAGE_ROWS;
+  const w = Math.max(2, Math.min(720, Math.round(h * aspect)));
+  const c = scratch(w, h);
+  const ctx = context(c, { willReadFrequently: true });
+  if (!ctx || !src.width || !src.height) return null;
+  // Cover: the image fills the stage, cropped evenly on the long side.
+  const k = Math.max(w / src.width, h / src.height);
+  const dw = src.width * k;
+  const dh = src.height * k;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  const d = ctx.getImageData(0, 0, w, h).data;
+  const lum = new Float32Array(w * h);
+  const rgb = new Float32Array(w * h * 3);
+  for (let i = 0, o = 0; i < w * h; i++, o += 4) {
+    const r = d[o] / 255;
+    const g = d[o + 1] / 255;
+    const b = d[o + 2] / 255;
+    rgb[i * 3] = r;
+    rgb[i * 3 + 1] = g;
+    rgb[i * 3 + 2] = b;
+    lum[i] = r * 0.2126 + g * 0.7152 + b * 0.0722;
+  }
+  return { w, h, aspect, lum, rgb };
+}
+
+// ── noise tables (built once per thread, shared by every field) ──
+
+const N = 256;
+const MASK = N - 1;
+let tables: [Float32Array, Float32Array] | null = null;
+
+function buildNoise(seed: number): Float32Array {
+  // Tileable value-noise fbm: each octave is a wrapped lattice, so the table repeats seamlessly.
+  let s = seed >>> 0;
+  const rand = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+  const out = new Float32Array(N * N);
+  let amp = 0.5;
+  let total = 0;
+  for (let period = 4; period <= 64; period *= 2) {
+    const lattice = new Float32Array(period * period);
+    for (let i = 0; i < lattice.length; i++) lattice[i] = rand();
+    const scale = period / N;
+    for (let y = 0; y < N; y++) {
+      const fy = y * scale;
+      const y0 = Math.floor(fy);
+      const ty = fy - y0;
+      const sy = ty * ty * (3 - 2 * ty);
+      const ya = (y0 % period) * period;
+      const yb = ((y0 + 1) % period) * period;
+      for (let x = 0; x < N; x++) {
+        const fx = x * scale;
+        const x0 = Math.floor(fx);
+        const tx = fx - x0;
+        const sx = tx * tx * (3 - 2 * tx);
+        const xa = x0 % period;
+        const xb = (x0 + 1) % period;
+        const top = lattice[ya + xa] + (lattice[ya + xb] - lattice[ya + xa]) * sx;
+        const bot = lattice[yb + xa] + (lattice[yb + xb] - lattice[yb + xa]) * sx;
+        out[y * N + x] += (top + (bot - top) * sy) * amp;
+      }
+    }
+    total += amp;
+    amp *= 0.5;
+  }
+  for (let i = 0; i < out.length; i++) out[i] /= total;
+  return out;
+}
+
+function getTables() {
+  return (tables ??= [buildNoise(7), buildNoise(1913)]);
+}
+
+/** Bilinear sample; one unit of (x, y) spans the whole table. */
+function sample(tex: Float32Array, x: number, y: number): number {
+  const fx = x * N;
+  const fy = y * N;
+  const x0 = Math.floor(fx);
+  const y0 = Math.floor(fy);
+  const tx = fx - x0;
+  const ty = fy - y0;
+  const xa = x0 & MASK;
+  const xb = (x0 + 1) & MASK;
+  const ya = (y0 & MASK) * N;
+  const yb = ((y0 + 1) & MASK) * N;
+  const top = tex[ya + xa] + (tex[ya + xb] - tex[ya + xa]) * tx;
+  const bot = tex[yb + xa] + (tex[yb + xb] - tex[yb + xa]) * tx;
+  return top + (bot - top) * ty;
+}
+
+const BAYER = (() => {
+  const m = new Float32Array(64);
+  const b2 = [0, 2, 3, 1];
+  for (let y = 0; y < 8; y++)
+    for (let x = 0; x < 8; x++) {
+      let v = 0;
+      for (let bit = 0; bit < 3; bit++) {
+        const xx = (x >> bit) & 1;
+        const yy = (y >> bit) & 1;
+        // The finest spatial bit carries the most weight: that is what makes the pattern fine-grained.
+        v += b2[yy * 2 + xx] / 4 ** (bit + 1);
+      }
+      m[y * 8 + x] = v - 0.5;
+    }
+  return m;
+})();
+
+const sstep = (a: number, b: number, x: number) => {
+  const t = x <= a ? 0 : x >= b ? 1 : (x - a) / (b - a);
+  return t * t * (3 - 2 * t);
+};
+
+const TAU = 6.28318;
+/** How long a pulse travels, in ms. */
+const PULSE_MS = 1100;
+
+/**
+ * The spectrum palette's hues: Sable's own spectrum (the working mark's blue, violet, pink,
+ * ember and gold) as a closed loop, held a little below full saturation so a whole stage of
+ * it stays a wash of light rather than a rainbow.
+ */
+const HUE_N = 512;
+const HUES = (() => {
+  const stops = ['#5b8cf0', '#9a78f2', '#e46aa4', '#f07a48', '#eaa850', '#e46aa4', '#9a78f2'].map(hex);
+  const t = new Float32Array(HUE_N * 3);
+  for (let i = 0; i < HUE_N; i++) {
+    const f = (i / HUE_N) * stops.length;
+    const k = Math.floor(f);
+    const u = sstep(0, 1, f - k);
+    const a = stops[k % stops.length];
+    const b = stops[(k + 1) % stops.length];
+    const rgb = [0, 1, 2].map((j) => (a[j] + (b[j] - a[j]) * u) / 255);
+    const grey = rgb[0] * 0.3 + rgb[1] * 0.55 + rgb[2] * 0.15;
+    for (let j = 0; j < 3; j++) t[i * 3 + j] = grey + (rgb[j] - grey) * 0.82;
+  }
+  return t;
+})();
+/** cos(x) by table, for per-cell waves: 1024 steps around the circle are far finer than a cell. */
+const COS_N = 1024;
+const COS = (() => {
+  const t = new Float32Array(COS_N);
+  for (let i = 0; i < COS_N; i++) t[i] = Math.cos((i / COS_N) * Math.PI * 2);
+  return t;
+})();
+const COS_K = COS_N / (Math.PI * 2);
+const fcos = (x: number) => COS[((x * COS_K) | 0) & (COS_N - 1)];
+const STREAK_COS = Math.cos(-0.6);
+const STREAK_SIN = Math.sin(-0.6);
+/** Streaks run along a 35° diagonal, rising to the right on screen (y grows downward). */
+const STREAKS_COS = Math.cos((35 * Math.PI) / 180);
+const STREAKS_SIN = Math.sin((35 * Math.PI) / 180);
+
+/** Tubes: grid pitch (in field heights), and how far the light reaches from the focus. */
+const TUBE_G = 0.2;
+/** A full-bleed field of tubes is a finer, regular grid. */
+const TUBE_G_FULL = 0.1;
+const TUBE_REACH = 0.92;
+/** Past this distance the brightest rim, after the falloff, stays under the black floor: never evaluated. */
+const TUBE_SPAN = 0.8;
+/** The travelling wave: radians per tube along its direction, and its angular speed (a 4.2 s period). */
+const WAVE_K = 0.9;
+const WAVE_W = TAU / 4.2;
+/** Full bleed: one long, slow sweep crossing the stage (about 20 tubes per wavelength, an 11 s period). */
+const WAVE_K_FULL = 0.32;
+const WAVE_W_FULL = TAU / 11;
+/** Tiles: a plane seen from above at a slight angle. Horizon (field heights above the top), scales across and along. */
+const TILE_H = -2.2;
+const TILE_SU = 25;
+const TILE_SV = 92;
+const TILE_REACH = 0.88;
+const TILE_SPAN = 0.84;
+/** Tile body: half size and corner radius in cell units, and the width of the lit edge. */
+const TILE_HALF = 0.4;
+const TILE_R = 0.16;
+const TILE_RIM = 0.075;
+/** Full bleed: the soft darkening behind the centre column (field heights) and how deep it goes. */
+const HOLLOW_Y = 0.45;
+const HOLLOW_RX = 0.62;
+const HOLLOW_RY = 0.4;
+const HOLLOW = 0.64;
+/** Full bleed: light above this knee rolls off toward KNEE + ROLL, so the brightest cells stay well below white. */
+const KNEE = 0.4;
+const ROLL = 0.24;
+/** Full bleed: how strongly each variant shows, so they sit at the same calm level. */
+const FULL_GAIN: Partial<Record<DitherVariant, number>> = { streaks: 2.1, aurora: 1.3, tubes: 0.85, tiles: 0.85 };
+
+// ── the field (shared by both textures) ──
+
+/**
+ * The eased look and clock of one field, and the per-point evaluation. `step` once per
+ * frame, then `shade` every cell inside `span`. Coordinates are in units of the field's
+ * height: px in 0..aspect left to right, py in 0..1 top to bottom.
+ */
+export class Field {
+  /** Palette ramp, 256 entries of rgb in 0..1. `lut[0..2]` is the ground colour. */
+  readonly lut = new Float32Array(256 * 3);
+  private readonly A: Float32Array;
+  private readonly B: Float32Array;
+  // Eased state, so palette / gain / focus changes cross-fade instead of snapping.
+  private readonly colors: RGB[];
+  private spectrum: number;
+  private readonly focusNow: number[];
+  private readonly par = [0, 0];
+  private gainNow: number;
+  private fullNow: number;
+  private clock: number;
+  private last = 0;
+  private first = true;
+  // Per-frame constants read by shade().
+  private t = 0;
+  private aspect = 1;
+  private fx = 0;
+  private fy = 0;
+  /** The vanishing point: the focus, nudged toward the pointer. */
+  private vx = 0;
+  private vy = 0;
+  private reach = Infinity;
+  private full = false;
+  private mode: DitherVariant = 'bloom';
+  private sd = 0;
+  private wc = 1;
+  private ws = 0;
+  private l1x = 0;
+  private l1y = 0;
+  private l2x = 0;
+  private l2y = 0;
+  private breath = 1;
+  private fullK = 1;
+  private hollowK = 0;
+  private tubeG = TUBE_G;
+  private waveK = WAVE_K;
+  private waveW = WAVE_W;
+  // Per-cell cache: tubes and tiles are evaluated once per tube or tile, not once per pixel.
+  private ci = 1e9;
+  private cj = 1e9;
+  private c0 = 0;
+  private c1 = 0;
+  private c2 = 0;
+  private c3 = 0;
+  private c4 = 0;
+  private c5 = 0;
+  private c6 = 0;
+  // Per-row cache for tiles.
+  private ry = -1;
+  private rh = 0;
+  private riz = 0;
+  private riv = 0;
+  private rlv = 0;
+  /** The hue the variant chose for this point (spectrum palette). */
+  private hue = 0;
+  // Per-row cache for the hollow.
+  private hy = -1;
+  private hq = 0;
+  // Pulses: swells of light travelling outward from a point (a sent message, a finished turn).
+  // At most two at once; `pn` is how many are live this frame, so an idle field pays one test per cell.
+  private readonly pulses: { x: number; y: number; t0: number; strength: number }[] = [];
+  private pn = 0;
+  private readonly pf = new Float32Array(12);
+  private lift = 0;
+
+  /** Starts a pulse at (nx, ny), each 0..1 across the field. */
+  pulse(nx: number, ny: number, strength: number, now: number) {
+    if (this.pulses.length >= 2) this.pulses.shift();
+    this.pulses.push({ x: nx, y: ny, t0: now, strength: strength < 0 ? 0 : strength > 1 ? 1 : strength });
+  }
+
+  /** True while a pulse is travelling (the engine draws a little faster meanwhile). */
+  get pulsing() {
+    return this.pulses.length > 0;
+  }
+
+  // The spot (Look.spot), eased: centre in stage units (0..1 both ways) and reach.
+  private readonly spotNow = [0.5, 0.5, 1];
+  private spotOn = false;
+  private spX = 0.5;
+  private spY = 0.5;
+  private spR = 1;
+  private spIn = 0;
+  private spEven = 0;
+  /** Streak direction (cos, sin). */
+  private sc = STREAKS_COS;
+  private ss = STREAKS_SIN;
+  // The image that replaces the pattern, and its pixels for the current aspect.
+  private imageSrc: (CanvasImageSource & { width: number; height: number }) | null = null;
+  private px: ImagePixels | null = null;
+  private imgColour = false;
+  /** The image colour at the point just shaded (image colours only). */
+  private ir = 0;
+  private ig = 0;
+  private ib = 0;
+  private ilum = 0;
+
+  /** The image to draw instead of the pattern (null: the pattern). Rasterized on the next step. */
+  setImage(src: (CanvasImageSource & { width: number; height: number }) | null) {
+    this.imageSrc = src;
+    this.px = null;
+  }
+
+  get hasImage() {
+    return this.imageSrc != null;
+  }
+
+  /** Even light in place of the pattern (the soft image's light mask: the image itself is drawn as it is). */
+  flat = false;
+
+  /** The field's clock (s, scaled by speed) and the pointer's eased lean, for renderers that move on their own. */
+  get clockNow() {
+    return this.clock;
+  }
+
+  get parallax(): readonly number[] {
+    return this.par;
+  }
+
+  constructor(look: Look) {
+    [this.A, this.B] = getTables();
+    this.colors = paletteOf(look).map((c) => [...c]) as RGB[];
+    this.spectrum = look.palette === 'spectrum' ? 1 : 0;
+    this.focusNow = look.full ? [0.5, 0.5] : [...look.focus];
+    this.gainNow = look.gain;
+    this.fullNow = look.full ? 1 : 0;
+    this.clock = look.seed * 10;
+    if (look.spot) [this.spotNow[0], this.spotNow[1], this.spotNow[2]] = look.spot;
+  }
+
+  step(s: Look, now: number, aspect: number) {
+    const dt = this.first ? 0 : Math.min(0.25, (now - this.last) / 1000);
+    this.last = now;
+    this.clock += dt * s.speed;
+    const k = this.first ? 1 : Math.min(1, dt * 3);
+    const kp = this.first ? 1 : Math.min(1, dt * 2.2);
+    this.first = false;
+    const target = paletteOf(s);
+    const colors = this.colors;
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) colors[i][j] += (target[i][j] - colors[i][j]) * k;
+    this.spectrum += ((s.palette === 'spectrum' ? 1 : 0) - this.spectrum) * k;
+    const focus = s.full ? [0.5, 0.5] : s.focus;
+    this.focusNow[0] += (focus[0] - this.focusNow[0]) * k;
+    this.focusNow[1] += (focus[1] - this.focusNow[1]) * k;
+    this.gainNow += (s.gain - this.gainNow) * k;
+    this.fullNow += ((s.full ? 1 : 0) - this.fullNow) * k;
+    const p = s.pointer;
+    this.par[0] += ((p ? p[0] * 0.07 : 0) - this.par[0]) * kp;
+    this.par[1] += ((p ? p[1] * 0.05 : 0) - this.par[1]) * kp;
+    // The spot eases like the focus, so dragging it in Settings glides.
+    const spot = s.spot ?? null;
+    const sn = this.spotNow;
+    const ks = this.first ? 1 : Math.min(1, dt * 6);
+    sn[0] += ((spot ? spot[0] : 0.5) - sn[0]) * ks;
+    sn[1] += ((spot ? spot[1] : 0.5) - sn[1]) * ks;
+    sn[2] += ((spot ? spot[2] : 1) - sn[2]) * ks;
+    if (Math.abs(sn[2] - (spot ? spot[2] : 1)) < 0.002) sn[2] = spot ? spot[2] : 1;
+    // Reach → falloff radius (in stage units, so the light spreads as an ellipse matching the
+    // stage); near full reach the falloff blends into even light.
+    const reach = sn[2];
+    this.spotOn = reach < 0.999;
+    this.spX = sn[0];
+    this.spY = sn[1];
+    this.spR = 0.1 + 1.8 * reach ** 1.3;
+    this.spIn = 0;
+    this.spEven = sstep(0.86, 1, reach);
+    const ang = s.angle == null ? null : (s.angle * Math.PI) / 180;
+    this.sc = ang == null ? STREAKS_COS : Math.cos(ang);
+    this.ss = ang == null ? STREAKS_SIN : Math.sin(ang);
+    this.imgColour = !!s.imageColour;
+    if (this.imageSrc && (!this.px || Math.abs(this.px.aspect - aspect) > 0.01)) this.px = rasterize(this.imageSrc, aspect);
+
+    const lut = this.lut;
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255;
+      const a = sstep(0, 0.4, t);
+      const b = sstep(0.28, 0.74, t);
+      const c = sstep(0.7, 1, t);
+      for (let j = 0; j < 3; j++) {
+        let v = colors[0][j] + (colors[1][j] - colors[0][j]) * a;
+        v += (colors[2][j] - v) * b;
+        v += (colors[3][j] - v) * c;
+        lut[i * 3 + j] = v / 255;
+      }
+    }
+
+    const t = this.clock;
+    this.t = t;
+    this.aspect = aspect;
+    this.full = s.full;
+    this.fx = this.focusNow[0] * aspect;
+    this.fy = this.focusNow[1];
+    this.vx = (this.focusNow[0] + this.par[0]) * aspect;
+    this.vy = this.focusNow[1] + this.par[1];
+    this.mode = s.variant;
+    this.sd = s.seed * 0.137;
+    this.reach = s.full ? Infinity : s.variant === 'tubes' ? TUBE_SPAN : s.variant === 'tiles' ? TILE_SPAN : Infinity;
+    this.tubeG = s.full ? TUBE_G_FULL : TUBE_G;
+    this.fullK = this.gainNow * (FULL_GAIN[s.variant] ?? 1);
+    this.hollowK = HOLLOW * this.fullNow;
+    this.waveK = s.full ? WAVE_K_FULL : WAVE_K;
+    this.waveW = s.full ? WAVE_W_FULL : WAVE_W;
+    // The wave's direction turns slowly: a full turn in about two minutes.
+    // With an angle it holds that direction, swaying a little.
+    const dir = ang == null ? t * 0.05 + this.sd * 7 : ang + 0.22 * Math.sin(t * 0.05);
+    this.wc = Math.cos(dir);
+    this.ws = Math.sin(dir);
+    // A gentle breath, so a full stage of light is never quite still.
+    this.breath = 0.92 + 0.08 * Math.sin(t * 0.42);
+    // Two lights glide under the tiles on slow, unrelated loops; a full stage spreads them across its width.
+    if (s.full) {
+      this.l1x = aspect * (0.3 + 0.2 * Math.sin(t * 0.21 + this.sd * 9));
+      this.l1y = 0.35 + 0.25 * Math.sin(t * 0.17 + 1.7);
+      this.l2x = aspect * (0.7 + 0.2 * Math.sin(t * 0.15 + 3.1));
+      this.l2y = 0.6 + 0.25 * Math.cos(t * 0.19);
+    } else {
+      this.l1x = this.fx - 0.3 + 0.24 * Math.sin(t * 0.45 + this.sd * 9);
+      this.l1y = this.fy - 0.22 + 0.15 * Math.sin(t * 0.31 + 1.7);
+      this.l2x = this.fx - 0.1 + 0.16 * Math.sin(t * 0.27 + 3.1);
+      this.l2y = this.fy - 0.44 + 0.12 * Math.cos(t * 0.39);
+    }
+    this.ci = 1e9;
+    this.cj = 1e9;
+    this.ry = -1;
+    this.hy = -1;
+
+    // Pulses: per-frame radius, band and strength; the per-cell work is a squared-distance test.
+    const pf = this.pf;
+    let n = 0;
+    let lift = 0;
+    for (let i = this.pulses.length - 1; i >= 0; i--) {
+      const p = this.pulses[i];
+      const u = (now - p.t0) / PULSE_MS;
+      if (u >= 1) {
+        this.pulses.splice(i, 1);
+        continue;
+      }
+      // The front eases out as it travels; the light swells quickly and settles slowly.
+      const e = 1 - (1 - u) * (1 - u);
+      const r = 0.04 + e * (aspect > 1.6 ? aspect * 0.62 : 1.05);
+      const amp = p.strength * (u < 0.1 ? u / 0.1 : 1 - (u - 0.1) / 0.9);
+      const lead = 0.05 + 0.05 * e;
+      const tail = 0.16 + 0.3 * e;
+      const o = n * 6;
+      pf[o] = p.x * aspect;
+      pf[o + 1] = p.y;
+      pf[o + 2] = r;
+      pf[o + 3] = lead;
+      pf[o + 4] = tail;
+      pf[o + 5] = amp;
+      lift += amp;
+      n++;
+    }
+    this.pn = n;
+    this.lift = lift > 1 ? 1 : lift;
+  }
+
+  /** How much pulse light reaches (px, py): 0 outside every front. Only called while a pulse is live. */
+  private swell(px: number, py: number): number {
+    const pf = this.pf;
+    let k = 0;
+    for (let o = 0, end = this.pn * 6; o < end; o += 6) {
+      const dx = px - pf[o];
+      const dy = py - pf[o + 1];
+      const d2 = dx * dx + dy * dy;
+      const r = pf[o + 2];
+      const outer = r + pf[o + 3];
+      if (d2 > outer * outer) continue;
+      const inner = r - pf[o + 4];
+      if (inner > 0 && d2 < inner * inner) continue;
+      const d = Math.sqrt(d2);
+      // A sharp leading edge, a long soft tail behind it.
+      const f = d > r ? 1 - (d - r) / pf[o + 3] : 1 - (r - d) / pf[o + 4];
+      k += f * f * pf[o + 5];
+    }
+    return k;
+  }
+
+  /**
+   * The part of row `py` that can be lit, as px from out[0] to out[1] (empty when out[0] > out[1]).
+   * Outside it the light has fallen to nothing, so those cells are ground and are not evaluated.
+   */
+  span(py: number, out: Float32Array) {
+    if (this.reach === Infinity) {
+      out[0] = -1e9;
+      out[1] = 1e9;
+      // The spot leaves everything past its radius dark (unless it blends into even light).
+      if (this.spotOn && this.spEven <= 0) {
+        const dy = py - this.spY;
+        const r2 = this.spR * this.spR - dy * dy;
+        if (r2 <= 0) {
+          out[0] = 1;
+          out[1] = 0;
+          return;
+        }
+        const r = Math.sqrt(r2);
+        out[0] = (this.spX - r) * this.aspect;
+        out[1] = (this.spX + r) * this.aspect;
+      }
+      return;
+    }
+    const dy = py - this.fy;
+    const r2 = this.reach * this.reach - dy * dy;
+    if (r2 <= 0) {
+      out[0] = 1;
+      out[1] = 0;
+      return;
+    }
+    const r = Math.sqrt(r2);
+    out[0] = this.fx - r;
+    out[1] = this.fx + r;
+  }
+
+  /** Writes the colour (rgb in 0..1) into out[0..2] and the light level (0 = unlit) into out[3]. */
+  shade(px: number, py: number, out: Float32Array) {
+    // One small method per variant: each stays monomorphic and cheap for the JIT.
+    const mode = this.mode;
+    this.hue = 0;
+    let w = 1;
+    if (this.spotOn) {
+      w = this.spotAt(px, py);
+      if (w <= 0) {
+        // Past the spot: ground, without evaluating the pattern.
+        out[0] = this.lut[0];
+        out[1] = this.lut[1];
+        out[2] = this.lut[2];
+        out[3] = 0;
+        return;
+      }
+    }
+    const v = this.flat
+      ? 0.62
+      : this.px
+        ? this.image(px, py)
+      : mode === 'streaks'
+        ? this.streaks(px, py)
+        : mode === 'tubes'
+          ? this.tubes(px, py)
+          : mode === 'tiles'
+            ? this.tiles(px, py)
+            : this.broad(px, py);
+    this.finish(v, px, py, out, w);
+  }
+
+  /** How much of the light the spot lets through at (px, py): 1 at its centre, 0 past its reach. */
+  private spotAt(px: number, py: number): number {
+    const dx = px / this.aspect - this.spX;
+    const dy = py - this.spY;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    // A glow: brightest at the centre and thinning out all the way to the edge (no flat top, no rim).
+    const u = d <= this.spIn ? 0 : d >= this.spR ? 1 : (d - this.spIn) / (this.spR - this.spIn);
+    const q = 1 - u * u;
+    const f = q * q;
+    return f + (1 - f) * this.spEven;
+  }
+
+  /** An image's brightness, with a slow drift of the threshold so a moving field is never quite still. */
+  private image(px: number, py: number): number {
+    const P = this.px!;
+    // Zoomed in a little, so the pointer can shift it without showing an edge.
+    let u = 0.5 + (px / this.aspect - 0.5) * 0.95 - this.par[0] * 0.6;
+    let v = 0.5 + (py - 0.5) * 0.95 - this.par[1] * 0.6;
+    u = u < 0 ? 0 : u > 1 ? 1 : u;
+    v = v < 0 ? 0 : v > 1 ? 1 : v;
+    const fx = u * (P.w - 1);
+    const fy = v * (P.h - 1);
+    const x0 = fx | 0;
+    const y0 = fy | 0;
+    const x1 = x0 + 1 < P.w ? x0 + 1 : x0;
+    const y1 = y0 + 1 < P.h ? y0 + 1 : y0;
+    const tx = fx - x0;
+    const ty = fy - y0;
+    const a = y0 * P.w + x0;
+    const b = y0 * P.w + x1;
+    const c = y1 * P.w + x0;
+    const d = y1 * P.w + x1;
+    const L = P.lum;
+    const top = L[a] + (L[b] - L[a]) * tx;
+    const lum = top + (L[c] + (L[d] - L[c]) * tx - top) * ty;
+    if (this.imgColour) {
+      const R = P.rgb;
+      const mix = (j: number) => {
+        const t0 = R[a * 3 + j] + (R[b * 3 + j] - R[a * 3 + j]) * tx;
+        return t0 + (R[c * 3 + j] + (R[d * 3 + j] - R[c * 3 + j]) * tx - t0) * ty;
+      };
+      this.ir = mix(0);
+      this.ig = mix(1);
+      this.ib = mix(2);
+    }
+    this.ilum = lum;
+    const t = this.t;
+    const n = sample(this.A, px * 0.32 + t * 0.012 + this.sd, py * 0.32 - t * 0.009);
+    return lum * (0.84 + 0.32 * n);
+  }
+
+  private streaks(px: number, py: number): number {
+    const A = this.A;
+    const B = this.B;
+    const t = this.t;
+    const sd = this.sd;
+    const full = this.full;
+    let v: number;
+    // Long soft bands of light along a diagonal, like a slow exposure of sunlit leaves: two
+    // stretched noise layers of different widths, drifting along the streak, under a broad
+    // light that is brightest toward the top right and leaves dark pockets.
+    const a = px * this.sc - py * this.ss;
+    const c = px * this.ss + py * this.sc;
+    const drift = t * 0.011;
+    const n1 = sample(A, a * 0.045 + drift + sd, c * 0.42);
+    const n2 = sample(B, a * 0.085 + drift * 1.7, c * 1.25 + 0.37);
+    const n3 = sample(A, a * 0.16 - drift * 0.6 + 0.5, c * 2.2 + sd);
+    const bands = n1 * 0.6 + n2 * 0.42 + n3 * 0.16;
+    const lit = sstep(0.22, 0.82, bands);
+    const L = sample(B, px * 0.16 + sd * 0.5 + t * 0.0016, py * 0.16 - t * 0.0012);
+    const corner = (px / this.aspect) * 0.55 + (1 - py) * 0.45;
+    v = lit * (0.5 + 0.6 * sstep(0.25, 0.75, L)) * (0.38 + 0.95 * corner) * this.breath;
+    this.hue = a * 0.12 + n1 * 0.6 + t * 0.006;
+    return v;
+  }
+
+  private tubes(px: number, py: number): number {
+    const A = this.A;
+    const B = this.B;
+    const t = this.t;
+    const sd = this.sd;
+    const full = this.full;
+    let v: number;
+    if (!full) {
+      // Tubes never get brighter than ~1.7: where the falloff keeps even that under the floor, it is ground.
+      const dx = px - this.fx;
+      const dy = py - this.fy;
+      if ((1 - sstep(0.12, TUBE_REACH, Math.sqrt(dx * dx + dy * dy))) * this.gainNow * 1.7 < 0.09) return 0;
+    }
+    // A grid of glowing tubes seen from above. Each leans away from the vanishing point,
+    // more so the further out it stands. A wave of light travels across the grid along a
+    // slowly turning direction: the rims catch it first, then the bores fill.
+    const g = this.tubeG;
+    const ix = Math.floor(px / g);
+    const iy = Math.floor(py / g);
+    const cx = (ix + 0.5) * g;
+    const cy = (iy + 0.5) * g;
+    if (ix !== this.ci || iy !== this.cj) {
+      this.ci = ix;
+      this.cj = iy;
+      const ox = cx - this.vx;
+      const oy = cy - this.vy;
+      const od = Math.sqrt(ox * ox + oy * oy) || 1;
+      const lean = Math.min(0.3, od * (full ? 0.22 : 0.34)) * g;
+      this.c0 = (ox / od) * lean;
+      this.c1 = (oy / od) * lean;
+      const ph = ((cx * this.wc + cy * this.ws) / g) * this.waveK - t * this.waveW;
+      const body = 0.5 + 0.5 * Math.cos(ph);
+      const rim = 0.5 + 0.5 * Math.cos(ph - 0.75);
+      const n = sample(A, ix * 0.07 + t * 0.03 + sd, iy * 0.07 - t * 0.022);
+      if (full) {
+        // A calm sweep: softer peaks, so the whole grid glows and the wave passes through it.
+        this.c2 = 0.42 + 0.36 * n + 0.6 * body * body;
+        this.c3 = 0.6 + 0.26 * n + 0.5 * rim * rim;
+      } else {
+        this.c2 = 0.34 + 0.4 * n + 0.95 * body * body * body;
+        this.c3 = 0.52 + 0.28 * n + 0.8 * rim * rim * rim;
+      }
+      this.c4 = ix * 0.045 + iy * 0.03 + t * 0.045 + n * 0.5;
+    }
+    const lx = this.c0;
+    const ly = this.c1;
+    const R = g * 0.4;
+    const rimW = g * 0.07;
+    const tx = px - (cx + lx);
+    const ty = py - (cy + ly);
+    const dTop2 = tx * tx + ty * ty;
+    const bx = px - cx;
+    const by = py - cy;
+    const ll = lx * lx + ly * ly || 1e-6;
+    let u = (bx * lx + by * ly) / ll;
+    u = u < 0 ? 0 : u > 1 ? 1 : u;
+    const ex = bx - lx * u;
+    const ey = by - ly * u;
+    const dBody2 = ex * ex + ey * ey;
+    // Squared distances decide the region; a root is taken only where a distance is needed.
+    const Ri = R - rimW;
+    let depth = 0;
+    if (dTop2 < Ri * Ri) {
+      // Looking down the bore: its floor sits toward the vanishing point.
+      const hx = px - (cx - lx * 0.9);
+      const hy = py - (cy - ly * 0.9);
+      const dh = Math.sqrt(hx * hx + hy * hy) / R;
+      const lum = 0.05 + 0.82 * sstep(0.2, 1.25, dh);
+      depth = 1 - lum;
+      v = lum * this.c2;
+    } else if (dTop2 < R * R) {
+      v = this.c3;
+    } else if (dBody2 < R * R) {
+      v = (0.2 + 0.5 * u) * this.c2;
+      depth = 0.8 - 0.8 * u;
+    } else {
+      // The halo, spent after a few decay lengths.
+      const m2 = dTop2 < dBody2 ? dTop2 : dBody2;
+      // Past this the halo is under the floor anyway (sooner on a full stage, where it is dimmer): skip the exp.
+    const far = R + g * (full ? 0.14 : 0.3);
+      v = m2 > far * far ? 0 : 0.2 * Math.exp(-(Math.sqrt(m2) - R) / (g * 0.09)) * this.c2;
+    }
+    this.hue = this.c4 + depth * 0.16;
+    return v;
+  }
+
+  private tiles(px: number, py: number): number {
+    const A = this.A;
+    const B = this.B;
+    const t = this.t;
+    const sd = this.sd;
+    const full = this.full;
+    const fy = this.fy;
+    let v: number;
+    // Softly rounded frosted keys on a plane seen at a slight angle, lit from underneath by
+    // two lights that glide about: faces glow, and the edges facing a light catch it.
+    // Everything that depends only on the row is worked out once per row.
+    if (py !== this.ry) {
+      this.ry = py;
+      const H = TILE_H + (this.vy - fy) * 2;
+      this.rh = H;
+      this.riz = (1 / (py - H)) * TILE_SU;
+      const w = TILE_SV / (py - H);
+      this.riv = Math.floor(w);
+      // Rows run up the screen as w grows, so screen-down within a tile is -w.
+      this.rlv = this.riv + 0.5 - w;
+    }
+    const H = this.rh;
+    const iv = this.riv;
+    const lv = this.rlv;
+    const u = (px - this.vx) * this.riz;
+    const iu = Math.floor(u);
+    if (iu !== this.ci || iv !== this.cj) {
+      this.ci = iu;
+      this.cj = iv;
+      // The tile's centre on screen.
+      const cyy = TILE_SV / (iv + 0.5);
+      const cy = cyy + H;
+      const cx = this.vx + ((iu + 0.5) * cyy) / TILE_SU;
+      const ax = this.l1x - cx;
+      const ay = this.l1y - cy;
+      const bx = this.l2x - cx;
+      const by = this.l2y - cy;
+      const a2 = ax * ax + ay * ay;
+      const b2 = bx * bx + by * by;
+      // A full stage spreads the lights wide, so every key is lit and the lights are broad swells.
+      const ia = full ? Math.exp(-a2 / 0.3) : Math.exp(-a2 / 0.12);
+      const ib = full ? 0.8 * Math.exp(-b2 / 0.24) : 0.65 * Math.exp(-b2 / 0.07);
+      const n = sample(B, iu * 0.13 + sd, iv * 0.13 + t * 0.012);
+      // Every key glows a little; the lights passing underneath make it bloom.
+      this.c2 = ((full ? 0.42 : 0.32) + ia + ib) * (0.8 + 0.45 * n);
+      // Direction toward the light, weighted by how much each light gives.
+      const la = Math.sqrt(a2) || 1;
+      const lb = Math.sqrt(b2) || 1;
+      const mx = (ax / la) * ia + (bx / lb) * ib;
+      const my = (ay / la) * ia + (by / lb) * ib;
+      const ml = Math.sqrt(mx * mx + my * my) || 1;
+      this.c5 = mx / ml;
+      this.c6 = my / ml;
+      this.c4 = iu * 0.05 + iv * 0.045 + t * 0.06 + n * 0.35;
+    }
+    const lu = u - iu - 0.5;
+    const qx = Math.abs(lu) - (TILE_HALF - TILE_R);
+    const qy = Math.abs(lv) - (TILE_HALF - TILE_R);
+    const ox = qx > 0 ? qx : 0;
+    const oy = qy > 0 ? qy : 0;
+    const d = Math.sqrt(ox * ox + oy * oy) + Math.min(qx > qy ? qx : qy, 0) - TILE_R;
+    const I = this.c2;
+    if (d > 0) {
+      // The gap: dark, with a thin halo where light leaks past the edge.
+      v = d > (full ? 0.05 : 0.1) ? 0 : I * 0.22 * Math.exp(-d / 0.035);
+    } else {
+      // Frosted face, brighter on the side toward the light.
+      const toward = lu * this.c5 + lv * this.c6;
+      v = I * (0.44 + 0.34 * toward);
+      if (d > -TILE_RIM) {
+        // The edge, catching the light where it faces it.
+        const facing = toward > 0 ? toward / (Math.sqrt(lu * lu + lv * lv) || 1) : 0;
+        const e = 1 + d / TILE_RIM;
+        v += I * e * e * (0.3 + facing);
+      }
+    }
+    this.hue = this.c4;
+    return v;
+  }
+
+  /** The broad fields: bloom, streak (the session's floor of light) and aurora. */
+  private broad(px: number, py: number): number {
+    const A = this.A;
+    const B = this.B;
+    const t = this.t;
+    const sd = this.sd;
+    const full = this.full;
+    const mode = this.mode;
+    const dx = px - this.fx;
+    const dy = py - this.fy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    let v: number;
+    if (mode === 'bloom') {
+      const ang = Math.atan2(dy, dx);
+      const wob = sample(A, dx * 0.42 + sd + t * 0.008, dy * 0.42 + t * 0.006);
+      const petals = 0.5 + 0.5 * Math.cos(ang * 5 + t * 0.07 + wob * 5.2);
+      const shape = 1 - sstep(0, 0.6, dist - 0.16 - 0.36 * petals);
+      const core = 1 - sstep(0, 0.42, dist);
+      const grain = sample(B, px * 0.6 - t * 0.01, py * 0.6 + sd);
+      v = shape * (0.34 + 0.6 * grain) + core * 0.3;
+    } else if (mode === 'streak') {
+      const qx = (px * STREAK_COS - py * STREAK_SIN) * 0.085 + sd;
+      const qy = (px * STREAK_SIN + py * STREAK_COS) * 0.9;
+      const n = sample(A, qx + t * 0.011, qy);
+      const n2 = sample(B, qx * 0.5 - t * 0.007, qy * 2.3 + 0.31);
+      v = sstep(0.3, 0.74, n * 0.62 + n2 * 0.46);
+    } else {
+      const qx = px * 0.3 + sd;
+      const qy = py * 0.3;
+      const w1 = sample(A, qx, qy + t * 0.008);
+      const w2 = sample(B, qx + 0.52, qy - t * 0.006);
+      const n = sample(A, qx + w1 * 0.42 + t * 0.004, qy + w2 * 0.42);
+      // A full stage keeps a faint floor of light everywhere, so no part of it goes empty.
+      v = full ? 0.24 + 0.62 * sstep(0.22, 0.76, n) : sstep(0.34, 0.72, n);
+    }
+    return v;
+  }
+
+  /** Falloff (or, full bleed, the sweep, hollow and roll-off), the floor, the palette and the spectrum's hues. */
+  private finish(v: number, px: number, py: number, out: Float32Array, spot = 1) {
+    const lut = this.lut;
+    const img = this.px != null || this.flat;
+    if (v <= 0) {
+      // Unlit (the gaps between tubes and tiles): ground, with nothing more to work out.
+      out[0] = lut[0];
+      out[1] = lut[1];
+      out[2] = lut[2];
+      out[3] = 0;
+      return;
+    }
+    const B = this.B;
+    const t = this.t;
+    const sd = this.sd;
+    const full = this.full;
+    const mode = this.mode;
+    const hue = this.hue;
+    const dx = px - this.fx;
+    const dy = py - this.fy;
+    const dist = full ? 0 : Math.sqrt(dx * dx + dy * dy);
+    if (full) {
+      // Even light edge to edge. A long, slow sweep crosses the stage (tubes carry their own wave),
+      // and a soft, wide hollow behind the centre column keeps the headline and composer on calm ground.
+      // An image keeps its own light: no sweep, a shallower hollow and a higher knee.
+      if (mode !== 'tubes' && !img) {
+        const sweep = 0.5 + 0.5 * fcos((px * this.wc + py * this.ws) * 2.2 - t * 0.55);
+        v *= mode === 'streaks' ? 0.84 + 0.22 * sweep : 0.74 + 0.36 * sweep;
+      }
+      if (py !== this.hy) {
+        this.hy = py;
+        const ey = (py - HOLLOW_Y) / HOLLOW_RY;
+        this.hq = ey * ey;
+      }
+      const ex = (px - this.aspect * 0.5) / HOLLOW_RX;
+      const q = ex * ex + this.hq;
+      // A spot already keeps light off most of the stage, so the hollow eases off with it.
+      const hollow = this.hollowK * (img ? 0.6 : 1) * (this.spotOn ? 0.35 + 0.65 * this.spEven : 1);
+      v *= (1 - hollow / (1 + q * q)) * (img ? this.gainNow * 1.15 : this.fullK);
+      const knee = img ? 0.72 : KNEE;
+      if (v > knee) {
+        const x = v - knee;
+        v = knee + x / (1 + x / ROLL);
+      }
+      // A pulse lifts what it passes, lit cells most; it stays under the cap by construction.
+      if (this.pn !== 0) {
+        const k = this.swell(px, py);
+        if (k > 0) v += k * (0.07 + 0.42 * v);
+      }
+    } else {
+      // Light falls away from the focus, leaving a dark ground for text.
+      // Tubes and tiles fade out completely with distance so they never sit behind the reading area.
+      // A streak is a floor of light: it fades only upwards, evenly across the width.
+      const fall =
+        mode === 'tubes'
+          ? 1 - sstep(0.12, TUBE_REACH, dist)
+          : mode === 'tiles'
+            ? 1 - sstep(0.18, TILE_REACH, dist)
+            : mode === 'streak'
+              ? sstep(0, 1, py)
+              : 0.1 + 0.9 * (1 - sstep(0.05, 1.3, dist));
+      v *= fall * this.gainNow;
+      // The band under the dock lifts as a whole while the front crosses it.
+      if (this.pn !== 0) v *= 1 + 0.5 * this.lift + 0.9 * this.swell(px, py);
+    }
+    // The spot's falloff, before the floor and quantization, so its edge dithers away like the rest.
+    v *= spot;
+    // A floor, so the dark side is clean ground rather than a scatter of stray cells.
+    v = v < 0.09 ? 0 : (v - 0.09) * 1.099;
+    if (this.px && this.imgColour) {
+      // The image's own colour at this point, scaled by what happened to its brightness.
+      const k = v <= 0 ? 0 : Math.min(1.6, v / (this.ilum > 0.03 ? this.ilum : 0.03));
+      out[0] = lut[0] + (this.ir - lut[0]) * k;
+      out[1] = lut[1] + (this.ig - lut[1]) * k;
+      out[2] = lut[2] + (this.ib - lut[2]) * k;
+      out[3] = v;
+      return;
+    }
+    const vi = v <= 0 ? 0 : v >= 1 ? 765 : ((v * 255) | 0) * 3;
+    let r = lut[vi];
+    let g = lut[vi + 1];
+    let b = lut[vi + 2];
+
+    const spectrum = img ? 0 : this.spectrum;
+    if (spectrum > 0.01 && v > 0) {
+      const hueAt =
+        mode === 'tubes' || mode === 'tiles' || mode === 'streaks'
+          ? hue
+          : sample(B, px * 0.21 + sd + t * 0.003, py * 0.21) * 1.7 + px * 0.22 - py * 0.2 + t * 0.008;
+      const mix = sstep(0.1, 0.6, v) * (full ? 0.72 : 0.9) * spectrum;
+      const lum = 0.14 + v * 1.05;
+      const hi = (((hueAt - Math.floor(hueAt)) * HUE_N) | 0) * 3;
+      r += (HUES[hi] * lum - r) * mix;
+      g += (HUES[hi + 1] * lum - g) * mix;
+      b += (HUES[hi + 2] * lum - b) * mix;
+    }
+    out[0] = r;
+    out[1] = g;
+    out[2] = b;
+    out[3] = v;
+  }
+}
+
+// ── layout (shared with the host, so it can size the canvas element to match) ──
+
+/** Above this many cells a dither stage gets coarser cells: the frame cost stays flat on big screens. */
+const MAX_CELLS = 24000;
+
+export function ditherLayout(width: number, height: number, cell: number) {
+  let c = cell;
+  let cols = Math.max(2, Math.ceil(width / c));
+  let rows = Math.max(2, Math.ceil(height / c));
+  while (cols * rows > MAX_CELLS && c < 24) {
+    c++;
+    cols = Math.max(2, Math.ceil(width / c));
+    rows = Math.max(2, Math.ceil(height / c));
+  }
+  return { cell: c, cols, rows };
+}
+
+/** Glyph cell in CSS px (Geist Mono advances ~0.6em, so 12.5px type fills an 8px column). */
+const GLYPH_W = 8;
+const GLYPH_H = 14;
+const GLYPH_FONT = 12.5;
+/** Above this stage area (CSS px²) glyphs grow by a quarter: big screens get fewer, larger characters. */
+const GLYPH_BIG_AREA = 1.5e6;
+/** Dark to bright. Index 0 is never drawn. */
+export const RAMP = ' .·:-=+*xo#%@';
+
+/** The dither cell the glyph size is judged against: at this cell, glyphs are their default size. */
+const GLYPH_REF_CELL = 5;
+
+/** `cell` (the dither cell asked for) scales the glyphs: finer cells, smaller characters. */
+export function asciiLayout(width: number, height: number, dpr: number, cell = GLYPH_REF_CELL) {
+  const d = Math.min(3, Math.max(1, dpr || 1));
+  // Whole device pixels per cell keep every glyph on the pixel grid: crisp at any ratio.
+  const k = Math.min(2.4, Math.max(0.8, cell / GLYPH_REF_CELL));
+  const s = (width * height > GLYPH_BIG_AREA ? 1.25 : 1) * k;
+  const cw = GLYPH_W * s;
+  const ch = GLYPH_H * s;
+  return { dpr: d, font: GLYPH_FONT * s, cols: Math.max(2, Math.ceil(width / cw)), rows: Math.max(2, Math.ceil(height / ch)), gw: Math.round(cw * d), gh: Math.round(ch * d) };
+}
+
+/** At most this many dots: each is a blit when it changes, like a glyph. */
+const MAX_DOTS = 9000;
+
+/** Halftone: square cells a little larger than the dither cell, sized in whole device pixels. */
+export function halftoneLayout(width: number, height: number, dpr: number, cell: number) {
+  const d = Math.min(2, Math.max(1, dpr || 1));
+  let c = Math.max(5, cell * 1.6);
+  let cols = Math.max(2, Math.ceil(width / c));
+  let rows = Math.max(2, Math.ceil(height / c));
+  while (cols * rows > MAX_DOTS) {
+    c += 1;
+    cols = Math.max(2, Math.ceil(width / c));
+    rows = Math.max(2, Math.ceil(height / c));
+  }
+  const g = Math.round(c * d);
+  return { dpr: d, cols, rows, gw: g, gh: g };
+}
+
+/** The soft image's canvas resolution: about one device pixel per CSS pixel, capped. */
+export function softImageLayout(width: number, height: number, dpr: number) {
+  const k = Math.min(1.25, Math.max(0.5, dpr || 1), 1600 / Math.max(1, width));
+  return { w: Math.max(2, Math.round(width * k)), h: Math.max(2, Math.round(height * k)) };
+}
+
+/**
+ * How big the host should make the canvas element (CSS px) for a texture, and for glyphs the
+ * atlas it must draw and send.
+ */
+export function fieldLayout(texture: DitherTexture, image: boolean, width: number, height: number, dpr: number, cell: number): { cssW: number; cssH: number; cell: number; atlas?: { gw: number; gh: number; dpr: number; font: number } } {
+  if (texture === 'soft' && image) return { cssW: width, cssH: height, cell };
+  if (texture === 'ascii') {
+    const L = asciiLayout(width, height, dpr, cell);
+    return { cssW: (L.cols * L.gw) / L.dpr, cssH: (L.rows * L.gh) / L.dpr, cell, atlas: { gw: L.gw, gh: L.gh, dpr: L.dpr, font: L.font } };
+  }
+  if (texture === 'halftone') {
+    const L = halftoneLayout(width, height, dpr, cell);
+    return { cssW: (L.cols * L.gw) / L.dpr, cssH: (L.rows * L.gh) / L.dpr, cell: L.gw / L.dpr };
+  }
+  const L = ditherLayout(width, height, cell);
+  return { cssW: L.cols * L.cell, cssH: L.rows * L.cell, cell: L.cell };
+}
+
+// ── renderers ──
+
+type Surface = HTMLCanvasElement | OffscreenCanvas;
+type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+type Source = CanvasImageSource;
+
+function context(el: Surface, opts?: CanvasRenderingContext2DSettings): Ctx | null {
+  return (el as HTMLCanvasElement).getContext('2d', opts) as Ctx | null;
+}
+
+function scratch(w: number, h: number): Surface {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  return c;
+}
+
+interface Renderer {
+  resize(m: Metrics): void;
+  /** False when nothing could be drawn yet (glyphs before their atlas arrives). */
+  draw(field: Field, look: Look, now: number): boolean;
+  setAtlas?(atlas: Source): void;
+  setImage?(image: ImageSource | null): void;
+}
+
+type ImageSource = CanvasImageSource & { width: number; height: number };
+
+const LEVELS = 4;
+const NONE: [number, number] = [1, 0];
+const FULL_ROW: [number, number] = [0, 1e9];
+
+/** The first and last column of a `cols`-wide row that the light can reach (none when first > last). */
+function litColumns(field: Field, py: number, aspect: number, cols: number, sp: Float32Array): [number, number] {
+  field.span(py, sp);
+  if (sp[0] > sp[1]) return NONE;
+  const a = Math.ceil((sp[0] / aspect) * cols - 0.5);
+  const b = Math.floor((sp[1] / aspect) * cols - 0.5);
+  return [a < 0 ? 0 : a, b > cols - 1 ? cols - 1 : b];
+}
+
+/** `soft`: the same field without quantization (a whisper of ordered noise keeps gradients from banding). */
+function ditherRenderer(el: Surface, soft = false): Renderer | null {
+  // One canvas may move between renderers (a texture change), so every renderer asks for the same context.
+  const ctx = context(el);
+  if (!ctx) return null;
+  let w = 0;
+  let h = 0;
+  let image: ImageData | null = null;
+  const c = new Float32Array(4);
+  const sp = new Float32Array(2);
+  let coarse = new Float32Array(0);
+  let coarseW = 0;
+  return {
+    resize(m) {
+      const { cols, rows } = ditherLayout(m.width, m.height, m.cell);
+      if (cols === w && rows === h) return;
+      w = cols;
+      h = rows;
+      el.width = w;
+      el.height = h;
+      image = ctx.createImageData(w, h);
+    },
+    draw(field, look, now) {
+      if (!image) return false;
+      const aspect = w / h;
+      field.step(look, now, aspect);
+      const lut = field.lut;
+      const r0 = lut[0];
+      const g0 = lut[1];
+      const b0 = lut[2];
+      const data = image.data;
+      const R0 = r0 * 255;
+      const G0 = g0 * 255;
+      const B0 = b0 * 255;
+      // The broad, soft variants are evaluated on every other cell and interpolated between:
+      // a quarter of the work, and nothing they draw is finer than two cells. Tubes and tiles
+      // have crisp edges and are evaluated per cell (they cache per tube or tile).
+      // An image is sampled per cell: its detail is the point.
+      const smooth = look.variant !== 'tubes' && look.variant !== 'tiles' && !field.hasImage;
+      // A full-bleed backdrop gets a couple more levels: its dim reaches read as soft light, not scattered dots.
+      const levels = look.full ? LEVELS + 2 : LEVELS;
+      if (smooth) {
+        const cw = (w >> 1) + 2;
+        const ch = (h >> 1) + 2;
+        if (coarse.length < cw * ch * 3) coarse = new Float32Array(cw * ch * 3);
+        let k = 0;
+        for (let j = 0; j < ch; j++) {
+          const py = (2 * j + 0.5) / h;
+          for (let i = 0; i < cw; i++, k += 3) {
+            field.shade(((2 * i + 0.5) / w) * aspect, py, c);
+            coarse[k] = c[0];
+            coarse[k + 1] = c[1];
+            coarse[k + 2] = c[2];
+          }
+        }
+        coarseW = cw;
+      }
+      let o = 0;
+      for (let y = 0; y < h; y++) {
+        const py = (y + 0.5) / h;
+        const brow = (y & 7) * 8;
+        const [xa, xb] = smooth ? FULL_ROW : litColumns(field, py, aspect, w, sp);
+        const row0 = (y >> 1) * coarseW * 3;
+        const row1 = row0 + coarseW * 3;
+        const fy = (y & 1) * 0.5;
+        for (let x = 0; x < w; x++, o += 4) {
+          if (x < xa || x > xb) {
+            data[o] = R0;
+            data[o + 1] = G0;
+            data[o + 2] = B0;
+            data[o + 3] = 255;
+            continue;
+          }
+          let r: number;
+          let g: number;
+          let b: number;
+          if (smooth) {
+            const a = row0 + (x >> 1) * 3;
+            const d = row1 + (x >> 1) * 3;
+            if (x & 1) {
+              // Halfway between two coarse columns.
+              const t0 = (coarse[a] + coarse[a + 3]) * 0.5;
+              const t1 = (coarse[a + 1] + coarse[a + 4]) * 0.5;
+              const t2 = (coarse[a + 2] + coarse[a + 5]) * 0.5;
+              r = t0 + ((coarse[d] + coarse[d + 3]) * 0.5 - t0) * fy;
+              g = t1 + ((coarse[d + 1] + coarse[d + 4]) * 0.5 - t1) * fy;
+              b = t2 + ((coarse[d + 2] + coarse[d + 5]) * 0.5 - t2) * fy;
+            } else {
+              r = coarse[a] + (coarse[d] - coarse[a]) * fy;
+              g = coarse[a + 1] + (coarse[d + 1] - coarse[a + 1]) * fy;
+              b = coarse[a + 2] + (coarse[d + 2] - coarse[a + 2]) * fy;
+            }
+          } else {
+            field.shade(((x + 0.5) / w) * aspect, py, c);
+            r = c[0];
+            g = c[1];
+            b = c[2];
+          }
+          // Dither the light above the ground colour, so unlit cells are exactly the stage colour.
+          // The cell's brightness is quantized, not each channel on its own, so a cell keeps its
+          // hue at every level instead of scattering off-colour specks through dark areas.
+          const lr = r > r0 ? r - r0 : 0;
+          const lg = g > g0 ? g - g0 : 0;
+          const lb = b > b0 ? b - b0 : 0;
+          const m = lr > lg ? (lr > lb ? lr : lb) : lg > lb ? lg : lb;
+          if (m < 0.002) {
+            data[o] = R0;
+            data[o + 1] = G0;
+            data[o + 2] = B0;
+            data[o + 3] = 255;
+            continue;
+          }
+          if (soft) {
+            // Unbroken light reads brighter than the same light dithered: held a little lower.
+            const n = BAYER[brow + (x & 7)] * 1.5;
+            data[o] = R0 + lr * 204 + n;
+            data[o + 1] = G0 + lg * 204 + n;
+            data[o + 2] = B0 + lb * 204 + n;
+            data[o + 3] = 255;
+            continue;
+          }
+          // Light above the ground is never negative, so truncation is the floor.
+          const q = (((m * levels + BAYER[brow + (x & 7)] + 0.5) | 0) / levels / m) * 255;
+          data[o] = R0 + lr * q;
+          data[o + 1] = G0 + lg * q;
+          data[o + 2] = B0 + lb * q;
+          data[o + 3] = 255;
+        }
+      }
+      ctx.putImageData(image, 0, 0);
+      return true;
+    },
+  };
+}
+
+/** Light level that maps to the last glyph of the ramp (broad fields; tubes peak at 1). */
+const GLYPH_PEAK = 1.3;
+/** A full-bleed backdrop is capped near 0.6, so its glyph ramp tops out there. */
+const GLYPH_PEAK_FULL = 0.75;
+/** Strength of the soft halo drawn under the characters. */
+const GLOW = 0.16;
+
+/** A broad field on every other cell (colour and level), interpolated back: a quarter of the evaluations. */
+class Coarse {
+  private buf = new Float32Array(0);
+  private w = 0;
+
+  fill(field: Field, cols: number, rows: number, aspect: number, c: Float32Array) {
+    const cw = (cols >> 1) + 2;
+    const ch = (rows >> 1) + 2;
+    if (this.buf.length < cw * ch * 4) this.buf = new Float32Array(cw * ch * 4);
+    const buf = this.buf;
+    let k = 0;
+    for (let j = 0; j < ch; j++) {
+      const py = (2 * j + 0.5) / rows;
+      for (let i = 0; i < cw; i++, k += 4) {
+        field.shade(((2 * i + 0.5) / cols) * aspect, py, c);
+        buf[k] = c[0];
+        buf[k + 1] = c[1];
+        buf[k + 2] = c[2];
+        buf[k + 3] = c[3];
+      }
+    }
+    this.w = cw;
+  }
+
+  at(x: number, y: number, out: Float32Array) {
+    const buf = this.buf;
+    const a = ((y >> 1) * this.w + (x >> 1)) * 4;
+    const d = a + this.w * 4;
+    const fy = (y & 1) * 0.5;
+    const fx = (x & 1) * 0.5;
+    for (let j = 0; j < 4; j++) {
+      const top = buf[a + j] + (buf[a + 4 + j] - buf[a + j]) * fx;
+      const bot = buf[d + j] + (buf[d + 4 + j] - buf[d + j]) * fx;
+      out[j] = top + (bot - top) * fy;
+    }
+  }
+}
+
+/** A ramp of white dots, area proportional to the level, one `g`-px cell each, side by side (like the glyph atlas). */
+function dotAtlas(g: number): Source | null {
+  const c = scratch(g * RAMP.length, g);
+  const ctx = context(c);
+  if (!ctx) return null;
+  ctx.fillStyle = '#fff';
+  const top = RAMP.length - 1;
+  for (let i = 1; i <= top; i++) {
+    const r = Math.max(0.6, g * 0.5 * 0.96 * Math.sqrt(i / top));
+    ctx.beginPath();
+    ctx.arc(i * g + g / 2, g / 2, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return c;
+}
+
+/** Characters (`ascii`, atlas from the host) or dots (`halftone`, atlas drawn here). */
+function asciiRenderer(el: Surface, kind: 'ascii' | 'halftone' = 'ascii'): Renderer | null {
+  const ctx = context(el);
+  const tint = scratch(2, 2);
+  const tctx = context(tint);
+  const mask = scratch(2, 2);
+  const mctx = context(mask);
+  if (!ctx || !tctx || !mctx) return null;
+  const dots = kind === 'halftone';
+  // Dots carry brightness in their size; a fainter halo keeps them crisp.
+  const glow = dots ? 0.07 : GLOW;
+  let cols = 0;
+  let rows = 0;
+  let gw = 0;
+  let gh = 0;
+  let image: ImageData | null = null;
+  let atlas: Source | null = null;
+  /** The glyph each cell of the mask holds; 255 forces a redraw. */
+  let held = new Uint8Array(0);
+  const coarse = new Coarse();
+  const c = new Float32Array(4);
+  const sp = new Float32Array(2);
+
+  return {
+    setAtlas(next) {
+      if (dots) return;
+      atlas = next;
+      held.fill(255);
+    },
+    resize(m) {
+      const L = dots ? halftoneLayout(m.width, m.height, m.dpr, m.cell) : asciiLayout(m.width, m.height, m.dpr, m.cell);
+      if (L.cols === cols && L.rows === rows && L.gw === gw && L.gh === gh) return;
+      if (dots) {
+        atlas = dotAtlas(L.gw);
+        held.fill(255);
+      }
+      ({ cols, rows, gw, gh } = L);
+      el.width = cols * gw;
+      el.height = rows * gh;
+      mask.width = cols * gw;
+      mask.height = rows * gh;
+      tint.width = cols;
+      tint.height = rows;
+      image = tctx.createImageData(cols, rows);
+      held = new Uint8Array(cols * rows).fill(255);
+    },
+    draw(field, look, now) {
+      if (!image || !atlas) return false;
+      const aspect = dots ? cols / rows : (cols * GLYPH_W) / (rows * GLYPH_H);
+      field.step(look, now, aspect);
+      const lut = field.lut;
+      const r0 = lut[0];
+      const g0 = lut[1];
+      const b0 = lut[2];
+      const data = image.data;
+      const top = RAMP.length - 1;
+      // Tubes and tiles are crisp lines and edges of light; they lean on the dense glyphs to read.
+      const tubes = look.variant === 'tubes' || look.variant === 'tiles';
+      const full = look.full;
+      const peak = full ? GLYPH_PEAK_FULL : GLYPH_PEAK;
+      const W = cols * gw;
+      const H = rows * gh;
+
+      // The broad variants are evaluated on every other glyph and interpolated (see the dither renderer).
+      const smooth = !tubes && !field.hasImage;
+      if (smooth) coarse.fill(field, cols, rows, aspect, c);
+
+      // 1. Glyph masks: only cells whose glyph changed since the last frame are touched.
+      let o = 0;
+      let i = 0;
+      for (let y = 0; y < rows; y++) {
+        const py = (y + 0.5) / rows;
+        const brow = (y & 7) * 8;
+        const dy = y * gh;
+        const [xa, xb] = litColumns(field, py, aspect, cols, sp);
+        for (let x = 0; x < cols; x++, o += 4, i++) {
+          let gi = 0;
+          if (x >= xa && x <= xb) {
+            if (smooth) coarse.at(x, y, c);
+            else field.shade(((x + 0.5) / cols) * aspect, py, c);
+            const v = c[3] > 1 ? 1 : c[3];
+            if (v > 0) {
+              // Ordered dither between neighbouring glyphs, so the ramp shades smoothly. Tubes are thin
+              // lines of light and lean on the dense glyphs to read; the broad fields keep the densest
+              // glyphs for their headroom past 1, so bright areas stay a weave instead of a wall of @.
+              let gf: number;
+              if (tubes) gf = Math.sqrt(v) * top + BAYER[brow + (x & 7)] * 0.9 + 0.5;
+              else {
+                const level = c[3] >= peak ? 1 : c[3] / peak;
+                gf = level * Math.sqrt(level) * top + BAYER[brow + (x & 7)] * 0.9 + 0.5;
+              }
+              gi = Math.floor(gf);
+              // Hysteresis: a cell keeps its glyph until the light has clearly moved on, so slow drift
+              // and breathing do not flip glyphs back and forth (each flip is a blit).
+              const h = held[i];
+              if (h !== 255 && h !== gi && h > 0 && gf > h - 0.15 && gf < h + 1.15) gi = h;
+              if (gi > top) gi = top;
+              // The light above the ground, keeping its hue and lifted so dim cells still read.
+              const lr = c[0] > r0 ? c[0] - r0 : 0;
+              const lg = c[1] > g0 ? c[1] - g0 : 0;
+              const lb = c[2] > b0 ? c[2] - b0 : 0;
+              const m = lr > lg ? (lr > lb ? lr : lb) : lg > lb ? lg : lb;
+              if (gi < 0 || m < 0.004) gi = 0;
+              else {
+                // A full-bleed backdrop is lifted less: characters stay a texture of light, not a wall of type.
+                const lift = ((full ? 0.3 + 0.48 * Math.sqrt(v) : 0.42 + 0.58 * Math.sqrt(v)) * 255) / m;
+                data[o] = lr * lift;
+                data[o + 1] = lg * lift;
+                data[o + 2] = lb * lift;
+              }
+            }
+          }
+          data[o + 3] = gi > 0 ? 255 : 0;
+          if (held[i] !== gi) {
+            held[i] = gi;
+            mctx.clearRect(x * gw, dy, gw, gh);
+            if (gi > 0) mctx.drawImage(atlas, gi * gw, 0, gw, gh, x * gw, dy, gw, gh);
+          }
+        }
+      }
+      tctx.putImageData(image, 0, 0);
+
+      // 2. Colour the masks: one cell-sized pixel per glyph, scaled up hard.
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'copy';
+      ctx.drawImage(mask, 0, 0);
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(tint, 0, 0, W, H);
+      // 3. A soft halo under the characters: the same colours scaled up smoothly.
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.imageSmoothingEnabled = true;
+      ctx.globalAlpha = glow;
+      ctx.drawImage(tint, 0, 0, W, H);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+      // The ground is the host's background (every palette's shadow stop is --sheet).
+      return true;
+    },
+  };
+}
+
+/** Cells of the soft image's light mask (CSS px); the mask is scaled up smoothly. */
+const SOFT_MASK_CELL = 12;
+
+/**
+ * The image itself, cover-fitted and dimmed: drawn from a cached copy (recoloured once for a
+ * palette or mono), drifting very slightly and leaning with the pointer, under a light mask
+ * from the field (gain, hollow, spot, pulses) that is ordered-dithered before it is scaled up.
+ */
+function softImageRenderer(el: Surface): Renderer | null {
+  const ctx = context(el);
+  const mask = scratch(2, 2);
+  const mctx = context(mask);
+  if (!ctx || !mctx) return null;
+  let w = 0;
+  let h = 0;
+  let mw = 0;
+  let mh = 0;
+  let src: ImageSource | null = null;
+  let cache: Surface | null = null;
+  let cacheKey = '';
+  let mimg: ImageData | null = null;
+  const c = new Float32Array(4);
+
+  /** The image at stage size with a little overscan for drift, recoloured unless it keeps its own colours. */
+  function prepare(look: Look, field: Field) {
+    if (!src) return null;
+    const own = !!look.imageColour;
+    const key = `${w}x${h}/${own ? 'own' : `${field.lut[600]},${field.lut[601]},${field.lut[602]}`}`;
+    if (cache && key === cacheKey) return cache;
+    const cw = Math.round(w * 1.06);
+    const ch = Math.round(h * 1.06);
+    const out = scratch(cw, ch);
+    const o = context(out);
+    if (!o) return null;
+    const k = Math.max(cw / src.width, ch / src.height);
+    o.imageSmoothingQuality = 'high';
+    o.drawImage(src, (cw - src.width * k) / 2, (ch - src.height * k) / 2, src.width * k, src.height * k);
+    if (!own) {
+      // Keep the image's light, take the palette's colour: the light stop's hue over its luminosity.
+      const L = field.lut;
+      o.globalCompositeOperation = 'color';
+      o.fillStyle = `rgb(${Math.round(L[600] * 255)} ${Math.round(L[601] * 255)} ${Math.round(L[602] * 255)})`;
+      o.fillRect(0, 0, cw, ch);
+      o.globalCompositeOperation = 'source-over';
+    }
+    cache = out;
+    cacheKey = key;
+    return out;
+  }
+
+  return {
+    setImage(next) {
+      src = next;
+      cache = null;
+      cacheKey = '';
+    },
+    resize(m) {
+      const L = softImageLayout(m.width, m.height, m.dpr);
+      const nmw = Math.max(2, Math.ceil(m.width / SOFT_MASK_CELL));
+      const nmh = Math.max(2, Math.ceil(m.height / SOFT_MASK_CELL));
+      if (L.w === w && L.h === h && nmw === mw && nmh === mh) return;
+      w = L.w;
+      h = L.h;
+      el.width = w;
+      el.height = h;
+      mw = nmw;
+      mh = nmh;
+      mask.width = mw;
+      mask.height = mh;
+      mimg = mctx.createImageData(mw, mh);
+      cache = null;
+    },
+    draw(field, look, now) {
+      if (!src || !mimg || !w) return false;
+      const aspect = w / h;
+      field.step(look, now, aspect);
+      const img = prepare(look, field);
+      if (!img) return false;
+      // The light mask: the field's level per cell (an even, bright image gives the strength the
+      // gain, hollow and spot leave), dithered so its gradient does not band.
+      const d = mimg.data;
+      let o = 0;
+      for (let y = 0; y < mh; y++) {
+        const py = (y + 0.5) / mh;
+        const brow = (y & 7) * 8;
+        for (let x = 0; x < mw; x++, o += 4) {
+          field.shade(((x + 0.5) / mw) * aspect, py, c);
+          const a = Math.min(1, c[3] * 1.25) * 255 + BAYER[brow + (x & 7)] * 6;
+          d[o] = d[o + 1] = d[o + 2] = 255;
+          d[o + 3] = a < 0 ? 0 : a > 255 ? 255 : a;
+        }
+      }
+      mctx.putImageData(mimg, 0, 0);
+      // The picture, drifting a hair and leaning with the pointer (the field's own parallax).
+      const t = field.clockNow;
+      const [lx, ly] = field.parallax;
+      const ox = (img.width - w) / 2;
+      const oy = (img.height - h) / 2;
+      const dx = -ox + Math.sin(t * 0.021) * ox * 0.5 - lx * ox * 6;
+      const dy = -oy + Math.cos(t * 0.017) * oy * 0.5 - ly * oy * 6;
+      ctx.globalCompositeOperation = 'copy';
+      ctx.globalAlpha = 1;
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(img, dx, dy);
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.drawImage(mask, 0, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+      return true;
+    },
+  };
+}
+
+// ── engine: the clock and frame loop, wherever it runs ──
+
+/** Frame interval in ms: ~16 fps for dither cells; glyphs cost a blit per change and a full-size composite, so ~9 fps. */
+const FRAME_MS: Record<DitherTexture, number> = { dither: 60, ascii: 110, halftone: 90, soft: 60 };
+/** The soft image redraws a stage-sized picture each frame; it moves so slowly that ~12 fps is plenty. */
+const SOFT_IMAGE_MS = 84;
+
+function makeRenderer(surface: Surface, texture: DitherTexture, image: boolean): Renderer | null {
+  if (texture === 'ascii' || texture === 'halftone') return asciiRenderer(surface, texture);
+  if (texture === 'soft' && image) return softImageRenderer(surface);
+  return ditherRenderer(surface, texture === 'soft');
+}
+
+/** Frame interval while a pulse is travelling. */
+const PULSE_FRAME_MS = 33;
+
+/**
+ * Adaptive quality. A busy machine is the normal case, so the field watches whether it keeps up
+ * and steps down on its own: 0 full, 1 a lower frame rate, 2 also coarser cells (the host
+ * re-sizes the stage with QUALITY_CELL), 3 a still frame. It steps back up after a quiet spell.
+ *
+ * Signals, judged once a second: the field's own frame cost against its interval, how late its
+ * timer fires (a late timer means the CPU is contended, wherever the engine runs), and the main
+ * thread's load as reported by the host (ms of long animation frames per second, setPressure).
+ * Three stressed seconds in a row step down; `quietNeed` quiet ms step up. Bouncing straight back
+ * down after a step up doubles `quietNeed` (up to a minute), so a busy machine does not flicker
+ * between levels. At level 3 nothing is drawn; a cheap 1 s probe timer keeps judging.
+ */
+export const QUALITY_INTERVAL = [1, 1.6, 2.4, 2.4];
+export const QUALITY_CELL = [1, 1, 1.5, 1.5];
+export const MAX_QUALITY = 3;
+const STRESS_LATE_MS = 40;
+const STRESS_COST = 0.4;
+const STRESS_MAIN_MS = 200;
+const QUIET_MS = 8000;
+/** Stressed seconds in a row before a step down (Windows timers alone are ~16 ms coarse). */
+const STRESS_WINDOWS = 3;
+const QUIET_MAX_MS = 64_000;
+const BOUNCE_MS = 15_000;
+const PROBE_MS = 1000;
+
+export interface EngineEvents {
+  /** After a frame was drawn: `first` once, and a smoothed frame cost every ~20 frames. */
+  frame(first: boolean, ms: number | null): void;
+  /** The quality level changed (0 full .. MAX_QUALITY still). */
+  quality?(level: number): void;
+}
+
+export class FieldEngine {
+  private readonly field: Field;
+  private renderer: Renderer;
+  private texture: DitherTexture;
+  private image: ImageSource | null = null;
+  private metrics: Metrics | null = null;
+  private atlas: Source | null = null;
+  private look: Look;
+  private running = false;
+  private animate = false;
+  private timer: ReturnType<typeof setTimeout> | 0 = 0;
+  private settle: ReturnType<typeof setInterval> | 0 = 0;
+  private drawn = false;
+  /** The last 20 frame costs; their median is reported, so one stall on a busy machine does not skew it. */
+  private readonly costs = new Float32Array(20);
+  private count = 0;
+  private interval: number;
+  // ── governor ──
+  private quality = 0;
+  /** When the pending timer was due, to measure how late it fired. */
+  private due = 0;
+  private winStart = 0;
+  private winN = 0;
+  private winLate = 0;
+  private winCost = 0;
+  private stressed = 0;
+  private quietSince = 0;
+  private quietNeed = QUIET_MS;
+  private lastUp = -Infinity;
+  /** Main-thread load from the host: ms of long frames in the last second. */
+  private mainLoad = 0;
+
+  static create(surface: Surface, texture: DitherTexture, look: Look, events: EngineEvents): FieldEngine | null {
+    const r = makeRenderer(surface, texture, false);
+    return r ? new FieldEngine(surface, r, texture, look, events) : null;
+  }
+
+  private constructor(
+    private readonly surface: Surface,
+    renderer: Renderer,
+    texture: DitherTexture,
+    look: Look,
+    private readonly events: EngineEvents,
+  ) {
+    this.renderer = renderer;
+    this.texture = texture;
+    this.look = look;
+    this.field = new Field(look);
+    this.interval = FRAME_MS[texture];
+  }
+
+  /** New size, and for glyphs the atlas drawn for it (sent whenever the glyph cell changes). */
+  resize(m: Metrics, atlas?: Source) {
+    this.metrics = m;
+    if (atlas) this.atlas = atlas;
+    this.renderer.resize(m);
+    if (atlas) this.renderer.setAtlas?.(atlas);
+    this.draw();
+  }
+
+  /**
+   * Another texture on the same canvas (the host re-sizes the element and, for glyphs, sends a
+   * new atlas). The clock, eased look and governor carry on.
+   */
+  setTexture(texture: DitherTexture) {
+    if (texture === this.texture) return;
+    this.texture = texture;
+    this.rebuild();
+  }
+
+  /** An image in place of the pattern (null: back to the pattern). */
+  setImage(image: ImageSource | null) {
+    if (image === this.image) return;
+    const was = this.softImage;
+    this.image = image;
+    this.applyImage();
+    if (this.softImage !== was) this.rebuild();
+    else {
+      this.renderer.setImage?.(image);
+      this.draw();
+    }
+  }
+
+  private get softImage() {
+    return this.texture === 'soft' && this.image != null;
+  }
+
+  /** The soft image draws the picture itself, under a mask of even light; every other texture samples it. */
+  private applyImage() {
+    const soft = this.softImage;
+    this.field.flat = soft;
+    this.field.setImage(soft ? null : this.image);
+  }
+
+  private rebuild() {
+    const r = makeRenderer(this.surface, this.texture, this.image != null);
+    if (!r) return;
+    this.renderer = r;
+    this.interval = this.softImage ? SOFT_IMAGE_MS : FRAME_MS[this.texture];
+    this.applyImage();
+    r.setImage?.(this.image);
+    if (this.metrics) r.resize(this.metrics);
+    if (this.atlas) r.setAtlas?.(this.atlas);
+    this.draw();
+  }
+
+  setLook(look: Look) {
+    this.look = { ...look, pointer: this.look.pointer };
+    if (this.animate && this.running && this.quality < MAX_QUALITY) return;
+    // Still mode: run a short burst so the change eases in.
+    if (this.settle) clearInterval(this.settle);
+    let n = 0;
+    this.settle = setInterval(() => {
+      this.draw();
+      if (++n > 14 && this.settle) {
+        clearInterval(this.settle);
+        this.settle = 0;
+      }
+    }, 70);
+  }
+
+  setPointer(p: [number, number] | null) {
+    this.look.pointer = p;
+  }
+
+  /** Main-thread load reported by the host: ms spent in long frames during the last second. */
+  setPressure(ms: number) {
+    this.mainLoad = ms;
+  }
+
+  /** A swell of light from (nx, ny), each 0..1 across the field. Ignored unless the field is moving. */
+  pulse(nx: number, ny: number, strength: number) {
+    if (!this.animate || !this.running || this.quality >= MAX_QUALITY) return;
+    this.field.pulse(nx, ny, strength, performance.now());
+    // Start on the next frame instead of waiting out the current interval.
+    this.schedule(0);
+  }
+
+  /** `animate`: the field moves at all. `running`: the host says it is visible, uncovered and in the foreground. */
+  setState(animate: boolean, running: boolean) {
+    this.animate = animate;
+    const on = animate && running;
+    if (on === this.running) return;
+    this.running = on;
+    this.resetWindow();
+    if (on) this.schedule(0);
+    else this.stop();
+  }
+
+  dispose() {
+    this.running = false;
+    this.stop();
+    if (this.settle) clearInterval(this.settle);
+    this.settle = 0;
+  }
+
+  private stop() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = 0;
+  }
+
+  private schedule(wait: number) {
+    this.stop();
+    this.due = performance.now() + wait;
+    this.timer = setTimeout(this.quality >= MAX_QUALITY ? this.probe : this.tick, wait);
+  }
+
+  private tick = () => {
+    this.timer = 0;
+    if (!this.running) return;
+    const t0 = performance.now();
+    const late = t0 - this.due;
+    this.draw();
+    const cost = performance.now() - t0;
+    // A slow drift needs fewer frames to look just as smooth (pulses still draw at full rate below).
+    const slow = this.look.speed < 0.75 ? 1.35 : 1;
+    const base = this.interval * QUALITY_INTERVAL[this.quality] * slow;
+    this.judge(late, cost, base);
+    if (!this.running) return;
+    // While a pulse travels the field draws faster, so the front moves smoothly.
+    const interval = this.field.pulsing ? Math.min(base, PULSE_FRAME_MS) : base;
+    this.schedule(this.quality >= MAX_QUALITY ? PROBE_MS : Math.max(4, interval - cost));
+  };
+
+  /** Level 3: nothing is drawn; a timer only checks whether the machine is quiet again. */
+  private probe = () => {
+    this.timer = 0;
+    if (!this.running) return;
+    this.judge(performance.now() - this.due, 0, Infinity);
+    if (!this.running) return;
+    this.schedule(this.quality >= MAX_QUALITY ? PROBE_MS : 0);
+  };
+
+  private resetWindow() {
+    const now = performance.now();
+    this.winStart = now;
+    this.winN = this.winLate = this.winCost = 0;
+    this.stressed = 0;
+    this.quietSince = now;
+  }
+
+  private judge(late: number, cost: number, interval: number) {
+    this.winN++;
+    this.winLate += late > 0 ? late : 0;
+    this.winCost += cost;
+    const now = performance.now();
+    if (now - this.winStart < 1000) return;
+    const avgLate = this.winLate / this.winN;
+    const avgCost = this.winCost / this.winN;
+    this.winStart = now;
+    this.winN = this.winLate = this.winCost = 0;
+    const stressed = avgLate > STRESS_LATE_MS || avgCost > interval * STRESS_COST || this.mainLoad > STRESS_MAIN_MS;
+    if (stressed) {
+      this.quietSince = now;
+      if (++this.stressed >= STRESS_WINDOWS && this.quality < MAX_QUALITY) {
+        this.stressed = 0;
+        // Straight back down after a step up: wait longer before the next try.
+        if (now - this.lastUp < BOUNCE_MS) this.quietNeed = Math.min(this.quietNeed * 2, QUIET_MAX_MS);
+        this.setQuality(this.quality + 1);
+      }
+      return;
+    }
+    this.stressed = 0;
+    if (now - this.lastUp > 60_000) this.quietNeed = QUIET_MS;
+    if (this.quality > 0 && now - this.quietSince >= this.quietNeed) {
+      this.lastUp = now;
+      this.quietSince = now;
+      this.setQuality(this.quality - 1);
+    }
+  }
+
+  private setQuality(q: number) {
+    if (q === this.quality) return;
+    this.quality = q;
+    this.events.quality?.(q);
+  }
+
+  private draw() {
+    const t0 = performance.now();
+    if (!this.renderer.draw(this.field, this.look, t0)) return;
+    const d = performance.now() - t0;
+    this.costs[this.count % 20] = d;
+    const first = !this.drawn;
+    this.drawn = true;
+    if (first) this.events.frame(true, null);
+    else if (++this.count % 20 === 0) this.events.frame(false, [...this.costs].sort((a, b) => a - b)[10]);
+  }
+}

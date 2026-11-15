@@ -1,0 +1,197 @@
+/* ── mark ── */
+
+.logo-mark {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.logo-mark svg {
+  display: block;
+  overflow: visible;
+}
+
+/* ── launch intro ── */
+
+.logo-intro {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  /* Sit a little above centre, where the eye lands. */
+  padding-bottom: 8vh;
+}
+
+.logo-intro-note {
+  position: absolute;
+  top: calc(50% - 4vh + 46px);
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* ── status marks (12 px) ── */
+
+.ring {
+  flex-shrink: 0;
+  color: var(--text);
+}
+
+.ring-active {
+  animation: spin 0.9s linear infinite;
+  /* Its own layer while it turns: a spinner never repaints what is around it. */
+  will-change: transform;
+}
+
+.status-glyph {
+  display: block;
+  flex-shrink: 0;
+}
+
+.status-glyph[data-tone='awaiting'] {
+  color: var(--amber);
+}
+
+.status-glyph[data-tone='unread'] {
+  color: var(--text);
+}
+
+.status-glyph[data-tone='error'] {
+  color: var(--red);
+}
+
+.wordmark {
+  font-size: 15px;
+  font-weight: 620;
+  font-variation-settings: 'wdth' 108;
+  letter-spacing: -0.02em;
+}
+
+.provider-mark {
+  flex-shrink: 0;
+}
+
+/* Claude's own orange, for the mark only. */
+.provider-mark[data-provider='claude'] {
+  color: #d97757;
+}
+
+.provider-mark[data-provider='codex'] {
+  color: var(--text);
+}
+
+.provider-mark[data-provider='demo'] {
+  color: var(--mint);
+}
+
+/* ── tiles (working indicator) ── */
+
+.tiles {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: calc(var(--s) * 0.1);
+  width: var(--s);
+  height: var(--s);
+  flex-shrink: 0;
+}
+
+.tiles i {
+  border-radius: 30%;
+  background: var(--text-3);
+  opacity: 0.55;
+}
+
+.tiles i:nth-child(1) {
+  --c: #ff7a3d;
+}
+.tiles i:nth-child(2),
+.tiles i:nth-child(4) {
+  --c: #ffb648;
+}
+.tiles i:nth-child(3),
+.tiles i:nth-child(5),
+.tiles i:nth-child(7) {
+  --c: #ff6aa8;
+}
+.tiles i:nth-child(6),
+.tiles i:nth-child(8) {
+  --c: #a57bff;
+}
+.tiles i:nth-child(9) {
+  --c: #5b9bff;
+}
+
+.tiles-active i {
+  background: var(--c);
+  opacity: 0.2;
+  animation: tile-wave 1.5s var(--ease) infinite;
+  animation-delay: calc(var(--d) * 105ms);
+}
+
+@keyframes tile-wave {
+  0%,
+  100% {
+    opacity: 0.16;
+    transform: scale(0.78);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  60% {
+    opacity: 0.4;
+    transform: scale(0.88);
+  }
+}
+
+/* ── dither field ── */
+
+.dither {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 900ms var(--ease);
+  /* Its own layer: a new frame never repaints or relayouts anything around it. */
+  contain: strict;
+}
+
+.dither[data-ready='true'] {
+  opacity: var(--dither-opacity, 1);
+}
+
+/* A low-resolution bitmap (one pixel per cell), sized in whole cells by the component and scaled up hard. */
+.dither canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+
+/* Characters and dots are drawn at device resolution and sized in CSS px by the component;
+   soft is a low-resolution field scaled up smoothly (or the image at stage size). */
+.dither[data-texture='ascii'],
+.dither[data-texture='halftone'],
+.dither[data-texture='soft'] {
+  background: var(--sheet);
+}
+
+.dither[data-texture='ascii'] canvas,
+.dither[data-texture='halftone'] canvas,
+.dither[data-texture='soft'] canvas {
+  image-rendering: auto;
+}
+
+/* The screen: hairline gaps between cells make the pixels read as tiles. */
+.dither-grid::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgb(6 6 7 / 0.42) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(6 6 7 / 0.42) 1px, transparent 1px);
+  background-size: var(--cell) var(--cell);
+}

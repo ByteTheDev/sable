@@ -1,0 +1,108 @@
+/* An icon that identifies a thing: plain, monochrome, centred in its box. No tile, no tint. */
+.glyph {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+
+/* ── icons answer the control they sit in ──
+   One small move per icon when its button or link is hovered or focused: 120 ms, the icon's own
+   box only (individual transform properties, so rules that already set `transform` still hold),
+   no layout change, nothing loops. */
+svg[data-icon] {
+  transition:
+    translate 120ms var(--ease-out),
+    rotate 120ms var(--ease-out),
+    scale 120ms var(--ease-out);
+
+}
+
+:is(button, a, [role='button']):is(:hover, :focus-visible) {
+  /* direction */
+  & svg[data-icon='arrow-up'],
+  & svg[data-icon='caret-up'] {
+    translate: 0 -1.5px;
+  }
+  & svg[data-icon='arrow-down'],
+  & svg[data-icon='caret-down'],
+  & svg[data-icon='to-bottom'],
+  & svg[data-icon='download'],
+  & svg[data-icon='archive'] {
+    translate: 0 1.5px;
+  }
+  & svg[data-icon='arrow-right'],
+  & svg[data-icon='caret-right'],
+  & svg[data-icon='fast-forward'],
+  & svg[data-icon='sign-in'],
+  & svg[data-icon='play'] {
+    translate: 1.5px 0;
+  }
+  & svg[data-icon='arrow-left'],
+  & svg[data-icon='caret-left'],
+  & svg[data-icon='rewind'],
+  & svg[data-icon='reply'],
+  & svg[data-icon='sidebar'] {
+    translate: -1.5px 0;
+  }
+  & svg[data-icon='external'],
+  & svg[data-icon='export'],
+  & svg[data-icon='copy'] {
+    translate: 1px -1px;
+  }
+  /* turn */
+  & svg[data-icon='plus'],
+  & svg[data-icon='x'],
+  & svg[data-icon='refresh'] {
+    rotate: 90deg;
+  }
+  & svg[data-icon='settings'] {
+    rotate: 30deg;
+  }
+  & svg[data-icon='search'],
+  & svg[data-icon='pencil'],
+  & svg[data-icon='compose'],
+  & svg[data-icon='attach'],
+  & svg[data-icon='history'],
+  & svg[data-icon='wrench'] {
+    rotate: -12deg;
+  }
+  & svg[data-icon='pin'],
+  & svg[data-icon='at'],
+  & svg[data-icon='plug'],
+  & svg[data-icon='key'] {
+    rotate: 14deg;
+  }
+  & svg[data-icon='trash'] {
+    rotate: -9deg;
+    translate: 0 -1px;
+  }
+  /* open, lift, grow */
+  & svg[data-icon='folder'],
+  & svg[data-icon='folder-open'],
+  & svg[data-icon='folder-plus'],
+  & svg[data-icon='image'],
+  & svg[data-icon='user'],
+  & svg[data-icon='dots'],
+  & svg[data-icon='dots-vertical'],
+  & svg[data-icon='check'],
+  & svg[data-icon='sliders'],
+  & svg[data-icon='queue'],
+  & svg[data-icon='context'] {
+    scale: 1.12;
+  }
+  & svg[data-icon='caret-updown'] {
+    scale: 1 1.18;
+  }
+}
+
+/* The panel toggle is the sidebar icon mirrored: it leans toward its own side. */
+.flip-x:is(:hover, :focus-visible) svg[data-icon='sidebar'] {
+  translate: 1.5px 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  svg[data-icon] {
+    transition: none;
+  }
+}
