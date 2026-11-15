@@ -1,0 +1,58 @@
+/* Settings › Models: which models the menu lists, and what new sessions start with. */
+
+.mset-list {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+}
+
+.mset-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 46px;
+  padding: 6px 18px;
+}
+
+.mset-row + .mset-row {
+  border-top: 1px solid var(--line);
+}
+
+.mset-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text);
+  transition: color var(--d-2) var(--ease);
+}
+
+.mset-row[data-off] .mset-name {
+  color: var(--text-3);
+}
+
+.mset-dim {
+  font-size: var(--t-small);
+  font-weight: var(--w-regular);
+  color: var(--text-3);
+}
+
+.mset-pick {
+  gap: 7px;
+  max-width: 240px;
+  min-width: 132px;
+  justify-content: flex-start;
+}
+
+.mset-pick .truncate {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.mset-caret {
+  color: var(--text-3);
+}

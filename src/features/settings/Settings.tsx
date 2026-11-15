@@ -1,0 +1,213 @@
+import { useEffect, useRef, useState, type ComponentType, type KeyboardEvent } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { Icon } from '@/icons';
+import { useStore, type SettingsSection } from '@/state/store';
+import { IconButton, Modal } from '@/ui';
+import { About } from './About';
+import { Accounts } from './Accounts';
+import { Agents } from './Agents';
+import { Appearance } from './Appearance';
+import { General } from './General';
+import { Hooks } from './Hooks';
+import { Mcp } from './Mcp';
+import { Memory } from './Memory';
+import { Models } from './Models';
+import { Permissions } from './Permissions';
+import { matchSections, SECTIONS } from './sections';
+import { Shortcuts } from './Shortcuts';
+import { Skills } from './Skills';
+import { takeComposerFocus } from './UseList';
+import './settings.css';
+
+const VIEWS: Record<SettingsSection, ComponentType> = {
+  general: General,
+  appearance: Appearance,
+  accounts: Accounts,
+  models: Models,
+  permissions: Permissions,
+  mcp: Mcp,
+  hooks: Hooks,
+  skills: Skills,
+  agents: Agents,
+  memory: Memory,
+  shortcuts: Shortcuts,
+  about: About,
+};
+
+/** The settings dialog: a nav column on the left, one section on the right. */
+export function Settings() {
+  const section = useStore((s) => s.ui.settings);
+  const setUi = useStore((s) => s.setUi);
+  // Keep showing the last section while the dialog animates out.
+  const last = useRef<SettingsSection>('general');
+  if (section) last.current = section;
+  const current = section ?? last.current;
+
+  return (
+    <Modal open={!!section} onOpenChange={(open) => !open && setUi({ settings: null })} title="Settings" className="settings-dialog" bare onCloseAutoFocus={takeComposerFocus}>
+      <Nav current={current} open={!!section} />
+      <div className="set-main">
+        <IconButton icon="x" label="Close" keys="esc" className="set-close" tipSide="left" onClick={() => setUi({ settings: null })} />
+        <AnimatePresence mode="wait" initial={false}>
+          <Section key={current} id={current} />
+        </AnimatePresence>
+      </div>
+    </Modal>
+  );
+}
+
+const FOCUSABLE = 'button:not(:disabled), [href], input:not(:disabled), select, textarea, [tabindex]:not([tabindex="-1"])';
+
+function Nav({ current, open }: { current: SettingsSection; open: boolean }) {
+  const setUi = useStore((s) => s.setUi);
+  const refs = useRef<Partial<Record<SettingsSection, HTMLButtonElement | null>>>({});
+  const filterRef = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState('');
+  const shown = matchSections(query);
+
+  // A fresh filter every time the dialog opens.
+  useEffect(() => {
+    if (!open) setQuery('');
+  }, [open]);
+
+  // When the section changes from elsewhere (palette, a link) while focus sits in the nav, keep focus on the active row.
+  useEffect(() => {
+    const el = refs.current[current];
+    if (el && document.activeElement !== el && document.activeElement?.closest('.set-nav-list')) el.focus();
+  }, [current]);
+
+  const go = (id: SettingsSection, focus = false) => {
+    setUi({ settings: id });
+    if (focus) refs.current[id]?.focus();
+  };
+
+  const onFilter = (value: string) => {
+    setQuery(value);
+    const best = value.trim() ? matchSections(value)[0] : undefined;
+    if (best) setUi({ settings: best.id });
+  };
+
+  const intoPanel = () => {
+    const body = document.querySelector<HTMLElement>('#set-panel .set-body');
+    (body?.querySelector<HTMLElement>(FOCUSABLE) ?? body)?.focus();
+  };
+
+  const onFilterKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape' && query) {
+      e.stopPropagation();
+      setQuery('');
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const target = shown.find((s) => s.id === current) ?? shown[0];
+      if (target) go(target.id, true);
+    } else if (e.key === 'Enter' && shown[0]) {
+      e.preventDefault();
+      if (!shown.some((s) => s.id === current)) go(shown[0].id);
+      // Let the new section mount before moving focus into it.
+      window.setTimeout(intoPanel, 260);
+    }
+  };
+
+  const onListKey = (e: KeyboardEvent) => {
+    const i = shown.findIndex((s) => s.id === current);
+    let next = -1;
+    if (e.key === 'ArrowDown') next = (i + 1) % shown.length;
+    else if (e.key === 'ArrowUp') {
+      if (i <= 0) {
+        e.preventDefault();
+        filterRef.current?.focus();
+        return;
+      }
+      next = i - 1;
+    } else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = shown.length - 1;
+    else if (e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // Type to filter: the keystroke lands in the filter field.
+      e.preventDefault();
+      filterRef.current?.focus();
+      onFilter(query + e.key);
+      return;
+    }
+    if (next < 0 || !shown.length) return;
+    e.preventDefault();
+    go(shown[next].id, true);
+  };
+
+  return (
+    <nav className="set-nav" aria-label="Settings sections">
+      <div className="set-nav-title">Settings</div>
+      <div className="set-nav-filter">
+        <Icon name="search" size={14} />
+        <input
+          ref={filterRef}
+          className="field"
+          type="search"
+          value={query}
+          placeholder="Search"
+          aria-label="Search settings"
+          spellCheck={false}
+          autoComplete="off"
+          data-escape-scope={query ? '' : undefined}
+          onChange={(e) => onFilter(e.target.value)}
+          onKeyDown={onFilterKey}
+        />
+      </div>
+      <div className="set-nav-list" role="tablist" aria-orientation="vertical" onKeyDown={onListKey}>
+        {shown.map((s) => {
+          const active = s.id === current;
+          return (
+            <button
+              key={s.id}
+              ref={(el) => {
+                refs.current[s.id] = el;
+              }}
+              type="button"
+              role="tab"
+              id={`set-tab-${s.id}`}
+              aria-selected={active}
+              aria-controls="set-panel"
+              tabIndex={active || (!shown.some((x) => x.id === current) && s === shown[0]) ? 0 : -1}
+              data-active={active || undefined}
+              data-gap={(s.gap && !query) || undefined}
+              className="set-nav-row"
+              onClick={() => go(s.id)}
+            >
+              {active && <motion.span layoutId="set-nav-pill" className="set-nav-pill dither-sel" transition=
+{{ type: 'spring', stiffness: 480, damping: 38 }} />}
+              <Icon name={s.icon} size={16} className="set-nav-icon" />
+              <span className="truncate">{s.label}</span>
+            </button>
+          );
+        })}
+        {!shown.length && <p className="set-nav-empty">No setting matches “{query.trim()}”.</p>}
+      </div>
+    </nav>
+  );
+}
+
+function Section({ id }: { id: SettingsSection }) {
+  const meta = SECTIONS.find((s) => s.id === id)!;
+  const View = VIEWS[id];
+  const reduce = useReducedMotion();
+  return (
+    <motion.div
+      className="set-section"
+      id="set-panel"
+      role="tabpanel"
+      aria-labelledby={`set-tab-${id}`}
+      initial={{ opacity: 0, y: reduce ? 0 : 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, transition: { duration: 0.08 } }}
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <header className="set-head">
+        <h2 className="set-title">{meta.label}</h2>
+      </header>
+      <div className="set-body scroll" tabIndex={-1}>
+        <div className="set-col">
+          <View />
+        </div>
+      </div>
+    </motion.div>
+  );
+}

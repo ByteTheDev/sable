@@ -1,0 +1,423 @@
+/* ───────────── Appearance → Background ───────────── */
+
+/* The app in miniature: an ink sidebar strip and the stage with the real field. */
+.bg-preview {
+  position: relative;
+  display: flex;
+  height: 300px;
+  margin: 8px 8px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background-color: var(--bg);
+}
+
+.bg-mini-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 21%;
+  flex-shrink: 0;
+  padding: 18px 12px;
+}
+
+.bg-mini-side i {
+  height: 5px;
+  border-radius: 3px;
+  background-color: var(--fill-2);
+}
+
+.bg-mini-side i.gap {
+  margin-top: 10px;
+  background-color: var(--fill-1);
+}
+
+.bg-mini-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  margin: 6px 6px 6px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: var(--sheet);
+  isolation: isolate;
+}
+
+.bg-mini-stage[data-focusable] {
+  cursor: crosshair;
+}
+
+/* The home screen's own veil, at the miniature's scale. */
+.bg-mini-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(70% 52% at 50% 44%, rgb(12 12 14 / 0.5) 0%, rgb(12 12 14 / 0.22) 55%, transparent 100%);
+}
+
+.bg-mini-home {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 25%;
+  pointer-events: none;
+}
+
+.bg-mini-home .bg-mini-title {
+  width: 30%;
+  height: 8px;
+  margin-bottom: 12px;
+  border-radius: 4px;
+  background-color: var(--fill-4);
+}
+
+.bg-mini-composer {
+  display: block;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background-color: rgb(13 13 15 / 0.84);
+}
+
+.bg-mini-home .bg-mini-composer {
+  width: 58%;
+  height: 18%;
+}
+
+/* Session: a few timeline lines and the dock, the band of light behind it (as in session.css). */
+.bg-mini-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 32%;
+  pointer-events: none;
+}
+
+.bg-mini-band::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgb(13 13 15 / 0.15) 0%, rgb(13 13 15 / 0.55) 35%, var(--sheet) 100%);
+}
+
+.bg-mini-session {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 26px 20% 0;
+  pointer-events: none;
+}
+
+.bg-mini-session i {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background-color: var(--fill-2);
+}
+
+.bg-mini-session i.bg-mini-user {
+  align-self: flex-end;
+  height: 14px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  background-color: var(--fill-3);
+}
+
+.bg-mini-session .bg-mini-composer {
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: 7%;
+  height: 16%;
+}
+
+/* The focus point: a small ivory ring, dragged directly on the field. */
+.bg-focus {
+  position: absolute;
+  z-index: 2;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border: 1.5px solid var(--text);
+  border-radius: 50%;
+  background-color: rgb(13 13 15 / 0.4);
+  cursor: grab;
+  transition:
+    scale var(--d-1) var(--ease-out),
+    background-color var(--d-1) var(--ease);
+}
+
+.bg-focus::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background-color: var(--text);
+}
+
+.bg-focus:hover {
+  scale: 1.12;
+  background-color: rgb(13 13 15 / 0.6);
+}
+
+.bg-focus[data-dragging] {
+  scale: 0.92;
+  cursor: grabbing;
+}
+
+.bg-focus:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
+.bg-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  font-size: var(--t-small);
+  color: var(--text-2);
+  background-color: rgb(13 13 15 / 0.78);
+  pointer-events: none;
+}
+
+.bg-preview[data-dropping] .bg-mini-stage {
+  border-color: var(--line-3);
+}
+
+/* In the sidebar strip, where the real app keeps its own small controls. */
+.bg-view {
+  position: absolute;
+  left: 10px;
+  bottom: 12px;
+  z-index: 2;
+}
+
+.bg-view .seg {
+  background-color: rgb(13 13 15 / 0.72);
+}
+
+/* ── presets ── */
+
+.bg-presets {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.bg-preset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--text-3);
+  transition: color var(--d-1) var(--ease);
+}
+
+.bg-preset:hover {
+  color: var(--text-2);
+}
+
+.bg-preset[aria-checked='true'] {
+  color: var(--text);
+}
+
+.bg-preset:focus-visible {
+  outline: none;
+}
+
+.bg-swatch {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 10;
+  border-radius: 7px;
+  overflow: hidden;
+  background-color: var(--sheet);
+  transition: scale var(--d-1) var(--ease-out);
+}
+
+.bg-preset:active .bg-swatch {
+  scale: 0.97;
+}
+
+/* The ring sits over the field, so it is drawn last. */
+.bg-swatch::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  pointer-events: none;
+}
+
+.bg-preset[aria-checked='true'] .bg-swatch::after {
+  box-shadow: inset 0 0 0 1.5px var(--text-2);
+}
+
+.bg-preset:focus-visible .bg-swatch::after {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+.bg-preset-name {
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── images ── */
+
+.bg-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 380px;
+}
+
+.bg-thumb {
+  position: relative;
+  width: 64px;
+  height: 40px;
+}
+
+.bg-thumb-pick {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 7px;
+  overflow: hidden;
+  background-color: var(--sheet);
+  transition: scale var(--d-1) var(--ease-out);
+}
+
+.bg-thumb-pick:active {
+  scale: 0.97;
+}
+
+.bg-thumb-pick img,
+.bg-thumb-pick .skel {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.72;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.bg-thumb-pick:hover img,
+.bg-thumb[data-on] img {
+  opacity: 1;
+}
+
+.bg-thumb-pick::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.bg-thumb[data-on] .bg-thumb-pick::after {
+  box-shadow: inset 0 0 0 1.5px var(--text-2);
+}
+
+.bg-thumb-pick:focus-visible {
+  outline: none;
+}
+
+.bg-thumb-pick:focus-visible::after {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+.bg-thumb-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line-2);
+  border-radius: 50%;
+  background-color: var(--panel-3);
+  color: var(--text-2);
+  opacity: 0;
+  transition:
+    opacity var(--d-1) var(--ease),
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.bg-thumb:hover .bg-thumb-remove,
+.bg-thumb:focus-within .bg-thumb-remove {
+  opacity: 1;
+}
+
+.bg-thumb-remove:hover {
+  background-color: var(--panel-4);
+  color: var(--text);
+}
+
+.bg-thumb-remove:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus);
+}
+
+.bg-add {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 40px;
+  border-radius: 7px;
+  background-color: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-3);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale var(--d-1) var(--ease-out);
+}
+
+.bg-add:hover {
+  background-color: var(--fill-2);
+  color: var(--text);
+}
+
+.bg-add:active {
+  scale: 0.97;
+}
+
+.bg-add:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--line), 0 0 0 2px var(--focus);
+}
+
+/* ── slider rows ── */
+
+.bg-slider {
+  width: 220px;
+}
+
+.bg-value {
+  width: 36px;
+  text-align: right;
+  font-size: var(--t-small);
+  color: var(--text-2);
+}
