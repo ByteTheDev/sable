@@ -1,0 +1,384 @@
+/* Markdown: reading type for assistant text. Calm rhythm, tight headings, quiet structure. */
+
+.md {
+  --md-fg: color-mix(in oklab, var(--text) 91%, var(--text-2));
+  --md-gap: 0.8em;
+  font-size: var(--t-body);
+  line-height: 1.62;
+  letter-spacing: -0.003em;
+  color: var(--md-fg);
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+:where(.md) :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre) {
+  margin: 0;
+}
+
+.md > * + * {
+  margin-top: var(--md-gap);
+}
+
+.md strong {
+  font-weight: var(--w-semi);
+  color: var(--text);
+}
+
+.md em {
+  font-style: italic;
+  font-variation-settings: 'wdth' 100;
+}
+
+.md del {
+  color: var(--text-3);
+  text-decoration-color: var(--text-4);
+}
+
+/* ── headings ── */
+
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  color: var(--text);
+  font-weight: 590;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+.md h1 {
+  font-size: 23px;
+  letter-spacing: -0.024em;
+  font-variation-settings: 'wdth' 103;
+}
+
+.md h2 {
+  font-size: 19px;
+  letter-spacing: -0.02em;
+}
+
+.md h3 {
+  font-size: 16px;
+  letter-spacing: -0.012em;
+}
+
+.md h4,
+.md h5,
+.md h6 {
+  font-size: var(--t-body);
+  letter-spacing: -0.006em;
+}
+
+.md > * + h1,
+.md > * + h2 {
+  margin-top: 1.5em;
+}
+
+.md > * + h3,
+.md > * + h4 {
+  margin-top: 1.25em;
+}
+
+.md > h1 + *,
+.md > h2 + * {
+  margin-top: 0.62em;
+}
+
+.md > h3 + *,
+.md > h4 + * {
+  margin-top: 0.5em;
+}
+
+/* ── inline ── */
+
+.md-code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  font-variant-ligatures: none;
+  padding: 0.14em 0.4em;
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.md h1 .md-code,
+.md h2 .md-code,
+.md h3 .md-code {
+  font-size: 0.84em;
+  font-weight: 400;
+}
+
+.md-link {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--text) 36%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  border-radius: 3px;
+  transition: text-decoration-color var(--d-1) var(--ease);
+}
+
+.md-link[href] {
+  cursor: pointer;
+}
+
+.md-link[href]:hover {
+  text-decoration-color: var(--text);
+}
+
+/* A linked code chip shows it with a firmer ring instead of an underline. */
+.md-link:has(> .md-code:only-child) {
+  text-decoration: none;
+}
+
+.md-link .md-code {
+  box-shadow: inset 0 0 0 1px var(--line-3);
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.md-link[href]:hover .md-code {
+  background: var(--fill-4);
+}
+
+.md-img {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--r-md);
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+  vertical-align: middle;
+}
+
+/* ── lists ── */
+
+.md ul,
+.md ol {
+  padding-left: 1.45em;
+}
+
+.md ul {
+  list-style: disc;
+}
+
+.md ol {
+  list-style: decimal;
+}
+
+.md ul ul {
+  list-style: circle;
+}
+
+.md li {
+  padding-left: 0.2em;
+}
+
+.md li::marker {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.93em;
+}
+
+.md li + li {
+  margin-top: 0.32em;
+}
+
+.md li > ul,
+.md li > ol {
+  margin-top: 0.32em;
+}
+
+.md [data-loose] > li + li {
+  margin-top: 0.7em;
+}
+
+.md li > p + p,
+.md li > p + ul,
+.md li > p + ol,
+.md li > * + .cb,
+.md li > .cb + * {
+  margin-top: 0.55em;
+}
+
+.md li > span + .cb {
+  display: block;
+}
+
+.md li > .cb {
+  margin-top: 0.55em;
+  margin-bottom: 0.2em;
+}
+
+.md .md-task {
+  display: flex;
+  gap: 0.6em;
+  list-style: none;
+  margin-left: -1.45em;
+  padding-left: 0;
+}
+
+.md-check {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin-top: 0.3em;
+  border: 1px solid var(--line-3);
+  border-radius: 4px;
+  background-color: transparent;
+  color: var(--text-inverse);
+}
+
+.md-task[data-checked] .md-check {
+  border-color: transparent;
+  background-color: var(--text);
+}
+
+.md-task-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.md-task[data-checked] .md-task-body {
+  color: var(--text-2);
+}
+
+/* ── blocks ── */
+
+.md blockquote {
+  padding: 1px 0 1px 15px;
+  color: var(--text-2);
+  border-left: 2px solid var(--line-3);
+  padding-left: 13px;
+}
+
+.md blockquote > * + * {
+  margin-top: 0.6em;
+}
+
+.md hr {
+  height: 1px;
+  border: 0;
+  margin: 1.5em 0;
+  background: var(--line-2);
+}
+
+.md > .cb {
+  margin-top: 0.95em;
+}
+
+.md > .cb + * {
+  margin-top: 0.95em;
+}
+
+.md-raw {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+
+/* Tables scroll sideways inside a soft well instead of squeezing the column. */
+.md-table {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background-color: rgb(0 0 0 / 0.22);
+}
+
+.md-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-ui);
+  line-height: 1.5;
+}
+
+.md-table th,
+.md-table td {
+  padding: 8px 14px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.md-table th {
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+  font-size: var(--t-small);
+  white-space: nowrap;
+  background: rgb(255 255 255 / 0.025);
+  border-bottom: 1px solid var(--line-2);
+}
+
+.md-table td {
+  border-top: 1px solid var(--line);
+  min-width: 72px;
+}
+
+.md-table tbody tr:first-child td {
+  border-top: 0;
+}
+
+.md-table .md-code {
+  overflow-wrap: normal;
+}
+
+.md-table th:empty {
+  padding: 0;
+  border: 0;
+}
+
+/* ── streaming: only words that mount on a later frame run this ── */
+
+/* Each new word fades up from nothing. A colour fade, not opacity or transform: hundreds of words
+   in flight would otherwise each become a compositor layer, and the frame rate pays for it. */
+.md-w {
+  animation: md-word 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes md-word {
+  from {
+    color: transparent;
+  }
+}
+
+/* The write head: a small still light just past the newest word. It takes no room, so a line never
+   wraps for it; when the stream ends it fades out. */
+.md-caret {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  vertical-align: baseline;
+}
+
+.md-caret::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  bottom: 0.32em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 0 9px 1px rgb(255 255 255 / 0.26);
+  transition:
+    opacity 220ms var(--ease),
+    transform 220ms var(--ease);
+}
+
+.md[data-head='out'] .md-caret::after {
+  opacity: 0;
+  transform: scale(0.3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-w {
+    animation: none;
+  }
+}

@@ -1,0 +1,219 @@
+/* DiffView: a flat well like code, with a file header above a hairline. */
+
+.dv {
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background-color: rgb(0 0 0 / 0.3);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.dv-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px 0 11px;
+  text-align: left;
+  background-color: var(--fill-1);
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.dv[data-open] .dv-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.dv-head:hover {
+  background-color: var(--fill-2);
+}
+
+.dv-head:focus-visible {
+  outline-offset: -3px;
+}
+
+.dv-icon {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.dv-path {
+  display: flex;
+  min-width: 0;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.dv-dir {
+  color: var(--text-3);
+}
+
+.dv-base {
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.dv-stat {
+  display: flex;
+  gap: 7px;
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: var(--t-micro);
+  font-weight: var(--w-medium);
+  flex-shrink: 0;
+}
+
+.dv-add {
+  color: var(--add);
+}
+
+.dv-del {
+  color: var(--del);
+}
+
+.dv-caret {
+  color: var(--text-4);
+  flex-shrink: 0;
+  transition:
+    transform var(--d-2) var(--ease-out),
+    color var(--d-1) var(--ease);
+}
+
+.dv-head:hover .dv-caret {
+  color: var(--text-2);
+}
+
+.dv-head[aria-expanded='true'] .dv-caret {
+  transform: rotate(90deg);
+}
+
+.dv-note {
+  padding: 10px 13px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* ── lines ── */
+
+.dv-body {
+  padding: 5px 0;
+  font-family: var(--font-mono);
+  font-size: var(--code-size);
+  line-height: var(--code-lh);
+  color: var(--syn-fg);
+  font-variant-ligatures: none;
+  tab-size: 2;
+}
+
+.dv-lines {
+  width: max-content;
+  min-width: 100%;
+}
+
+.dv-row {
+  --row-bg: transparent;
+  --row-edge: transparent;
+  display: flex;
+  min-height: var(--code-lh);
+  background: var(--row-bg);
+}
+
+.dv-row[data-t='+'] {
+  --row-bg: var(--add-bg);
+  --row-edge: var(--add);
+}
+
+.dv-row[data-t='-'] {
+  --row-bg: var(--del-bg);
+  --row-edge: var(--del);
+}
+
+/* A file that is all new (or all gone) needs less tint: the edge already says it. */
+.dv[data-status='added'] .dv-row[data-t='+'] {
+  --row-bg: color-mix(in oklab, var(--add) 5%, transparent);
+}
+
+.dv[data-status='deleted'] .dv-row[data-t='-'] {
+  --row-bg: color-mix(in oklab, var(--del) 5%, transparent);
+}
+
+/* Sticks while long lines scroll; opaque so code passes underneath it. */
+.dv-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  flex-shrink: 0;
+  padding: 0 4px 0 10px;
+  background:
+    linear-gradient(var(--row-bg), var(--row-bg)),
+    var(--well-solid);
+  box-shadow: inset 2px 0 0 var(--row-edge);
+  user-select: none;
+}
+
+.dv-n {
+  width: calc(var(--dv-digits, 2) * 1ch + 10px);
+  text-align: right;
+  color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.dv-row[data-t='+'] .dv-n {
+  color: color-mix(in oklab, var(--add) 48%, var(--text-4));
+}
+
+.dv-row[data-t='-'] .dv-n {
+  color: color-mix(in oklab, var(--del) 52%, var(--text-4));
+}
+
+.dv-sign {
+  flex-shrink: 0;
+  width: 22px;
+  text-align: center;
+  color: var(--row-edge);
+  opacity: 0.75;
+  user-select: none;
+}
+
+.dv-code {
+  white-space: pre;
+  padding-right: 16px;
+}
+
+.dv-row[data-t='-'] .dv-code {
+  color: color-mix(in oklab, var(--syn-fg) 82%, var(--del));
+}
+
+.dv-mark {
+  color: inherit;
+  border-radius: 3px;
+  padding: 1.5px 0;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  background: var(--add-bg-strong);
+}
+
+.dv-row[data-t='-'] .dv-mark {
+  background: var(--del-bg-strong);
+}
+
+/* Skipped range between hunks. */
+.dv-sep {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  margin: 4px 0;
+  padding: 0 12px;
+  font-family: var(--font-sans);
+  font-size: var(--t-micro);
+  color: var(--text-3);
+  border-block: 1px solid var(--line);
+  background-color: rgb(255 255 255 / 0.022);
+  user-select: none;
+}
+
+.dv-sep:first-child {
+  margin-top: -5px;
+  border-top: 0;
+}

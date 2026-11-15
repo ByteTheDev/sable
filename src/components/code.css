@@ -1,0 +1,214 @@
+/*
+ * Code surfaces: CodeBlock and the shared syntax palette (also used by DiffView).
+ * The palette is derived from the design tokens: neutrals carry structure, and three
+ * quiet hues carry meaning (keywords cool, strings warm, constants violet).
+ */
+
+:root {
+  /* Monochrome by intent: structure comes from brightness; hue is a faint tint at most. */
+  --syn-fg: color-mix(in oklab, var(--text) 82%, var(--text-3));
+  --syn-fn: var(--text);
+  --syn-comment: var(--text-4);
+  --syn-punct: var(--text-3);
+  --syn-keyword: color-mix(in oklab, var(--text-2) 82%, var(--blue));
+  --syn-type: color-mix(in oklab, var(--text) 88%, var(--blue));
+  --syn-string: color-mix(in oklab, var(--text-2) 80%, var(--amber));
+  --syn-const: color-mix(in oklab, var(--text) 80%, var(--violet));
+
+  --code-size: 12px;
+  --code-lh: 18px;
+  /* The colour of a well as it sits on the sheet, for opaque sticky gutters. */
+  --well-solid: #09090a;
+}
+
+/* Horizontal scrolling that never traps the page's vertical scroll. */
+.hscroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  overscroll-behavior-x: contain;
+}
+
+.hscroll:hover,
+.hscroll:focus-within {
+  scrollbar-color: rgb(255 255 255 / 0.16) transparent;
+}
+
+.hscroll::-webkit-scrollbar {
+  height: 9px;
+  width: 9px;
+}
+
+.hscroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 3px solid transparent;
+  border-radius: 99px;
+  background-clip: content-box;
+}
+
+.hscroll:hover::-webkit-scrollbar-thumb {
+  background-color: rgb(255 255 255 / 0.16);
+}
+
+.hscroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ───────────── code block ───────────── */
+
+.cb {
+  position: relative;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background-color: rgb(0 0 0 / 0.3);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.cb-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 4px 0 12px;
+  border-bottom: 1px solid var(--line);
+  background-color: var(--fill-1);
+}
+
+.cb-label {
+  flex: 1;
+  font-size: var(--t-micro);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+  letter-spacing: 0.005em;
+}
+
+.cb-title {
+  font-size: 12px;
+  font-weight: var(--w-regular);
+  color: var(--text-2);
+}
+
+.cb-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.cb:hover .cb-actions,
+.cb:focus-within .cb-actions,
+.cb-actions:has([data-copied], [data-active]) {
+  opacity: 1;
+}
+
+.cb-btn {
+  width: 24px;
+  height: 22px;
+  border-radius: 6px;
+}
+
+.copy-btn[data-copied] {
+  color: var(--green);
+}
+
+.cb-body {
+  transition: max-height var(--d-3) var(--ease-out);
+}
+
+.cb[data-clipped] .cb-body {
+  position: relative;
+  overflow: hidden;
+}
+
+/* The clipped end fades into the well: an overlay, not a mask. */
+.cb[data-clipped] .cb-body::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 64px;
+  background: linear-gradient(to bottom, transparent, var(--well-solid));
+  pointer-events: none;
+}
+
+.cb-pre {
+  margin: 0;
+  padding: 11px 14px;
+  width: max-content;
+  min-width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--code-size);
+  line-height: var(--code-lh);
+  color: var(--syn-fg);
+  tab-size: 2;
+  white-space: pre;
+}
+
+.cb-pre code {
+  font: inherit;
+  font-variant-ligatures: none;
+}
+
+.cb[data-wrap] .cb-pre {
+  width: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Line numbers: each line is a block with its number hanging in the gutter. */
+.cb[data-numbered] .cb-pre {
+  padding-left: 0;
+}
+
+.cb-line {
+  display: block;
+  position: relative;
+  padding-left: calc(var(--cb-digits, 2) * 1ch + 30px);
+}
+
+.cb-line::before {
+  content: attr(data-n);
+  position: absolute;
+  left: 0;
+  width: calc(var(--cb-digits, 2) * 1ch + 14px);
+  text-align: right;
+  color: var(--text-4);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  height: 30px;
+  font-size: var(--t-micro);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+  border-top: 1px solid var(--line);
+  background: rgb(255 255 255 / 0.015);
+  transition:
+    color var(--d-1) var(--ease),
+    background var(--d-1) var(--ease);
+}
+
+.cb-more:hover {
+  color: var(--text);
+  background: var(--fill-1);
+}
+
+.cb-more:focus-visible {
+  outline-offset: -3px;
+}
+
+.cb-more svg {
+  transition: transform var(--d-2) var(--ease-out);
+}
+
+.cb-more[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}

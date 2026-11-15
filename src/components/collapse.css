@@ -1,0 +1,24 @@
+.collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--d-3) var(--ease-out),
+    opacity var(--d-1) var(--ease);
+}
+
+.collapse[data-open] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+/* Clips while animating. Content that draws outside its box (rings, shadows) pads itself. */
+.collapse-inner {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.collapse[data-settled] > .collapse-inner {
+  overflow: visible;
+}

@@ -1,0 +1,294 @@
+import { memo, useRef, type ReactNode } from 'react';
+import type { Token, Tokens } from 'marked';
+import { Icon } from '@/icons';
+import { onLinkClick } from '@/lib/links';
+import { PENDING_HREF, lexBlocks, repairTail, type LexState } from '@/lib/md';
+import { CodeBlock } from './CodeBlock';
+import './markdown.css';
+
+export interface MarkdownProps {
+  text: string;
+  /** The text is still arriving: new words fade in and unfinished syntax is tolerated. */
+  streaming?: boolean;
+  /** The write head: a small light after the newest word ('live'), fading away ('out'). */
+  head?: 'live' | 'out';
+  className?: string;
+}
+
+/**
+ * The write head. Zero width, so it never wraps a line by itself or moves the words around it;
+ * the light is drawn just past the newest word.
+ */
+const Caret = () => <span className="md-caret" aria-hidden />;
+
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
+
+function decode(text: string): string {
+  if (!text.includes('&')) return text;
+  return text.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, name: string) => {
+    const known = ENTITIES[name.toLowerCase()];
+    if (known) return known;
+    if (name[0] === '#') {
+      const code = name[1] === 'x' || name[1] === 'X' ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : m;
+    }
+    return m;
+  });
+}
+
+const SAFE_HREF = /^(https?:|mailto:|#|\/|\.\.?\/)/i;
+const SAFE_SRC = /^(https?:|data:image\/|blob:)/i;
+
+/** Words wrapped in spans, so the ones that mount on a later frame are the only ones that fade in. */
+function words(text: string, key: string): ReactNode {
+  const parts = text.split(/(\s+)/);
+  return parts.map((p, i) =>
+    p && i % 2 === 0 ? (
+      <span className="md-w" key={`${key}.${i}`}>
+        {p}
+      </span>
+    ) : (
+      p
+    ),
+  );
+}
+
+function inline(tokens: Token[] | undefined, live: boolean, path: string): ReactNode {
+  if (!tokens) return null;
+  return tokens.map((t, i) => {
+    const key = `${path}${i}`;
+    switch (t.type) {
+      case 'text': {
+        const tt = t as Tokens.Text;
+        if (tt.tokens?.length) return inline(tt.tokens, live, `${key}.`);
+        const text = decode(tt.text);
+        return live ? words(text, key) : text;
+      }
+      case 'escape':
+        return live ? words(decode((t as Tokens.Escape).text), key) : decode((t as Tokens.Escape).text);
+      case 'strong':
+        return <strong key={key}>{inline((t as Tokens.Strong).tokens, live, `${key}.`)}</strong>;
+      case 'em':
+        return <em key={key}>{inline((t as Tokens.Em).tokens, live, `${key}.`)}</em>;
+      case 'del':
+        return <del key={key}>{inline((t as Tokens.Del).tokens, live, `${key}.`)}</del>;
+      case 'codespan':
+        return (
+          <code key={key} className={live ? 'md-code md-w' : 'md-code'}>
+            {decode((t as Tokens.Codespan).text)}
+          </code>
+        );
+      case 'br':
+        return <br key={key} />;
+      case 'link': {
+        const l = t as Tokens.Link;
+        const children = inline(l.tokens, live, `${key}.`);
+        if (l.href === PENDING_HREF) {
+          return (
+            <a key={key} className="md-link">
+              {children}
+            </a>
+          );
+        }
+        if (!SAFE_HREF.test(l.href)) return <span key={key}>{children}</span>;
+        return (
+          <a key={key} className="md-link" href={l.href} title={l.title ?? undefined} target="_blank" rel="noopener noreferrer" onClick={onLinkClick}>
+            {children}
+          </a>
+        );
+      }
+      case 'image': {
+        const im = t as Tokens.Image;
+        if (!SAFE_SRC.test(im.href)) return <span key={key}>{im.text}</span>;
+        return <img key={key} className="md-img" src={im.href} alt={im.text} title={im.title ?? undefined} loading="lazy" decoding="async" />;
+      }
+      case 'html':
+        // Raw HTML is shown as written, never interpreted.
+        return (t as Tokens.HTML).text;
+      default:
+        return 'text' in t && typeof t.text === 'string' ? decode(t.text) : t.raw;
+    }
+  });
+}
+
+function listItem(item: Tokens.ListItem, loose: boolean, live: boolean, tail: boolean, key: string): ReactNode {
+  let last = item.tokens.length - 1;
+  while (last >= 0 && item.tokens[last].type === 'space') last--;
+  const body = item.tokens.map((t, i) => {
+    const k = `${key}.${i}`;
+    const head = tail && i === last;
+    if (t.type === 'text') {
+      const content = inline((t as Tokens.Text).tokens ?? [t], live, `${k}.`);
+      return loose ? (
+        <p key={k}>
+          {content}
+          {head && <Caret />}
+        </p>
+      ) : (
+        <span key={k}>
+          {content}
+          {head && <Caret />}
+        </span>
+      );
+    }
+    return block(t, live, k, head);
+  });
+  if (item.task) {
+    return (
+      <li key={key} className="md-task" data-checked={item.checked || undefined}>
+        <span className="md-check" role="checkbox" aria-checked={!!item.checked} aria-disabled>
+          {item.checked && <Icon name="check" size={10} />}
+        </span>
+        <div className="md-task-body">{body}</div>
+      </li>
+    );
+  }
+  return <li key={key}>{body}</li>;
+}
+
+/** A list item, re-rendered only when its own text changes: a long list streams one item at a time. */
+const ListItem = memo(
+  function ListItem({ item, loose, live, tail, k }: { raw: string; item: Tokens.ListItem; loose: boolean; live: boolean; tail: boolean; k: string }) {
+    return <>{listItem(item, loose, live, tail, k)}</>;
+  },
+  (a, b) => a.raw === b.raw && a.loose === b.loose && a.tail === b.tail && a.live === b.live,
+);
+
+/** A table row, re-rendered only when its own cells change. */
+const TableRow = memo(
+  function TableRow({ row, align, live, k }: { raw: string; row: Tokens.TableCell[]; align: Tokens.Table['align']; live: boolean; k: string }) {
+    return (
+      <tr>
+        {row.map((c, i) => (
+          <td key={i} style={align[i] ? { textAlign: align[i]! } : undefined}>
+            {inline(c.tokens, live, `${k}.${i}.`)}
+          </td>
+        ))}
+      </tr>
+    );
+  },
+  (a, b) => a.raw === b.raw && a.live === b.live,
+);
+
+/** `tail`: this block holds the newest words, so the write head goes at its end. */
+function block(t: Token, live: boolean, key: string, tail = false): ReactNode {
+  switch (t.type) {
+    case 'space':
+      return null;
+    case 'paragraph':
+      return (
+        <p key={key}>
+          {inline((t as Tokens.Paragraph).tokens, live, `${key}.`)}
+          {tail && <Caret />}
+        </p>
+      );
+    case 'text':
+      return (
+        <p key={key}>
+          {inline((t as Tokens.Text).tokens ?? [t], live, `${key}.`)}
+          {tail && <Caret />}
+        </p>
+      );
+    case 'heading': {
+      const h = t as Tokens.Heading;
+      const Tag = `h${Math.min(6, Math.max(1, h.depth))}` as 'h1';
+      return (
+        <Tag key={key}>
+          {inline(h.tokens, live, `${key}.`)}
+          {tail && <Caret />}
+        </Tag>
+      );
+    }
+    case 'code': {
+      const c = t as Tokens.Code;
+      return <CodeBlock key={key} code={c.text} lang={c.lang || undefined} streaming={live} />;
+    }
+    case 'blockquote': {
+      const kids = (t as Tokens.Blockquote).tokens;
+      let last = kids.length - 1;
+      while (last >= 0 && kids[last].type === 'space') last--;
+      return <blockquote key={key}>{kids.map((c, i) => block(c, live, `${key}.${i}`, tail && i === last))}</blockquote>;
+    }
+    case 'list': {
+      const l = t as Tokens.List;
+      const n = l.items.length - 1;
+      const items = l.items.map((it, i) =>
+        live ? <ListItem key={i} raw={it.raw} item={it} loose={l.loose} live={live} tail={tail && i === n} k={`${key}.${i}`} /> : listItem(it, l.loose, false, false, `${key}.${i}`),
+      );
+      const tasks = l.items.some((it) => it.task);
+      return l.ordered ? (
+        <ol key={key} start={typeof l.start === 'number' && l.start !== 1 ? l.start : undefined} data-loose={l.loose || undefined}>
+          {items}
+        </ol>
+      ) : (
+        <ul key={key} data-loose={l.loose || undefined} data-tasks={tasks || undefined}>
+          {items}
+        </ul>
+      );
+    }
+    case 'table': {
+      const tb = t as Tokens.Table;
+      const align = (i: number) => tb.align[i] ?? undefined;
+      return (
+        <div className="md-table hscroll" key={key}>
+          <table>
+            <thead>
+              <tr>
+                {tb.header.map((c, i) => (
+                  <th key={i} style={align(i) ? { textAlign: align(i)! } : undefined}>
+                    {inline(c.tokens, live, `${key}.h${i}.`)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {tb.rows.map((row, r) => (
+                <TableRow key={r} raw={row.map((c) => c.text).join('|')} row={row} align={tb.align} live={live} k={`${key}.${r}`} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+    case 'hr':
+      return <hr key={key} />;
+    case 'html':
+      return (
+        <p key={key} className="md-raw">
+          {(t as Tokens.HTML).text.trim()}
+        </p>
+      );
+    default:
+      return <p key={key}>{t.raw}</p>;
+  }
+}
+
+/**
+ * One top-level block. A settled block never re-renders: its raw text is its identity.
+ * Code re-renders when it stops being the live tail (to pick up colours); prose re-renders
+ * only to hand the write head on, and keeps the word spans it streamed in with, so nothing
+ * snaps when the next block starts.
+ */
+const Block = memo(
+  function Block({ token, live, tail }: { raw: string; token: Token; live: boolean; tail: boolean }) {
+    const streamed = useRef(live);
+    if (live) streamed.current = true;
+    return <>{block(token, token.type === 'code' ? live : streamed.current, 'b', tail)}</>;
+  },
+  (a, b) => a.raw === b.raw && a.tail === b.tail && (a.live === b.live || a.token.type !== 'code'),
+);
+
+/** Renders assistant markdown. Self-contained: give it text, and say whether it is still streaming. */
+export const Markdown = memo(function Markdown({ text, streaming = false, head, className }: MarkdownProps) {
+  const state = useRef<LexState | null>(null);
+  const source = streaming ? repairTail(text.replace(/\r\n?/g, '\n')) : text.replace(/\r\n?/g, '\n');
+  if (!state.current || state.current.text !== source) state.current = lexBlocks(streaming ? state.current : null, source);
+  const blocks = state.current.blocks;
+  let last = blocks.length - 1;
+  while (last >= 0 && blocks[last].token.type === 'space') last--;
+  return (
+    <div className={`md ${className ?? ''}`} data-streaming={streaming || undefined} data-head={head}>
+      {blocks.map((b, i) => (b.token.type === 'space' ? null : <Block key={i} raw={b.raw} token={b.token} live={streaming && i === last} tail={!!head && i === last} />))}
+    </div>
+  );
+});
