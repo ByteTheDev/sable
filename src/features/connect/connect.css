@@ -1,0 +1,426 @@
+/* ── agent card ──
+   Flat: one hairline, one surface step. The agent's own mark is the only colour. */
+
+/* data-spot: its hairline brightens near the pointer. */
+.cc {
+  position: relative;
+
+  padding: 4px 14px 4px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background-color: var(--panel);
+}
+
+.cc[data-compact] {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.cc-mark {
+  display: block;
+  flex-shrink: 0;
+}
+
+.cc-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+}
+
+.cc-name,
+.acc-agent {
+  font-size: 13.5px;
+  font-weight: var(--w-semi);
+  letter-spacing: -0.006em;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* A status dot in the tone of its parent (also used by About and MCP). */
+.cc-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--tone, var(--text-4));
+}
+
+.cc-spin svg {
+  animation: spin 0.9s linear infinite;
+  /* Its own layer while it turns: a spinner never repaints what is around it. */
+  will-change: transform;
+}
+
+/* ── one account ── */
+
+.acc {
+  padding: 10px 0;
+}
+
+.acc-list {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0 0 0 36px;
+}
+
+.acc-list > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.cc[data-multi] .acc {
+  padding: 9px 0;
+}
+
+.acc-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 36px;
+}
+
+.acc-id {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.acc-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.acc-plan {
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+/* With no agent name in front (several accounts), the plan leads. */
+.acc-top > .acc-plan:first-child {
+  color: var(--text);
+  font-weight: var(--w-medium);
+}
+
+.acc[data-phase='out'] .acc-top > .acc-plan:first-child:empty {
+  display: none;
+}
+
+.acc-default {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* A small dot sets the marker apart without a badge. */
+.acc-default::before {
+  content: '';
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-4);
+}
+
+.acc-sub {
+  display: flex;
+  min-width: 0;
+  font-size: var(--t-small);
+  line-height: 18px;
+  color: var(--text-3);
+}
+
+.acc-sub .roll-item {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.acc-sub .roll-item > * {
+  display: inline-block;
+  margin-right: 7px;
+  vertical-align: -2px;
+}
+
+.acc[data-phase='started'] .acc-sub,
+.acc[data-phase='url'] .acc-sub,
+.acc[data-phase='success'] .acc-sub,
+.acc[data-confirm] .acc-sub {
+  color: var(--text-2);
+}
+
+.acc-error {
+  color: oklch(0.8 0.1 24);
+}
+
+.acc-error .roll-item {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.acc-actions {
+  flex-shrink: 0;
+}
+
+.acc-actions .roll-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Secondary text actions: quiet until pointed at. */
+.acc-quiet {
+  color: var(--text-3);
+}
+
+.acc-quiet:hover,
+.acc-quiet:focus-visible {
+  color: var(--text);
+}
+
+.acc-more {
+  margin-left: -2px;
+  opacity: 0;
+  transition:
+    opacity var(--d-1) var(--ease-out),
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.acc:hover .acc-more,
+.acc:focus-within .acc-more,
+.acc-more[data-state='open'] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .acc-more {
+    opacity: 1;
+  }
+}
+
+.acc-rename {
+  height: 28px;
+  max-width: 260px;
+  padding: 0 10px;
+  font-size: var(--t-ui);
+}
+
+/* ── odometer ──
+   Clipped to its own line box (with a little room so focus rings and descenders survive). */
+
+.roll {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  padding-block: 3px;
+  margin-block: -3px;
+  clip-path: inset(0 -100vw);
+}
+
+.roll-item {
+  min-width: 0;
+}
+
+/* ── drawn check ── */
+
+.drawn-check {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.drawn-check circle {
+  stroke-opacity: 0.45;
+  stroke-dasharray: 44;
+  stroke-dashoffset: 44;
+  animation: cc-draw 420ms var(--ease-out) forwards;
+}
+
+.drawn-check path {
+  stroke-dasharray: 12;
+  stroke-dashoffset: 12;
+  animation: cc-draw 260ms 150ms var(--ease-out) forwards;
+}
+
+@keyframes cc-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ── not installed ── */
+
+.acc[data-phase='missing'] .cc-mark {
+  opacity: 0.45;
+}
+
+.acc-install {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 0 2px 36px;
+}
+
+.cc[data-compact] .acc-install {
+  padding-left: 34px;
+}
+
+.acc-install-label {
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.acc-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 4px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: rgb(0 0 0 / 0.28);
+  box-shadow: none;
+}
+
+.acc-cmd code {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: var(--w-regular);
+  color: var(--text);
+  user-select: all;
+}
+
+/* ── limits ── */
+
+.acc-limits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  padding: 6px 0 0 36px;
+}
+
+.cc[data-multi] .acc-limits {
+  padding-left: 0;
+}
+
+.acc-limit {
+  display: inline-grid;
+  grid-template-columns: auto 56px 32px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--t-small);
+}
+
+.acc-limit-label {
+  max-width: 150px;
+  color: var(--text-3);
+}
+
+.cc-limit-track {
+  height: 3px;
+}
+
+.cc-limit-pct {
+  text-align: right;
+  color: var(--text-2);
+}
+
+.acc-limit[data-level='amber'] .cc-limit-pct {
+
+  color: var(--amber);
+}
+.acc-limit[data-level='red'] .cc-limit-pct {
+  color: var(--red);
+}
+
+.acc-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin: 0 0 8px 26px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+  transition:
+    color var(--d-1) var(--ease),
+    background-color var(--d-1) var(--ease);
+}
+
+.acc-add:hover {
+  color: var(--text);
+  background-color: var(--fill-2);
+}
+
+.acc-add:active {
+  background-color: var(--fill-3);
+}
+
+.acc-add:focus-visible {
+  outline: 2px solid var(--line-3);
+  outline-offset: 1px;
+}
+
+.acc-add:disabled {
+  opacity: 0.6;
+}
+
+@media (max-width: 860px) {
+  .acc-limits,
+  .acc-install,
+  .acc-list {
+    padding-left: 0;
+  }
+  .acc-add {
+    margin-left: -10px;
+  }
+}
+
+/* ── banner (home screen) ── */
+
+.connect-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background-color: rgb(16 16 18 / 0.92);
+}
+
+.cb-marks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cb-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-ui);
+  color: var(--text-2);
+}

@@ -1,0 +1,470 @@
+/* ───────────── first-run welcome ───────────── */
+
+.onb {
+  position: fixed;
+  inset: 0;
+  /* Above the app, below dialogs and menus: a folder dialog opens on top of it. */
+  z-index: 40;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The light and the sheet under it fade out together when the welcome hands over to the app. */
+.onb-bg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--sheet);
+}
+
+.onb-light {
+  position: absolute;
+  inset: 0;
+}
+
+/* Keeps the middle dark so the column reads effortlessly; the light lives at the edges. */
+.onb-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(48% 58% at 50% 47%, var(--sheet) 0%, rgb(13 13 15 / 0.86) 46%, rgb(13 13 15 / 0.2) 84%),
+    linear-gradient(180deg, rgb(13 13 15 / 0.7) 0%, transparent 22%, transparent 80%, rgb(13 13 15 / 0.6) 100%);
+}
+
+/* The top of the window is left free: in the desktop app it drags the window, and the native
+   window buttons have their corner to themselves. */
+.onb-top {
+  height: calc(var(--gap) + var(--topbar-h));
+  flex-shrink: 0;
+}
+
+html[data-desktop] .onb-top {
+  -webkit-app-region: drag;
+}
+
+.onb-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow-y: auto;
+}
+
+.onb-col {
+  position: relative;
+  width: min(500px, calc(100% - 32px));
+  margin: auto;
+  /* An emptier page wants its weight a touch above true centre. */
+  padding: 8px 0 calc(4 * var(--vh));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+/* ── the mark: one size, scaled; its box follows so the column below sits right ── */
+
+.onb-mark {
+  display: grid;
+  place-items: center;
+  height: 64px;
+  margin-bottom: 26px;
+}
+
+.onb-col:not([data-step='0']) .onb-mark {
+  height: 32px;
+  margin-bottom: 20px;
+}
+
+.onb-mark-travel,
+.onb-mark-scale {
+  display: block;
+  width: 64px;
+  height: 64px;
+  transform-origin: 50% 50%;
+}
+
+.onb-mark-svg {
+  display: block;
+  overflow: visible;
+}
+
+.onb-mark-svg rect {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* The home screen's own mark waits while ours travels onto it. */
+html[data-handover] .home .logo-mark {
+  opacity: 0;
+}
+
+/* ── a step ── */
+
+.onb-step {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform-origin: 50% 0;
+}
+
+/* Words roll through their own line box; the padding keeps descenders out of the clip. */
+.onb-w {
+  display: inline-block;
+  padding-block: 0.06em 0.14em;
+  margin-block: -0.06em -0.14em;
+  clip-path: inset(0 -0.2em);
+}
+
+.onb-w-in {
+  display: inline-block;
+}
+
+.onb-name {
+  font-size: var(--t-display);
+  font-weight: 600;
+  letter-spacing: -0.032em;
+  line-height: 1.06;
+}
+
+.onb-lead {
+  max-width: 40ch;
+  margin-top: 14px;
+  font-size: var(--t-lead);
+  line-height: 1.5;
+  color: var(--text-2);
+  text-wrap: balance;
+}
+
+.onb-title {
+  font-size: var(--t-h2);
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  line-height: 1.16;
+  text-wrap: balance;
+}
+
+.onb-sub {
+  max-width: 44ch;
+  margin-top: 8px;
+  font-size: var(--t-body);
+  line-height: 1.5;
+  color: var(--text-2);
+  text-wrap: balance;
+}
+
+.onb-actions {
+  margin-top: 28px;
+}
+
+.onb-go {
+  min-width: 168px;
+  justify-content: center;
+  transition:
+    background-color var(--d-1) var(--ease),
+    transform var(--d-1) var(--ease-out);
+}
+
+.onb-go:active {
+  transform: scale(0.97);
+}
+
+.onb-go-arrow {
+  transition: transform var(--d-2) var(--ease-out);
+}
+
+.onb-go:hover .onb-go-arrow,
+.onb-go:focus-visible .onb-go-arrow {
+  transform: translateX(3px);
+}
+
+.onb-go:focus-visible {
+  outline: 1.5px solid var(--focus);
+
+  outline-offset: 3px;
+}
+
+/* ── cards: one quiet surface, one hairline ── */
+
+.onb-unfold {
+  position: relative;
+  width: 100%;
+  margin-top: 26px;
+}
+
+.onb-card {
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  background-color: rgb(18 18 21 / 0.9);
+  text-align: left;
+}
+
+/* The line a card unfolds from: drawn from the centre outward, gone once the card is open. */
+.onb-seam {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--line-3);
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* ── agents ── */
+
+.onb-agents {
+  padding: 4px 16px;
+}
+
+.onb-agent + .onb-agent {
+  border-top: 1px solid var(--line);
+}
+
+.onb-agent .acc {
+  padding: 12px 0;
+}
+
+/* The agent marks land last, a beat after their rows. */
+.onb-step[data-dir] .onb-agents .cc-mark {
+  animation: onb-land 300ms 230ms var(--spring) both;
+}
+
+@keyframes onb-land {
+  from {
+    opacity: 0;
+    transform: translateY(-7px) scale(0.45) rotate(-28deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── folder ── */
+
+.onb-places {
+  padding: 6px;
+}
+
+.onb-places-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.onb-places-loading {
+  display: grid;
+  place-items: center;
+  height: 52px;
+  color: var(--text-3);
+}
+
+.onb-place {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 52px;
+  padding: 0 14px 0 12px;
+  border-radius: 10px;
+  text-align: left;
+  color: var(--text);
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.onb-place:hover {
+  background-color: var(--fill-2);
+}
+
+.onb-place:focus-visible {
+  outline: none;
+  background-color: var(--fill-3);
+}
+
+.onb-place:active,
+.onb-place[data-chosen] {
+  background-color: var(--fill-3);
+}
+
+.onb-place-icon {
+  flex-shrink: 0;
+  color: var(--text-3);
+  transition:
+    color var(--d-1) var(--ease),
+    transform var(--d-2) var(--ease-out);
+}
+
+.onb-place:hover .onb-place-icon,
+.onb-place:focus-visible .onb-place-icon {
+  color: var(--text);
+  transform: translateY(-1px) rotate(-6deg);
+}
+
+.onb-place-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.onb-place-name {
+  font-size: 13.5px;
+  font-weight: var(--w-medium);
+  letter-spacing: -0.004em;
+}
+
+/* The folder it lives in: quiet, in the interface face (paths are read here, not copied). */
+.onb-place-path {
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.onb-place-kbd {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.onb-place:focus-visible .onb-place-kbd {
+  opacity: 1;
+}
+
+.onb-place-go {
+  position: absolute;
+  right: 16px;
+  color: var(--text-2);
+  opacity: 0;
+  transform: translateX(-5px);
+  transition:
+    opacity var(--d-1) var(--ease),
+    transform var(--d-2) var(--ease-out);
+}
+
+.onb-place:hover:not(:focus-visible):not([data-chosen]) .onb-place-go {
+  opacity: 1;
+  transform: none;
+}
+
+.onb-place-pick {
+  height: 46px;
+  color: var(--text-2);
+}
+
+.onb-place-pick .onb-place-name {
+  font-weight: var(--w-regular);
+}
+
+.onb-places-list > :last-child {
+  position: relative;
+  margin-top: 5px;
+}
+
+.onb-places-list > :last-child::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 12px;
+  right: 12px;
+  height: 1px;
+  background: var(--line);
+}
+
+.onb-places-list > :only-child {
+  margin-top: 0;
+}
+
+.onb-places-list > :only-child::before {
+  display: none;
+}
+
+.onb-place-pick:hover .onb-place-kbd {
+  opacity: 0.8;
+}
+
+/* ── footer: back, progress, skip ── */
+
+.onb-foot {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  height: 64px;
+  flex-shrink: 0;
+  padding: 0 20px;
+}
+
+.onb-foot-side {
+  display: flex;
+  align-items: center;
+}
+
+.onb-foot-end {
+  justify-content: flex-end;
+}
+
+.onb-back-icon {
+  transition: transform var(--d-2) var(--ease-out);
+}
+
+.onb-back:hover .onb-back-icon {
+  transform: translateX(-2px);
+}
+
+.onb-skip .kbds {
+  margin-left: 2px;
+  opacity: 0.8;
+}
+
+.onb-progress {
+  position: relative;
+  height: 6px;
+}
+
+.onb-dot {
+  position: absolute;
+  top: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text);
+  opacity: 0.22;
+  transition: opacity var(--d-3) var(--ease);
+}
+
+.onb-dot[data-done] {
+  opacity: 0.45;
+}
+
+.onb-pill {
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  background: var(--text);
+}
+
+@media (max-height: 760px) {
+  .onb-foot {
+    height: 56px;
+  }
+  .onb-unfold {
+    margin-top: 22px;
+  }
+  .onb-actions {
+    margin-top: 24px;
+  }
+  .onb-mark {
+    height: 56px;
+    margin-bottom: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onb-step[data-dir] .onb-agents .cc-mark {
+    animation: none;
+  }
+}
