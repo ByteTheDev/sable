@@ -1,0 +1,329 @@
+/* The panel's Browser tab. */
+
+.bw {
+  position: relative;
+}
+
+/* ── toolbar ── */
+
+.bw-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 8px 8px 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.bw-bar > .icon-btn:disabled {
+  opacity: 0.32;
+}
+
+.bw-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1.5px;
+  pointer-events: none;
+  background-color: rgb(242 241 238 / 0.55);
+  transform-origin: left center;
+  transform: scaleX(0);
+  opacity: 0;
+  transition:
+    transform var(--d-2) var(--ease-out),
+    opacity var(--d-3) var(--ease) var(--d-2);
+}
+
+/* Trickles towards the end while loading, then completes and fades. */
+.bw-progress[data-on] {
+  opacity: 1;
+  transform: scaleX(0.86);
+  transition:
+    transform 9s cubic-bezier(0.05, 0.75, 0.15, 1),
+    opacity var(--d-1) var(--ease);
+}
+
+.bw-progress:not([data-on]) {
+  transform: scaleX(1);
+}
+
+/* ── address field ── */
+
+.bw-addr {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  margin: 0 4px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background-color: rgb(0 0 0 / 0.22);
+  cursor: text;
+}
+
+.bw-addr:hover {
+  border-color: var(--line-3);
+}
+
+.bw-addr[data-focused] {
+  border-color: var(--focus-field);
+}
+
+.bw-addr-icon {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.bw-favicon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.bw-addr input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: none;
+  font-size: var(--t-ui);
+  color: var(--text);
+}
+
+.bw-addr input:focus {
+  outline: none;
+}
+
+.bw-addr input::placeholder {
+  color: var(--text-4);
+}
+
+.bw-addr-view {
+  position: absolute;
+  inset: 0 10px 0 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  font-size: var(--t-ui);
+}
+
+.bw-addr-url {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.bw-addr-title {
+  flex-shrink: 100;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-3);
+}
+
+/* ── note for embedded public sites (web build) ── */
+
+.bw-note {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+  padding: 9px 10px 9px 14px;
+  font-size: var(--t-small);
+  line-height: 1.45;
+  color: var(--text-2);
+  background-color: var(--fill-1);
+  border-bottom: 1px solid var(--line);
+  animation: bw-rise var(--d-3) var(--ease-out);
+}
+
+.bw-note > svg {
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+
+.bw-note-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── the page ── */
+
+.bw-view {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bw-host,
+.bw-webview,
+.bw-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.bw-webview {
+  display: flex;
+  background: #fff;
+}
+
+/* A page without its own background paints on white, as in any browser; fade in once loaded. */
+.bw-frame {
+  color-scheme: normal;
+  background: #fff;
+  opacity: 0;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.bw-frame[data-loaded] {
+  opacity: 1;
+}
+
+/* Frames swallow pointer events: keep the panel's resize drag smooth. */
+:root[data-rail-resizing] .bw-view {
+  pointer-events: none;
+}
+
+.bw-error {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 28px;
+  text-align: center;
+  font-size: var(--t-ui);
+  line-height: 1.55;
+  color: var(--text-2);
+  background: var(--panel);
+  text-wrap: balance;
+  animation: bw-rise var(--d-3) var(--ease-out);
+}
+
+.bw-error-url {
+  font-size: var(--t-ui);
+  color: var(--text);
+}
+
+.bw-error-code {
+  margin-bottom: 10px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* ── empty state ── */
+
+.bw-empty {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 36px 14px 24px;
+}
+
+.bw-empty-line {
+  padding: 0 18px;
+  text-align: center;
+  font-size: var(--t-ui);
+  line-height: 1.55;
+  color: var(--text-3);
+  text-wrap: balance;
+}
+
+.bw-quick {
+  margin-top: 28px;
+  animation: bw-rise var(--d-3) var(--ease-out);
+}
+
+.bw-quick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bw-quick-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 6px 10px 6px 7px;
+  border-radius: var(--r-sm);
+  text-align: left;
+  color: var(--text);
+  transition:
+    background var(--d-1) var(--ease),
+    transform var(--d-1) var(--ease);
+}
+
+.bw-quick-row:hover {
+  background: var(--fill-2);
+}
+
+.bw-quick-row:active {
+  background-color: var(--fill-3);
+}
+
+.bw-quick-row:focus-visible {
+  outline: 1.5px solid rgb(255 255 255 / 0.4);
+  outline-offset: -1.5px;
+}
+
+.bw-quick-url {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-ui);
+}
+
+
+.bw-quick-go {
+  flex-shrink: 0;
+  color: var(--text-3);
+  opacity: 0;
+  transform: translateX(-3px);
+  transition:
+    opacity var(--d-1) var(--ease),
+    transform var(--d-2) var(--ease-out);
+}
+
+.bw-quick-row:hover .bw-quick-go,
+.bw-quick-row:focus-visible .bw-quick-go {
+  opacity: 1;
+  transform: none;
+}
+
+@keyframes bw-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bw-progress[data-on] {
+    transition: opacity var(--d-1) var(--ease);
+  }
+}
