@@ -7,6 +7,7 @@ import { Icon } from '@/icons';
 import { pathForFile } from '@/lib/desktop';
 import { baseName, dirName } from '@/lib/format';
 import { fuzzy } from '@/lib/fuzzy';
+import { isUltraEffort } from '@/lib/models';
 import { EASE_OUT, play, pulseFrom } from '@/lib/motion';
 import { searchFiles, type FileHit } from '@/lib/workspace';
 import { homeChoice, interrupt, sendMessage, setHomeUltracode, setUltracode, startFromHome, takeQueued, updateQueued } from '@/state/actions';
@@ -17,12 +18,13 @@ import { readFiles, withTextAttachments } from './attach';
 import { AttachmentRow } from './Attachments';
 import { useChoice } from './choice';
 import { APP_COMMANDS, appCommandsFor, commandRows, skillRows, type CommandCtx, type SuggestRow } from './commands';
-import { HomeChips, ModelEffort, ModelPopover, ModeMenu, openComposerMenu } from './Controls';
+import { HomeChips, ModelPopover, ModeMenu, openComposerMenu } from './Controls';
+import { ModelEffort } from './Thinking';
 import { Highlight } from './Highlight';
 import { NO_QUEUE, QueueTray } from './QueueTray';
 import { SendHint, SendKey } from './SendKey';
 import { SuggestMenu } from './SuggestMenu';
-import { UltraEdge, UltraToggle } from './Ultracode';
+import { UltraEdge } from './Ultracode';
 import './composer.css';
 
 export interface ComposerProps {
@@ -206,6 +208,8 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
   const steerable = !!caps?.features.steer;
   const ultraOffered = !!caps?.features.ultracode;
   const ultra = ultraOffered && (ultraLocal ?? storedUltra);
+  // "Ultra" is one look across agents: ultracode on (a mode), or an Ultra level (an effort).
+  const ultraLook = ultra || isUltraEffort(choice.effort);
   const images = !!caps?.features.images;
 
   useEffect(() => setUltraLocal(null), [storedUltra]);
@@ -388,7 +392,10 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
     setOriginX(caretLeft(ta, trigger.start) + inset);
   }, [menuOpen, trigKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ctx: CommandCtx = useMemo(() => ({ sessionId, openModel: () => openComposerMenu('model'), openMode: () => openComposerMenu('mode') }), [sessionId]);
+  const ctx: CommandCtx = useMemo(
+    () => ({ sessionId, openModel: () => openComposerMenu('model'), openMode: () => openComposerMenu('mode'), openEffort: () => openComposerMenu('effort') }),
+    [sessionId],
+  );
 
   const accept = (row: SuggestRow | undefined) => {
     if (!row || !trigger) return;
@@ -713,7 +720,7 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
         ref={card}
         className="cmp-card"
         data-spot
-        data-ultra={ultra || undefined}
+        data-ultra={ultraLook || undefined}
         data-shell={shell || undefined}
         data-empty={!text && !attachments.length ? '' : undefined}
         onMouseDown={(e) => {
@@ -807,20 +814,19 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
                   </RM.Portal>
                 </RM.Root>
                 <ModeMenu choice={choice} side={popSide} onClosed={focus} />
-                {ultraOffered && <UltraToggle on={ultra} onToggle={toggleUltra} />}
               </>
             )}
           </div>
           <SendHint on={queueing && canSend} steerable={steerable} sendWithEnter={sendWithEnter} />
           <div className="cmp-side cmp-right">
             <ModelPopover choice={choice} side={popSide} onClosed={focus} />
-            <ModelEffort choice={choice} />
+            <ModelEffort choice={choice} side={popSide} onClosed={focus} ultraOffered={ultraOffered} ultracode={ultra} onUltracode={toggleUltra} />
             <SendKey
               canSend={canSend}
               busy={busy}
               showStop={showStop}
               steerable={steerable}
-              ultracode={ultra}
+              ultracode={ultraLook}
               sendWithEnter={sendWithEnter}
               shell={shell}
               stoppable={variant === 'session' && !!sessionId}
@@ -830,7 +836,7 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
           </div>
         </div>
 
-        {ultraOffered && <UltraEdge on={ultra} card={card} />}
+        <UltraEdge on={ultraLook} card={card} />
         <input
           ref={fileInput}
           type="file"

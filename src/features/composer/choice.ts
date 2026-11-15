@@ -6,15 +6,6 @@ import { useShallow } from 'zustand/react/shallow';
 import { useCapsState } from '@/state/hooks';
 import { useStore } from '@/state/store';
 
-export const EFFORT_LABEL: Record<Effort, string> = {
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Extra high',
-  max: 'Max',
-};
-
 // ── the effort last used with each model (per browser), so picking a model brings it back ──
 
 const EFFORT_KEY = 'sable.modelEffort.v1';

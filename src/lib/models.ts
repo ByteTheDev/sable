@@ -1,4 +1,29 @@
-import type { ModelInfo, ProviderId } from '@shared/protocol';
+import type { Effort, ModelInfo, ProviderId } from '@shared/protocol';
+
+// ───────────────────────── reasoning effort ─────────────────────────
+
+const EFFORT_NAMES: Record<Effort, string> = {
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
+  ultra: 'Ultra',
+};
+
+/** What to call a reasoning effort, everywhere efforts are listed ("xhigh" → "Extra high"). */
+export function effortName(e: Effort): string;
+export function effortName(e: Effort | undefined): string | undefined;
+export function effortName(e: Effort | undefined): string | undefined {
+  return e ? (EFFORT_NAMES[e] ?? e) : undefined;
+}
+
+/**
+ * The level reads as "ultra": it carries the same mark as ultracode, so the idea looks the same
+ * whether it is a level the model offers (Codex) or a mode beside the level (Claude Code).
+ */
+export const isUltraEffort = (e: Effort | undefined) => e === 'ultra';
 
 /**
  * Which models a menu lists, and what they are called.

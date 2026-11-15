@@ -54,6 +54,14 @@ describe('modes and models', () => {
     expect(mapModel(X({ id: 'bare', model: '', displayName: '', supportedReasoningEfforts: [] }))).toMatchObject({ id: 'bare', name: 'bare', efforts: undefined });
   });
 
+  it('keeps ultra as the level above max, and drops efforts that are not levels', () => {
+    const raw = ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'].map((reasoningEffort) => ({ reasoningEffort }));
+    expect(mapModel(X({ id: 'm', model: 'gpt-6.1-sol', displayName: 'GPT-6.1-Sol', supportedReasoningEfforts: raw, defaultReasoningEffort: 'ultra' }))).toMatchObject({
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+      defaultEffort: 'ultra',
+    });
+  });
+
   it('maps MCP server status, inferring it when there is no runtime yet', () => {
     const base = { name: 'github', tools: { a: { name: 'create_issue', description: 'Create an issue\nmore' } }, authStatus: null, toolsError: null, serverInfo: null };
     expect(mapMcp(X({ ...base, runtimeStatus: 'connected' }))).toMatchObject({ status: 'connected', tools: [{ name: 'create_issue', description: 'Create an issue' }] });

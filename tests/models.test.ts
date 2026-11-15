@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelInfo } from '@shared/protocol';
-import { aliasTarget, currentGeneration, familyOf, modelName, modelNameById, visibleModels } from '../src/lib/models';
+import { aliasTarget, currentGeneration, effortName, familyOf, isUltraEffort, modelName, modelNameById, visibleModels } from '../src/lib/models';
+
+describe('effort names', () => {
+  it('names every level in sentence case, ultra included', () => {
+    expect(effortName('minimal')).toBe('Minimal');
+    expect(effortName('medium')).toBe('Medium');
+    expect(effortName('xhigh')).toBe('Extra high');
+    expect(effortName('max')).toBe('Max');
+    expect(effortName('ultra')).toBe('Ultra');
+    expect(effortName(undefined)).toBeUndefined();
+  });
+
+  it('only the ultra level reads as ultra', () => {
+    expect(isUltraEffort('ultra')).toBe(true);
+    expect(isUltraEffort('max')).toBe(false);
+    expect(isUltraEffort(undefined)).toBe(false);
+  });
+});
 
 // What the agents report today (trimmed).
 const CLAUDE: ModelInfo[] = [

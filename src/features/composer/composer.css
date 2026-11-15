@@ -204,8 +204,7 @@
   flex-shrink: 1;
 }
 
-.cmp-attach,
-.uc-toggle {
+.cmp-attach {
   position: relative;
   display: grid;
   place-items: center;
@@ -341,6 +340,7 @@
   .cm-mode {
     padding: 0;
     width: 28px;
+    flex-shrink: 0;
     justify-content: center;
   }
   .cm-mode .cm-mode-label {
@@ -406,149 +406,492 @@
   animation: fade-in var(--d-2) var(--ease-out);
 }
 
-/* ── effort: a row of level bars ── */
+/* ── thinking: the level at rest, the stepped track in a popover ── */
 
-.ef {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: var(--r-pill);
+/* At rest: the level's name and a step meter. The button's slot is as wide as the longest name
+   the model offers (a hidden sizer), so the toolbar never moves when the level changes; the
+   visible pill hugs the current name at the slot's right end and eases to its new width. */
+.th-chip {
+  display: inline-grid;
+  justify-items: end;
   flex-shrink: 0;
-  cursor: pointer;
-  touch-action: none;
+  padding: 0;
+  overflow: visible;
   outline: none;
-  transition: background-color var(--d-1) var(--ease);
 }
 
-.ef:hover,
-.ef:focus-visible {
+.tb-chip.th-chip:is(:hover, :active, [aria-expanded='true']) {
+  background-color: transparent;
+}
+
+.tb-chip.th-chip[aria-expanded='true'] > :not(svg) {
+  opacity: 1;
+}
+
+.th-sizer,
+.th-pill {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 10px 0 11px;
+  white-space: nowrap;
+}
+
+.th-sizer {
+  visibility: hidden;
+}
+
+.th-pill {
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  transition:
+    background-color var(--d-1) var(--ease),
+    opacity var(--d-1) var(--ease);
+}
+
+.th-chip:hover .th-pill {
   background-color: var(--fill-2);
 }
 
-.ef:focus-visible {
+.th-chip:active .th-pill {
+  background-color: var(--fill-3);
+}
+
+.th-chip[aria-expanded='true'] .th-pill {
+  background-color: var(--fill-2);
+}
+
+.th-chip:focus-visible .th-pill {
   box-shadow: 0 0 0 1.5px var(--focus);
 }
 
-.ef-bars {
-  display: inline-flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 13px;
+.th-chip[data-bare] .th-pill {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
 }
 
-.ef-bar {
-  position: relative;
-  width: 3px;
-  border-radius: 1.5px;
-  background-color: rgb(255 255 255 / 0.13);
-  overflow: hidden;
+.th-names {
+  display: inline-grid;
+  min-width: 0;
 }
 
-.ef:hover .ef-bar {
-  background-color: rgb(255 255 255 / 0.18);
+.th-names > .th-nm {
+  grid-area: 1 / 1;
 }
 
-.ef-fill {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background-color: var(--text-2);
-  transform: scaleY(0);
-  transform-origin: 50% 100%;
-  transition: transform 140ms var(--ease-out);
+.th-meter-slot {
+  height: 1px;
+  flex-shrink: 0;
 }
 
-.ef-fill[data-on] {
-  transform: none;
+.th-pill > .th-uc-narrow {
+  display: none;
 }
 
-.ef:hover .ef-fill,
-.ef:focus-visible .ef-fill {
-  background-color: var(--text);
-}
-
-/* The level's name, above the bars for a moment after a change. */
-.ef-tip {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  translate: -50% 3px;
-  padding: 3px 8px;
-  border-radius: var(--r-pill);
-  font-size: var(--t-small);
-  font-weight: var(--w-medium);
-  white-space: nowrap;
-  color: var(--text);
-  background: var(--grain) 0 0 / var(--grain-size), var(--panel-4);
-  box-shadow: var(--glass-edge), var(--shadow-pop);
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 100ms var(--ease),
-    translate 140ms var(--ease-out);
-}
-
-.ef-tip[data-on] {
-  opacity: 1;
-  translate: -50% 0;
-}
-
-.ef-tip-in {
-  display: block;
-  animation: fade-in 90ms var(--ease);
-}
-
-/* ── ultracode ── */
-
-.uc-toggle {
+.th-chip[data-bare]:not([data-ultra]) .ux-mark {
   color: var(--text-3);
 }
 
-.uc-toggle:hover {
+.th-chip[data-bare]:not([data-ultra]):hover .ux-mark {
   color: var(--text);
-  background-color: var(--fill-2);
 }
 
-.uc-toggle:active {
-  scale: 0.94;
-}
-
-.uc-toggle[data-on] {
+.th-nm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--text);
-  background-color: var(--fill-2);
 }
 
-.uc-glyph {
-  display: block;
-  overflow: visible;
-}
-
-.uc-glyph path {
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  transition:
-    translate 140ms var(--ease-out),
-    opacity 120ms var(--ease);
-}
-
-/* Off: the second head rests under the first and dim; hovering lifts both a step. */
-.uc-toggle:not([data-on]) .uc-g2 {
-  opacity: 0.45;
-}
-
-.uc-toggle:is(:hover, :focus-visible) .uc-g1 {
-  translate: 0 -1.5px;
-}
-
-.uc-toggle:is(:hover, :focus-visible) .uc-g2 {
+.th-meter {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+  flex-shrink: 0;
+  /* The ticks' feet sit on the text's optical baseline, not the box bottom. */
   translate: 0 -0.5px;
 }
 
-/* The edge light: leaf segments travel the card's rounded edge (offset-path follows its shape). */
+.th-meter i {
+  width: 3px;
+  border-radius: 1px;
+  background-color: rgb(255 255 255 / 0.14);
+  transition: background-color 120ms var(--ease);
+}
+
+.th-meter i[data-on] {
+  background-color: var(--text-2);
+}
+
+.th-chip:is(:hover, [aria-expanded='true'], :focus-visible) .th-meter i[data-on] {
+  background-color: var(--text);
+}
+
+/* An Ultra level's tick: lit in dither, the material "ultra" is drawn in. */
+.th-meter i[data-ultra] {
+  background: var(--dither-50) 0 0 / 2px 2px, rgb(255 255 255 / 0.1);
+  image-rendering: pixelated;
+}
+
+.th-meter i[data-ultra][data-on] {
+  background: var(--dither-50) 0 0 / 2px 2px, rgb(242 241 238 / 0.55);
+}
+
+/* "Ultra" at rest (ultracode on, or the Ultra level): one fill step, like an engaged control, and the mark. */
+.th-chip[data-ultra] .th-pill {
+  background-color: var(--fill-2);
+}
+
+.th-chip[data-ultra]:is(:hover, [aria-expanded='true']) .th-pill {
+  background-color: var(--fill-3);
+}
+
+/* The mark. Its second head rides a step under the first. */
+.ux-mark {
+  display: block;
+  flex-shrink: 0;
+  overflow: visible;
+  color: var(--text);
+}
+
+.tb-chip .ux-mark,
+.tb-chip:hover .ux-mark {
+  color: var(--text);
+}
+
+.ux-mark path {
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ux-m2 {
+  opacity: 0.55;
+}
+
+/* The moment it turns on: the second head rises into place under the first, the name lights once. */
+.th-chip[data-burst] .ux-m1 {
+  animation: ux-lift 520ms var(--ease-out) both;
+}
+
+.th-chip[data-burst] .ux-m2 {
+  animation: ux-stack 620ms var(--ease-out) both;
+}
+
+.th-chip[data-burst] .th-cur {
+  animation: th-light 900ms var(--ease) both;
+}
+
+@keyframes ux-lift {
+  0% {
+    translate: 0 2.5px;
+  }
+  45% {
+    translate: 0 -1.2px;
+  }
+  100% {
+    translate: 0 0;
+  }
+}
+
+@keyframes ux-stack {
+  0% {
+    translate: 0 4px;
+    opacity: 0;
+  }
+  35% {
+    opacity: 0;
+  }
+  100% {
+    translate: 0 0;
+    opacity: 0.55;
+  }
+}
+
+@keyframes th-light {
+  0% {
+    opacity: 0.35;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+
+/* Narrow composer: the names fold away first; the meter and mark stay. */
+@container cmp (max-width: 470px) {
+  .th-names,
+  .th-cur {
+    display: none;
+  }
+  .th-pill > .th-uc-narrow {
+    display: block;
+  }
+  .th-sizer,
+  .th-pill {
+    padding: 0 9px;
+  }
+}
+
+/* ── the popover ── */
+
+.th-pop {
+  width: 236px;
+  padding: 4px;
+}
+
+.th-body {
+  padding: 2px 4px 0;
+}
+
+.th-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 30px;
+  padding: 0 6px 0 8px;
+}
+
+.th-title {
+  color: var(--text-2);
+}
+
+.th-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: var(--w-medium);
+  color: var(--text);
+  animation: th-name-in 120ms var(--ease-out);
+}
+
+.th-name[data-preview] {
+  font-weight: var(--w-regular);
+  color: var(--text-3);
+}
+
+@keyframes th-name-in {
+  from {
+    opacity: 0;
+    translate: 0 2px;
+  }
+}
+
+/* The track: a 32px hit row, a hairline rail with a detent tick at every stop. */
+.th-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  margin: 0 0 4px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+
+.th-track:focus-visible {
+  box-shadow: 0 0 0 1.5px var(--focus);
+}
+
+.th-rail {
+  position: relative;
+  height: 2px;
+  border-radius: 1px;
+  background-color: rgb(255 255 255 / 0.1);
+}
+
+.th-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 2px;
+  border-radius: 1px;
+  background-color: var(--text-2);
+  transform-origin: 0 50%;
+  transition-property: transform;
+}
+
+.th-track:is(:hover, :focus-visible, [data-pressed]) .th-fill {
+  background-color: var(--text);
+}
+
+/* The Ultra stretch (from the level before it to Ultra): dithered, dim until it is reached. */
+.th-ultra-seg {
+  position: absolute;
+  top: -1px;
+  height: 4px;
+  background: var(--dither-50) 0 0 / 2px 2px;
+  image-rendering: pixelated;
+  opacity: 0.18;
+  transition: opacity 160ms var(--ease);
+}
+
+.th-ultra-seg[data-on] {
+  opacity: 0.8;
+}
+
+.th-ultra-seg[data-burst] {
+  animation: th-seg-charge 700ms var(--ease-out) both;
+}
+
+@keyframes th-seg-charge {
+  0% {
+    opacity: 0.18;
+    clip-path: inset(0 100% 0 0);
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.8;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.th-stop {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 8px;
+  margin: -4px 0 0 -1px;
+  border-radius: 1px;
+  background-color: rgb(255 255 255 / 0.2);
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.th-stop[data-on] {
+  background-color: var(--text-2);
+}
+
+.th-stop[data-hover]:not([data-on]) {
+  background-color: rgb(255 255 255 / 0.42);
+}
+
+.th-thumb {
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background-color: var(--text);
+  transition-property: transform, scale;
+  transition-duration: 0ms;
+}
+
+/* Inner dot sized by `scale`, which is separate from the transform the spring moves. */
+.th-thumb::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background-color: rgb(242 241 238 / 0.12);
+  scale: 0.6;
+  opacity: 0;
+  transition:
+    scale 120ms var(--ease-out),
+    opacity 120ms var(--ease);
+}
+
+.th-track:is(:hover, :focus-visible) .th-thumb::after {
+  scale: 1;
+  opacity: 1;
+}
+
+.th-track[data-pressed] .th-thumb {
+  scale: 0.86;
+}
+
+.th-sep {
+  margin: 2px 4px;
+}
+
+/* Ultracode: its own row, mark, name, switch. */
+.th-uc-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 0 8px 0 10px;
+  border-radius: 10px;
+  color: var(--text-2);
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.th-uc-row:hover {
+  background-color: var(--fill-2);
+  color: var(--text);
+}
+
+.th-uc-row[data-on] {
+  color: var(--text);
+}
+
+.th-uc-row .ux-mark {
+  color: var(--text-3);
+  transition: color var(--d-1) var(--ease);
+}
+
+.th-uc-row:is(:hover, [data-on]) .ux-mark {
+  color: var(--text);
+}
+
+/* Switching on: one band of dithered light crosses the row, then it is still. */
+.th-uc-row[data-burst]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 60%;
+  background: var(--dither-fade) right top / var(--dither-fade-size) repeat-y;
+  image-rendering: pixelated;
+  opacity: 0;
+  pointer-events: none;
+  animation: th-sweep 640ms var(--ease-out) both;
+}
+
+.th-uc-row[data-burst] .ux-m1 {
+  animation: ux-lift 520ms var(--ease-out) both;
+}
+
+.th-uc-row[data-burst] .ux-m2 {
+  animation: ux-stack 620ms var(--ease-out) both;
+}
+
+@keyframes th-sweep {
+  0% {
+    translate: -100% 0;
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.16;
+  }
+  100% {
+    translate: 175% 0;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .th-uc-row[data-burst]::after {
+    display: none;
+  }
+}
+
+/* ── the "ultra" edge: one lap of light when it turns on, then a still hairline ── */
+
 .uc {
   position: absolute;
   inset: 0;
@@ -557,7 +900,6 @@
   pointer-events: none;
 }
 
-/* A faint steady ring while it is on. */
 .uc::after {
   content: '';
   position: absolute;
@@ -569,77 +911,52 @@
 
 .uc[data-phase='drain']::after {
   opacity: 0;
-  transition: opacity 400ms var(--ease);
+  transition: opacity 360ms var(--ease);
 }
 
-.uc-run,
 .uc-charge {
   position: absolute;
   inset: 0;
   border-radius: inherit;
 }
 
-.uc i {
+/* The head is solid light, the tail breaks into dither and fades. */
+.uc-charge i {
   position: absolute;
   left: 0;
   top: 0;
-  width: 9px;
-  height: 1.5px;
+  width: 12px;
+  height: 2px;
   border-radius: 1px;
   offset-path: inset(0 round 20px);
   offset-anchor: 50% 50%;
   offset-rotate: auto;
   background-color: var(--text);
-  will-change: offset-distance;
-}
-
-/* The slow band: the head is solid light, the tail breaks into dither and fades. */
-.uc-run i {
-  opacity: calc(0.92 - var(--i) * 0.039);
-  animation: uc-travel 9s linear infinite;
-  animation-delay: calc(var(--i) * -0.032s);
-  transition: opacity 260ms var(--ease);
-}
-
-.uc-run i:nth-child(-n + 4) {
-  height: 2px;
-  box-shadow: 0 0 6px 1px rgb(242 241 238 / 0.35);
-}
-
-.uc-run i:nth-child(n + 6) {
-  background: var(--dither-edge) 0 0 / 8px 3px;
-  image-rendering: pixelated;
-}
-
-.uc[data-phase='charge'] .uc-run i {
-  opacity: 0;
-}
-
-.uc[data-phase='drain'] .uc-run i {
-  opacity: 0;
-  transition-duration: 300ms;
-  transition-delay: calc((22 - var(--i)) * 11ms);
-}
-
-.uc[data-paused] i {
-  animation-play-state: paused;
-}
-
-/* The charge: one fast lap of a brighter, longer band, then it hands over to the slow one. */
-.uc-charge i {
-  height: 2px;
-  width: 12px;
   opacity: calc(1 - var(--i) * 0.042);
+  will-change: offset-distance;
   animation: uc-travel 720ms cubic-bezier(0.45, 0, 0.2, 1) 1 both;
   animation-delay: calc(var(--i) * 3ms);
+}
+
+.uc-charge i:nth-child(n + 7) {
+  background: var(--dither-edge) 0 0 / 8px 4px;
+  image-rendering: pixelated;
 }
 
 @keyframes uc-travel {
   from {
     offset-distance: 0%;
+    opacity: 0;
+  }
+  8% {
+    opacity: calc(1 - var(--i) * 0.042);
+  }
+  85% {
+    opacity: calc(1 - var(--i) * 0.042);
   }
   to {
     offset-distance: 100%;
+    opacity: 0;
   }
 }
 

@@ -142,7 +142,7 @@ describe('DemoProvider catalog', () => {
     expect(info).toMatchObject({ id: 'demo', installed: true, auth: { loggedIn: true, email: 'demo@sable.local' } });
 
     const caps = await p.caps();
-    expect(new Set(caps.models.map((m) => m.id)).size).toBe(3);
+    expect(new Set(caps.models.map((m) => m.id)).size).toBe(4);
     expect(caps.models.filter((m) => m.isDefault)).toHaveLength(1);
     expect(caps.modes.map((m) => [m.id, m.tone])).toEqual([
       ['default', 'ask'],
@@ -167,7 +167,7 @@ describe('DemoProvider catalog', () => {
     const h = await setup();
     expect(h.rt.meta.model).toBe('demo-large');
     expect(h.rt.meta.providerSessionId).toMatch(/^demo-/);
-    expect(h.snap.caps?.models).toHaveLength(3);
+    expect(h.snap.caps?.models).toHaveLength(4);
     const before = await h.app.call('session.context', { sessionId: h.id });
     await h.send('hello');
     await h.idle();

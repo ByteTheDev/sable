@@ -60,7 +60,8 @@ export interface AccountInfo {
   problem?: string;
 }
 
-export type Effort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+/** Reasoning effort, lowest first. `ultra` is Codex's level above `max` (the model may delegate to sub-agents). */
+export type Effort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 
 export interface ModelInfo {
   id: string;

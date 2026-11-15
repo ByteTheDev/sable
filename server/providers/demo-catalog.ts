@@ -22,6 +22,14 @@ export const MODELS: ModelInfo[] = [
     isDefault: true,
   },
   {
+    // A model whose top level is Ultra (as Codex's are), so the composer's Ultra stop can be built against the demo.
+    id: 'demo-deep',
+    name: 'Demo Deep',
+    description: 'Longest reasoning, may split work across sub-agents',
+    efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    defaultEffort: 'medium',
+  },
+  {
     id: 'demo-fast',
     name: 'Demo Fast',
     description: 'Balanced speed and quality for everyday coding',
@@ -41,6 +49,7 @@ export const DEFAULT_MODEL = 'demo-large';
 
 export const PRICING: Record<string, Pricing> = {
   'demo-large': { input: 3, output: 15, cacheRead: 0.3, pace: 1 },
+  'demo-deep': { input: 5, output: 25, cacheRead: 0.5, pace: 1.2 },
   'demo-fast': { input: 1, output: 5, cacheRead: 0.1, pace: 0.75 },
   'demo-mini': { input: 0.25, output: 1.25, cacheRead: 0.03, pace: 0.55 },
 };

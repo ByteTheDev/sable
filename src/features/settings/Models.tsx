@@ -3,22 +3,13 @@ import { DropdownMenu as RM } from 'radix-ui';
 import type { Effort, ProviderId } from '@shared/protocol';
 import { PROVIDER_NAME } from '@/art/Logo';
 import { Icon, MODE_ICON } from '@/icons';
-import { aliasTarget, currentGeneration, modelName, visibilityKey, visibleModels } from '@/lib/models';
+import { aliasTarget, currentGeneration, effortName, modelName, visibilityKey, visibleModels } from '@/lib/models';
 import { setSettings } from '@/state/actions';
 import { useActiveProvider } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { Segmented, Switch } from '@/ui';
 import { Card, Empty, ProviderPicker, Row, Skeleton, useInstalled, useProviderCaps } from './parts';
 import './models.css';
-
-export const EFFORT_LABEL: Record<Effort, string> = {
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Extra high',
-  max: 'Max',
-};
 
 /** The provider a page starts on: the one in focus, if installed. */
 export function useInitialProvider(): ProviderId {
@@ -167,7 +158,7 @@ export function Models() {
             )}
             {model && efforts.length > 0 && (
               <Row label="Effort">
-                <Segmented<Effort> id="set-effort" value={effortValue} onChange={(e) => patch('defaultEfforts', e)} options={efforts.map((e) => ({ value: e, label: EFFORT_LABEL[e] }))} />
+                <Segmented<Effort> id="set-effort" value={effortValue} onChange={(e) => patch('defaultEfforts', e)} options={efforts.map((e) => ({ value: e, label: effortName(e) }))} />
               </Row>
             )}
             {caps.modes.length > 0 && (

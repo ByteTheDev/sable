@@ -10,6 +10,7 @@ export interface CommandCtx {
   sessionId: string | null;
   openModel: () => void;
   openMode: () => void;
+  openEffort: () => void;
 }
 
 export interface AppCommand {
@@ -51,7 +52,8 @@ export const APP_COMMANDS: AppCommand[] = [
       goHome(meta?.cwd);
     },
   },
-  { name: 'model', description: 'Choose the model and effort', run: (c) => c.openModel() },
+  { name: 'model', description: 'Choose the model', run: (c) => c.openModel() },
+  { name: 'effort', description: 'Choose the reasoning effort', run: (c) => c.openEffort() },
   { name: 'mode', description: 'Choose how much the agent may do without asking', run: (c) => c.openMode() },
   { name: 'resume', description: 'Resume an earlier conversation', run: () => ui()({ historyOpen: true }) },
   { name: 'settings', description: 'Open settings', run: () => openSettings() },

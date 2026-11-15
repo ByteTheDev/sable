@@ -1,6 +1,6 @@
-import { Fragment, memo, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Fragment, memo, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { DropdownMenu as RM } from 'radix-ui';
-import type { Effort, ProviderId } from '@shared/protocol';
+import type { ProviderId } from '@shared/protocol';
 import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
 import { Icon, MODE_ICON } from '@/icons';
 import { baseName, tildePath } from '@/lib/format';
@@ -12,7 +12,6 @@ import { accountName } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { Kbd, PathLabel, Tip } from '@/ui';
 import { type Choice } from './choice';
-import { EffortBars } from './EffortBars';
 import { Morph } from './Morph';
 
 export const ChipSkeleton = ({ w }: { w: number }) => <span className="chip-skel skel" style={{ width: w }} aria-hidden />;
@@ -20,9 +19,9 @@ export const ChipSkeleton = ({ w }: { w: number }) => <span className="chip-skel
 /** The model and mode menus share one width so they read as a pair. */
 const MENU_W = 232;
 
-/** Slash commands ("/model", "/mode") open the toolbar menus through this event. */
+/** Slash commands ("/model", "/mode", "/effort") open the toolbar menus through this event. */
 export const MENU_EVENT = 'sable:composer-menu';
-export const openComposerMenu = (which: 'model' | 'mode') => window.dispatchEvent(new CustomEvent(MENU_EVENT, { detail: which }));
+export const openComposerMenu = (which: 'model' | 'mode' | 'effort') => window.dispatchEvent(new CustomEvent(MENU_EVENT, { detail: which }));
 
 /** Open state kept inside the control, so opening a menu re-renders the menu and nothing else. */
 function useMenuOpen(which: 'model' | 'mode') {
@@ -133,7 +132,7 @@ export const ModeMenu = memo(function ModeMenu({ choice, side, onClosed }: MenuP
   );
 });
 
-// ───────────────────────── model + effort ─────────────────────────
+// ───────────────────────── model ─────────────────────────
 
 /** A name with the characters a filter matched drawn brighter. */
 function Hits({ text, indices }: { text: string; indices?: number[] }) {
@@ -283,14 +282,6 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
       </RM.Portal>
     </RM.Root>
   );
-});
-
-/** The effort bars for the model in use, or nothing when the model has no levels. */
-export const ModelEffort = memo(function ModelEffort({ choice }: { choice: Choice }) {
-  const { model, setEffort, clearEffort } = choice;
-  const onChange = useCallback((e: Effort | undefined) => (e ? setEffort(e) : clearEffort?.()), [setEffort, clearEffort]);
-  if (!model?.efforts?.length) return null;
-  return <EffortBars efforts={model.efforts} value={choice.effortChosen ? choice.effort : undefined} fallback={model.defaultEffort} clearable={!!clearEffort} onChange={onChange} />;
 });
 
 // ───────────────────────── home chips ─────────────────────────

@@ -94,7 +94,8 @@ export function modeInfo(p: Preset): ModeInfo {
 
 // ───────────────────────────── models / efforts ─────────────────────────────
 
-const EFFORTS: Effort[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+/** The levels Sable knows, lowest first. Codex also reports `ultra` (above `max`) and `none`/`persistent`, which are not levels. */
+const EFFORTS: Effort[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
 export function toEffort(e: string | null | undefined): Effort | undefined {
   return e && (EFFORTS as string[]).includes(e) ? (e as Effort) : undefined;
