@@ -1,0 +1,369 @@
+import { randomUUID } from 'node:crypto';
+import type {
+  BridgeEvent,
+  Capabilities,
+  NoticeItem,
+  PermissionRequest,
+  Question,
+  QueuedMessage,
+  QuestionRequest,
+  SessionMeta,
+  SessionSnapshot,
+  TimelineItem,
+  Todo,
+  UserItem,
+} from '../../shared/protocol';
+import type { ProviderSession } from '../providers/types';
+
+export type Emit = (event: BridgeEvent) => void;
+
+export interface PermissionAnswer {
+  optionId: string;
+  message?: string;
+}
+
+type NewItem<T extends TimelineItem> = T extends TimelineItem ? Omit<T, 'id' | 'ts'> & { id?: string; ts?: number } : never;
+
+/**
+ * One open session: metadata, the normalized timeline and any prompt waiting on the
+ * user. Provider adapters write to it; every mutation is broadcast to the UI.
+ */
+export class SessionRuntime {
+  items: TimelineItem[] = [];
+  caps?: Capabilities;
+  todos: Todo[] = [];
+  suggestion?: string;
+  handle?: ProviderSession;
+  turnActive = false;
+  turnStartedAt = 0;
+  /** Messages sent while a turn was running; the app sends them as turns end. */
+  queue: QueuedMessage[] = [];
+  /** The user stopped the current turn (interrupt or close): its end sends nothing from the queue. */
+  stopRequested = false;
+  /** Called after every turn end; `error` is set when the turn failed. */
+  onTurnEnd?: (rt: SessionRuntime, error?: string) => void;
+
+  private index = new Map<string, TimelineItem>();
+  private permissions = new Map<string, { request: PermissionRequest; resolve: (a: PermissionAnswer | null) => void }>();
+  private questions = new Map<string, { request: QuestionRequest; resolve: (a: Record<string, string[]> | null) => void }>();
+
+  constructor(
+    public meta: SessionMeta,
+    private emit: Emit,
+    private onDirty: (rt: SessionRuntime, what: 'meta' | 'items') => void,
+  ) {}
+
+  get id() {
+    return this.meta.id;
+  }
+
+  // ── timeline ──
+
+  load(items: TimelineItem[], todos: Todo[] = [], queue?: QueuedMessage[]) {
+    this.items = items;
+    this.todos = todos;
+    if (queue) this.queue = queue;
+    this.index = new Map(items.map((i) => [i.id, i]));
+  }
+
+  // ── queue ──
+
+  private queueChanged() {
+    this.emit({ type: 'queue.updated', sessionId: this.id, queue: this.queue.map((q) => ({ ...q })) });
+    this.onDirty(this, 'items');
+  }
+
+  enqueue(text: string, attachments?: QueuedMessage['attachments']): QueuedMessage {
+    const q: QueuedMessage = { id: randomUUID(), text, attachments: attachments?.length ? attachments : undefined, createdAt: Date.now() };
+    this.queue.push(q);
+    this.queueChanged();
+    return q;
+  }
+
+  /** New text, and new attachments when given (empty clears them). Left empty, the message goes. */
+  updateQueued(id: string, text: string, attachments?: QueuedMessage['attachments']) {
+    const at = this.queue.findIndex((x) => x.id === id);
+    if (at < 0) return false;
+    const q = this.queue[at];
+    const files = attachments === undefined ? q.attachments : attachments.length ? attachments : undefined;
+    if (!text.trim() && !files?.length) {
+      this.queue.splice(at, 1);
+    } else {
+      q.text = text;
+      q.attachments = files;
+    }
+    this.queueChanged();
+    return true;
+  }
+
+  /** `ids` first in that order; messages not named keep their relative order after them. */
+  reorderQueued(ids: string[]) {
+    const byId = new Map(this.queue.map((q) => [q.id, q]));
+    const seen = new Set<string>();
+    const front: QueuedMessage[] = [];
+    for (const id of ids) {
+      const q = byId.get(id);
+      if (q && !seen.has(id)) {
+        seen.add(id);
+        front.push(q);
+      }
+    }
+    const next = [...front, ...this.queue.filter((q) => !seen.has(q.id))];
+    if (next.every((q, i) => q === this.queue[i])) return false;
+    this.queue = next;
+    this.queueChanged();
+    return true;
+  }
+
+  /** Puts messages back at the front of the queue (steered messages the agent never took). */
+  requeue(messages: QueuedMessage[]) {
+    if (!messages.length) return;
+    this.queue.unshift(...messages.map((m) => ({ ...m, attachments: m.attachments?.length ? m.attachments : undefined })));
+    this.queueChanged();
+  }
+
+  /** Takes a message out of the queue (the first one without an id). */
+  takeQueued(id?: string): QueuedMessage | undefined {
+    const at = id ? this.queue.findIndex((x) => x.id === id) : this.queue.length ? 0 : -1;
+    if (at < 0) return undefined;
+    const [q] = this.queue.splice(at, 1);
+    this.queueChanged();
+    return q;
+  }
+
+  add<T extends TimelineItem>(item: NewItem<T>): T {
+    const full = { ...item, id: item.id ?? randomUUID(), ts: item.ts ?? Date.now() } as unknown as T;
+    this.items.push(full);
+    this.index.set(full.id, full);
+    // Emit a copy: the live object keeps mutating as deltas arrive.
+    this.emit({ type: 'item.added', sessionId: this.id, item: { ...full } });
+    this.onDirty(this, 'items');
+    return full;
+  }
+
+  get<T extends TimelineItem = TimelineItem>(id: string): T | undefined {
+    return this.index.get(id) as T | undefined;
+  }
+
+  delta(id: string, field: 'text' | 'inputText' | 'output', delta: string) {
+    const item = this.index.get(id) as Record<string, unknown> | undefined;
+    if (!item || !delta) return;
+    item[field] = ((item[field] as string | undefined) ?? '') + delta;
+    this.emit({ type: 'item.delta', sessionId: this.id, id, field, delta });
+    this.onDirty(this, 'items');
+  }
+
+  patch<T extends TimelineItem>(id: string, patch: Partial<T>) {
+    const item = this.index.get(id);
+    if (!item) return;
+    Object.assign(item, patch);
+    this.emit({ type: 'item.patch', sessionId: this.id, id, patch: patch as Partial<TimelineItem> });
+    this.onDirty(this, 'items');
+  }
+
+  /** Marks a message the agent has taken: a steered one stays where it was sent, a queued one moves down to here. */
+  taken(id: string, patch: Partial<UserItem> = {}) {
+    const item = this.index.get(id);
+    if (item?.type !== 'user') return;
+    if (item.steered || item.state !== 'queued') this.patch<UserItem>(id, { state: 'sent', ...patch });
+    else this.move(id, { state: 'sent', ...patch } as Partial<TimelineItem>);
+  }
+
+  /** Moves a root item to the end of the timeline (a queued message once the agent takes it). */
+  move(id: string, patch: Partial<TimelineItem> = {}) {
+    const item = this.index.get(id);
+    if (!item) return;
+    const at = this.items.indexOf(item);
+    if (at < 0 || at === this.items.length - 1 || item.parentId) {
+      this.patch(id, patch);
+      return;
+    }
+    Object.assign(item, patch, { ts: Date.now() });
+    this.items.splice(at, 1);
+    this.items.push(item);
+    this.emit({ type: 'item.removed', sessionId: this.id, id });
+    this.emit({ type: 'item.added', sessionId: this.id, item: { ...item } });
+    this.onDirty(this, 'items');
+  }
+
+  /** Removes an item and every item nested under it (children of a tool or agent, and theirs). */
+  remove(id: string) {
+    if (!this.index.has(id)) return;
+    const gone = new Set([id]);
+    // Items are appended after their parent, but walk until stable so order never matters.
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const i of this.items) {
+        if (i.parentId && gone.has(i.parentId) && !gone.has(i.id)) {
+          gone.add(i.id);
+          grew = true;
+        }
+      }
+    }
+    for (const g of gone) this.index.delete(g);
+    this.items = this.items.filter((i) => !gone.has(i.id));
+    // One event for the root: clients drop its descendants themselves.
+    this.emit({ type: 'item.removed', sessionId: this.id, id });
+    this.onDirty(this, 'items');
+  }
+
+  reset(items: TimelineItem[]) {
+    this.load(items, this.todos);
+    this.emit({ type: 'timeline.reset', sessionId: this.id, items: items.map((i) => ({ ...i })) });
+    this.onDirty(this, 'items');
+  }
+
+  notice(variant: NoticeItem['variant'], text: string, detail?: string, parentId?: string) {
+    return this.add<NoticeItem>({ type: 'notice', variant, text, detail, parentId });
+  }
+
+  // ── metadata ──
+
+  update(patch: Partial<SessionMeta>) {
+    const changed: Partial<SessionMeta> = {};
+    for (const [k, v] of Object.entries(patch) as [keyof SessionMeta, never][]) {
+      if (JSON.stringify(this.meta[k]) !== JSON.stringify(v)) {
+        (this.meta as unknown as Record<string, unknown>)[k] = v;
+        (changed as Record<string, unknown>)[k] = v;
+      }
+    }
+    if (!Object.keys(changed).length) return;
+    this.emit({ type: 'session.updated', id: this.id, patch: changed });
+    this.onDirty(this, 'meta');
+  }
+
+  touch() {
+    this.update({ updatedAt: Date.now() });
+  }
+
+  setCaps(caps: Capabilities) {
+    this.caps = caps;
+    this.emit({ type: 'session.caps', id: this.id, caps });
+  }
+
+  setTodos(todos: Todo[]) {
+    this.todos = todos;
+    this.emit({ type: 'todos.updated', sessionId: this.id, todos });
+    this.onDirty(this, 'items');
+  }
+
+  setSuggestion(text: string | undefined) {
+    this.suggestion = text;
+    this.emit({ type: 'suggestion', sessionId: this.id, text: text ?? '' });
+  }
+
+  // ── turn state ──
+
+  beginTurn(activity?: string) {
+    this.turnActive = true;
+    this.turnStartedAt = Date.now();
+    this.stopRequested = false;
+    this.setSuggestion(undefined);
+    this.update({ status: 'running', lastError: undefined, activity, updatedAt: Date.now() });
+  }
+
+  endTurn(error?: string) {
+    this.turnActive = false;
+    this.cancelPrompts();
+    this.update({ status: error ? 'error' : 'idle', lastError: error, activity: undefined, updatedAt: Date.now() });
+    this.onTurnEnd?.(this, error);
+  }
+
+  private refreshStatus() {
+    if (!this.turnActive) return;
+    const waiting = this.permissions.size + this.questions.size > 0;
+    this.update({ status: waiting ? 'awaiting' : 'running' });
+  }
+
+  // ── prompts ──
+
+  requestPermission(
+    req: Omit<PermissionRequest, 'id' | 'sessionId' | 'createdAt'>,
+    signal?: AbortSignal,
+  ): Promise<PermissionAnswer | null> {
+    const request: PermissionRequest = { ...req, id: randomUUID(), sessionId: this.id, createdAt: Date.now() };
+    return new Promise((resolve) => {
+      const done = (a: PermissionAnswer | null) => {
+        if (!this.permissions.delete(request.id)) return;
+        this.emit({ type: 'permission.removed', sessionId: this.id, id: request.id });
+        this.refreshStatus();
+        resolve(a);
+      };
+      this.permissions.set(request.id, { request, resolve: done });
+      signal?.addEventListener('abort', () => done(null), { once: true });
+      this.emit({ type: 'permission.added', request });
+      this.refreshStatus();
+    });
+  }
+
+  answerPermission(requestId: string, answer: PermissionAnswer) {
+    const p = this.permissions.get(requestId);
+    if (!p) return false;
+    p.resolve(answer);
+    return true;
+  }
+
+  ask(questions: Question[], itemId?: string, signal?: AbortSignal): Promise<Record<string, string[]> | null> {
+    const request: QuestionRequest = { id: randomUUID(), sessionId: this.id, itemId, questions, createdAt: Date.now() };
+    return new Promise((resolve) => {
+      const done = (a: Record<string, string[]> | null) => {
+        if (!this.questions.delete(request.id)) return;
+        this.emit({ type: 'question.removed', sessionId: this.id, id: request.id });
+        this.refreshStatus();
+        resolve(a);
+      };
+      this.questions.set(request.id, { request, resolve: done });
+      signal?.addEventListener('abort', () => done(null), { once: true });
+      this.emit({ type: 'question.added', request });
+      this.refreshStatus();
+    });
+  }
+
+  answerQuestion(requestId: string, answers: Record<string, string[]> | null) {
+    const q = this.questions.get(requestId);
+    if (!q) return false;
+    q.resolve(answers);
+    return true;
+  }
+
+  cancelPrompts() {
+    for (const p of [...this.permissions.values()]) p.resolve(null);
+    for (const q of [...this.questions.values()]) q.resolve(null);
+  }
+
+  /** Settles anything left "in flight" (after an interrupt, crash or restart). */
+  settle(reason: 'cancelled' | 'error' = 'cancelled') {
+    for (const item of this.items) {
+      if ((item.type === 'text' || item.type === 'thinking') && item.streaming) {
+        this.patch(item.id, { streaming: false, ...(item.type === 'thinking' ? { endedAt: Date.now() } : {}) } as Partial<TimelineItem>);
+      } else if (item.type === 'tool' && (item.status === 'running' || item.status === 'pending' || item.status === 'awaiting')) {
+        this.patch(item.id, { status: reason, endedAt: Date.now() } as Partial<TimelineItem>);
+      }
+    }
+  }
+
+  snapshot(): SessionSnapshot {
+    return {
+      session: this.meta,
+      items: this.items,
+      caps: this.caps,
+      permissions: [...this.permissions.values()].map((p) => p.request),
+      questions: [...this.questions.values()].map((q) => q.request),
+      todos: this.todos,
+      suggestion: this.suggestion,
+      queue: this.queue,
+    };
+  }
+}
+
+export function autoTitle(text: string): string {
+  const line =
+    text
+      .replace(/```[\s\S]*?```/g, ' ')
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? 'New session';
+  const clean = line.replace(/\s+/g, ' ').replace(/^[#>*\-\s]+/, '').trim();
+  if (!clean) return 'New session';
+  return clean.length > 56 ? clean.slice(0, 54).trimEnd() + '…' : clean;
+}
