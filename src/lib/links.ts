@@ -67,6 +67,41 @@ export function normalizeAddress(input: string): string | null {
   return SEARCH + encodeURIComponent(text);
 }
 
+/** Whether Enter in the address field would search the web for this text rather than open it. */
+export function willSearch(input: string): boolean {
+  return !!normalizeAddress(input)?.startsWith(SEARCH) && !/^https?:/i.test(input.trim());
+}
+
+/** Hosts whose `q` parameter is the search the person typed. */
+const SEARCH_HOST = /^(?:duckduckgo\.com|(?:[a-z]+\.)?bing\.com|google\.[a-z.]+|search\.brave\.com|kagi\.com)$/;
+
+const decode = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+
+/**
+ * How the address field shows a page at rest: the host (no "www."), then the decoded path. A
+ * query string is never shown raw; a search engine's results show the words searched instead.
+ */
+export function addressParts(url: string): { host: string; path: string; search?: string } {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return { host: url, path: '' };
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { host: url, path: '' };
+  const host = u.host.replace(/^www\./i, '');
+  const q = u.searchParams.get('q');
+  if (q?.trim() && SEARCH_HOST.test(u.hostname.replace(/^www\./i, ''))) return { host, path: '', search: q.trim() };
+  const path = decode(u.pathname).replace(/\/+$/, '');
+  return { host, path };
+}
+
 // eslint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g;
 const DEV_URL = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|[a-z0-9-]+\.localhost):\d{2,5}(?:[/?#][^\s'"`<>)\]}]*)?/gi;

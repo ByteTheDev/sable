@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findDevUrls, isLocalHost, isLocalUrl, normalizeAddress, previewTargets } from '@/lib/links';
+import { addressParts, findDevUrls, isLocalHost, isLocalUrl, normalizeAddress, previewTargets } from '@/lib/links';
 
 describe('local addresses', () => {
   it('recognises this machine', () => {
@@ -80,5 +80,25 @@ describe('findDevUrls', () => {
 
   it('ignores URLs without a port', () => {
     expect(findDevUrls('see http://localhost/ and ECONNREFUSED 127.0.0.1:5432')).toEqual([]);
+  });
+});
+
+describe('addressParts', () => {
+  it('shows the host and the decoded path, never a raw query', () => {
+    expect(addressParts('https://www.github.com/login?return_to=%2Fsettings%2Fprofile')).toEqual({ host: 'github.com', path: '/login' });
+    expect(addressParts('http://localhost:5173/')).toEqual({ host: 'localhost:5173', path: '' });
+    expect(addressParts('https://example.com/caf%C3%A9/menu/')).toEqual({ host: 'example.com', path: '/café/menu' });
+    expect(addressParts('https://example.com/%E0%A4%A')).toEqual({ host: 'example.com', path: '/%E0%A4%A' });
+  });
+
+  it('shows a search as the words searched', () => {
+    expect(addressParts('https://duckduckgo.com/?q=vite%20config&ia=web')).toEqual({ host: 'duckduckgo.com', path: '', search: 'vite config' });
+    expect(addressParts('https://www.google.com/search?q=react+19')).toEqual({ host: 'google.com', path: '', search: 'react 19' });
+    expect(addressParts('https://example.com/?q=not+a+search+engine')).toEqual({ host: 'example.com', path: '' });
+  });
+
+  it('leaves anything that is not a web URL as it is', () => {
+    expect(addressParts('about:blank')).toEqual({ host: 'about:blank', path: '' });
+    expect(addressParts('nonsense')).toEqual({ host: 'nonsense', path: '' });
   });
 });

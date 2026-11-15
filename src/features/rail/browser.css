@@ -6,51 +6,106 @@
 
 /* ── toolbar ── */
 
+/* One 40 px row like every pane's bar: three history controls, the address, the menu. The hairline
+   under it separates the app's ink from the page; the progress line runs on top of that hairline. */
 .bw-bar {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   flex-shrink: 0;
-  padding: 8px 8px 8px 10px;
+  height: var(--rail-bar-h);
+  padding: 0 7px;
   border-bottom: 1px solid var(--line);
 }
 
-.bw-bar > .icon-btn:disabled {
-  opacity: 0.32;
+.bw-bar .icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
 }
 
-.bw-progress {
+/* Reload turns into stop while a page loads: the two icons trade places with a short turn and fade. */
+.bw-reload {
+  display: grid;
+}
+
+.bw-reload > svg {
+  grid-area: 1 / 1;
+  transition:
+    opacity var(--d-2) var(--ease),
+    transform var(--d-3) var(--ease-out);
+}
+
+.bw-reload-b {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.6);
+}
+
+.bw-reload[data-loading] .bw-reload-a {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.6);
+}
+
+.bw-reload[data-loading] .bw-reload-b {
+  opacity: 1;
+  transform: none;
+}
+
+/* ── progress ── */
+
+.bw-load {
   position: absolute;
   left: 0;
   right: 0;
   bottom: -1px;
+  z-index: 1;
   height: 1.5px;
   pointer-events: none;
-  background-color: rgb(242 241 238 / 0.55);
+  background-color: var(--text);
   transform-origin: left center;
   transform: scaleX(0);
   opacity: 0;
-  transition:
-    transform var(--d-2) var(--ease-out),
-    opacity var(--d-3) var(--ease) var(--d-2);
 }
 
-/* Trickles towards the end while loading, then completes and fades. */
-.bw-progress[data-on] {
-  opacity: 1;
-  transform: scaleX(0.86);
+.bw-load[data-state='reset'] {
+  transition: none;
+  transform: scaleX(0);
+  opacity: 0.7;
+}
+
+/* Each stage eases towards its mark and creeps; a stage that arrives early jumps ahead from where the line is. */
+.bw-load[data-state='on'] {
+  opacity: 0.7;
   transition:
-    transform 9s cubic-bezier(0.05, 0.75, 0.15, 1),
+    transform 4s cubic-bezier(0.08, 0.7, 0.2, 1),
     opacity var(--d-1) var(--ease);
 }
 
-.bw-progress:not([data-on]) {
+.bw-load[data-state='on'][data-phase='1'] {
+  transform: scaleX(0.38);
+}
+
+.bw-load[data-state='on'][data-phase='2'] {
+  transform: scaleX(0.72);
+}
+
+.bw-load[data-state='on'][data-phase='3'] {
+  transform: scaleX(0.9);
+  transition-duration: 2.4s, var(--d-1);
+}
+
+.bw-load[data-state='done'] {
   transform: scaleX(1);
+  opacity: 0;
+  transition:
+    transform var(--d-3) var(--ease-out),
+    opacity var(--d-4) var(--ease) var(--d-3);
 }
 
 /* ── address field ── */
 
+/* A darker well like every field; the hairline brightens on hover and turns soft ivory on focus. */
 .bw-addr {
   position: relative;
   flex: 1;
@@ -58,13 +113,14 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  height: 30px;
-  margin: 0 4px;
-  padding: 0 10px;
+  height: 28px;
+  margin: 0 3px 0 5px;
+  padding: 0 3px 0 8px;
   border: 1px solid var(--line-2);
   border-radius: var(--r-sm);
   background-color: rgb(0 0 0 / 0.22);
   cursor: text;
+  transition: background-color var(--d-1) var(--ease);
 }
 
 .bw-addr:hover {
@@ -73,17 +129,24 @@
 
 .bw-addr[data-focused] {
   border-color: var(--focus-field);
+  background-color: rgb(0 0 0 / 0.3);
 }
 
-.bw-addr-icon {
+.bw-addr-lead {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+}
+
+.bw-site-icon {
   flex-shrink: 0;
   color: var(--text-3);
 }
 
 .bw-favicon {
   flex-shrink: 0;
-  width: 14px;
-  height: 14px;
   border-radius: 3px;
   object-fit: contain;
 }
@@ -92,6 +155,7 @@
   flex: 1;
   min-width: 0;
   height: 100%;
+  padding: 0;
   border: 0;
   background: none;
   font-size: var(--t-ui);
@@ -102,16 +166,27 @@
   outline: none;
 }
 
+.bw-addr[data-focused] input {
+  margin-right: 5px;
+}
+
 .bw-addr input::placeholder {
   color: var(--text-4);
 }
 
+.bw-addr input::selection {
+  background-color: rgb(242 241 238 / 0.2);
+}
+
+/* The address at rest sits over the empty input, exactly where typed text starts. */
 .bw-addr-view {
   position: absolute;
-  inset: 0 10px 0 30px;
+  top: 0;
+  bottom: 0;
+  left: 30px;
+  right: 8px;
   display: flex;
   align-items: center;
-  gap: 8px;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -119,19 +194,113 @@
   font-size: var(--t-ui);
 }
 
-.bw-addr-url {
-  flex-shrink: 1;
+.bw-addr[data-zoomed] .bw-addr-view {
+  right: 48px;
+}
+
+/* The host stays whole as long as it can; the path gives way first. */
+.bw-addr-host {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text);
 }
 
+.bw-addr-path,
 .bw-addr-title {
-  flex-shrink: 100;
+  flex: 0 100 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text-3);
+}
+
+.bw-addr-title {
+  padding-left: 8px;
+}
+
+/* A page that is not at 100 %: its zoom as a quiet figure at the end of the field; a click resets it. */
+.bw-zoom {
+  flex-shrink: 0;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: var(--t-micro);
+  color: var(--text-2);
+  background-color: var(--fill-2);
+  transition: background-color var(--d-1) var(--ease), color var(--d-1) var(--ease);
+}
+
+.bw-zoom:hover {
+  background-color: var(--fill-3);
+  color: var(--text);
+}
+
+.bw-zoom:focus-visible {
+  outline: 1.5px solid var(--focus);
+  outline-offset: 0;
+}
+
+/* ── find in page ── */
+
+.bw-find {
+  flex-shrink: 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+}
+
+.bw-find-row {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 40px;
+  padding: 0 7px 0 12px;
+}
+
+.bw-find-row .icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+.bw-find-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  margin-right: 5px;
+  padding: 0 9px 0 8px;
+  border: 1px solid var(--focus-field);
+  border-radius: var(--r-sm);
+  background-color: rgb(0 0 0 / 0.3);
+  color: var(--text-3);
+}
+
+.bw-find-field input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--t-ui);
+  color: var(--text);
+}
+
+.bw-find-field input:focus-visible {
+  outline: none;
+}
+
+.bw-find-field input::placeholder {
+  color: var(--text-4);
+}
+
+.bw-find-count {
+  flex-shrink: 0;
+  font-size: var(--t-small);
   color: var(--text-3);
 }
 
@@ -185,6 +354,78 @@
   background: #fff;
 }
 
+/* ── device sizes ── */
+
+/* The page at a fixed width, centred on the ground and scaled down to fit; a strip above says the size. */
+.bw-view[data-device] {
+  background-color: var(--bg);
+}
+
+.bw-view[data-device] .bw-host {
+  inset: auto;
+  left: 50%;
+  transform-origin: top center;
+  border-radius: 10px;
+  overflow: hidden;
+  outline: 1px solid var(--line-2);
+}
+
+.bw-view[data-device='tablet'] .bw-host {
+  animation: bw-stage-tablet var(--d-4) var(--ease-out);
+}
+
+.bw-view[data-device='phone'] .bw-host {
+  animation: bw-stage-phone var(--d-4) var(--ease-out);
+}
+
+@keyframes bw-stage-tablet {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+
+@keyframes bw-stage-phone {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+
+.bw-device {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 40px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.bw-device > svg {
+  color: var(--text-3);
+}
+
+.bw-device-name {
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+}
+
+.bw-device .bw-device-close {
+  position: absolute;
+  right: 7px;
+  top: 5px;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
 /* A page without its own background paints on white, as in any browser; fade in once loaded. */
 .bw-frame {
   color-scheme: normal;
@@ -202,105 +443,150 @@
   pointer-events: none;
 }
 
-.bw-error {
+/* ── states in place of the page: failed load, crashed page ── */
+
+.bw-state {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 28px;
+  padding: 28px 28px 12%;
   text-align: center;
-  font-size: var(--t-ui);
-  line-height: 1.55;
-  color: var(--text-2);
-  background: var(--panel);
+  background-color: var(--sheet);
   text-wrap: balance;
   animation: bw-rise var(--d-3) var(--ease-out);
 }
 
-.bw-error-url {
-  font-size: var(--t-ui);
+.bw-state-title {
+  max-width: 300px;
+  font-size: var(--t-body);
+  font-weight: var(--w-medium);
+  line-height: 1.45;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
-.bw-error-code {
-  margin-bottom: 10px;
+.bw-state-detail {
+  margin-top: 4px;
+  max-width: 300px;
   font-size: var(--t-small);
+  line-height: 1.5;
   color: var(--text-3);
+  overflow-wrap: anywhere;
 }
 
-/* ── empty state ── */
+.bw-state-acts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 16px;
+}
 
-.bw-empty {
+/* ── start view ── */
+
+.bw-start {
   position: absolute;
   inset: 0;
+  z-index: 1;
+  background-color: var(--sheet);
   overflow-y: auto;
-  padding: 36px 14px 24px;
+  padding: 12px 8px 24px;
 }
 
-.bw-empty-line {
-  padding: 0 18px;
-  text-align: center;
-  font-size: var(--t-ui);
-  line-height: 1.55;
-  color: var(--text-3);
-  text-wrap: balance;
-}
-
-.bw-quick {
-  margin-top: 28px;
+.bw-sec {
   animation: bw-rise var(--d-3) var(--ease-out);
 }
 
-.bw-quick-list {
+.bw-sec + .bw-sec {
+  margin-top: 18px;
+}
+
+.bw-start .bw-h {
+  margin: 0 8px 4px;
+}
+
+.bw-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.bw-quick-row {
+/* Rows like the panel's lists: one line, the page's icon, its name, its host dim. */
+.bw-row {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 38px;
-  padding: 6px 10px 6px 7px;
+  height: 32px;
+  padding: 0 10px 0 8px;
   border-radius: var(--r-sm);
   text-align: left;
+  font-size: var(--t-ui);
   color: var(--text);
+  white-space: nowrap;
   transition:
-    background var(--d-1) var(--ease),
-    transform var(--d-1) var(--ease);
+    background-color var(--d-1) var(--ease),
+    scale 80ms var(--ease-out);
 }
 
-.bw-quick-row:hover {
-  background: var(--fill-2);
+.bw-row:hover {
+  background-color: var(--fill-2);
 }
 
-.bw-quick-row:active {
+.bw-row:active {
   background-color: var(--fill-3);
+  scale: 0.99;
 }
 
-.bw-quick-row:focus-visible {
-  outline: 1.5px solid rgb(255 255 255 / 0.4);
+.bw-row:focus-visible {
+  outline: 1.5px solid var(--focus);
   outline-offset: -1.5px;
 }
 
-.bw-quick-url {
-  flex: 1;
+.bw-row-lead {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+}
+
+.bw-row-title {
+  flex: 0 1 auto;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bw-row-sub {
+  flex: 0 100 auto;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* A local page's path reads on from its host. */
+.bw-row-path {
+  margin-left: -10px;
+  padding-left: 0;
   font-size: var(--t-ui);
 }
 
-
-.bw-quick-go {
+.bw-row-go {
   flex-shrink: 0;
+  margin-left: auto;
   color: var(--text-3);
   opacity: 0;
   transform: translateX(-3px);
@@ -309,10 +595,15 @@
     transform var(--d-2) var(--ease-out);
 }
 
-.bw-quick-row:hover .bw-quick-go,
-.bw-quick-row:focus-visible .bw-quick-go {
+.bw-row:hover .bw-row-go,
+.bw-row:focus-visible .bw-row-go {
   opacity: 1;
   transform: none;
+}
+
+.bw-list .rail-row-acts {
+  top: 3px;
+  right: 4px;
 }
 
 @keyframes bw-rise {
@@ -323,7 +614,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bw-progress[data-on] {
+  .bw-load[data-state='on'] {
+    transition: opacity var(--d-1) var(--ease);
+  }
+
+  .bw-reload > svg {
     transition: opacity var(--d-1) var(--ease);
   }
 }
