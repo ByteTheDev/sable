@@ -1,0 +1,1420 @@
+import { VERSION } from '../version';
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import type {
+  AuthState,
+  SessionMeta,
+  SessionOptions,
+  Capabilities,
+  CommandInfo,
+  ContextBreakdown,
+  Effort,
+  HistoryEntry,
+  McpServerInfo,
+  ModelInfo,
+  PermissionOption,
+  ProviderInfo,
+  Question,
+  RateLimit,
+  TextItem,
+  ThinkingItem,
+  TimelineItem,
+  ToolItem,
+  TurnItem,
+  UserItem,
+} from '../../shared/protocol';
+import type { SessionRuntime } from '../core/runtime';
+import type { Provider, ProviderContext, ProviderSession } from './types';
+import { codexPlan } from './plans';
+import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
+import { CodexRpc, RpcError, resolveCodexCommand, type ExitInfo } from './codex-rpc';
+import {
+  PRESETS,
+  activityFor,
+  buildInput,
+  changesToDiffs,
+  commandTitle,
+  draftItem,
+  firstLine,
+  mapHistory,
+  mapLimits,
+  mapMcp,
+  mapModel,
+  mapPlan,
+  mapSkill,
+  modeInfo,
+  preset,
+  samePath,
+  sandboxPolicy,
+  toEffort,
+  transcript,
+  unwrapCommand,
+} from './codex-map';
+import type {
+  AccountLoginCompletedNotification,
+  ApplyPatchApprovalParams,
+  CommandExecutionApprovalDecision,
+  CommandExecutionRequestApprovalParams,
+  ErrorNotification,
+  ExecCommandApprovalParams,
+  FileChangeApprovalDecision,
+  FileChangePatchUpdatedNotification,
+  FileChangeRequestApprovalParams,
+  GetAccountRateLimitsResponse,
+  GetAccountResponse,
+  ItemDeltaNotification,
+  ItemNotification,
+  ListMcpServerStatusResponse,
+  LoginAccountResponse,
+  ModelListResponse,
+  PermissionsRequestApprovalParams,
+  PermissionsRequestApprovalResponse,
+  RateLimitSnapshot,
+  RequestId,
+  ReviewDecision,
+  ReviewTarget,
+  SkillsListResponse,
+  Thread,
+  ThreadListResponse,
+  ThreadStartResponse,
+  TokenUsageBreakdown,
+  ThreadTokenUsageUpdatedNotification,
+  ToolRequestUserInputParams,
+  ToolRequestUserInputResponse,
+  Turn,
+  TurnNotification,
+  TurnPlanUpdatedNotification,
+  TurnStartParams,
+  UserInput,
+  WarningNotification,
+} from './codex-types';
+
+const CLIENT_VERSION = VERSION;
+const CAPS_TTL = 60_000;
+const THREAD_TIMEOUT = 120_000;
+/** The Codex app's plugin behind browser and computer use, when the app-server does not name it. */
+const CUA_PLUGIN = 'unified-computer-use@openai-bundled';
+const MCP_TTL = 10 * 60_000;
+/** An app-server nobody uses is stopped after this long, so idle accounts cost no memory. */
+const IDLE_STOP_MS = 3 * 60_000;
+/** After the last session of an account closes, its app-server goes sooner. */
+const LAST_SESSION_STOP_MS = 45_000;
+
+/** Slash commands handled by CodexSession.send(). Keep in sync with runCommand(). */
+const COMMANDS: CommandInfo[] = [
+  { name: 'compact', description: 'Summarize the conversation to free up context', kind: 'builtin' },
+  {
+    name: 'review',
+    description: 'Review uncommitted changes, or follow custom review instructions',
+    argumentHint: '[instructions]',
+    kind: 'builtin',
+  },
+];
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * OpenAI Codex via `codex app-server` (JSON-RPC v2 over stdio). One shared child process
+ * per provider, started lazily and restarted on demand; threads are multiplexed by id.
+ */
+export class CodexProvider implements Provider {
+  readonly id = 'codex' as const;
+  readonly name = 'Codex';
+
+  /** threadId → session */
+  readonly sessions = new Map<string, CodexSession>();
+  private rpc: CodexRpc | null = null;
+  private starting: Promise<CodexRpc> | null = null;
+  private disposed = false;
+  private versionCache?: { installed: boolean; version?: string; problem?: string };
+  private capsCache = new Map<string, { at: number; caps: Promise<Capabilities> }>();
+  private lastAuth?: string;
+  private snapshots = new Map<string, RateLimitSnapshot>();
+  private mcpCache?: McpServerInfo[];
+  private mcpAt = 0;
+  private mcpLoading?: Promise<McpServerInfo[]>;
+  private pendingLogin?: { loginId: string; resolve: () => void; reject: (e: Error) => void; cancelled: boolean; timer: NodeJS.Timeout };
+  /** CODEX_HOME for an extra account; empty for the built-in default (the CLI's own ~/.codex). */
+  private readonly env?: Record<string, string>;
+  private lastUse = 0;
+  private idleTimer?: NodeJS.Timeout;
+  /** An app-server this provider is stopping on purpose (its exit is not news). */
+  private stopping?: CodexRpc;
+
+  constructor(readonly ctx: ProviderContext) {
+    if (ctx.account?.dir) this.env = { CODEX_HOME: ctx.account.dir };
+  }
+
+  // ── idle stop ──
+
+  private armIdle(ms = IDLE_STOP_MS) {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => this.stopIfIdle(ms), ms);
+    this.idleTimer.unref?.();
+  }
+
+  private stopIfIdle(ms: number) {
+    const rpc = this.rpc;
+    if (!rpc || this.disposed) return;
+    const busy = this.sessions.size > 0 || this.remoteWanted.size > 0 || !!this.pendingLogin || !!this.mcpLoading || !!this.starting;
+    const quietFor = Date.now() - this.lastUse;
+    if (busy || quietFor < ms) return this.armIdle(busy ? IDLE_STOP_MS : Math.max(1000, ms - quietFor));
+    this.ctx.log('[codex] stopping idle app-server');
+    this.rpc = null;
+    this.stopping = rpc;
+    void rpc.close().catch(() => {});
+  }
+
+  /** Called by a session when it closes: the last one lets the app-server go soon. */
+  sessionClosed() {
+    if (this.sessions.size === 0) this.armIdle(LAST_SESSION_STOP_MS);
+  }
+
+  // ── process ──
+
+  async client(): Promise<CodexRpc> {
+    if (this.disposed) throw new Error('Codex provider is shut down');
+    this.lastUse = Date.now();
+    if (this.rpc?.alive) return this.rpc;
+    this.armIdle();
+    if (!this.starting) {
+      // Experimental API: remote control lives there (the rest of the protocol is unchanged).
+      this.starting = CodexRpc.start({ log: this.ctx.log, clientVersion: CLIENT_VERSION, env: this.env, experimental: true })
+        .then(async (rpc) => {
+          if (this.disposed) {
+            await rpc.close();
+            throw new Error('Codex provider is shut down');
+          }
+          rpc.onNotification = (m, p) => this.onNotification(m, p);
+          rpc.onRequest = (m, p, id) => this.onServerRequest(m, p, id);
+          rpc.onExit = (info) => this.onExit(rpc, info);
+          this.rpc = rpc;
+          // Remote control belongs to the process: a new one picks it up again.
+          if (this.remoteWanted.size) setTimeout(() => void this.syncRemote(), 0);
+          return rpc;
+        })
+        .finally(() => {
+          this.starting = null;
+        });
+    }
+    return this.starting;
+  }
+
+  private onExit(rpc: CodexRpc, info: ExitInfo) {
+    if (this.rpc === rpc) this.rpc = null;
+    this.remoteOn = false;
+    if (this.stopping === rpc) {
+      this.stopping = undefined;
+      return;
+    }
+    if (this.disposed) return;
+    const tail = info.stderr
+      .replace(/\x1b\[[0-9;]*m/g, '')
+      .trim()
+      .split('\n')
+      .slice(-3)
+      .join('\n');
+    this.ctx.log('[codex] app-server exited', info.code ?? info.signal ?? '', tail);
+    const msg = `Codex app-server exited${info.code !== null ? ` (code ${info.code})` : ''}`;
+    for (const s of [...this.sessions.values()]) s.onServerDied(msg, tail);
+    this.sessions.clear();
+    if (this.pendingLogin) this.finishLogin(new Error(msg));
+  }
+
+  private onNotification(method: string, p: any) {
+    switch (method) {
+      case 'account/login/completed':
+        return this.onLoginCompleted(p as AccountLoginCompletedNotification);
+      case 'remoteControl/status/changed':
+        this.remoteStatus = p?.status;
+        return this.broadcastRemote();
+      case 'account/updated':
+        void this.info()
+          .then((info) => {
+            const key = JSON.stringify(info.auth);
+            if (this.lastAuth !== undefined && key !== this.lastAuth) this.ctx.emit({ type: 'provider.updated', provider: info });
+          })
+          .catch(() => {});
+        return;
+      case 'account/rateLimits/updated': {
+        const snap = p?.rateLimits as RateLimitSnapshot | undefined;
+        if (!snap) return;
+        const key = snap.limitId ?? 'codex';
+        const prev = this.snapshots.get(key);
+        // Sparse update: merge over the last full read.
+        this.snapshots.set(key, { ...prev, ...snap, primary: snap.primary ?? prev?.primary ?? null, secondary: snap.secondary ?? prev?.secondary ?? null });
+        this.ctx.emit({ type: 'limits.updated', provider: 'codex', limits: mapLimits([...this.snapshots.values()]) });
+        return;
+      }
+      default: {
+        const tid = p?.threadId;
+        if (typeof tid === 'string') this.sessions.get(tid)?.onNotification(method, p);
+      }
+    }
+  }
+
+  private async onServerRequest(method: string, p: any, id: RequestId): Promise<unknown> {
+    const tid: string | undefined = p?.threadId ?? p?.conversationId;
+    const s = tid ? this.sessions.get(tid) : undefined;
+    if (s) return s.onRequest(method, p, id);
+    // Nobody to ask: refuse safely.
+    switch (method) {
+      case 'item/commandExecution/requestApproval':
+      case 'item/fileChange/requestApproval':
+        return { decision: 'decline' };
+      case 'item/permissions/requestApproval':
+        return { permissions: {}, scope: 'turn' };
+      case 'item/tool/requestUserInput':
+        return { answers: {} };
+      case 'mcpServer/elicitation/request':
+        return { action: 'decline', content: null, _meta: null };
+      case 'execCommandApproval':
+      case 'applyPatchApproval':
+        return { decision: 'abort' };
+      default:
+        throw new RpcError(`Sable does not support ${method}`, -32601);
+    }
+  }
+
+  // ── info & auth ──
+
+  private version(force: boolean): Promise<{ installed: boolean; version?: string; problem?: string }> {
+    if (this.versionCache && !force) return Promise.resolve(this.versionCache);
+    const cmd = resolveCodexCommand(['--version'], this.env);
+    return new Promise((resolve) => {
+      execFile(cmd.file, cmd.args, { shell: cmd.shell, windowsHide: true, timeout: 15_000, env: cmd.env }, (err, stdout, stderr) => {
+        const out = `${stdout ?? ''}`.trim();
+        const m = out.match(/(\d+\.\d+\.\d+[\w.-]*)/);
+        this.versionCache =
+          err && !m
+            ? { installed: false, problem: /ENOENT|not recognized|not found/i.test(`${err.message}${stderr}`) ? 'Codex CLI is not installed (npm i -g @openai/codex)' : `codex --version failed: ${firstLine(`${stderr || err.message}`, 160)}` }
+            : { installed: true, version: m?.[1] ?? out };
+        resolve(this.versionCache);
+      });
+    });
+  }
+
+  async info(force = false): Promise<ProviderInfo> {
+    const v = await this.version(force);
+    const base = { id: this.id, name: this.name, installed: v.installed, version: v.version };
+    if (!v.installed) return { ...base, auth: { loggedIn: false }, problem: v.problem };
+    try {
+      const rpc = await this.client();
+      const r = await rpc.request<GetAccountResponse>('account/read', { refreshToken: false }, 20_000);
+      const a = r.account;
+      let auth: AuthState = { loggedIn: false };
+      const plan = codexPlan(a, !a && !r.requiresOpenaiAuth);
+      if (a?.type === 'chatgpt') auth = { loggedIn: true, method: 'chatgpt', email: a.email ?? undefined, ...plan, org: a.workspaceName ?? undefined };
+      else if (a) auth = { loggedIn: true, method: a.type, ...plan };
+      else if (!r.requiresOpenaiAuth) auth = { loggedIn: true, method: 'custom provider', ...plan };
+      this.lastAuth = JSON.stringify(auth);
+      return { ...base, auth };
+    } catch (err) {
+      return { ...base, auth: { loggedIn: false }, problem: errMsg(err) };
+    }
+  }
+
+  async login(): Promise<void> {
+    const rpc = await this.client();
+    if (this.pendingLogin) await this.cancelLogin();
+    const r = await rpc.request<LoginAccountResponse>('account/login/start', { type: 'chatgpt' }, 30_000);
+    if (r.type !== 'chatgpt' && r.type !== 'chatgptDeviceCode') return;
+    const url = r.type === 'chatgpt' ? r.authUrl : r.verificationUrl;
+    const done = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        void rpc.request('account/login/cancel', { loginId: r.loginId }).catch(() => {});
+        this.finishLogin(new Error('Login timed out'));
+      }, 10 * 60_000);
+      timer.unref();
+      this.pendingLogin = { loginId: r.loginId, resolve, reject, cancelled: false, timer };
+    });
+    this.ctx.emit({
+      type: 'auth.progress',
+      provider: 'codex',
+      state: 'url',
+      url,
+      message: r.type === 'chatgptDeviceCode' ? `Enter code ${r.userCode}` : 'Sign in with ChatGPT in your browser',
+    });
+    return done;
+  }
+
+  private finishLogin(err?: Error) {
+    const l = this.pendingLogin;
+    if (!l) return;
+    this.pendingLogin = undefined;
+    clearTimeout(l.timer);
+    this.capsCache.clear();
+    if (err && !l.cancelled) l.reject(err);
+    else l.resolve();
+  }
+
+  private onLoginCompleted(p: AccountLoginCompletedNotification) {
+    const l = this.pendingLogin;
+    if (!l || (p.loginId && p.loginId !== l.loginId)) return;
+    this.finishLogin(p.success ? undefined : new Error(p.error || 'Login failed'));
+  }
+
+  async cancelLogin(): Promise<void> {
+    const l = this.pendingLogin;
+    if (!l) return;
+    l.cancelled = true;
+    try {
+      await this.rpc?.request('account/login/cancel', { loginId: l.loginId }, 10_000);
+    } catch {
+      /* already finished */
+    }
+    this.finishLogin();
+  }
+
+  async logout(): Promise<void> {
+    const rpc = await this.client();
+    await rpc.request('account/logout', undefined, 20_000);
+    this.capsCache.clear();
+  }
+
+  // ── remote control (one per app-server process, shared by its sessions) ──
+
+  private remoteWanted = new Set<CodexSession>();
+  private remoteOn = false;
+  private remoteStatus?: string;
+  private pairing?: { code: string; expiresAt: number };
+  private remoteSync?: Promise<void>;
+
+  setRemote(session: CodexSession, on: boolean) {
+    if (on) this.remoteWanted.add(session);
+    else {
+      this.remoteWanted.delete(session);
+      session.setRemoteState(undefined);
+    }
+    return this.syncRemote();
+  }
+
+  private syncRemote(): Promise<void> {
+    const run = (this.remoteSync ?? Promise.resolve()).then(async () => {
+      const want = this.remoteWanted.size > 0;
+      if (want === this.remoteOn && (!want || this.pairing)) return this.broadcastRemote();
+      const rpc = await this.client();
+      if (want) {
+        const r = await rpc.request<{ status: string }>('remoteControl/enable', { ephemeral: true }, 20_000);
+        this.remoteOn = true;
+        this.remoteStatus = r.status;
+        const p = await rpc.request<{ manualPairingCode: string | null; pairingCode: string; expiresAt: number | bigint }>('remoteControl/pairing/start', { manualCode: true }, 20_000).catch((err) => {
+          this.ctx.log('[codex] remote pairing failed:', errMsg(err));
+          return undefined;
+        });
+        if (p) this.pairing = { code: p.manualPairingCode ?? p.pairingCode, expiresAt: Number(p.expiresAt) * 1000 };
+      } else {
+        await rpc.request('remoteControl/disable', { ephemeral: true }, 20_000).catch(() => {});
+        this.remoteOn = false;
+        this.pairing = undefined;
+      }
+      this.broadcastRemote();
+    });
+    this.remoteSync = run.catch((err) => {
+      const msg = errMsg(err);
+      this.ctx.log('[codex] remote control failed:', msg);
+      for (const s of this.remoteWanted) s.setRemoteState({ status: /unknown|not supported|-32601/i.test(msg) ? 'This Codex version has no remote control' : 'Remote control could not start', tone: 'error' });
+    });
+    return this.remoteSync;
+  }
+
+  private broadcastRemote() {
+    const s = this.remoteStatus;
+    const code = this.pairing && this.pairing.expiresAt > Date.now() ? this.pairing.code : undefined;
+    const state =
+      s === 'connected'
+        ? { status: code ? 'Connected. Pair from the Codex app on another device with this code' : 'Connected', tone: 'ok' as const, code }
+        : s === 'connecting'
+          ? { status: 'Connecting to remote control', tone: 'waiting' as const, code }
+          : s === 'errored'
+            ? { status: 'Remote control could not connect. It may already be on in the Codex app', tone: 'error' as const }
+            : { status: 'Remote control is off', tone: 'waiting' as const };
+    for (const sess of this.remoteWanted) sess.setRemoteState(state);
+  }
+
+  /** The plugin that gives Codex browser and computer use (from the Codex app), when this setup has it. */
+  computerUsePlugin(list = this.mcpCache): string | undefined {
+    return list?.find((s) => s.scope && /computer-use/i.test(s.scope))?.scope;
+  }
+
+  // ── developer instructions ──
+
+  /**
+   * Developer instructions for a thread: what the user configured for this folder
+   * (developer_instructions in config.toml) followed by the short-answers instruction when that
+   * setting is on. Undefined means "send nothing" (Codex then uses the config as it is).
+   */
+  async developerInstructions(cwd: string): Promise<string | undefined> {
+    if (this.ctx.settings?.().conciseReplies === false) return undefined;
+    let own: string | undefined;
+    try {
+      const rpc = await this.client();
+      const r = await rpc.request<{ config?: { developer_instructions?: string | null } }>('config/read', { cwd }, 15_000);
+      own = r.config?.developer_instructions?.trim() || undefined;
+    } catch (err) {
+      this.ctx.log('[codex] config/read failed:', errMsg(err));
+    }
+    return own ? `${own}\n\n${CONCISE_REPLIES_PROMPT}` : CONCISE_REPLIES_PROMPT;
+  }
+
+  // ── capabilities ──
+
+  caps(cwd?: string): Promise<Capabilities> {
+    const key = cwd ? path.resolve(cwd) : '';
+    const hit = this.capsCache.get(key);
+    if (hit && Date.now() - hit.at < CAPS_TTL) return hit.caps;
+    const caps = this.loadCaps(key || undefined);
+    this.capsCache.set(key, { at: Date.now(), caps });
+    caps.catch(() => this.capsCache.delete(key));
+    return caps;
+  }
+
+  private async loadCaps(cwd?: string): Promise<Capabilities> {
+    const rpc = await this.client();
+    const models = async (): Promise<ModelInfo[]> => {
+      const out: ModelInfo[] = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < 10; page++) {
+        const r: ModelListResponse = await rpc.request<ModelListResponse>('model/list', { cursor, limit: 100 }, 20_000);
+        for (const m of r.data ?? []) if (!m.hidden) out.push(mapModel(m));
+        cursor = r.nextCursor;
+        if (!cursor) break;
+      }
+      if (out.length && !out.some((m) => m.isDefault)) out[0].isDefault = true;
+      return out;
+    };
+    const skills = async () => {
+      const r = await rpc.request<SkillsListResponse>('skills/list', cwd ? { cwds: [cwd] } : {}, 20_000);
+      const seen = new Set<string>();
+      return (r.data ?? [])
+        .flatMap((e) => e.skills ?? [])
+        .filter((s) => s.enabled !== false && !seen.has(s.name) && seen.add(s.name))
+        .map(mapSkill);
+    };
+    const soft = <T,>(p: Promise<T>, fallback: T, what: string) =>
+      p.catch((err) => {
+        this.ctx.log(`[codex] ${what} failed:`, errMsg(err));
+        return fallback;
+      });
+    // MCP inventory is slow (it boots every configured server; ~50s here): never block on it.
+    if (!this.mcpCache || Date.now() - this.mcpAt > MCP_TTL) void this.refreshMcp();
+    const [m, s] = await Promise.all([models(), soft(skills(), [], 'skills/list')]);
+    return {
+      models: m,
+      modes: PRESETS.map(modeInfo),
+      commands: COMMANDS,
+      skills: s,
+      agents: [],
+      mcpServers: this.mcpCache ?? [],
+      tools: ['shell', 'apply_patch', 'update_plan', 'web_search', 'view_image'],
+      skillTrigger: '$',
+      features: { images: true, thinking: true, rewind: false, steer: true, compact: true, fast: false, ultracode: false, ...this.optionalFeatures() },
+    };
+  }
+
+  /** What this setup adds: the Codex app's computer-use plugin (browser + desktop), remote control. */
+  optionalFeatures(list = this.mcpCache) {
+    const cua = !!this.computerUsePlugin(list);
+    return { browser: cua, computerUse: cua, linkedBrowserComputer: cua, remoteControl: !!this.lastAuth?.includes('"chatgpt"') };
+  }
+
+  /** Background MCP refresh; pushes the result into cached caps and open sessions. */
+  refreshMcp(threadId?: string): Promise<McpServerInfo[]> {
+    if (this.mcpLoading) return this.mcpLoading;
+    const run = (async () => {
+      const rpc = await this.client();
+      const r = await rpc.request<ListMcpServerStatusResponse>(
+        'mcpServerStatus/list',
+        { detail: 'toolsAndAuthOnly', limit: 100, ...(threadId ? { threadId } : {}) },
+        120_000,
+      );
+      return (r.data ?? []).map(mapMcp);
+    })()
+      .then((list) => {
+        this.mcpCache = list;
+        this.mcpAt = Date.now();
+        const features = this.optionalFeatures(list);
+        for (const [cwd, entry] of this.capsCache) {
+          entry.caps = entry.caps.then((c) => ({ ...c, mcpServers: list, features: { ...c.features, ...features } }));
+          // The home composer asked before this slow inventory finished: tell it.
+          void entry.caps.then((caps) => this.ctx.emit({ type: 'caps.updated', provider: 'codex', cwd: cwd || undefined, caps })).catch(() => {});
+        }
+        for (const s of this.sessions.values()) s.updateMcp(list);
+        return list;
+      })
+      .catch((err) => {
+        this.ctx.log('[codex] mcpServerStatus/list failed:', errMsg(err));
+        this.mcpAt = Date.now();
+        this.mcpCache ??= [];
+        return this.mcpCache;
+      })
+      .finally(() => {
+        if (this.mcpLoading === run) this.mcpLoading = undefined;
+      });
+    this.mcpLoading = run;
+    return run;
+  }
+
+  async limits(): Promise<RateLimit[]> {
+    const rpc = await this.client();
+    const r = await rpc.request<GetAccountRateLimitsResponse>('account/rateLimits/read', undefined, 20_000);
+    this.snapshots.clear();
+    const byId = r.rateLimitsByLimitId ? Object.values(r.rateLimitsByLimitId).filter((x): x is RateLimitSnapshot => !!x) : [];
+    for (const s of byId.length ? byId : r.rateLimits ? [r.rateLimits] : []) this.snapshots.set(s.limitId ?? 'codex', s);
+    return mapLimits([...this.snapshots.values()]);
+  }
+
+  async history(cwd?: string, limit = 50): Promise<HistoryEntry[]> {
+    const rpc = await this.client();
+    limit = Math.max(1, Math.min(limit, 100)); // the server caps pages at 100
+    // useStateDbOnly: without it the server re-scans every JSONL rollout (~60s on a big history).
+    const list = (extra: object) =>
+      rpc.request<ThreadListResponse>('thread/list', { limit, sortKey: 'updated_at', archived: false, useStateDbOnly: true, ...extra }, 30_000);
+    let threads: Thread[];
+    if (cwd) {
+      threads = (await list({ cwd: path.resolve(cwd) })).data ?? [];
+      // The server filter is an exact string match; fall back to a normalized client-side match.
+      if (!threads.length) threads = ((await list({ limit: 100 })).data ?? []).filter((t) => t.cwd && samePath(t.cwd, cwd));
+    } else threads = (await list({})).data ?? [];
+    return threads
+      .filter((t) => !t.parentThreadId)
+      .slice(0, limit)
+      .map(mapHistory);
+  }
+
+  // ── sessions ──
+
+  async open(rt: SessionRuntime, opts: { loadTranscript?: boolean }): Promise<ProviderSession> {
+    const session = new CodexSession(this, rt);
+    await session.attach(!!opts.loadTranscript);
+    return session;
+  }
+
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    clearTimeout(this.idleTimer);
+    if (this.pendingLogin) this.finishLogin(new Error('Codex provider is shut down'));
+    for (const s of this.sessions.values()) s.abortPrompts();
+    this.sessions.clear();
+    const rpc = this.rpc ?? (await this.starting?.catch(() => null)) ?? null;
+    this.rpc = null;
+    await rpc?.close();
+  }
+}
+
+// ─────────────────────────────────── session ───────────────────────────────────
+
+interface Queued {
+  item: UserItem;
+  input: UserInput[];
+}
+
+
+class CodexSession implements ProviderSession {
+  threadId = '';
+  /** The thread is loaded in the current app-server process. */
+  private loaded = false;
+  private closed = false;
+  private turnId?: string;
+  private turnStarting?: Promise<unknown>;
+  private queue: Queued[] = [];
+  private policyDirty = false;
+  private interruptTimer?: NodeJS.Timeout;
+  private commandTimer?: NodeJS.Timeout;
+  private prompts = new Map<string, AbortController>();
+  private reasoningSource = new Map<string, 'summary' | 'content'>();
+  private compactSeen = false;
+  private warned = new Set<string>();
+  private turnError?: string;
+  /** Last thread-wide total seen in this session (undefined until the first usage update). */
+  private lastTotal?: TokenUsageBreakdown;
+  private turnTokens = { input: 0, output: 0 };
+  /** Thread config the loaded thread was started or resumed with (JSON), and whether it is out of date. */
+  private appliedConfig = 'null';
+  private optionsDirty = false;
+  /** What the thread was last started or resumed with (read by tests and smoke scripts). */
+  sentParams?: Record<string, unknown>;
+
+  constructor(
+    private provider: CodexProvider,
+    private rt: SessionRuntime,
+  ) {}
+
+  private log(...a: unknown[]) {
+    this.provider.ctx.log('[codex]', ...a);
+  }
+
+  // ── lifecycle ──
+
+  async attach(loadTranscript: boolean) {
+    const rt = this.rt;
+    const { resp, resumed } = await this.resumeOrStart(rt.meta.providerSessionId);
+    if (resumed && loadTranscript) rt.reset(transcript(await this.loadTurns(resp.thread.id)));
+    rt.update({
+      providerSessionId: this.threadId,
+      model: rt.meta.model || resp.model || resp.thread.model || '',
+      effort: rt.meta.effort ?? toEffort(resp.reasoningEffort ?? resp.thread.reasoningEffort),
+    });
+    try {
+      const caps = await this.provider.caps(rt.meta.cwd);
+      rt.setCaps(caps);
+      if (!rt.meta.model) {
+        const def = caps.models.find((m) => m.isDefault) ?? caps.models[0];
+        if (def) rt.update({ model: def.id });
+      }
+    } catch (err) {
+      this.log('caps failed', errMsg(err));
+    }
+    this.showCuaState();
+    if (rt.meta.options?.remoteControl) void this.provider.setRemote(this, true).catch(() => {});
+  }
+
+  /** Full stored history, oldest turn first. */
+  private async loadTurns(threadId: string): Promise<Turn[]> {
+    const rpc = await this.provider.client();
+    try {
+      const turns: Turn[] = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < 100; page++) {
+        const r: { data: Turn[]; nextCursor: string | null } = await rpc.request('thread/turns/list', { threadId, cursor, limit: 50, sortDirection: 'asc', itemsView: 'full' }, 30_000);
+        turns.push(...(r.data ?? []));
+        cursor = r.nextCursor;
+        if (!cursor) break;
+      }
+      return turns;
+    } catch (err) {
+      this.log('thread/turns/list failed, falling back to thread/read', errMsg(err));
+      const r = await rpc.request<{ thread: Thread }>('thread/read', { threadId, includeTurns: true }, 60_000);
+      return r.thread.turns ?? [];
+    }
+  }
+
+  /** Re-resumes the thread after an app-server restart. */
+  private async ensureLoaded() {
+    if (this.closed) throw new Error('Session is closed');
+    if (this.loaded && this.provider.sessions.get(this.threadId) === this) return;
+    const { resp } = await this.resumeOrStart(this.threadId);
+    if (resp.thread.id !== this.rt.meta.providerSessionId) this.rt.update({ providerSessionId: resp.thread.id });
+  }
+
+  /**
+   * Resumes `threadId` (or starts a thread when there is none). Codex only writes a rollout
+   * once the first turn runs, so a thread that never had a turn cannot be resumed after an
+   * app-server restart ("no rollout found"); nothing is lost then, so start a fresh one.
+   */
+  private async resumeOrStart(threadId: string | undefined): Promise<{ resp: ThreadStartResponse; resumed: boolean }> {
+    const rt = this.rt;
+    const rpc = await this.provider.client();
+    const p = preset(rt.meta.mode);
+    const config = this.threadConfig();
+    const developerInstructions = await this.provider.developerInstructions(rt.meta.cwd);
+    const params = {
+      cwd: rt.meta.cwd,
+      approvalPolicy: p.approval,
+      sandbox: p.sandbox,
+      model: rt.meta.model || null,
+      ...(config ? { config } : {}),
+      ...(developerInstructions ? { developerInstructions } : {}),
+    };
+    this.sentParams = params;
+    this.appliedConfig = JSON.stringify(config ?? null);
+    this.optionsDirty = false;
+    let resp: ThreadStartResponse | undefined;
+    let resumed = false;
+    if (threadId) {
+      try {
+        resp = await rpc.request<ThreadStartResponse>('thread/resume', { ...params, threadId, excludeTurns: true }, THREAD_TIMEOUT);
+        resumed = true;
+      } catch (err) {
+        if (!/no rollout found/i.test(errMsg(err))) throw err;
+        this.log('thread', threadId, 'has no rollout yet; starting a new thread');
+      }
+    }
+    resp ??= await rpc.request<ThreadStartResponse>('thread/start', params, THREAD_TIMEOUT);
+    if (this.threadId && this.threadId !== resp.thread.id && this.provider.sessions.get(this.threadId) === this) this.provider.sessions.delete(this.threadId);
+    this.threadId = resp.thread.id;
+    this.loaded = true;
+    this.policyDirty = false;
+    this.provider.sessions.set(this.threadId, this);
+    return { resp, resumed };
+  }
+
+  onServerDied(msg: string, detail?: string) {
+    this.loaded = false;
+    this.turnStarting = undefined;
+    this.abortPrompts();
+    // Drop the queue first so completeTurn() doesn't immediately restart the server for it.
+    const dropped = this.queue.length;
+    this.queue = [];
+    if (this.rt.turnActive) {
+      this.rt.notice('error', msg, detail || undefined);
+      this.completeTurn({ status: 'failed', error: msg });
+    }
+    if (dropped) this.rt.notice('error', 'Queued messages were not sent', 'The Codex app-server stopped. Send them again.');
+  }
+
+  abortPrompts() {
+    for (const ac of this.prompts.values()) ac.abort();
+    this.prompts.clear();
+  }
+
+  async close() {
+    if (this.closed) return;
+    if (this.rt.turnActive) await this.interrupt().catch(() => {});
+    this.closed = true;
+    void this.provider.setRemote(this, false).catch(() => {});
+    this.abortPrompts();
+    clearTimeout(this.interruptTimer);
+    clearTimeout(this.commandTimer);
+    this.queue = [];
+    if (this.provider.sessions.get(this.threadId) === this) this.provider.sessions.delete(this.threadId);
+    if (this.loaded) {
+      const rpc = await this.provider.client().catch(() => null);
+      await rpc?.request('thread/unsubscribe', { threadId: this.threadId }, 10_000).catch(() => {});
+    }
+    this.provider.sessionClosed();
+    this.loaded = false;
+  }
+
+  // ── settings ──
+
+  async setModel(_model: string) {
+    // Applied as a turn/start override (which persists for later turns).
+  }
+  async setEffort(_effort: Effort) {}
+  async setMode(_mode: string) {
+    this.policyDirty = true;
+  }
+
+  private effortFor(): string | undefined {
+    const e = this.rt.meta.effort;
+    if (!e) return undefined;
+    const m = this.rt.caps?.models.find((x) => x.id === this.rt.meta.model);
+    if (m?.efforts && !m.efforts.includes(e)) return undefined;
+    return e;
+  }
+
+  async context(): Promise<ContextBreakdown | null> {
+    const u = this.rt.meta.usage;
+    if (!u.contextWindow || u.contextTokens === undefined) return null;
+    const used = Math.min(u.contextTokens, u.contextWindow);
+    return {
+      totalTokens: used,
+      maxTokens: u.contextWindow,
+      percent: Math.round((used / u.contextWindow) * 100),
+      model: this.rt.meta.model,
+      categories: [
+        { name: 'Conversation', tokens: used, kind: 'used' },
+        { name: 'Free', tokens: u.contextWindow - used, kind: 'free' },
+      ],
+    };
+  }
+
+  async mcp(): Promise<McpServerInfo[]> {
+    return this.provider.refreshMcp(this.loaded ? this.threadId : undefined);
+  }
+
+  updateMcp(list: McpServerInfo[]) {
+    if (this.rt.caps && !this.closed) this.rt.setCaps({ ...this.rt.caps, mcpServers: list, features: { ...this.rt.caps.features, ...this.provider.optionalFeatures(list) } });
+    this.showCuaState();
+  }
+
+  // ── capabilities: the Codex app's computer-use plugin, remote control ──
+
+  /** Per-thread config: the plugin is on unless the user switched both browser and computer use off. */
+  private threadConfig(): Record<string, unknown> | undefined {
+    const o = this.rt.meta.options;
+    if (!o || o.browser !== false || o.computerUse !== false) return undefined;
+    const plugin = this.provider.computerUsePlugin() ?? CUA_PLUGIN;
+    return { plugins: { [plugin]: { enabled: false } } };
+  }
+
+  private showCuaState() {
+    const o = this.rt.meta.options ?? {};
+    const has = !!this.provider.computerUsePlugin();
+    const on = has && (o.browser !== false || o.computerUse !== false);
+    const state = on ? { status: 'Runs through the Codex app, which must be open', tone: 'ok' as const } : undefined;
+    const next = state ? { browser: state, computerUse: state } : undefined;
+    if (JSON.stringify(this.rt.meta.capState) !== JSON.stringify(next)) this.rt.update({ capState: next });
+  }
+
+  setRemoteState(state: SessionMeta['remote']) {
+    if (JSON.stringify(this.rt.meta.remote) !== JSON.stringify(state)) this.rt.update({ remote: state });
+  }
+
+  async setOptions(options: SessionOptions) {
+    const before = this.appliedConfig;
+    if (JSON.stringify(this.threadConfig() ?? null) !== before) {
+      // Thread config applies when the thread is (re)loaded; never mid-turn.
+      this.optionsDirty = true;
+      if (!this.rt.turnActive) await this.reloadForOptions();
+    }
+    this.showCuaState();
+    await this.provider.setRemote(this, !!options.remoteControl);
+  }
+
+  /** Unloads the thread so the next resume carries the new config. */
+  private async reloadForOptions() {
+    if (!this.optionsDirty || !this.loaded) return;
+    this.optionsDirty = false;
+    const rpc = await this.provider.client().catch(() => null);
+    await rpc?.request('thread/unsubscribe', { threadId: this.threadId }, 10_000).catch(() => {});
+    this.loaded = false;
+  }
+
+  // ── sending ──
+
+  async send(item: UserItem) {
+    if (!existsSync(this.rt.meta.cwd)) throw new Error(`The folder ${this.rt.meta.cwd} does not exist.`);
+    const cmd = item.text.trim().match(/^\/(compact|review)(?:\s+([\s\S]*))?$/);
+    if (cmd) return this.runCommand(item, cmd[1] as 'compact' | 'review', cmd[2]?.trim());
+    const input = buildInput(item.text, item.attachments, this.rt.caps?.skills ?? []);
+    if (this.rt.turnActive) return this.steerOrQueue(item, input);
+    await this.startTurn([item], input);
+  }
+
+  private async startTurn(items: UserItem[], input: UserInput[]) {
+    const rt = this.rt;
+    rt.beginTurn('Thinking');
+    // Queued messages move down to where the agent picks them up (steered ones stay where they were sent).
+    for (const it of items) if (it.state === 'queued') rt.taken(it.id);
+    this.resetTurnState();
+    if (this.optionsDirty) await this.reloadForOptions();
+    await this.ensureLoaded();
+    const params: TurnStartParams = { threadId: this.threadId, input };
+    if (rt.meta.model) params.model = rt.meta.model;
+    const effort = this.effortFor();
+    if (effort) params.effort = effort;
+    if (this.policyDirty) {
+      const p = preset(rt.meta.mode);
+      params.approvalPolicy = p.approval;
+      params.sandboxPolicy = sandboxPolicy(p.sandbox);
+    }
+    const started = (this.turnStarting = (async () => {
+      const rpc = await this.provider.client();
+      const r = await rpc.request<{ turn: Turn }>('turn/start', params, 60_000);
+      this.turnId ??= r.turn?.id;
+      this.policyDirty = false;
+    })());
+    try {
+      await started;
+    } finally {
+      if (this.turnStarting === started) this.turnStarting = undefined;
+    }
+  }
+
+  private resetTurnState() {
+    this.turnId = undefined;
+    this.turnError = undefined;
+    this.compactSeen = false;
+    this.turnTokens = { input: 0, output: 0 };
+    this.reasoningSource.clear();
+  }
+
+  private async steerOrQueue(item: UserItem, input: UserInput[]) {
+    if (this.turnStarting) await this.turnStarting.catch(() => {});
+    if (this.turnId && this.rt.turnActive && this.loaded) {
+      try {
+        const rpc = await this.provider.client();
+        await rpc.request('turn/steer', { threadId: this.threadId, input, expectedTurnId: this.turnId }, 30_000);
+        this.rt.patch<UserItem>(item.id, { state: 'sent' });
+        return;
+      } catch (err) {
+        this.log('turn/steer failed; queueing', errMsg(err));
+      }
+    }
+    if (!this.rt.turnActive) return this.startTurn([item], input);
+    this.queue.push({ item, input });
+  }
+
+  private drainQueue() {
+    if (!this.queue.length || this.rt.turnActive || this.closed) return;
+    const q = this.queue.splice(0);
+    void this.startTurn(
+      q.map((x) => x.item),
+      q.flatMap((x) => x.input),
+    ).catch((err) => {
+      this.rt.notice('error', 'Could not send the queued message', errMsg(err));
+      if (this.rt.turnActive) this.completeTurn({ status: 'failed', error: errMsg(err) });
+    });
+  }
+
+  private async runCommand(item: UserItem, name: 'compact' | 'review', args?: string) {
+    const rt = this.rt;
+    if (rt.turnActive) {
+      rt.patch<UserItem>(item.id, { state: 'sent' });
+      rt.notice('info', `/${name} can only run while Codex is idle`);
+      return;
+    }
+    rt.beginTurn(name === 'compact' ? 'Compacting context' : 'Reviewing');
+    this.resetTurnState();
+    if (this.optionsDirty) await this.reloadForOptions();
+    await this.ensureLoaded();
+    const rpc = await this.provider.client();
+    if (name === 'compact') {
+      await rpc.request('thread/compact/start', { threadId: this.threadId }, 60_000);
+    } else {
+      const target: ReviewTarget = args ? { type: 'custom', instructions: args } : { type: 'uncommittedChanges' };
+      const r = await rpc.request<{ turn: Turn }>('review/start', { threadId: this.threadId, target, delivery: 'inline' }, 60_000);
+      this.turnId ??= r.turn?.id;
+    }
+    // Safety net: if the server never reports a turn for this command, don't stay "running".
+    clearTimeout(this.commandTimer);
+    if (!rt.turnActive || this.turnId) return;
+    this.commandTimer = setTimeout(() => {
+      if (rt.turnActive && !this.turnId) this.completeTurn({ status: 'completed' });
+    }, 15_000);
+  }
+
+  async interrupt() {
+    const rt = this.rt;
+    if (!rt.turnActive) return;
+    if (this.turnStarting) await this.turnStarting.catch(() => {});
+    if (!this.turnId || !this.loaded) {
+      this.completeTurn({ status: 'interrupted' });
+      return;
+    }
+    const turnId = this.turnId;
+    try {
+      const rpc = await this.provider.client();
+      await rpc.request('turn/interrupt', { threadId: this.threadId, turnId }, 15_000);
+    } catch (err) {
+      this.log('turn/interrupt failed', errMsg(err));
+    }
+    clearTimeout(this.interruptTimer);
+    // turn/completed (status "interrupted") often lands before the request returns; then
+    // a safety net armed now would end the user's next turn.
+    if (!rt.turnActive || this.turnId !== turnId) return;
+    // turn/completed normally follows; don't hang if it doesn't.
+    this.interruptTimer = setTimeout(() => {
+      if (rt.turnActive && this.turnId === turnId) this.completeTurn({ status: 'interrupted' });
+    }, 8_000);
+  }
+
+  /** Closes the running turn: settles items, adds the TurnItem, ends the turn, drains the queue. */
+  private completeTurn(t: { status: Turn['status']; error?: string; durationMs?: number | null }) {
+    const rt = this.rt;
+    clearTimeout(this.interruptTimer);
+    clearTimeout(this.commandTimer);
+    if (!rt.turnActive) return;
+    this.abortPrompts();
+    if (t.status === 'interrupted') {
+      rt.settle('cancelled');
+      rt.notice('interrupted', 'Interrupted');
+    } else {
+      rt.settle(t.status === 'failed' ? 'error' : 'cancelled');
+    }
+    const error = t.status === 'failed' ? (t.error ?? this.turnError ?? 'Turn failed') : undefined;
+    const inTok = this.turnTokens.input;
+    const outTok = this.turnTokens.output;
+    rt.add<TurnItem>({
+      type: 'turn',
+      durationMs: t.durationMs ?? (rt.turnStartedAt ? Date.now() - rt.turnStartedAt : 0),
+      inputTokens: inTok > 0 ? inTok : undefined,
+      outputTokens: outTok > 0 ? outTok : undefined,
+      stopReason: t.status,
+      error,
+    });
+    rt.update({ usage: { ...rt.meta.usage, turns: rt.meta.usage.turns + 1 } });
+    this.turnId = undefined;
+    rt.endTurn(error);
+    this.drainQueue();
+  }
+
+  // ── notifications ──
+
+  onNotification(method: string, p: any) {
+    if (this.closed) return;
+    const rt = this.rt;
+    switch (method) {
+      case 'turn/started': {
+        const turn = (p as TurnNotification).turn;
+        if (!rt.turnActive) {
+          rt.beginTurn('Thinking');
+          this.resetTurnState();
+        }
+        if (turn?.id) this.turnId = turn.id;
+        return;
+      }
+      case 'turn/completed': {
+        const turn = (p as TurnNotification).turn;
+        if (this.turnId && turn?.id && turn.id !== this.turnId) return; // stale turn
+        return this.completeTurn({ status: turn?.status ?? 'completed', error: turn?.error?.message, durationMs: turn?.durationMs });
+      }
+      case 'item/started':
+        return this.onItem(p as ItemNotification, false);
+      case 'item/completed':
+        return this.onItem(p as ItemNotification, true);
+      case 'item/agentMessage/delta':
+        return this.onTextDelta(p as ItemDeltaNotification, 'text');
+      case 'item/reasoning/summaryTextDelta':
+        return this.onReasoningDelta(p as ItemDeltaNotification, 'summary');
+      case 'item/reasoning/textDelta':
+        return this.onReasoningDelta(p as ItemDeltaNotification, 'content');
+      case 'item/reasoning/summaryPartAdded': {
+        const id = `${p.turnId}:${p.itemId}`;
+        const it = rt.get<ThinkingItem>(id);
+        if (it?.text && this.reasoningSource.get(id) !== 'content') rt.delta(id, 'text', '\n\n');
+        return;
+      }
+      case 'item/commandExecution/outputDelta':
+      case 'item/fileChange/outputDelta': {
+        const d = p as ItemDeltaNotification;
+        return rt.delta(`${d.turnId}:${d.itemId}`, 'output', d.delta);
+      }
+      case 'item/fileChange/patchUpdated': {
+        const d = p as FileChangePatchUpdatedNotification;
+        const id = `${d.turnId}:${d.itemId}`;
+        const it = rt.get<ToolItem>(id);
+        if (it?.type === 'tool') rt.patch<ToolItem>(id, { detail: { ...it.detail, path: d.changes?.[0]?.path ?? it.detail.path }, result: { ...it.result, diff: changesToDiffs(d.changes) } });
+        return;
+      }
+      case 'turn/plan/updated':
+        return rt.setTodos(mapPlan(p as TurnPlanUpdatedNotification));
+      case 'thread/tokenUsage/updated': {
+        const u = (p as ThreadTokenUsageUpdatedNotification).tokenUsage;
+        if (!u?.total) return;
+        if (rt.turnActive) {
+          // Per-turn counts: delta of the thread total; on the first update after a resume
+          // there is no baseline, so use the last request's usage.
+          const prev = this.lastTotal;
+          this.turnTokens.input += Math.max(0, prev ? u.total.inputTokens - prev.inputTokens : (u.last?.inputTokens ?? 0));
+          this.turnTokens.output += Math.max(0, prev ? u.total.outputTokens - prev.outputTokens : (u.last?.outputTokens ?? 0));
+        }
+        this.lastTotal = u.total;
+        rt.update({
+          usage: {
+            ...rt.meta.usage,
+            inputTokens: u.total.inputTokens,
+            outputTokens: u.total.outputTokens,
+            cacheReadTokens: u.total.cachedInputTokens,
+            contextTokens: u.last?.totalTokens ?? rt.meta.usage.contextTokens,
+            contextWindow: u.modelContextWindow ?? rt.meta.usage.contextWindow,
+          },
+        });
+        return;
+      }
+      case 'thread/compacted':
+        // Deprecated duplicate of the contextCompaction item.
+        if (!this.compactSeen) {
+          this.compactSeen = true;
+          rt.notice('compact', 'Context compacted');
+        }
+        return;
+      case 'error': {
+        const e = p as ErrorNotification;
+        const msg = e.error?.message ?? 'Codex error';
+        if (!e.willRetry) this.turnError = msg;
+        rt.notice(e.willRetry ? 'retry' : 'error', msg, e.error?.additionalDetails ?? undefined);
+        return;
+      }
+      case 'warning': {
+        const msg = (p as WarningNotification).message;
+        if (!msg || this.warned.has(msg)) return; // e.g. config warnings repeat on every resume
+        this.warned.add(msg);
+        // The headline is the first line; the detail is what follows it (the whole text only when the headline was cut short).
+        const head = firstLine(msg, 120);
+        const lines = msg.trim().split('\n');
+        const rest = head.endsWith('…') ? msg.trim() : lines.slice(1).join('\n').trim();
+        return void rt.notice('info', head, rest || undefined);
+      }
+      case 'model/rerouted':
+        return void rt.notice('model', `Switched to ${p.toModel}`, p.fromModel ? `Rerouted from ${p.fromModel}` : undefined);
+      case 'serverRequest/resolved':
+        this.prompts.get(String(p.requestId))?.abort();
+        return;
+      default:
+        return; // unknown / uninteresting notifications are ignored
+    }
+  }
+
+  private onItem(n: ItemNotification, completed: boolean) {
+    const rt = this.rt;
+    const item = n.item;
+    if (!item || item.type === 'userMessage') return;
+    const id = `${n.turnId}:${item.id}`;
+    const existing = rt.get(id);
+    if (item.type === 'contextCompaction' && completed) {
+      if (this.compactSeen) return;
+      this.compactSeen = true;
+    }
+    if (!completed) {
+      const act = activityFor(item);
+      if (act) rt.update({ activity: act });
+      const d = draftItem(item, { streaming: true });
+      if (!d) return;
+      if (!existing) {
+        if (d.type === 'tool' && d.kind === 'bash' && (d as ToolItem).output === undefined) (d as ToolItem).output = '';
+        rt.add({ ...d, id, ts: item.startedAtMs ?? Date.now() } as TimelineItem);
+      } else if (d.type === 'tool' && existing.type === 'tool') {
+        // Created early by an approval request: fill in details, keep the awaiting state.
+        const { status, output, ...rest } = d as ToolItem;
+        rt.patch<ToolItem>(id, existing.status === 'awaiting' ? rest : { ...rest, status });
+      }
+      return;
+    }
+    const d = draftItem(item, { streaming: false });
+    if (!d) return;
+    if (!existing) {
+      if (d.type === 'thinking' && !d.text) return;
+      rt.add({ ...d, id, ts: item.startedAtMs ?? Date.now() } as TimelineItem);
+    } else {
+      if (d.type === 'thinking' && !d.text && !(existing as ThinkingItem).text) return rt.remove(id);
+      const patch = { ...d } as Record<string, unknown>;
+      delete patch.type;
+      delete patch.ts;
+      if ((d.type === 'text' || d.type === 'thinking') && !d.text) delete patch.text;
+      if (d.type === 'tool' && patch.output === undefined) delete patch.output;
+      rt.patch(id, patch as Partial<TimelineItem>);
+    }
+    if (rt.turnActive && d.type === 'tool') rt.update({ activity: 'Thinking' });
+  }
+
+  private onTextDelta(d: ItemDeltaNotification, _field: 'text') {
+    const id = `${d.turnId}:${d.itemId}`;
+    if (!this.rt.get(id)) this.rt.add<TextItem>({ id, type: 'text', text: '', streaming: true });
+    this.rt.delta(id, 'text', d.delta);
+  }
+
+  private onReasoningDelta(d: ItemDeltaNotification, source: 'summary' | 'content') {
+    const id = `${d.turnId}:${d.itemId}`;
+    const current = this.reasoningSource.get(id);
+    if (current && current !== source) return; // summary and raw content both stream; show one
+    this.reasoningSource.set(id, source);
+    if (!this.rt.get(id)) this.rt.add<ThinkingItem>({ id, type: 'thinking', text: '', streaming: true });
+    this.rt.delta(id, 'text', d.delta);
+  }
+
+  // ── server requests (approvals & questions) ──
+
+  async onRequest(method: string, p: any, reqId: RequestId): Promise<unknown> {
+    const ac = new AbortController();
+    const key = String(reqId);
+    this.prompts.set(key, ac);
+    try {
+      switch (method) {
+        case 'item/commandExecution/requestApproval':
+          return await this.approveCommand(p as CommandExecutionRequestApprovalParams, ac.signal);
+        case 'item/fileChange/requestApproval':
+          return await this.approveFileChange(p as FileChangeRequestApprovalParams, ac.signal);
+        case 'item/permissions/requestApproval':
+          return await this.approvePermissions(p as PermissionsRequestApprovalParams, ac.signal);
+        case 'item/tool/requestUserInput':
+          return await this.askUser(p as ToolRequestUserInputParams, ac.signal);
+        case 'execCommandApproval':
+          return await this.legacyExec(p as ExecCommandApprovalParams, ac.signal);
+        case 'applyPatchApproval':
+          return await this.legacyPatch(p as ApplyPatchApprovalParams, ac.signal);
+        case 'mcpServer/elicitation/request':
+          this.rt.notice('info', `MCP server "${p.serverName}" asked for input`, `${p.message ?? ''}\nSable cannot answer MCP elicitations yet; it was declined.`.trim());
+          return { action: 'decline', content: null, _meta: null };
+        default:
+          throw new RpcError(`Sable does not support ${method}`, -32601);
+      }
+    } finally {
+      this.prompts.delete(key);
+    }
+  }
+
+  /** Ensures a ToolItem exists for the approval and marks it awaiting. */
+  private gate(id: string, fallback: Omit<ToolItem, 'id' | 'ts' | 'type' | 'status'>): ToolItem {
+    const existing = this.rt.get<ToolItem>(id);
+    if (existing?.type === 'tool') {
+      this.rt.patch<ToolItem>(id, { status: 'awaiting' });
+      return existing;
+    }
+    return this.rt.add<ToolItem>({ ...fallback, id, type: 'tool', status: 'awaiting' });
+  }
+
+  private afterDecision(id: string, allowed: boolean) {
+    const it = this.rt.get<ToolItem>(id);
+    if (it?.type === 'tool' && it.status === 'awaiting') {
+      this.rt.patch<ToolItem>(id, allowed ? { status: 'running' } : { status: 'denied', endedAt: Date.now() });
+    }
+    if (this.rt.turnActive) this.rt.update({ activity: allowed ? (it ? firstLine(`Running ${it.title}`, 70) : 'Working') : 'Thinking' });
+  }
+
+  private async approveCommand(p: CommandExecutionRequestApprovalParams, signal: AbortSignal) {
+    const id = `${p.turnId}:${p.itemId}`;
+    const raw = p.command ?? '';
+    const command = unwrapCommand(raw);
+    const stdin = p.kind === 'writeStdin';
+    const item = this.gate(id, {
+      name: 'shell',
+      kind: 'bash',
+      title: stdin ? 'Send input to a running command' : commandTitle(raw, p.commandActions),
+      detail: { command, cwd: p.cwd ?? undefined },
+      input: { command: raw, cwd: p.cwd },
+      output: '',
+    });
+    this.rt.update({ activity: 'Waiting for approval' });
+    const amend = p.proposedExecpolicyAmendment?.length ? p.proposedExecpolicyAmendment : null;
+    const options: PermissionOption[] = [
+      { id: 'accept', label: 'Allow once', tone: 'allow' },
+      { id: 'acceptForSession', label: 'Allow for this session', tone: 'always' },
+    ];
+    if (amend) options.push({ id: 'amend', label: `Always allow “${amend.join(' ')}”`, hint: 'Saves a rule; matching commands run without asking', tone: 'always' });
+    options.push({ id: 'decline', label: 'Decline', hint: 'Codex continues without running it', tone: 'deny' }, { id: 'cancel', label: 'Decline and stop', hint: 'Ends the turn', tone: 'deny' });
+    const reason = p.reason ?? (p.networkApprovalContext ? `Network access to ${p.networkApprovalContext.host}` : undefined);
+    const answer = await this.rt.requestPermission(
+      {
+        itemId: id,
+        toolName: 'shell',
+        kind: 'bash',
+        title: stdin ? 'Send input to a running command?' : 'Run this command?',
+        description: item.title,
+        detail: { command: command || (item.detail.command ?? ''), cwd: p.cwd ?? item.detail.cwd },
+        reason,
+        options,
+        allowFeedback: false,
+      },
+      signal,
+    );
+    let decision: CommandExecutionApprovalDecision;
+    switch (answer?.optionId) {
+      case 'accept':
+        decision = 'accept';
+        break;
+      case 'acceptForSession':
+        decision = 'acceptForSession';
+        break;
+      case 'amend':
+        decision = amend ? { acceptWithExecpolicyAmendment: { execpolicy_amendment: amend } } : 'accept';
+        break;
+      case 'decline':
+        decision = 'decline';
+        break;
+      default:
+        decision = 'cancel';
+    }
+    this.afterDecision(id, decision !== 'decline' && decision !== 'cancel');
+    return { decision };
+  }
+
+  private async approveFileChange(p: FileChangeRequestApprovalParams, signal: AbortSignal) {
+    const id = `${p.turnId}:${p.itemId}`;
+    const item = this.gate(id, { name: 'apply_patch', kind: 'edit', title: 'Edit files', detail: {} });
+    this.rt.update({ activity: 'Waiting for approval' });
+    const answer = await this.rt.requestPermission(
+      {
+        itemId: id,
+        toolName: 'apply_patch',
+        kind: item.kind,
+        title: `${item.title}?`,
+        description: item.detail.path,
+        detail: item.detail,
+        diff: item.result?.diff,
+        reason: p.reason ?? (p.grantRoot ? `Allow writes under ${p.grantRoot} for this session` : undefined),
+        options: [
+          { id: 'accept', label: 'Allow once', tone: 'allow' },
+          { id: 'acceptForSession', label: 'Allow edits for this session', tone: 'always' },
+          { id: 'decline', label: 'Decline', hint: 'Codex continues without this change', tone: 'deny' },
+          { id: 'cancel', label: 'Decline and stop', hint: 'Ends the turn', tone: 'deny' },
+        ],
+        allowFeedback: false,
+      },
+      signal,
+    );
+    const map: Record<string, FileChangeApprovalDecision> = { accept: 'accept', acceptForSession: 'acceptForSession', decline: 'decline' };
+    const decision: FileChangeApprovalDecision = (answer && map[answer.optionId]) || 'cancel';
+    this.afterDecision(id, decision === 'accept' || decision === 'acceptForSession');
+    return { decision };
+  }
+
+  private async approvePermissions(p: PermissionsRequestApprovalParams, signal: AbortSignal): Promise<PermissionsRequestApprovalResponse> {
+    const wants: string[] = [];
+    if (p.permissions?.network?.enabled) wants.push('Network access');
+    if (p.permissions?.fileSystem?.write?.length) wants.push(`Write: ${p.permissions.fileSystem.write.join(', ')}`);
+    if (p.permissions?.fileSystem?.read?.length) wants.push(`Read: ${p.permissions.fileSystem.read.join(', ')}`);
+    this.rt.update({ activity: 'Waiting for approval' });
+    const answer = await this.rt.requestPermission(
+      {
+        toolName: 'permissions',
+        kind: 'other',
+        title: 'Grant additional permissions?',
+        description: wants.join('\n') || 'Codex asked for more sandbox access',
+        detail: { cwd: p.cwd },
+        reason: p.reason ?? undefined,
+        options: [
+          { id: 'turn', label: 'Allow for this turn', tone: 'allow' },
+          { id: 'session', label: 'Allow for this session', tone: 'always' },
+          { id: 'deny', label: 'Decline', tone: 'deny' },
+        ],
+        allowFeedback: false,
+      },
+      signal,
+    );
+    if (this.rt.turnActive) this.rt.update({ activity: 'Thinking' });
+    if (answer?.optionId === 'turn' || answer?.optionId === 'session') {
+      const granted: PermissionsRequestApprovalResponse['permissions'] = {};
+      if (p.permissions?.network) granted.network = p.permissions.network;
+      if (p.permissions?.fileSystem) granted.fileSystem = p.permissions.fileSystem;
+      return { permissions: granted, scope: answer.optionId };
+    }
+    return { permissions: {}, scope: 'turn' };
+  }
+
+  private async askUser(p: ToolRequestUserInputParams, signal: AbortSignal): Promise<ToolRequestUserInputResponse> {
+    const questions: Question[] = (p.questions ?? []).map((q) => ({
+      question: q.question,
+      header: q.header || undefined,
+      multiSelect: false,
+      options: (q.options ?? []).map((o) => ({ label: o.label, description: o.description || undefined })),
+    }));
+    const answers = await this.rt.ask(questions, `${p.turnId}:${p.itemId}`, signal);
+    const out: ToolRequestUserInputResponse = { answers: {} };
+    for (const q of p.questions ?? []) out.answers[q.id] = { answers: answers?.[q.question] ?? answers?.[q.id] ?? [] };
+    return out;
+  }
+
+  private async legacyExec(p: ExecCommandApprovalParams, signal: AbortSignal): Promise<{ decision: ReviewDecision }> {
+    const command = (p.command ?? []).join(' ');
+    const answer = await this.rt.requestPermission(
+      {
+        toolName: 'shell',
+        kind: 'bash',
+        title: 'Run this command?',
+        description: unwrapCommand(command),
+        detail: { command: unwrapCommand(command), cwd: p.cwd },
+        reason: p.reason ?? undefined,
+        options: [
+          { id: 'approved', label: 'Allow once', tone: 'allow' },
+          { id: 'approved_for_session', label: 'Allow for this session', tone: 'always' },
+          { id: 'denied', label: 'Decline', tone: 'deny' },
+        ],
+        allowFeedback: true,
+      },
+      signal,
+    );
+    if (answer?.optionId === 'approved' || answer?.optionId === 'approved_for_session') return { decision: answer.optionId };
+    if (answer?.optionId === 'denied') return { decision: { denied: { rejection: answer.message || 'The user declined this command.' } } };
+    return { decision: 'abort' };
+  }
+
+  private async legacyPatch(p: ApplyPatchApprovalParams, signal: AbortSignal): Promise<{ decision: ReviewDecision }> {
+    const files = Object.keys(p.fileChanges ?? {});
+    const answer = await this.rt.requestPermission(
+      {
+        toolName: 'apply_patch',
+        kind: 'edit',
+        title: files.length === 1 ? `Edit ${path.basename(files[0])}?` : `Edit ${files.length} files?`,
+        description: files.join('\n'),
+        detail: { path: files[0] },
+        reason: p.reason ?? undefined,
+        options: [
+          { id: 'approved', label: 'Allow once', tone: 'allow' },
+          { id: 'approved_for_session', label: 'Allow for this session', tone: 'always' },
+          { id: 'denied', label: 'Decline', tone: 'deny' },
+        ],
+        allowFeedback: true,
+      },
+      signal,
+    );
+    if (answer?.optionId === 'approved' || answer?.optionId === 'approved_for_session') return { decision: answer.optionId };
+    if (answer?.optionId === 'denied') return { decision: { denied: { rejection: answer.message || 'The user declined this change.' } } };
+    return { decision: 'abort' };
+  }
+}
