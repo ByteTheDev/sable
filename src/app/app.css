@@ -132,28 +132,50 @@
   margin-left: auto;
 }
 
+/* A toggle in the top row (the panel) shows its state as a brighter glyph, not a block of fill:
+   the panel itself is the evidence, and a filled square beside quiet icons reads as a stray button. */
+.topbar .icon-btn[data-active='true'] {
+  background-color: transparent;
+  color: var(--text);
+}
+
+.topbar .icon-btn[data-active='true']:hover {
+  background-color: var(--fill-2);
+}
+
 .flip-x svg {
   transform: scaleX(-1);
 }
 
+/* The context ring and its figure: an icon button with a number, same height, pill and timing. */
 .ctx-meter {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 28px;
-  padding: 0 8px;
-  border-radius: 7px;
+  padding: 0 9px 0 6px;
+  border-radius: 8px;
   font-size: var(--t-small);
   font-weight: var(--w-medium);
   color: var(--text-3);
   transition:
     background-color var(--d-1) var(--ease),
-    color var(--d-1) var(--ease);
+    color var(--d-1) var(--ease),
+    scale 80ms var(--ease-out);
+}
+
+.ctx-meter svg {
+  flex-shrink: 0;
 }
 
 .ctx-meter:hover {
   background-color: var(--fill-2);
   color: var(--text);
+}
+
+.ctx-meter:active {
+  background-color: var(--fill-3);
+  scale: 0.97;
 }
 
 .ctx-meter[data-warn] {
@@ -166,14 +188,17 @@
   position: relative;
 }
 
+/* Any capability on: a small ivory dot at the glyph's top right corner, ringed in the sheet so it cuts cleanly. */
 .caps-dot {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 6px;
-  height: 6px;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
+  border: 1.5px solid var(--sheet);
   background: var(--text);
+  pointer-events: none;
 }
 
 .caps-pop {
@@ -296,8 +321,8 @@
 
 /* ── desktop shell ──
    Only inside the Electron app (html[data-desktop] is set from the preload). The bars that run
-   along the top of the window drag it; their controls stay clickable. The native window controls
-   float over the top corner, so the bar under them keeps that corner free. */
+   along the top of the window drag it (a double-click maximises, as on any title bar); their
+   controls stay clickable. */
 
 html[data-desktop] .app::before {
   content: '';
@@ -316,120 +341,147 @@ html[data-desktop] .rail-resize {
   -webkit-app-region: no-drag;
 }
 
-/* ── title strip (Windows, Linux) ──
-   html[data-wco] is set while the native minimise / maximise / close buttons float over the top
-   right corner (useTitleStrip in App.tsx sets it, with their width as --wco-w and one button's
-   width as --caption-w, both already divided by the root zoom). The strip is the window gap plus
-   the top bar, and the native overlay is sized to exactly that, so everything in the top row
-   (sidebar brand, top bar, panel header) is centred on the strip's middle line, like the native
-   glyphs. Nothing of the app sits under the native buttons. */
-html[data-wco] {
-  --wco-w: 138px;
-  --caption-w: 46px;
-  --strip-h: calc(var(--gap) + var(--topbar-h));
-}
-
-html[data-wco] :is(.topbar, .side-brand, .app-rail .rail-head) {
-  padding-bottom: var(--gap);
-}
-
-/* No panel: the top bar's actions join the native buttons as one row of equal caption buttons,
-   the full strip tall, a hairline between the two groups. */
-html[data-wco] .app:not(:has(> .app-rail)) .topbar {
-  padding-right: calc(var(--wco-w) + var(--caption-actions-w, calc(4 * var(--caption-w))) - var(--gap) + 8px);
-}
-
-html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions {
-  position: fixed;
-  top: 0;
-  right: var(--wco-w);
-  z-index: 5;
-  height: var(--strip-h);
-  gap: 0;
-  margin: 0;
+/* The panel's tab row (a tablist) fills the header: its empty end still drags; the tabs do not. */
+html[data-desktop] .rail-head .rail-tabs[role='tablist'] {
   -webkit-app-region: drag;
 }
 
-html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions::after {
-  content: '';
+/* ── window controls (Windows, Linux) ──
+   The page draws minimise, maximise / restore and close (WindowControls.tsx); html[data-wc] is set
+   while they show. They are fixed to the window's top right corner, the strip (window gap plus top
+   bar) tall, and their pills sit on the top row's centre line like every other icon there. The row
+   under them keeps --wc-w free: the stage's top bar while the panel is closed (eased away as the
+   panel opens, see --rail-live in App.tsx), the panel's header while it is open.
+   Geometry: hairline block 15 px (8 + 1 + 6), two 32 px buttons, close 2 + 28 + 17 px, so the close
+   pill ends 17 px from the window edge, where the panel's and the top bar's last icon end. */
+html[data-wc] {
+  --wc-w: 126px;
+  --strip-h: calc(var(--gap) + var(--topbar-h));
+}
+
+.wc {
+  position: fixed;
+  top: 0;
+  right: 0;
+  /* Above dialogs (--z-modal) and the welcome; below toasts, which live at the bottom anyway. */
+  z-index: 65;
+  display: flex;
+  align-items: stretch;
+  /* The window gap, the sheets' 1 px border, then a 44 px row: the pills centre where the top bar's do. */
+  height: calc(var(--strip-h) + 1px);
+  -webkit-app-region: drag;
+}
+
+.wc-sep {
   align-self: center;
   width: 1px;
   height: 16px;
-  margin: 0 3px 0 4px;
-  background: var(--line-2);
+  margin: calc(var(--gap) + 1px) 6px 0 8px;
+  background-color: var(--line-2);
+  transition: opacity var(--d-2) var(--ease);
 }
 
-html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > :is(.icon-btn, .ctx-meter) {
+/* Nothing of the app's sits beside the controls on the welcome: no hairline to separate. */
+body:has(.onb) .wc-sep {
+  opacity: 0;
+}
+
+.wc-btn {
+  display: flex;
+  align-items: center;
   justify-content: center;
-  height: 100%;
-  min-width: var(--caption-w);
-  border-radius: 0;
-  color: var(--text-2);
+  width: 32px;
+  padding-top: calc(var(--gap) + 1px);
   -webkit-app-region: no-drag;
 }
 
-html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > .ctx-meter {
-  padding: 0 14px;
+/* The last hit area runs to the window's edge: the corner pixel closes the window. */
+.wc-btn.wc-close {
+  width: auto;
+  justify-content: flex-start;
+  padding-left: 2px;
+  padding-right: calc(var(--gap) + 9px);
 }
 
-html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > :is(.icon-btn, .ctx-meter):hover,
-html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > :is(.icon-btn, .ctx-meter)[data-state='open'] {
+.wc-btn:focus-visible {
+  outline: none;
+}
+
+/* The pill is .icon-btn's: 28 px, the same fill steps, press and timing. */
+.wc-pill {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--text-3);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    opacity var(--d-2) var(--ease),
+    scale 80ms var(--ease-out);
+}
+
+.wc-btn:hover .wc-pill {
+  background-color: var(--fill-2);
   color: var(--text);
+}
+
+.wc-btn:active .wc-pill {
   background-color: var(--fill-3);
+  scale: 0.94;
 }
 
-html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > :is(.icon-btn, .ctx-meter):active {
-  background-color: var(--fill-4);
+.wc-btn:focus-visible .wc-pill {
+  outline: 1.5px solid var(--focus);
+  outline-offset: 0;
 }
 
-html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > .ctx-meter[data-warn] {
-  color: var(--amber);
+/* Close: the one restrained red, as destructive actions do elsewhere (red glyph on a faint red fill). */
+.wc-close:hover .wc-pill {
+  background-color: var(--red-dim);
+  color: var(--red);
 }
 
-/* A toggled button (the panel) keeps its state as a brighter glyph, not a block of fill. */
-html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > .icon-btn[data-active='true'] {
-  color: var(--text);
-  background-color: transparent;
+.wc-close:active .wc-pill {
+  background-color: color-mix(in oklab, var(--red) 22%, transparent);
 }
 
-html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions .caps-dot {
-  top: calc(50% - 10px);
-  right: calc(50% - 11px);
+/* An unfocused window: the glyphs step back, as native caption buttons do. */
+.wc[data-blur] .wc-btn:not(:hover) .wc-pill {
+  opacity: 0.5;
 }
 
-/* With the panel open the native buttons float over its header: the actions stay at the end of
-   the stage's top bar, a little larger than in the browser, on the same centre line. */
-html[data-wco] .app:has(> .app-rail) .topbar {
-  padding-right: 6px;
+html[data-wc] .topbar {
+  padding-right: max(8px, calc(var(--wc-w) - var(--gap) - 1px - var(--rail-live, 0px)));
 }
 
-html[data-wco] .app:has(> .app-rail) .topbar-actions > :is(.icon-btn, .ctx-meter) {
-  height: 32px;
-  min-width: 32px;
-  justify-content: center;
+/* A panel that was open at start-up never animated: the controls are over its header already. */
+html[data-wc] .app:has(> .app-rail) .topbar {
+  --rail-live: 999px;
 }
 
-/* Dialogs centre in the window below the strip, so none reaches under the native buttons. */
-html[data-wco] .dialog {
+html[data-wc] .app-rail .rail-head {
+  padding-right: calc(var(--wc-w) - var(--gap) - 1px);
+}
+
+/* The panel's own close button would sit beside the window's; the top bar toggle (Mod+J) remains. */
+html[data-wc] .app-rail .rail-close {
+  display: none;
+}
+
+/* Dialogs centre in the window below the strip, so none reaches under the window controls. */
+html[data-wc] .dialog {
   top: calc(50% + var(--strip-h) / 2);
   max-height: calc(100 * var(--vh) - var(--strip-h) - 32px);
 }
 
-html[data-wco] .dialog.settings-dialog {
+html[data-wc] .dialog.settings-dialog {
   height: min(640px, calc(100 * var(--vh) - var(--strip-h) - 32px));
 }
 
-html[data-wco] .palette {
+html[data-wc] .palette {
   top: max(calc(var(--strip-h) + 16px), calc(13 * var(--vh)));
-}
-
-html[data-wco] .app-rail .rail-head {
-  padding-right: calc(var(--wco-w) - var(--gap) + 6px);
-}
-
-/* The panel's own close button would sit beside the window's; the top bar toggle (Mod+J) remains. */
-html[data-wco] .app-rail .rail-close {
-  display: none;
 }
 
 /* macOS: the traffic lights sit at the top left, over the sidebar's first row or the top bar. */

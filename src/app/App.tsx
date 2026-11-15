@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { INTRO_DELAY, INTRO_MIN, LogoIntro, LogoMark, ProviderMark } from '@/art/Logo';
 import { Home } from '@/features/home/Home';
@@ -7,15 +7,19 @@ import { useOnboarding } from '@/features/onboarding/useOnboarding';
 import { SessionView } from '@/features/session/SessionView';
 import { Sidebar } from '@/features/sidebar/Sidebar';
 import { Icon } from '@/icons';
-import { desktop, onWindowControlsChange, windowControlsWidth } from '@/lib/desktop';
+import { windowShell } from '@/lib/desktop';
 import { baseName, formatTokens } from '@/lib/format';
 import { goHome, openSettings } from '@/state/actions';
 import { useActiveProvider, useHotkey, useSessionAccountName } from '@/state/hooks';
 import { useShallow } from 'zustand/react/shallow';
-import { useStore } from '@/state/store';
+import { useStore, type RailTab } from '@/state/store';
 import { IconButton, Tip, TipProvider, Toasts } from '@/ui';
 import { CapabilitiesButton } from './Capabilities';
+import { WindowControls } from './WindowControls';
 import './app.css';
+
+/** The side panel's tabs in the order of their shortcuts (Alt+1 to Alt+6), as the panel lists them. */
+const RAIL_TAB_ORDER: RailTab[] = ['changes', 'files', 'browser', 'terminal', 'tasks', 'context'];
 
 // Surfaces that are not part of the first paint load on demand (and are prefetched once idle).
 const loadPalette = () => import('@/features/palette/Palette');
@@ -82,7 +86,6 @@ export function App() {
     root.zoom = fontScale === 1 ? '' : String(fontScale);
     root.setProperty('--ui-zoom', String(fontScale));
   }, [fontScale]);
-  useTitleStrip(fontScale);
 
   const paletteOpen = useStore((s) => s.ui.paletteOpen);
   const historyOpen = useStore((s) => s.ui.historyOpen);
@@ -104,6 +107,19 @@ export function App() {
   useHotkey('mod+,', useCallback((e) => (e.preventDefault(), openSettings()), []));
   useHotkey('mod+shift+o', useCallback((e) => (e.preventDefault(), goHome()), []));
   useHotkey('mod+o', useCallback((e) => (e.preventDefault(), setUi({ projectPicker: true })), [setUi]));
+  // Alt+1 to Alt+6: the side panel's tabs, in order (opens the panel when it is closed).
+  useEffect(() => {
+    if (!sessionId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const tab = RAIL_TAB_ORDER[Number(e.code.replace('Digit', '')) - 1];
+      if (!/^Digit[1-6]$/.test(e.code) || !tab) return;
+      e.preventDefault();
+      setUi({ railOpen: true, railTab: tab });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sessionId, setUi]);
 
   return (
     <TipProvider>
@@ -160,6 +176,7 @@ export function App() {
               animate={{ width: 'var(--rail-w)', opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 380, damping: 38 }}
+              onUpdate={trackRailWidth}
             >
               <div className="app-rail-inner">
                 <Suspense fallback={null}>
@@ -188,38 +205,25 @@ export function App() {
         </Suspense>
         <Toasts />
       </div>
+      {/* Outside .app (an isolated stacking context) so the controls stay above dialogs and the welcome. */}
+      <WindowControls />
     </TipProvider>
   );
 }
 
 /**
- * The desktop title strip (Windows and Linux): the native minimise / maximise / close buttons are
- * drawn over the page's top-right corner. The app's top-bar actions sit immediately left of them,
- * sized like them, and the native overlay is told the strip's height (window gap plus top bar,
- * scaled by Interface size) so both groups share one row and one centre line. Lengths go to CSS
- * divided by the root zoom, because the root's zoom multiplies them again.
+ * While the panel opens or closes, the stage's top bar hands the room kept for the window controls
+ * over to the panel frame by frame (--rail-live, app.css), so its actions never pass under them.
+ * Set on the top bar alone: a custom property on .app would restyle the whole tree every frame.
  */
-function useTitleStrip(fontScale: number) {
-  useEffect(() => {
-    if (!desktop) return;
-    const root = document.documentElement;
-    const sync = () => {
-      const controls = windowControlsWidth();
-      if (controls === null) {
-        delete root.dataset.wco;
-        return;
-      }
-      root.dataset.wco = '';
-      root.style.setProperty('--wco-w', `${controls / fontScale}px`);
-      root.style.setProperty('--caption-w', `${controls / 3 / fontScale}px`);
-      const css = getComputedStyle(root);
-      const strip = (parseFloat(css.getPropertyValue('--gap')) + parseFloat(css.getPropertyValue('--topbar-h'))) * fontScale;
-      if (strip > 0) desktop?.setTitleBarHeight?.(strip);
-    };
-    sync();
-    return onWindowControlsChange(sync);
-  }, [fontScale]);
-}
+const trackRailWidth = windowShell
+  ? (latest: { width?: unknown }) => {
+      const bar = document.querySelector<HTMLElement>('.stage > .topbar');
+      if (!bar) return;
+      const w = latest.width;
+      bar.style.setProperty('--rail-live', typeof w === 'number' ? `${w}px` : typeof w === 'string' && w.endsWith('px') ? w : '999px');
+    }
+  : undefined;
 
 /** How full the context window is; its own subscription so usage ticks re-render only this. */
 function ContextMeter({ sessionId }: { sessionId: string }) {
@@ -228,12 +232,13 @@ function ContextMeter({ sessionId }: { sessionId: string }) {
   const setUi = useStore((s) => s.setUi);
   if (!used || !max) return null;
   const pct = Math.min(100, (used / max) * 100);
+  // A ring drawn on the icons' 16 px grid: a hairline track and a 1.5 px arc, so it weighs what the line icons beside it weigh.
   return (
     <Tip label={`${formatTokens(used)} of ${formatTokens(max)} context used`}>
-      <button type="button" className="ctx-meter" onClick={() => setUi({ railOpen: true, railTab: 'context' })} data-warn={pct > 80 || undefined}>
-        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden>
-          <circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeOpacity="0.18" strokeWidth="2.2" />
-          <circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" pathLength={100} strokeDasharray={`${Math.max(2, pct)} 100`} transform="rotate(-90 10 10)" />
+      <button type="button" className="ctx-meter" onClick={() => setUi({ railOpen: true, railTab: 'context' })} data-warn={pct > 80 || undefined} aria-label={`Context ${Math.round(pct)}% used`}>
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
+          <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+          <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" pathLength={100} strokeDasharray={`${Math.max(1.5, pct)} 100`} transform="rotate(-90 8 8)" />
         </svg>
         <span className="num">{Math.round(pct)}%</span>
       </button>
@@ -254,19 +259,6 @@ function Topbar() {
     }),
   );
   const accountName = useSessionAccountName(session);
-
-  // The actions' width, so the title stops short of them when they float in the title strip.
-  const actions = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = actions.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      const w = entry.borderBoxSize?.[0]?.inlineSize ?? el.offsetWidth;
-      document.documentElement.style.setProperty('--caption-actions-w', `${Math.ceil(w)}px`);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   return (
     <header className="topbar">
@@ -302,7 +294,7 @@ function Topbar() {
         <div className="grow" />
       )}
 
-      <div className="topbar-actions" ref={actions}>
+      <div className="topbar-actions">
         {session && <ContextMeter sessionId={session.id} />}
         {session && <CapabilitiesButton sessionId={session.id} />}
         <IconButton icon="search" label="Search and commands" keys="mod+k" onClick={() => setUi({ paletteOpen: true })} />

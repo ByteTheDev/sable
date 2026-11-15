@@ -10,11 +10,45 @@ export interface DesktopShell {
   pickFolder?: (startIn?: string) => Promise<string | null>;
   /** The real path of a dropped or picked file; empty when it has none (pasted). Missing on older shells. */
   pathForFile?: (file: File) => string;
-  /** Tells the shell how tall the title strip is (CSS pixels) so the native buttons match it. */
-  setTitleBarHeight?: (height: number) => void;
+  /** The commands behind the page's own window controls (Windows, Linux). Missing on older shells. */
+  window?: WindowShell;
+}
+
+export interface WindowState {
+  maximized: boolean;
+  focused: boolean;
+  fullScreen: boolean;
+}
+
+export interface WindowShell {
+  minimize: () => void;
+  toggleMaximize: () => void;
+  close: () => void;
+  getState: () => Promise<WindowState>;
+  onState: (cb: (s: WindowState) => void) => () => void;
 }
 
 export const desktop: DesktopShell | undefined = typeof window === 'undefined' ? undefined : (window as { sableDesktop?: DesktopShell }).sableDesktop;
+
+/**
+ * Development only: `?wc` in the address shows the window controls in a plain browser so their look
+ * can be judged in headless screenshots (`?wc=max` draws the restore icon, `?wc=blur` the unfocused
+ * state). The buttons do nothing there.
+ */
+function previewShell(): WindowShell | undefined {
+  if (!import.meta.env.DEV || typeof location === 'undefined') return undefined;
+  const flag = new URLSearchParams(location.search).get('wc');
+  if (flag === null) return undefined;
+  const state: WindowState = { maximized: flag === 'max', focused: flag !== 'blur', fullScreen: false };
+  const log = (what: string) => () => console.info(`[window controls preview] ${what}`);
+  return { minimize: log('minimize'), toggleMaximize: log('toggle maximize'), close: log('close'), getState: async () => state, onState: () => () => {} };
+}
+
+/**
+ * The page draws its own minimise / maximise / close buttons on Windows and Linux desktop builds
+ * (macOS keeps its traffic lights). Undefined when there are none to draw.
+ */
+export const windowShell: WindowShell | undefined = desktop ? (desktop.platform !== 'darwin' ? desktop.window : undefined) : previewShell();
 
 /** A dropped or picked file's real path in the desktop app; undefined in the browser or when it has none. */
 export function pathForFile(file: File): string | undefined {
@@ -28,25 +62,3 @@ export function pathForFile(file: File): string | undefined {
 /** True when the native folder dialog replaces the in-app folder browser. */
 export const hasNativeFolderPicker = !!desktop?.pickFolder;
 
-/**
- * Window Controls Overlay: the native minimise / maximise / close buttons drawn over the page
- * (Windows and Linux desktop builds). Returns their width in viewport pixels, or null without them.
- */
-export function windowControlsWidth(): number | null {
-  const wco = (navigator as { windowControlsOverlay?: { visible: boolean; getTitlebarAreaRect(): DOMRect } }).windowControlsOverlay;
-  if (!wco?.visible) return null;
-  const r = wco.getTitlebarAreaRect();
-  // The title bar area is what is left of the window beside the buttons (they sit on the right here).
-  const right = window.innerWidth - (r.x + r.width);
-  return right > 0 ? right : null;
-}
-
-export function onWindowControlsChange(fn: () => void): () => void {
-  const wco = (navigator as { windowControlsOverlay?: EventTarget }).windowControlsOverlay;
-  wco?.addEventListener('geometrychange', fn);
-  window.addEventListener('resize', fn);
-  return () => {
-    wco?.removeEventListener('geometrychange', fn);
-    window.removeEventListener('resize', fn);
-  };
-}

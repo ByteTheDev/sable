@@ -1,13 +1,24 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 /**
- * Sandboxed preload: the page gets a few facts about the shell, the native folder dialog, the title
- * strip's height (so the native window buttons line up with the top bar), the real path of a dropped or
+ * Sandboxed preload: the page gets a few facts about the shell, the native folder dialog, the window
+ * commands behind its own minimise / maximise / close buttons, the real path of a dropped or
  * picked file (Electron's webUtils.getPathForFile), and three narrow calls for
  * the panel browser (capture its page, clear its data, hear about blocked downloads), nothing else.
  * The app version arrives as an extra argument from the main process.
  */
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+
+interface WindowState {
+  maximized: boolean;
+  focused: boolean;
+  fullScreen: boolean;
+}
+
+const toState = (s: unknown): WindowState => {
+  const o = (s ?? {}) as Partial<WindowState>;
+  return { maximized: !!o.maximized, focused: o.focused !== false, fullScreen: !!o.fullScreen };
+};
 
 contextBridge.exposeInMainWorld('sableDesktop', {
   platform: process.platform,
@@ -24,8 +35,21 @@ contextBridge.exposeInMainWorld('sableDesktop', {
       return '';
     }
   },
-  /** The height of the app's title strip in CSS pixels; the native buttons are sized to match. */
-  setTitleBarHeight: (height: number) => ipcRenderer.send('sable:titlebar', Number(height)),
+  /** The page's own minimise / maximise / close buttons (Windows, Linux): three commands and the window's state. */
+  window: {
+    minimize: () => ipcRenderer.send('sable:window', 'minimize'),
+    toggleMaximize: () => ipcRenderer.send('sable:window', 'toggle-maximize'),
+    close: () => ipcRenderer.send('sable:window', 'close'),
+    getState: (): Promise<WindowState> => ipcRenderer.invoke('sable:window-state').then(toState),
+    onState: (cb: (s: WindowState) => void) => {
+      if (typeof cb !== 'function') return () => {};
+      const listener = (_e: unknown, msg: unknown) => cb(toState(msg));
+      ipcRenderer.on('sable:window-state', listener);
+      return () => {
+        ipcRenderer.removeListener('sable:window-state', listener);
+      };
+    },
+  },
   browser: {
     capture: (webContentsId: number): Promise<string> => ipcRenderer.invoke('sable:browser-capture', Number(webContentsId)),
     clearData: (): Promise<void> => ipcRenderer.invoke('sable:browser-clear'),

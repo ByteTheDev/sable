@@ -27,14 +27,6 @@ import { pickFolder, type ShowFolderDialog } from './folder';
 const isMac = process.platform === 'darwin';
 const isWin = process.platform === 'win32';
 
-/**
- * Height of the native controls overlay (Windows, Linux) before the page reports its own: the app's
- * title strip (the window gap plus the top bar, 8 + 44 px) at the default Interface size. The page
- * sends its real height whenever Interface size or zoom changes (sable:titlebar), so the native
- * buttons and the app's own top-bar buttons always share one row.
- */
-const TITLEBAR_HEIGHT = 52;
-const TITLEBAR_SYMBOL = '#b3b2ae';
 /** Preferred port: a stable origin keeps the page's local storage and zoom between runs. */
 const PREFERRED_PORT = 47_317;
 const BG = '#060607';
@@ -181,7 +173,10 @@ const isViewable = (target: string) => {
 /** Calls from the app's own page in the main window; anything else (guests, other frames) is refused. */
 const fromApp = (e: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) => isAppUrl(e.senderFrame?.url ?? '') && e.sender === win?.webContents;
 
-/** Window calls from the page: the native folder dialog and the title strip's height. */
+/** What the page's own window controls show: maximised (restore icon), focused (full strength), full screen (hidden). */
+const windowState = (w: BrowserWindow) => ({ maximized: w.isMaximized(), focused: w.isFocused(), fullScreen: w.isFullScreen() });
+
+/** Window calls from the page: the native folder dialog and the window controls (Windows, Linux). */
 function windowCalls() {
   const stub = screenshotFile ? process.env.SABLE_DIALOG_STUB : undefined;
   ipcMain.handle('sable:pick-folder', async (e, suggested: unknown) => {
@@ -196,17 +191,28 @@ function windowCalls() {
     return pickFolder(show, suggested);
   });
 
-  // The page reports its title strip in CSS pixels; the overlay is sized in window pixels (page zoom applied).
-  let current = TITLEBAR_HEIGHT;
-  ipcMain.on('sable:titlebar', (e, height: unknown) => {
+  // The page draws minimise, maximise / restore and close itself (macOS keeps its traffic lights).
+  ipcMain.on('sable:window', (e, command: unknown) => {
     if (isMac || !fromApp(e) || !win) return;
-    const css = Number(height);
-    if (!Number.isFinite(css) || css < 24 || css > 160) return;
-    const px = Math.round(css * e.sender.getZoomFactor());
-    if (px === current) return;
-    current = px;
-    win.setTitleBarOverlay({ color: '#00000000', symbolColor: TITLEBAR_SYMBOL, height: px });
+    if (command === 'minimize') win.minimize();
+    else if (command === 'toggle-maximize') {
+      if (win.isMaximized()) win.unmaximize();
+      else win.maximize();
+    } else if (command === 'close') win.close();
   });
+  ipcMain.handle('sable:window-state', (e) => {
+    if (!fromApp(e) || !win) throw new Error('Not allowed');
+    return windowState(win);
+  });
+}
+
+/** Keeps the page's window controls in step with the window: restore icon while maximised, dimmed while unfocused. */
+function reportWindowState(w: BrowserWindow) {
+  if (isMac) return;
+  const push = () => {
+    if (!w.isDestroyed()) w.webContents.send('sable:window-state', windowState(w));
+  };
+  for (const ev of ['maximize', 'unmaximize', 'restore', 'focus', 'blur', 'enter-full-screen', 'leave-full-screen'] as const) w.on(ev as 'focus', push);
 }
 
 /** Pages inside the panel browser (<webview> guests): web navigation only, popups stay in the view. */
@@ -414,9 +420,8 @@ function createWindow(url: string) {
     // The packaged executable carries the icon too; this covers `electron .` and Linux.
     icon: isMac ? undefined : path.join(__dirname, isWin ? 'icon.ico' : 'icon.png'),
     backgroundColor: BG,
-    ...(isMac
-      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 18, y: 23 } }
-      : { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#00000000', symbolColor: TITLEBAR_SYMBOL, height: TITLEBAR_HEIGHT } }),
+    // Windows and Linux: no native caption buttons; the page draws its own (WindowControls in App.tsx).
+    ...(isMac ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 18, y: 23 } } : { titleBarStyle: 'hidden' as const }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -448,6 +453,7 @@ function createWindow(url: string) {
   }
   w.on('closed', () => (win = undefined));
 
+  reportWindowState(w);
   viewShortcuts(w);
   contextMenu(w);
   if (screenshotFile) {

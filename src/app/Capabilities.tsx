@@ -44,7 +44,7 @@ export function CapabilitiesButton({ sessionId }: { sessionId: string }) {
       <Tip label="Capabilities">
         <PopoverTrigger asChild>
           <button type="button" className="icon-btn caps-trigger" aria-label="Capabilities">
-            <Icon name="plug" size={16} />
+            <Icon name="capabilities" size={16} />
             {anyOn && <span className="caps-dot" aria-hidden />}
           </button>
         </PopoverTrigger>
