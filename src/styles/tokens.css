@@ -1,0 +1,183 @@
+/*
+ * Sable design tokens.
+ *
+ * Direction: ink and light. The interface is monochrome: ink surfaces, ivory text. Colour lives
+ * only in the backdrop and in a few tiny marks that mean something (amber = waiting on you,
+ * red = error, green/red numbers in diffs). Surfaces are flat; depth comes from layering (each
+ * layer one small step lighter) and from light that reacts: hairlines that are almost invisible
+ * at rest brighten near the pointer ([data-spot], ui/spot.ts). Floating glass carries a faint
+ * static grain. Small accents use a monochrome dither instead of gradients. Nothing glossy.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ── ink: canvas & surfaces, one small step per layer ── */
+  --bg: #070708;
+  --sheet: #0c0c0e;
+  --panel: #121214;
+  --panel-2: #18181b;
+  --panel-3: #1f1f23;
+  --panel-4: #27272c;
+
+  /* Fills for hover / selected, laid over any surface. */
+  --fill-1: rgb(255 255 255 / 0.035);
+  --fill-2: rgb(255 255 255 / 0.06);
+  --fill-3: rgb(255 255 255 / 0.09);
+  --fill-4: rgb(255 255 255 / 0.125);
+  /* The highlighted row in a menu or list: one step lighter, never darker. */
+  --hl: var(--fill-2);
+  /* Deprecated alias (was a darker "pressed" fill); use --hl. */
+  --recess: var(--hl);
+
+  /* Hairlines: almost invisible at rest. --line separates, --line-2 outlines a control or a floating layer. */
+  --line: rgb(255 255 255 / 0.06);
+  --line-2: rgb(255 255 255 / 0.09);
+  --line-3: rgb(255 255 255 / 0.15);
+  /* The reactive hairline under the pointer (see [data-spot] in ui.css). */
+  --spot: rgb(255 255 255 / 0.3);
+  --spot-r: 140px;
+
+  /* ── text ── */
+  --text: #f2f1ee;
+  --text-2: #aeada9;
+  --text-3: #7a7975;
+  --text-4: #54534f;
+  --text-inverse: #0a0a0b;
+
+  /* ── colour: the backdrop and meaningful marks only ──
+     Amber = waiting on you, red = error, green/red = diff numbers. The other hues belong to the
+     backdrop (art/) and the agent marks; never use them on chrome. */
+  --ember: oklch(0.76 0.165 48);
+  --amber: oklch(0.84 0.135 82);
+  --rose: oklch(0.74 0.16 8);
+  --red: oklch(0.71 0.175 24);
+  --violet: oklch(0.74 0.14 300);
+  --iris: oklch(0.73 0.135 274);
+  --blue: oklch(0.77 0.115 245);
+  --mint: oklch(0.84 0.13 160);
+  --green: oklch(0.8 0.15 150);
+
+  --ember-dim: oklch(0.76 0.165 48 / 0.14);
+  --amber-dim: oklch(0.84 0.135 82 / 0.12);
+  --red-dim: oklch(0.71 0.175 24 / 0.13);
+  --violet-dim: oklch(0.74 0.14 300 / 0.14);
+  --iris-dim: oklch(0.73 0.135 274 / 0.15);
+  --blue-dim: oklch(0.77 0.115 245 / 0.14);
+  --green-dim: oklch(0.8 0.15 150 / 0.13);
+
+  --add: var(--green);
+  --add-bg: oklch(0.8 0.15 150 / 0.1);
+  --add-bg-strong: oklch(0.8 0.15 150 / 0.2);
+  --del: var(--red);
+  --del-bg: oklch(0.71 0.175 24 / 0.1);
+  --del-bg-strong: oklch(0.71 0.175 24 / 0.2);
+
+  /* Accent is neutral: the interface never takes the agent's colour (its mark keeps its own). */
+  --accent: var(--text);
+  --accent-dim: var(--fill-2);
+
+  /* Focus: neutral ivory at reduced strength. */
+  --focus: rgb(242 241 238 / 0.5);
+  --focus-field: rgb(242 241 238 / 0.28);
+
+  /* ── type ── */
+  --font-sans: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+
+  --t-micro: 11.5px;
+  --t-small: 12px;
+  --t-ui: 13px;
+  --t-body: 14px;
+  --t-lead: 15.5px;
+  --t-h3: 19px;
+  --t-h2: 24px;
+  --t-h1: 32px;
+  --t-display: 42px;
+
+  --w-regular: 400;
+  --w-medium: 500;
+  --w-semi: 580;
+  --w-bold: 660;
+
+  /* ── shape ── */
+  --r-xs: 5px;
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 12px;
+  --r-xl: 14px;
+  --r-2xl: 18px;
+  --r-pill: 999px;
+
+  /* ── depth: in-flow surfaces cast nothing; floating layers cast one soft shadow ── */
+  --shadow-pop: 0 12px 32px -12px rgb(0 0 0 / 0.75), 0 0 0 1px rgb(0 0 0 / 0.35);
+  --shadow-float: var(--shadow-pop);
+  --shadow-composer: 0 18px 44px -18px rgb(0 0 0 / 0.75);
+
+  /* Floating layers: flat frosted ink, a uniform hairline, a faint static grain. */
+  --glass: rgb(20 20 23 / 0.88);
+  --glass-strong: rgb(22 22 25 / 0.95);
+  --glass-menu: rgb(24 24 28 / 0.86);
+  --glass-edge: inset 0 0 0 1px rgb(255 255 255 / 0.075);
+  --blur: blur(18px) saturate(130%);
+  --blur-soft: blur(10px) saturate(120%);
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.08 0 0 0 -0.035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --grain-size: 160px 160px;
+
+  /* ── dither: the house texture for small accents (white pixels; set strength with opacity) ──
+     --dither-fade runs dense to empty, left to right (24 x 4 cells); -50 and -25 are flat tones.
+     Draw cells 2px wide: background-size var(--dither-fade-size) and image-rendering: pixelated. */
+  --dither-fade: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='4' shape-rendering='crispEdges'%3E%3Cpath fill='%23fff' d='M0 0h1v1h-1zM1 0h1v1h-1zM2 0h1v1h-1zM3 0h1v1h-1zM4 0h1v1h-1zM5 0h1v1h-1zM6 0h1v1h-1zM7 0h1v1h-1zM8 0h1v1h-1zM9 0h1v1h-1zM10 0h1v1h-1zM12 0h1v1h-1zM14 0h1v1h-1zM16 0h1v1h-1zM18 0h1v1h-1zM20 0h1v1h-1zM0 1h1v1h-1zM1 1h1v1h-1zM3 1h1v1h-1zM4 1h1v1h-1zM5 1h1v1h-1zM7 1h1v1h-1zM9 1h1v1h-1zM11 1h1v1h-1zM13 1h1v1h-1zM0 2h1v1h-1zM1 2h1v1h-1zM2 2h1v1h-1zM3 2h1v1h-1zM4 2h1v1h-1zM5 2h1v1h-1zM6 2h1v1h-1zM7 2h1v1h-1zM8 2h1v1h-1zM10 2h1v1h-1zM12 2h1v1h-1zM14 2h1v1h-1zM16 2h1v1h-1zM18 2h1v1h-1zM0 3h1v1h-1zM1 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM5 3h1v1h-1zM7 3h1v1h-1zM9 3h1v1h-1zM11 3h1v1h-1zM15 3h1v1h-1z'/%3E%3C/svg%3E");
+  --dither-50: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'%3E%3Cpath fill='%23fff' d='M0 0h1v1h-1zM2 0h1v1h-1zM1 1h1v1h-1zM3 1h1v1h-1zM0 2h1v1h-1zM2 2h1v1h-1zM1 3h1v1h-1zM3 3h1v1h-1z'/%3E%3C/svg%3E");
+  --dither-25: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'%3E%3Cpath fill='%23fff' d='M0 0h1v1h-1zM2 0h1v1h-1zM0 2h1v1h-1zM2 2h1v1h-1z'/%3E%3C/svg%3E");
+  /* A short dense-to-empty edge in 1px cells (8 x 4), for the leading edge of meters. */
+  --dither-edge: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='4' shape-rendering='crispEdges'%3E%3Cpath fill='%23fff' d='M0 0h1v1h-1zM1 0h1v1h-1zM2 0h1v1h-1zM4 0h1v1h-1zM6 0h1v1h-1zM0 1h1v1h-1zM1 1h1v1h-1zM3 1h1v1h-1zM5 1h1v1h-1zM0 2h1v1h-1zM1 2h1v1h-1zM2 2h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM1 3h1v1h-1zM3 3h1v1h-1z'/%3E%3C/svg%3E");
+  --dither-fade-size: 48px 8px;
+  --dither-tone-size: 8px 8px;
+
+  /* ── motion: feedback within a frame, short transitions on opacity/transform/background only ── */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.5, 0, 0.9, 0.4);
+  --spring: linear(0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%, 1.017 18.4%, 1.077 20.4%, 1.121 22.8%, 1.149 25.7%, 1.159 29.6%, 1.14 34.9%, 1.079 43%, 1.04 48.3%, 1.016 53.4%, 0.999 61.6%, 0.995 71.2%, 1);
+  --d-1: 90ms;
+  --d-2: 120ms;
+  --d-3: 200ms;
+  --d-4: 340ms;
+
+  /* ── layout ── */
+  --sidebar-w: 268px;
+  --rail-w: 396px;
+  --gap: 8px;
+  --column: 760px;
+  --topbar-h: 44px;
+  /* Viewport units that stay true under Interface size (the root is zoomed, which scales vh/vw too). */
+  --vh: calc(1vh / var(--ui-zoom, 1));
+  --vw: calc(1vw / var(--ui-zoom, 1));
+
+  --z-pop: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+}
+
+/* Modes and kinds are told apart by icon and label, not hue. Only danger keeps its red. */
+[data-tone='ask'],
+[data-tone='edit'],
+[data-tone='plan'],
+[data-tone='auto'] {
+  --tone: var(--text-2);
+  --tone-dim: var(--fill-2);
+}
+[data-tone='danger'] {
+  --tone: var(--red);
+  --tone-dim: var(--red-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --d-1: 1ms;
+    --d-2: 1ms;
+    --d-3: 1ms;
+    --d-4: 1ms;
+  }
+}

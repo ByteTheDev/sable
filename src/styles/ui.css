@@ -1,0 +1,972 @@
+/* Primitive controls. Class-based so any component (or Radix part) can wear them. */
+
+/* ───────────── buttons ───────────── */
+
+.btn {
+  --h: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--h);
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r-sm);
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  white-space: nowrap;
+  color: var(--text);
+  /* Ink and light: one fill step and a hairline that is almost not there. No bevel, no gloss. */
+  background-color: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition:
+    background-color var(--d-1) var(--ease),
+    opacity var(--d-1) var(--ease),
+    scale 80ms var(--ease-out);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.btn:hover {
+  background-color: var(--fill-3);
+}
+
+.btn:active,
+.btn[data-state='open'] {
+  background-color: var(--fill-2);
+}
+
+/* Press: a small give, inside one frame. */
+.btn:active {
+  scale: 0.97;
+}
+
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.btn svg {
+  flex-shrink: 0;
+}
+
+.btn-sm {
+  --h: 26px;
+  padding: 0 9px;
+  font-size: var(--t-small);
+  border-radius: 7px;
+  gap: 5px;
+}
+
+.btn-lg {
+  --h: 36px;
+  padding: 0 16px;
+  font-size: var(--t-ui);
+  border-radius: var(--r-sm);
+}
+
+/* The one bright control per view: solid ivory, dark text. Flat: no gradient, no glow. */
+.btn-primary {
+  color: var(--text-inverse);
+  font-weight: var(--w-semi);
+  background-color: var(--text);
+  box-shadow: none;
+}
+
+.btn-primary:hover {
+  background-color: #fff;
+}
+
+.btn-primary:active {
+  background-color: #dcdad5;
+}
+
+.btn-ghost {
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--text-2);
+}
+
+.btn-ghost:hover {
+  background-color: var(--fill-2);
+  color: var(--text);
+}
+
+.btn-ghost:active,
+.btn-ghost[data-state='open'] {
+  background-color: var(--fill-3);
+  color: var(--text);
+}
+
+/* Destructive: a neutral button whose words are red (a meaningful mark, not a coloured block). */
+.btn-danger {
+  color: oklch(0.8 0.13 24);
+}
+
+.btn-danger:hover {
+  background-color: var(--red-dim);
+}
+
+/* Quiet square icon button for toolbars. */
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--text-3);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale 80ms var(--ease-out);
+  flex-shrink: 0;
+}
+
+.icon-btn:hover {
+  background-color: var(--fill-2);
+  color: var(--text);
+}
+
+.icon-btn:active {
+  background-color: var(--fill-3);
+  scale: 0.94;
+}
+
+.icon-btn[data-active='true'],
+.icon-btn[data-state='open'] {
+  background: var(--fill-3);
+  color: var(--text);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* ───────────── chips & badges ───────────── */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: var(--r-sm);
+  font-size: var(--t-ui);
+  font-weight: var(--w-regular);
+  color: var(--text-2);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.chip:hover,
+.chip[data-state='open'] {
+  background: var(--fill-2);
+  color: var(--text);
+}
+
+.chip svg {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.chip:hover svg {
+  color: var(--text-2);
+}
+
+.chip .caret {
+  margin-left: -2px;
+  opacity: 0.6;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 19px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  font-size: var(--t-micro);
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+  background-color: var(--fill-2);
+  white-space: nowrap;
+}
+
+.badge[data-tone] {
+  color: var(--tone);
+}
+
+.kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: var(--r-xs);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: var(--w-medium);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--text-3);
+  background-color: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.kbds {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+/* ───────────── fields ───────────── */
+
+.field {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background-color: rgb(0 0 0 / 0.22);
+  color: var(--text);
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.field::placeholder {
+  color: var(--text-4);
+}
+
+.field:hover {
+  border-color: var(--line-3);
+}
+
+/* Focus: the hairline turns soft ivory, nothing else. */
+.field:focus,
+.field:focus-visible {
+  outline: none;
+  border-color: var(--focus-field);
+}
+
+textarea.field {
+  height: auto;
+  padding: 7px 10px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.label {
+  display: block;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+
+/* ───────────── switch ───────────── */
+
+.switch {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border-radius: 99px;
+  background-color: var(--fill-4);
+  transition: background-color var(--d-2) var(--ease);
+  flex-shrink: 0;
+}
+
+.switch[data-state='checked'] {
+  background-color: var(--text);
+}
+
+.switch-thumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  margin: 2px;
+  border-radius: 50%;
+  background-color: #d6d5d1;
+  transition:
+    transform var(--d-2) var(--ease-out),
+    background-color var(--d-2) var(--ease);
+}
+
+.switch[data-state='checked'] .switch-thumb {
+  transform: translateX(12px);
+  background-color: var(--panel);
+}
+
+/* ───────────── slider ───────────── */
+
+/* A thin hairline track, an ivory fill, a small solid thumb. The hit area is the full 18px row. */
+.slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 18px;
+  touch-action: none;
+  user-select: none;
+  cursor: pointer;
+}
+
+.slider-track {
+  position: relative;
+  flex: 1;
+  height: 2px;
+  border-radius: 99px;
+  background-color: var(--fill-4);
+  overflow: hidden;
+}
+
+.slider-range {
+  position: absolute;
+  height: 100%;
+  background-color: var(--text-2);
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.slider:hover .slider-range,
+.slider:has(:focus-visible) .slider-range {
+  background-color: var(--text);
+}
+
+.slider-thumb {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: var(--text);
+  transition:
+    scale var(--d-1) var(--ease-out),
+    background-color var(--d-1) var(--ease);
+}
+
+.slider-thumb:hover {
+  scale: 1.12;
+}
+
+.slider-thumb:active {
+  scale: 0.94;
+}
+
+.slider-thumb:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+/* ───────────── segmented control ───────────── */
+
+.seg {
+  position: relative;
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background-color: rgb(0 0 0 / 0.22);
+}
+
+.seg-item {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+  transition: color var(--d-1) var(--ease);
+  white-space: nowrap;
+}
+
+.seg-item:hover {
+  color: var(--text-2);
+}
+
+.seg-item[data-active='true'] {
+  color: var(--text);
+}
+
+.seg-pill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 6px;
+  background-color: var(--fill-3);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* ───────────── floating surfaces (menus, popovers, tooltips) ───────────── */
+
+/* Interface size zooms the root, but floating layers are placed in screen pixels: the
+   positioned wrapper undoes the zoom and its content applies it again. */
+[data-radix-popper-content-wrapper] {
+  zoom: calc(1 / var(--ui-zoom, 1));
+}
+
+[data-radix-popper-content-wrapper] > * {
+  zoom: var(--ui-zoom, 1);
+}
+
+/* Menus and popovers can open from inside a dialog, so they always float above it (toasts stay on top). */
+.pop {
+  z-index: calc(var(--z-modal) + 2);
+  min-width: 200px;
+  padding: 4px;
+  border-radius: 16px;
+  background: var(--grain) 0 0 / var(--grain-size), var(--glass-menu);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--glass-edge);
+  color: var(--text);
+  font-size: var(--t-ui);
+  /* Grows out of its trigger and shrinks back into it: a clip, so the content is never scaled.
+     ui/grow.ts measures the origin when the animation starts and sets --g-* and --o-*. */
+  position: relative;
+  translate: var(--o-x, 0px) var(--o-y, 0px);
+  animation:
+    pop-grow 110ms var(--ease-out) backwards,
+    pop-fade 70ms linear backwards;
+}
+
+/* The drop shadow is its own layer: it would be cut by the clip, so it fades in once the box is open. */
+.pop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+  opacity: 0;
+  animation: pop-shadow 160ms var(--ease) 100ms forwards;
+}
+
+.pop[data-state='closed'] {
+  animation: pop-shrink 100ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
+}
+
+.pop[data-state='closed']::after {
+  animation: none;
+}
+
+@keyframes pop-grow {
+  from {
+    clip-path: inset(var(--g-t, 0px) var(--g-r, 0px) var(--g-b, 0px) var(--g-l, 0px) round var(--g-rad, 10px));
+  }
+  to {
+    clip-path: inset(0px round 16px);
+  }
+}
+
+@keyframes pop-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pop-shadow {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pop-shrink {
+  from {
+    clip-path: inset(0px round 16px);
+    opacity: 1;
+  }
+  65% {
+    opacity: 1;
+  }
+  to {
+    clip-path: inset(var(--g-t, 0px) var(--g-r, 0px) var(--g-b, 0px) var(--g-l, 0px) round var(--g-rad, 10px));
+    opacity: 0;
+  }
+}
+
+.pop-pad {
+  padding: 14px;
+}
+
+.menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 26px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: var(--t-ui);
+  color: var(--text-2);
+  cursor: default;
+  user-select: none;
+  outline: none;
+  scroll-margin: 6px;
+  /* The highlight crossfades between rows; it never slides. */
+  transition:
+    background-color 80ms var(--ease-out),
+    color 80ms var(--ease-out);
+}
+
+.menu-item svg {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+/* The highlighted row is one step lighter than the menu: light, not a press. */
+.menu-item[data-highlighted],
+.menu-item[data-active='true'],
+.menu-item:hover {
+  background-color: var(--hl);
+  color: var(--text);
+}
+
+.menu-item[data-highlighted] svg,
+.menu-item[data-active='true'] svg,
+.menu-item:hover svg {
+  color: var(--text);
+}
+
+.menu-item[data-disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.menu-item[data-tone='danger'] {
+  color: oklch(0.8 0.13 24);
+}
+
+.menu-item[data-tone='danger'] svg {
+  color: currentColor;
+}
+
+.menu-item .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.menu-item .hint {
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.menu-label {
+  padding: 7px 8px 3px;
+  font-size: var(--t-micro);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--line);
+}
+
+.tooltip {
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text);
+  background-color: rgb(30 30 34 / 0.97);
+  box-shadow: var(--shadow-pop);
+  animation: pop-in var(--d-1) var(--ease-out);
+  transform-origin: var(--radix-tooltip-content-transform-origin);
+  pointer-events: none;
+}
+
+/* ───────────── dialog ───────────── */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: rgb(0 0 0 / 0.62);
+  animation: fade-in var(--d-2) var(--ease);
+}
+
+.overlay[data-state='closed'] {
+  animation: fade-in var(--d-1) var(--ease) reverse forwards;
+}
+
+.dialog {
+  position: fixed;
+  z-index: var(--z-modal);
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  width: min(520px, calc(100 * var(--vw) - 32px));
+  max-height: calc(100 * var(--vh) - 48px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-xl);
+  background: var(--grain) 0 0 / var(--grain-size), var(--panel);
+  box-shadow: var(--shadow-pop);
+  animation: dialog-in 140ms var(--ease-out);
+  overflow: hidden;
+}
+
+.dialog[data-state='closed'] {
+  animation: dialog-out var(--d-1) var(--ease-in) forwards;
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(6px);
+  }
+}
+
+@keyframes dialog-out {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+.dialog-head {
+  padding: 18px 20px 0;
+}
+
+.dialog-title {
+  font-size: var(--t-lead);
+  font-weight: var(--w-semi);
+  letter-spacing: -0.015em;
+}
+
+.dialog-desc {
+  margin-top: 4px;
+  color: var(--text-2);
+}
+
+.dialog-body {
+  padding: 16px 20px;
+}
+
+.dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 20px 18px;
+}
+
+/* ───────────── cards & panels ───────────── */
+
+/* Card: a flat raised surface with one hairline. */
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background-color: var(--panel);
+}
+
+/* Inside a dialog (itself --panel) a card steps up once more. */
+.dialog .card {
+  background-color: var(--panel-2);
+}
+
+/* Frosted panel: for small layers floating above the backdrop. Solid enough to read. */
+.glass {
+  border: 1px solid var(--line-2);
+  background: var(--grain) 0 0 / var(--grain-size), var(--glass);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--shadow-float);
+}
+
+/* Well: code, terminal output, inputs. A flat darker fill, one hairline. */
+.well {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background-color: rgb(0 0 0 / 0.24);
+}
+
+.hr {
+  height: 1px;
+  background: var(--line);
+  border: 0;
+  margin: 0;
+}
+
+/* ───────────── tabs ───────────── */
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+  transition:
+    color var(--d-1) var(--ease),
+    background-color var(--d-1) var(--ease);
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--text-2);
+  background: var(--fill-1);
+}
+
+.tab[data-active='true'],
+.tab[data-state='active'] {
+  color: var(--text);
+  background-color: var(--fill-3);
+}
+
+.tab .count {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ───────────── misc ───────────── */
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid rgb(255 255 255 / 0.16);
+  border-top-color: var(--text);
+  animation: spin 0.7s linear infinite;
+  /* Its own layer while it turns: a spinner never repaints what is around it. */
+  will-change: transform;
+  flex-shrink: 0;
+}
+
+.empty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  height: 100%;
+  padding: 32px;
+  text-align: center;
+  color: var(--text-3);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ───────────── adaptive quality ─────────────
+   When the machine cannot keep up, the backdrop steps itself down and mirrors its level on
+   <html data-quality="1..3"> (art/DitherField.tsx). The interface sheds its own costly effects
+   with it: floating glass loses its backdrop blur for a more opaque ink, and working labels stop
+   their light sweep (a repaint every frame) for plain secondary text. */
+:root[data-quality] .pop,
+:root[data-quality] .glass,
+:root[data-quality] .dialog {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background-color: var(--glass-strong);
+}
+
+:root[data-quality] .shimmer {
+  animation: none;
+  color: var(--text-2);
+  background: none;
+}
+
+/* ───────────── material: reactive hairlines ─────────────
+   Give a card, panel, menu or dialog `data-spot` and its hairline brightens within --spot-r of
+   the pointer. ui/spot.ts (one rAF-throttled listener on the document) adds one leaf
+   <span class="spot-ring"> to the surface under the pointer the first time it is hovered and
+   moves the light by writing --mx/--my on that span only, so the surface itself never restyles.
+   The ring sits just inside the border, so overflow: hidden does not clip it. Elements without a
+   position become relative. */
+
+@property --mx {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: -1000px;
+}
+
+@property --my {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: -1000px;
+}
+
+:where([data-spot]) {
+  position: relative;
+}
+
+.spot-ring {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 1px;
+  border-radius: inherit;
+  background: radial-gradient(var(--spot-r) circle at var(--mx) var(--my), var(--spot), transparent 100%);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  opacity: 0;
+  transition: opacity var(--d-2) var(--ease);
+  pointer-events: none;
+}
+
+[data-spot-on] > .spot-ring {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spot-ring {
+    display: none;
+  }
+}
+
+/* ───────────── material: dither accents ─────────────
+   Monochrome ordered dither is the house texture for small accents, never a gradient. */
+
+/* Selected row or tab: put this class on the absolutely positioned pill under the content.
+   One fill step, plus dithered light falling off from its leading edge. */
+.dither-sel {
+  background-color: var(--fill-3);
+}
+
+.dither-sel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--dither-fade) left top / var(--dither-fade-size) repeat-y;
+  image-rendering: pixelated;
+  opacity: 0.06;
+  pointer-events: none;
+}
+
+/* Meter: a track and a fill whose leading edge dissolves in dither.
+     <span class="meter" data-level?><span class="meter-fill" style="--p: 0.42"></span></span>
+   The fill slides (transform only), so the dithered edge is never stretched. data-level="amber"
+   or "red" colours it (a meaningful mark) and drops the dither edge. */
+.meter {
+  position: relative;
+  display: block;
+  height: 4px;
+  border-radius: 99px;
+  background-color: rgb(255 255 255 / 0.07);
+  overflow: hidden;
+}
+
+.meter-fill {
+  --meter-color: rgb(242 241 238 / 0.82);
+  position: absolute;
+  inset: 0;
+  padding-right: 8px;
+  border-radius: inherit;
+  background: var(--meter-color) content-box;
+  transform: translateX(calc((var(--p, 0) - 1) * 100%));
+  transition: transform var(--d-4) var(--ease-out);
+}
+
+.meter-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  background: var(--dither-edge) left top / 8px 4px repeat-y;
+  image-rendering: pixelated;
+  opacity: 0.82;
+}
+
+.meter[data-level] .meter-fill {
+  padding-right: 0;
+}
+
+.meter[data-level] .meter-fill::after {
+  display: none;
+}
+
+.meter[data-level='amber'] .meter-fill {
+  --meter-color: var(--amber);
+}
+
+.meter[data-level='red'] .meter-fill {
+  --meter-color: var(--red);
+}
+
+/* Skeleton: a flat placeholder with a dithered band of light passing over it. */
+.skel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 99px;
+  background-color: var(--fill-2);
+}
+
+.skel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--dither-fade) right top / var(--dither-fade-size) repeat-y;
+  image-rendering: pixelated;
+  opacity: 0.1;
+  transform: translateX(-100%) scaleX(-1);
+  animation: skel-sweep 1.5s var(--ease) infinite;
+}
+
+@keyframes skel-sweep {
+  to {
+    transform: translateX(100%) scaleX(-1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skel::after {
+    animation: none;
+    opacity: 0;
+  }
+}
