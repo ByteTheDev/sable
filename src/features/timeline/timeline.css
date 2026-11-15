@@ -1,0 +1,1797 @@
+/*
+ * The conversation timeline.
+ *
+ * Each item is a full-width row whose side padding centres the reading column. Rows
+ * carry their own vertical rhythm as padding (not margins), so `content-visibility`
+ * can skip settled rows without clipping their shadows.
+ */
+
+.tl {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.tl-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
+}
+
+/* Content dissolves under the top bar instead of being cut by it: an overlay in the stage colour (no mask on the scroller). */
+.tl::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
+  height: 34px;
+  background: linear-gradient(to bottom, var(--sheet), transparent);
+  pointer-events: none;
+}
+
+.tl-scroll:focus-visible {
+  outline: none;
+}
+
+.tl-content {
+  --gutter: max(24px, calc((100% - var(--column)) / 2));
+  container: tl / inline-size;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 30px 0 calc(var(--dock-h) + 26px);
+}
+
+.tl-content[data-empty] {
+  justify-content: center;
+  align-items: center;
+}
+
+.tl-empty {
+  color: var(--text-3);
+  font-size: var(--t-body);
+  animation: fade-in var(--d-4) var(--ease);
+}
+
+/* ───────────── rows & rhythm ───────────── */
+
+/* A row brought into view from elsewhere (sable:reveal-item) glows once, then settles. */
+[data-item-id][data-reveal] > * {
+  border-radius: var(--r-md);
+  animation: tl-reveal 1.6s var(--ease-out);
+}
+
+@keyframes tl-reveal {
+  0%,
+  35% {
+    background-color: var(--fill-3);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-item-id][data-reveal] > * {
+    animation-duration: 1.2s;
+  }
+}
+
+.tl-item {
+  padding: 1px var(--gutter);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
+}
+
+.tl-item[data-t='user'] {
+  padding-top: 26px;
+  padding-bottom: 14px;
+  contain-intrinsic-size: auto 96px;
+}
+
+.tl-item[data-t='user']:first-child {
+  padding-top: 6px;
+}
+
+.tl-item[data-t='text'] {
+  position: relative;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  contain-intrinsic-size: auto 140px;
+}
+
+.tl-item[data-t='text'] + .tl-item[data-t='text'] {
+  padding-top: 4px;
+}
+
+/* A group of tool rows gets air where it meets prose. */
+.tl-item[data-t='text'] + .tl-item[data-t='tool'],
+.tl-item[data-t='text'] + .tl-item[data-t='thinking'] {
+  padding-top: 4px;
+}
+
+.tl-item[data-k='edit'],
+.tl-item[data-k='write'] {
+  contain-intrinsic-size: auto 240px;
+}
+
+.tl-item[data-k='agent'],
+.tl-item[data-k='plan'] {
+  padding-top: 5px;
+  padding-bottom: 5px;
+  contain-intrinsic-size: auto 64px;
+}
+
+.tl-item[data-t='notice'] {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  contain-intrinsic-size: auto 44px;
+}
+
+
+/* Something that just happened rises in. History never does. */
+.tl-item[data-fresh] > *,
+.tl-sub[data-fresh] > * {
+  animation: rise-in var(--d-3) var(--ease-out) backwards;
+}
+
+.tl-item[data-fresh][data-t='user'] > * {
+  animation: user-in var(--d-4) var(--ease-out) backwards;
+}
+
+@keyframes user-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+
+/* ───────────── a one-line row (tools, thinking, groups) ───────────── */
+
+.row-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% + 12px);
+  min-height: 26px;
+  margin: 0 -6px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 7px;
+  text-align: left;
+  color: var(--text-2);
+  transition: background-color 90ms var(--ease);
+}
+
+.row-btn:not([data-static]):hover {
+  background-color: var(--fill-1);
+}
+
+.row-btn:not([data-static]):active {
+  background-color: var(--fill-2);
+}
+
+.row-btn:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--r-sm);
+}
+
+.row-slot {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.row-caret {
+  flex-shrink: 0;
+  color: var(--text-4);
+  transition:
+    transform 120ms var(--ease-out),
+    color 90ms var(--ease);
+}
+
+.row-btn:hover .row-caret,
+button:hover > .row-caret {
+  color: var(--text-2);
+}
+
+[aria-expanded='true'] > .row-caret {
+  transform: rotate(90deg);
+}
+
+/* ───────────── tools ───────────── */
+
+/* A plain monochrome icon in a fixed slot: no tile, no hue. It lifts a little on hover. */
+.tool-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-3);
+  transition:
+    color 90ms var(--ease),
+    transform 120ms var(--ease-out);
+}
+
+.row-btn:not([data-static]):hover .tool-icon {
+  color: var(--text);
+  transform: translateY(-1px);
+}
+
+.tool[data-status='error'] .tool-icon {
+  color: color-mix(in oklab, var(--red) 70%, var(--text-3));
+}
+
+.tool-icon[data-quiet] {
+  color: var(--text-4);
+}
+
+.tool-title {
+  flex: 0 1 auto;
+  font-size: 12.5px;
+  font-weight: var(--w-regular);
+  color: var(--text-2);
+  transition: color 90ms var(--ease);
+}
+
+/* With a preview after it, the title keeps its full width (up to 60% of the row) and the preview gives way first. */
+.tool-title:has(+ .tool-sub) {
+  flex-shrink: 0;
+  max-width: 60%;
+}
+
+.tool-title.shimmer {
+  color: transparent;
+}
+
+.row-btn:not([data-static]):hover .tool-title:not(.shimmer) {
+  color: var(--text);
+}
+
+.tool[data-status='error'] .tool-title {
+  color: color-mix(in oklab, var(--red) 58%, var(--text));
+}
+
+.tool[data-status='denied'] .tool-title,
+.tool[data-status='cancelled'] .tool-title {
+  color: var(--text-3);
+}
+
+.tool-sub {
+  flex: 0 1 auto;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.tool-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding-left: 6px;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.tool-await {
+  color: var(--amber);
+}
+
+.t-add {
+  color: var(--add);
+}
+
+.t-del {
+  color: var(--del);
+}
+
+.tool-exit {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: var(--w-medium);
+  color: color-mix(in oklab, var(--red) 70%, var(--text));
+  background: var(--red-dim);
+}
+
+.tool-details {
+  /* Aligned with the title, past the icon. 1px of room for the wells' rings. */
+  padding: 3px 1px 8px 24px;
+}
+
+.tool-error {
+  margin: 1px 0 6px 24px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in oklab, var(--red) 16%, transparent);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: color-mix(in oklab, var(--red) 55%, var(--text));
+  background-color: var(--red-dim);
+}
+
+.tool-details .tool-error {
+  margin: 8px 0 0;
+}
+
+/* Rows folded into an "Explored" group hang off a guide line. */
+.run-rows {
+  margin: 1px 0 4px 7px;
+  padding-left: 9px;
+  border-left: 1px solid var(--line-2);
+}
+
+/* ── terminal ── */
+
+.term {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background-color: rgb(0 0 0 / 0.3);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--code-size, 12px);
+  line-height: 18px;
+  font-variant-ligatures: none;
+}
+
+.term-cmd {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 6px 8px 13px;
+}
+
+.term-ps {
+  color: var(--text-3);
+  user-select: none;
+}
+
+.term-line {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.term-side {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.term-copy {
+  opacity: 0;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.term:hover .term-copy,
+.term-copy:focus-visible,
+.term-copy[data-copied] {
+  opacity: 1;
+}
+
+.term-note {
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.vscroll {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.14) transparent;
+}
+
+/* column-reverse: the scroller rests at its end and stays there as output grows. */
+.term-out {
+  display: flex;
+  flex-direction: column-reverse;
+  max-height: 300px;
+  padding: 9px 13px 11px;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+}
+
+.term-flow {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.term-out pre {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.term-err {
+  color: color-mix(in oklab, var(--red) 52%, var(--text-2));
+}
+
+.term-out pre + .term-err {
+  margin-top: 4px;
+}
+
+.term-empty,
+.term-clip {
+  font-family: var(--font-sans);
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.term-empty {
+  padding: 8px 13px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.term-clip {
+  margin-bottom: 6px;
+}
+
+.a-bold {
+  font-weight: 700;
+  color: var(--text);
+}
+.a-dim {
+  color: var(--text-3);
+}
+.a-italic {
+  font-style: italic;
+}
+.a-gray {
+  color: var(--text-3);
+}
+.a-white {
+  color: var(--text);
+}
+.a-red {
+  color: color-mix(in oklab, var(--red) 80%, var(--text));
+}
+.a-green {
+  color: color-mix(in oklab, var(--green) 78%, var(--text));
+}
+.a-yellow {
+  color: color-mix(in oklab, var(--amber) 78%, var(--text));
+}
+.a-blue {
+  color: color-mix(in oklab, var(--blue) 80%, var(--text));
+}
+.a-magenta {
+  color: color-mix(in oklab, var(--violet) 80%, var(--text));
+}
+.a-cyan {
+  color: color-mix(in oklab, var(--mint) 70%, var(--text));
+}
+
+/* ── edit in progress ── */
+
+.writing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background-color: rgb(0 0 0 / 0.24);
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.writing svg {
+  flex-shrink: 0;
+}
+
+.writing-path {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.writing-state {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ── detail pieces ── */
+
+.detail-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.detail-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 20px;
+}
+
+.detail-field {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--t-small);
+  line-height: 1.5;
+}
+
+.detail-label {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.detail-value {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.detail-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.detail-quiet {
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.detail-prose .md {
+  --md-fg: var(--text-2);
+  font-size: var(--t-ui);
+  line-height: 1.58;
+}
+
+.detail-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.files ul {
+  display: grid;
+}
+
+.files li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.files li svg {
+  color: var(--text-4);
+  flex-shrink: 0;
+}
+
+.files-dir {
+  color: var(--text-3);
+}
+
+.link-btn {
+  margin-top: 4px;
+  padding: 2px 0;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+  border-radius: 4px;
+  transition: color var(--d-1) var(--ease);
+}
+
+.link-btn:hover {
+  color: var(--text);
+}
+
+.links {
+  display: grid;
+  gap: 1px;
+}
+
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 30px;
+  margin: 0 -8px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: var(--t-ui);
+  color: var(--text-2);
+  transition:
+    background var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.link-row > svg:first-child {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.link-row:hover {
+  background: var(--fill-1);
+  color: var(--text);
+}
+
+.link-host {
+  flex-shrink: 0;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.link-out {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.link-row:hover .link-out,
+.link-row:focus-visible .link-out {
+  opacity: 1;
+}
+
+.link-solo .link-title {
+  font-size: 12.5px;
+}
+
+.todos {
+  display: grid;
+  gap: 1px;
+}
+
+.todos li {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 3px 0;
+  font-size: var(--t-ui);
+  line-height: 20px;
+  color: var(--text-2);
+}
+
+.todo-mark {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--text-4);
+}
+
+.todos li[data-status='completed'] .todo-mark {
+  color: var(--text-3);
+}
+
+.todos li[data-status='completed'] .todo-text {
+  color: var(--text-3);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-4);
+}
+
+.todos li[data-status='in_progress'] .todo-text {
+  color: var(--text);
+}
+
+.qa {
+  display: grid;
+  gap: 10px;
+}
+
+.qa-q {
+  font-size: var(--t-ui);
+  color: var(--text-2);
+}
+
+.qa-a {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.qa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text);
+  background-color: var(--fill-2);
+}
+
+.qa-chip svg {
+  color: var(--text-2);
+}
+
+/* ───────────── thinking ───────────── */
+
+.think-row {
+  min-height: 26px;
+  color: var(--text-3);
+}
+
+.think-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+}
+
+.think-label {
+  font-size: 12.5px;
+}
+
+.think-row:not([data-static]):hover .think-label:not(.shimmer) {
+  color: var(--text-2);
+}
+
+.think-row .row-caret {
+  opacity: 0;
+  transition:
+    opacity var(--d-1) var(--ease),
+    transform var(--d-2) var(--ease-out);
+}
+
+.think-row:hover .row-caret,
+.think-row:focus-visible .row-caret,
+.think-row[aria-expanded='true'] .row-caret {
+  opacity: 1;
+}
+
+/* A three-line window onto the newest thought; older lines fade out at the top (an overlay, not a mask). */
+.think-preview {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  height: 60px;
+  margin: 0 0 4px 24px;
+  overflow: hidden;
+  font-size: var(--t-small);
+  line-height: 20px;
+  color: var(--text-3);
+}
+
+.think-preview::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, var(--sheet) 0, transparent 72%);
+  pointer-events: none;
+}
+
+.think-preview p {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.think-body {
+  margin: 2px 0 8px 7px;
+  padding: 1px 0 1px 16px;
+  border-left: 1px solid var(--line-2);
+}
+
+.think-body .md {
+  --md-fg: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.think-body .md strong {
+  color: var(--text-2);
+}
+
+.think-body .md-code {
+  color: var(--text-2);
+  background: var(--fill-1);
+}
+
+/* ───────────── user message ───────────── */
+
+.user {
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.user-card {
+  max-width: 78%;
+  min-width: 0;
+  padding: 9px 14px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  font-size: var(--t-body);
+  line-height: 1.55;
+  color: var(--text);
+  background-color: var(--panel-2);
+  transition: opacity var(--d-3) var(--ease);
+}
+
+.user-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.user-text[data-clipped] {
+  position: relative;
+  max-height: 232px;
+  overflow: hidden;
+}
+
+.user-text[data-clipped]::after {
+  content: '';
+  position: absolute;
+  inset: 62% 0 0;
+  background: linear-gradient(to bottom, transparent, var(--panel-2));
+  pointer-events: none;
+}
+
+.user-more {
+  margin-top: 4px;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+  border-radius: 4px;
+  transition: color var(--d-1) var(--ease);
+}
+
+.user-more:hover {
+  color: var(--text);
+}
+
+.user[data-queued] .user-card {
+  opacity: 0.6;
+}
+
+/* "Steered" / "Queued": a quiet word beside the card, no chip. */
+.user-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  margin-bottom: 9px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.user-mark svg {
+  color: var(--text-4);
+}
+
+.user-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-bottom: 5px;
+  opacity: 0;
+  transition: opacity 90ms var(--ease);
+  flex-shrink: 0;
+}
+
+/* Appears in the frame the pointer arrives; leaves with a short fade. */
+.tl-item:hover .user-actions,
+.user:focus-within .user-actions,
+.user[data-open] .user-actions {
+  opacity: 1;
+  transition: none;
+}
+
+.user-stamp {
+  padding: 0 7px 0 4px;
+}
+
+.user-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 1px -6px 9px;
+}
+
+.user-images:last-child {
+  margin-bottom: 0;
+}
+
+.user-thumb {
+  display: block;
+  width: 104px;
+  height: 78px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  overflow: hidden;
+  background-color: rgb(0 0 0 / 0.3);
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.user-thumb:hover {
+  opacity: 0.88;
+}
+
+.user-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.user-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 9px -4px 1px;
+}
+
+.user-files:first-child {
+  margin-top: 1px;
+}
+
+.user-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  max-width: 240px;
+  padding: 0 9px 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: var(--t-small);
+  color: var(--text-2);
+  background-color: rgb(0 0 0 / 0.22);
+}
+
+.user-file svg {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.user-file-size {
+  color: var(--text-3);
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+
+.rewind-title {
+  font-size: var(--t-ui);
+  font-weight: var(--w-semi);
+}
+
+.rewind-desc {
+  margin-top: 4px;
+  font-size: var(--t-small);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.rewind-opt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 9px 10px 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background-color: rgb(0 0 0 / 0.22);
+}
+
+.rewind-opt-name {
+  display: block;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+}
+
+.rewind-opt-hint {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.rewind-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+/* ───────────── sub-agent card ───────────── */
+
+.agent {
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background-color: var(--panel);
+}
+
+.agent-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+
+.agent[data-status='error'] .agent-icon {
+  color: color-mix(in oklab, var(--red) 70%, var(--text-3));
+}
+
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px 8px 11px;
+  border-radius: var(--r-md);
+  text-align: left;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.agent-head:hover {
+  background-color: var(--fill-1);
+}
+
+.agent-head:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--r-md);
+}
+
+.agent-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: var(--w-regular);
+  color: var(--text);
+}
+
+.agent-line {
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.agent-body {
+  padding: 2px 15px 14px;
+}
+
+.agent-prompt {
+  margin: 0 0 10px;
+  font-size: var(--t-small);
+  line-height: 1.55;
+  color: var(--text-3);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* The agent's own timeline hangs off a thin guide. */
+.agent-thread {
+  margin-left: 8px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line-2);
+}
+
+.tl-sub {
+  padding: 1px 0;
+}
+
+.tl-sub[data-t='text'] {
+  padding: 7px 0;
+}
+
+.tl-sub .md {
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.agent-report {
+  margin-top: 12px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+
+.agent-report .md {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ───────────── plan card ───────────── */
+
+.plan {
+  position: relative;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background-color: var(--panel);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.plan-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 13px 10px 14px;
+  text-align: left;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.plan-head:hover {
+  background-color: var(--fill-1);
+}
+
+.plan-head:focus-visible {
+  outline-offset: -3px;
+}
+
+.plan-title {
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.plan-body {
+  padding: 4px 18px 16px 18px;
+}
+
+.plan-body .md {
+  font-size: 14.5px;
+}
+
+/* ───────────── notices ───────────── */
+
+.notice-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.notice-rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--line-2));
+}
+
+.notice-rule:last-child {
+  background: linear-gradient(to left, transparent, var(--line-2));
+}
+
+.notice-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.notice-label svg {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.notice-detail {
+  max-width: 520px;
+  margin: 5px auto 0;
+  text-align: center;
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  color: var(--text-3);
+  white-space: pre-wrap;
+  text-wrap: balance;
+}
+
+.notice-error {
+  display: flex;
+  gap: 10px;
+  padding: 11px 14px 12px 12px;
+  border: 1px solid color-mix(in oklab, var(--red) 20%, transparent);
+  border-radius: var(--r-md);
+  background-color: color-mix(in oklab, var(--red) 10%, transparent);
+}
+
+.notice-error > svg {
+  flex-shrink: 0;
+  margin-top: 1.5px;
+  color: var(--red);
+}
+
+.notice-error-body {
+  min-width: 0;
+}
+
+.notice-error-text {
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: color-mix(in oklab, var(--red) 30%, var(--text));
+}
+
+.notice-error-detail {
+  margin-top: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: color-mix(in oklab, var(--red) 38%, var(--text-2));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notice-cmd {
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background-color: var(--panel);
+}
+
+.notice-cmd-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: var(--r-md);
+  text-align: left;
+  font-size: 12.5px;
+  font-weight: var(--w-medium);
+  color: var(--text);
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.notice-cmd-head > svg:first-child {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.notice-cmd-head:not([data-static]):hover {
+  background-color: var(--fill-1);
+}
+
+.notice-cmd-head:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--r-lg);
+}
+
+.notice-cmd-body {
+  padding: 2px 14px 14px;
+}
+
+.notice-cmd-body .md {
+  font-size: 14px;
+}
+
+/* ───────────── a turn: message, work, answer ───────────── */
+
+.tg {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The answer reads at full strength; everything that led to it sits one step back. */
+.tl-item[data-answer] {
+  padding-top: 6px;
+}
+
+.tl-work {
+  position: relative;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  contain-intrinsic-size: auto 30px;
+}
+
+.work-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+}
+
+/* One quiet line: "Worked for 4m 12s · 23 steps". */
+.work-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 26px;
+  margin-left: -8px;
+  padding: 0 9px 0 8px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  transition:
+    background-color 90ms var(--ease),
+    color 90ms var(--ease);
+}
+
+.work-line:not([data-static]):hover,
+.tl-work[data-open] .work-line {
+  color: var(--text-2);
+}
+
+.work-line:not([data-static]):hover {
+  background-color: var(--fill-1);
+}
+
+.work-line:not([data-static]):active {
+  background-color: var(--fill-2);
+}
+
+.work-line:focus-visible {
+  outline-offset: -2px;
+}
+
+.work-label {
+  min-width: 0;
+}
+
+.work-time {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-4);
+}
+
+.work-time::before {
+  content: '·';
+  margin-right: 8px;
+  color: var(--text-4);
+}
+
+/* The working indicator: a thin ring turning, ivory on a faint track. Its own class: `.ring` is
+   the status mark in art/ (an SVG), which this rule used to spin and outline everywhere. On its own
+   compositor layer, so the turn never repaints the window behind it. */
+.work-ring {
+  will-change: transform;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line-2);
+  border-top-color: var(--text-2);
+  animation: spin 0.85s linear infinite;
+}
+
+.work-wait-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: var(--amber);
+}
+
+.work-waiting {
+  color: var(--amber);
+}
+
+.work-live-title {
+  flex: 0 1 auto;
+}
+
+.work-esc,
+.work-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.work-all {
+  height: 24px;
+  padding: 0 8px;
+  margin-right: -8px;
+  border-radius: 7px;
+  font-size: 12px;
+  transition:
+    background-color 90ms var(--ease),
+    color 90ms var(--ease);
+}
+
+.work-all:hover {
+  color: var(--text);
+  background-color: var(--fill-1);
+}
+
+.work-fold {
+  transition-duration: 200ms, 90ms;
+}
+
+/* ── the story: what was said on the way, steps folded between ── */
+
+.story {
+  position: relative;
+  margin: 2px 0 8px 5px;
+  padding: 2px 0 2px 17px;
+}
+
+/* The thread the story hangs from: a hairline that fades out at both ends. */
+.story::before {
+  content: '';
+  position: absolute;
+  inset: 6px auto 6px 0;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, var(--line-2) 14px, var(--line-2) calc(100% - 14px), transparent);
+}
+
+.story-text {
+  position: relative;
+  padding: 5px 0;
+}
+
+.story-text .md {
+  --md-fg: var(--text-2);
+  --md-gap: 0.65em;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.story-text .md strong {
+  color: var(--text-2);
+}
+
+.story-text .md h1,
+.story-text .md h2,
+.story-text .md h3 {
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.steps {
+  padding: 1px 0;
+}
+
+.steps-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  margin-left: -7px;
+  padding: 0 8px 0 7px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--text-3);
+  transition:
+    background-color 90ms var(--ease),
+    color 90ms var(--ease);
+}
+
+.steps-btn:hover {
+  color: var(--text-2);
+  background-color: var(--fill-1);
+}
+
+.steps-btn:active {
+  background-color: var(--fill-2);
+}
+
+.steps-btn:focus-visible {
+  outline-offset: -2px;
+}
+
+/* A short dithered bar: the house texture, in place of a bullet. It brightens as the run opens. */
+.steps-rule {
+  width: 12px;
+  height: 6px;
+  flex-shrink: 0;
+  background-image: radial-gradient(circle at center, currentColor 0.7px, transparent 0.8px);
+  background-size: 3px 3px;
+  opacity: 0.55;
+  transition: opacity 90ms var(--ease);
+}
+
+.steps-btn:hover .steps-rule,
+.steps[data-open] .steps-rule {
+  opacity: 1;
+}
+
+.steps-fold {
+  transition-duration: 180ms, 90ms;
+}
+
+.steps-rows {
+  padding: 1px 0 6px;
+}
+
+.steps-rows .tl-sub {
+  padding: 0;
+}
+
+.steps-rows .tl-sub[data-t='text'] {
+  padding: 4px 0;
+}
+
+/* ── time on hover ── */
+
+/* Out in the right margin, level with the first line; it appears in the frame the pointer arrives. */
+.stamp {
+  position: absolute;
+  top: 11px;
+  left: calc(100% - var(--gutter) + 16px);
+  display: flex;
+  flex-direction: column;
+  font-size: 11.5px;
+  line-height: 15px;
+  color: var(--text-3);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 90ms var(--ease);
+}
+
+.story-text > .stamp {
+  top: 8px;
+  left: calc(100% + 16px);
+}
+
+.stamp-day {
+  color: var(--text-4);
+}
+
+.tl-item:hover > .stamp,
+.tl-item:focus-within > .stamp,
+.story-text:hover > .stamp,
+.story-text:focus-within > .stamp {
+  opacity: 1;
+  transition: none;
+}
+
+/* Beside the message, among its actions. */
+.user-stamp,
+.user-stamp.stamp {
+  position: static;
+  flex-direction: row;
+  gap: 5px;
+  opacity: 1;
+  transition: none;
+}
+
+/* A narrow conversation has no margin to spare: the time sits over the end of the first line. */
+@container tl (max-width: 880px) {
+  .stamp {
+    top: 10px;
+    left: auto;
+    right: var(--gutter);
+    flex-direction: row;
+    gap: 5px;
+    padding: 0 0 0 10px;
+    background-color: var(--sheet);
+    box-shadow: -10px 0 10px var(--sheet);
+  }
+  .story-text > .stamp {
+    top: 7px;
+    left: auto;
+    right: 0;
+  }
+}
+
+/* ── under the answer ── */
+
+.turn {
+  padding-top: 4px;
+  padding-bottom: 8px;
+  contain-intrinsic-size: auto 34px;
+}
+
+.turn-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 26px;
+}
+
+.turn-note {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.turn-hover {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 90ms var(--ease);
+}
+
+.tg:hover .turn-hover,
+.turn-hover:focus-within {
+  opacity: 1;
+  transition: none;
+}
+
+.turn-meta {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.turn-copy {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+
+.turn[data-state='failed'] .notice-error {
+  margin-bottom: 10px;
+}
+
+/* Preview: the one clear control under an answer. Ink one step up, light on the edge as you near it. */
+.preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  color: var(--text);
+  background-color: var(--panel-2);
+  transition:
+    background-color 90ms var(--ease),
+    border-color 90ms var(--ease);
+}
+
+.preview-btn:hover {
+  border-color: var(--line-3);
+  background-color: var(--panel-3);
+}
+
+.preview-btn:active {
+  background-color: var(--panel-2);
+}
+
+.preview-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: var(--text-2);
+}
+
+.preview-host {
+  font-size: 12px;
+  color: var(--text-3);
+  transition: color 90ms var(--ease);
+}
+
+.preview-btn:hover .preview-host {
+  color: var(--text-2);
+}
+
+.preview-arrow {
+  color: var(--text-3);
+  transition:
+    transform 120ms var(--ease-out),
+    color 90ms var(--ease);
+}
+
+.preview-btn:hover .preview-arrow {
+  color: var(--text);
+  transform: translateX(2px);
+}
+
+/* ───────────── the working line (before a turn has a message to hang from) ───────────── */
+
+.tail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  margin-top: 6px;
+  padding: 0 var(--gutter);
+  flex-shrink: 0;
+  font-size: 12.5px;
+  animation: fade-in var(--d-3) var(--ease);
+}
+
+.tail[data-quiet] {
+  opacity: 0;
+}
+
+.tail-label {
+  min-width: 0;
+}
+
+.tail-time {
+  font-size: 12px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.tail-esc {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.tail-wait-icon {
+  color: var(--amber);
+}
+
+.tail-wait {
+  color: var(--amber);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .work-ring {
+    animation: none;
+    border-top-color: var(--line-2);
+    border-right-color: var(--text-2);
+  }
+}
+
+/* ───────────── jump to latest ───────────── */
+
+.tl-jump {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--dock-h) + 12px);
+  translate: -50% 0;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 13px 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+  background-color: var(--panel-2);
+  box-shadow: var(--shadow-pop);
+  transition: color var(--d-1) var(--ease);
+}
+
+.tl-jump:hover {
+  color: var(--text);
+}
+
+.tl-jump:focus-visible {
+  border-radius: var(--r-pill);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tl-item[data-fresh] > *,
+  .tl-sub[data-fresh] > * {
+    animation: none;
+  }
+}
