@@ -1,0 +1,850 @@
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
+import { DropdownMenu as RM } from 'radix-ui';
+import type { Attachment, QueuedMessage } from '@shared/protocol';
+import { beginHandoff, cancelHandoff, claimHandoff } from '@/features/home/handoff';
+import { Icon } from '@/icons';
+import { pathForFile } from '@/lib/desktop';
+import { baseName, dirName } from '@/lib/format';
+import { fuzzy } from '@/lib/fuzzy';
+import { EASE_OUT, play, pulseFrom } from '@/lib/motion';
+import { searchFiles, type FileHit } from '@/lib/workspace';
+import { homeChoice, interrupt, sendMessage, setHomeUltracode, setUltracode, startFromHome, takeQueued, updateQueued } from '@/state/actions';
+import { useHotkey } from '@/state/hooks';
+import { useStore } from '@/state/store';
+import { Kbd, Tip } from '@/ui';
+import { readFiles, withTextAttachments } from './attach';
+import { AttachmentRow } from './Attachments';
+import { useChoice } from './choice';
+import { APP_COMMANDS, appCommandsFor, commandRows, skillRows, type CommandCtx, type SuggestRow } from './commands';
+import { HomeChips, ModelEffort, ModelPopover, ModeMenu, openComposerMenu } from './Controls';
+import { Highlight } from './Highlight';
+import { NO_QUEUE, QueueTray } from './QueueTray';
+import { SendHint, SendKey } from './SendKey';
+import { SuggestMenu } from './SuggestMenu';
+import { UltraEdge, UltraToggle } from './Ultracode';
+import './composer.css';
+
+export interface ComposerProps {
+  /** Existing session, or null on the home screen (a session is created on send). */
+  sessionId: string | null;
+  variant: 'home' | 'session';
+  autoFocus?: boolean;
+}
+
+const EMPTY: Attachment[] = [];
+const LINE = 22;
+const PAD_Y = 10;
+const MAX_LINES = 10;
+const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
+/** Sessions that have already shown the "Ctrl+Enter steers" hint (once each while the app is open). */
+const hinted = new Set<string>();
+
+type Trigger = { kind: 'slash' | 'mention' | 'skill'; start: number; query: string };
+
+/** The token being typed at the caret, if it opens a typeahead. */
+function findTrigger(text: string, caret: number, dollar: boolean): Trigger | null {
+  const before = text.slice(0, caret);
+  if (/^\/\S*$/.test(before)) return { kind: 'slash', start: 0, query: before.slice(1) };
+  const m = /(^|\s)([@$])([^\s@$]*)$/.exec(before);
+  if (!m) return null;
+  if (m[2] === '$' && !dollar) return null;
+  return { kind: m[2] === '@' ? 'mention' : 'skill', start: before.length - m[3].length - 1, query: m[3] };
+}
+
+/** The caret's left edge (CSS px from the field's left) at `index`, measured on a hidden twin of the field. */
+let caretTwin: HTMLDivElement | null = null;
+function caretLeft(ta: HTMLTextAreaElement, index: number): number {
+  if (!caretTwin) {
+    caretTwin = document.createElement('div');
+    caretTwin.setAttribute('aria-hidden', 'true');
+    caretTwin.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;white-space:pre-wrap;overflow-wrap:break-word;';
+    document.body.appendChild(caretTwin);
+  }
+  const cs = getComputedStyle(ta);
+  const t = caretTwin;
+  t.style.width = `${ta.clientWidth}px`;
+  t.style.font = cs.font;
+  t.style.padding = cs.padding;
+  t.style.letterSpacing = cs.letterSpacing;
+  t.textContent = ta.value.slice(0, index);
+  const mark = document.createElement('span');
+  mark.textContent = '​';
+  t.appendChild(mark);
+  return mark.offsetLeft;
+}
+
+/** Images and files that go by path travel as attachments; text files are folded into the message. */
+const parcel = (body: string, atts: Attachment[]) => ({ text: withTextAttachments(body, atts), attachments: atts.filter((a) => a.kind === 'image' || (a.kind === 'file' && !!a.path)) });
+
+/** Files can be dropped anywhere on the stage; the newest composer on screen takes them. */
+const dropOwners: number[] = [];
+let dropSeq = 0;
+
+function useStageDrop(card: RefObject<HTMLElement | null>, onFiles: (files: File[]) => void) {
+  const [over, setOver] = useState(false);
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  const take = useRef(onFiles);
+  take.current = onFiles;
+  useEffect(() => {
+    const me = ++dropSeq;
+    dropOwners.push(me);
+    const stage = card.current?.closest('.stage') ?? document.querySelector('.stage');
+    const target: EventTarget = stage ?? window;
+    setHost((stage as HTMLElement | null) ?? null);
+    let t = 0;
+    const mine = () => dropOwners[dropOwners.length - 1] === me;
+    const files = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+    const onOver = (e: Event) => {
+      const d = e as DragEvent;
+      if (!files(d) || !mine()) return;
+      d.preventDefault();
+      if (d.dataTransfer) d.dataTransfer.dropEffect = 'copy';
+      setOver(true);
+      window.clearTimeout(t);
+      // dragover repeats every ~50 ms while a file is over the stage; silence means it left.
+      t = window.setTimeout(() => setOver(false), 180);
+    };
+    const onDrop = (e: Event) => {
+      const d = e as DragEvent;
+      if (!files(d) || !mine()) return;
+      d.preventDefault();
+      window.clearTimeout(t);
+      setOver(false);
+      take.current([...(d.dataTransfer?.files ?? [])]);
+    };
+    // Anywhere else in the window a dropped file must not open in place of the app.
+    const guard = (e: Event) => files(e as DragEvent) && e.preventDefault();
+    target.addEventListener('dragenter', onOver);
+    target.addEventListener('dragover', onOver);
+    target.addEventListener('drop', onDrop);
+    window.addEventListener('dragover', guard);
+    window.addEventListener('drop', guard);
+    return () => {
+      window.clearTimeout(t);
+      dropOwners.splice(dropOwners.indexOf(me), 1);
+      target.removeEventListener('dragenter', onOver);
+      target.removeEventListener('dragover', onOver);
+      target.removeEventListener('drop', onDrop);
+      window.removeEventListener('dragover', guard);
+      window.removeEventListener('drop', guard);
+    };
+  }, [card]);
+  return { over, host };
+}
+
+/** One calm drop state over the whole stage. */
+const StageDrop = memo(function StageDrop({ host, images }: { host: HTMLElement | null; images: boolean }) {
+  if (!host) return null;
+  return createPortal(
+    <div className="stage-drop" aria-hidden>
+      <div className="stage-drop-label">
+        <Icon name={images ? 'image' : 'file-plus'} size={18} />
+        {images ? 'Drop files or images to attach them' : 'Drop files to attach them'}
+      </div>
+    </div>,
+    host,
+  );
+});
+
+/** The add button's plus, drawn on the pixel grid so it sits dead centre at any interface size. */
+function PlusGlyph() {
+  return (
+    <svg className="cmp-plus" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+      <path d="M7 2.25v9.5M2.25 7h9.5" />
+    </svg>
+  );
+}
+
+/**
+ * The composer: one card that takes text, mentions, commands and files, and sends them to the
+ * agent (or starts a session from the home screen). While a turn runs, Enter queues and Ctrl+Enter
+ * steers. Menus and keys are memoized children that keep their own state, so opening a menu or
+ * typing never re-renders more than it must.
+ */
+export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
+  const key = sessionId ?? 'home';
+  const text = useStore((s) => s.drafts[key]?.text ?? '');
+  const attachments = useStore((s) => s.drafts[key]?.attachments ?? EMPTY);
+  const setDraft = useStore((s) => s.setDraft);
+  const sendWithEnter = useStore((s) => s.settings.sendWithEnter);
+  const status = useStore((s) => (sessionId ? s.sessions[sessionId]?.status : undefined));
+  const suggestion = useStore((s) => (sessionId ? s.data[sessionId]?.suggestion : undefined));
+  const cwd = useStore((s) => (sessionId ? (s.sessions[sessionId]?.cwd ?? null) : s.ui.homeCwd));
+  const queue = useStore((s) => (sessionId ? (s.data[sessionId]?.queue ?? NO_QUEUE) : NO_QUEUE));
+  const storedUltra = useStore((s) => (sessionId ? !!s.sessions[sessionId]?.ultracode : !!s.ui.homeUltracode));
+  const toast = useStore((s) => s.toast);
+  const choice = useChoice(sessionId);
+  const caps = choice.caps;
+
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const mirror = useRef<HTMLTextAreaElement>(null);
+  const hl = useRef<HTMLDivElement>(null);
+  const card = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const pendingCaret = useRef<number | null>(null);
+  const listId = useId();
+
+  const [caret, setCaret] = useState(0);
+  const [focused, setFocused] = useState(false);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [active, setActive] = useState(0);
+  const [files, setFiles] = useState<FileHit[]>([]);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [recall, setRecall] = useState<number | null>(null);
+  const [ultraLocal, setUltraLocal] = useState<boolean | null>(null);
+  const searchSeq = useRef(0);
+
+  const busy = status === 'running' || status === 'awaiting' || status === 'starting';
+  const shell = variant === 'session' && text.startsWith('!');
+  const trimmed = text.trim();
+  const canSend = shell ? text.slice(1).trim().length > 0 : trimmed.length > 0 || attachments.length > 0;
+  const showStop = variant === 'session' && busy && !canSend;
+  const ghost = !text && suggestion && !attachments.length ? suggestion : null;
+  const popSide = variant === 'home' ? 'bottom' : 'top';
+  const steerable = !!caps?.features.steer;
+  const ultraOffered = !!caps?.features.ultracode;
+  const ultra = ultraOffered && (ultraLocal ?? storedUltra);
+  const images = !!caps?.features.images;
+
+  useEffect(() => setUltraLocal(null), [storedUltra]);
+
+  // ── text helpers ──
+
+  const setText = useCallback(
+    (next: string, caretAt?: number) => {
+      setDraft(key, { text: next });
+      pendingCaret.current = caretAt ?? next.length;
+    },
+    [key, setDraft],
+  );
+
+  const focus = useCallback(() => ref.current?.focus({ preventScroll: true }), []);
+
+  useLayoutEffect(() => {
+    const pos = pendingCaret.current;
+    const ta = ref.current;
+    if (pos == null || !ta) return;
+    pendingCaret.current = null;
+    ta.setSelectionRange(pos, pos);
+    setCaret(pos);
+  }, [text]);
+
+  // ── auto-grow: measure a hidden twin so the visible field can animate its height ──
+
+  const minLines = variant === 'home' ? 2 : 1;
+  // The suggestion renders on one truncated line, so it never grows the field.
+  const measured = ghost ? '' : text === '!' && shell ? '! Run a shell command in the terminal' : text;
+  const measure = useCallback(() => {
+    const m = mirror.current;
+    const ta = ref.current;
+    if (!m || !ta) return;
+    m.value = measured || ' ';
+    const content = m.scrollHeight;
+    const max = LINE * MAX_LINES + PAD_Y;
+    const h = Math.min(max, Math.max(LINE * minLines + PAD_Y, content));
+    ta.style.height = `${h}px`;
+    ta.style.overflowY = content > max ? 'auto' : 'hidden';
+  }, [measured, minLines]);
+
+  // The pill layer scrolls (and reserves a scrollbar) exactly like the field above it.
+  const syncHighlight = useCallback(() => {
+    const ta = ref.current;
+    const layer = hl.current;
+    if (!ta || !layer) return;
+    layer.style.overflowY = ta.style.overflowY === 'auto' ? 'scroll' : 'hidden';
+    layer.scrollTop = ta.scrollTop;
+  }, []);
+
+  // Only when the text changes: a render for any other reason (focus, a menu) reads no layout.
+  useLayoutEffect(() => {
+    measure();
+    syncHighlight();
+  }, [measure, syncHighlight]);
+
+  useEffect(() => {
+    const ta = ref.current;
+    if (!ta) return;
+    let w = ta.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (ta.clientWidth !== w) {
+        w = ta.clientWidth;
+        measure();
+      }
+    });
+    ro.observe(ta);
+    // The first measurement never animates.
+    requestAnimationFrame(() => ta.setAttribute('data-ready', ''));
+    return () => ro.disconnect();
+  }, [measure]);
+
+  // ── the home-to-session hand-off lands on this card ──
+
+  useLayoutEffect(() => {
+    if (variant === 'session') claimHandoff(card.current);
+  }, [variant]);
+
+  // ── focus ──
+
+  useEffect(() => {
+    if (!autoFocus) return;
+    const t = window.setTimeout(() => {
+      if (!document.querySelector('[role="dialog"]')) focus();
+    }, 30);
+    return () => window.clearTimeout(t);
+  }, [autoFocus, sessionId, focus]);
+
+  useHotkey(
+    'mod+l',
+    useCallback(
+      (e: globalThis.KeyboardEvent) => {
+        e.preventDefault();
+        focus();
+      },
+      [focus],
+    ),
+  );
+
+  useEffect(() => {
+    const onFocus = (e: Event) => {
+      const detail = (e as CustomEvent<{ text?: string; append?: boolean }>).detail ?? {};
+      const ta = ref.current;
+      const cur = useStore.getState().drafts[key]?.text ?? '';
+      if (typeof detail.text === 'string') {
+        if (detail.append) {
+          const at = ta && document.activeElement === ta ? ta.selectionStart : cur.length;
+          const pre = cur.slice(0, at);
+          const sep = pre && !/\s$/.test(pre) ? ' ' : '';
+          const ins = sep + detail.text;
+          setText(pre + ins + cur.slice(at), at + ins.length);
+        } else setText(detail.text);
+      }
+      const want = pendingCaret.current;
+      window.requestAnimationFrame(() => {
+        focus();
+        const pos = want ?? ta?.value.length ?? 0;
+        ta?.setSelectionRange(pos, pos);
+        setCaret(pos);
+      });
+    };
+    window.addEventListener('sable:focus-composer', onFocus);
+    return () => window.removeEventListener('sable:focus-composer', onFocus);
+  }, [key, setText, focus]);
+
+  // ── typeahead ──
+
+  const trigger = shell ? null : findTrigger(text, caret, caps?.skillTrigger === '$');
+  const trigKey = trigger ? `${trigger.kind}:${trigger.start}` : null;
+  const menuOpen = !!trigger && focused && dismissed !== trigKey && (trigger.kind !== 'mention' || !!cwd);
+
+  useEffect(() => {
+    if (!trigKey) setDismissed(null);
+  }, [trigKey]);
+
+  useEffect(() => {
+    if (!menuOpen || trigger?.kind !== 'mention' || !cwd) return;
+    const q = trigger.query;
+    const my = ++searchSeq.current;
+    setFilesLoading(true);
+    const t = window.setTimeout(() => {
+      searchFiles(cwd, q, 30)
+        .then((r) => my === searchSeq.current && (setFiles(r), setFilesLoading(false)))
+        .catch(() => my === searchSeq.current && (setFiles([]), setFilesLoading(false)));
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [menuOpen, trigger?.kind, trigger?.query, cwd]);
+
+  const rows: SuggestRow[] = useMemo(() => {
+    if (!menuOpen || !trigger) return [];
+    if (trigger.kind === 'slash') return commandRows(trigger.query, caps, sessionId);
+    if (trigger.kind === 'skill') return skillRows(trigger.query, caps);
+    return files.map((f) => {
+      const rel = f.rel.replace(/\\/g, '/');
+      const name = baseName(rel);
+      const dir = dirName(rel);
+      return {
+        id: `file:${rel}`,
+        kind: f.dir ? ('dir' as const) : ('file' as const),
+        name,
+        label: name,
+        indices: fuzzy(trigger.query.split('/').pop() ?? '', name)?.indices,
+        detail: dir && dir !== name ? dir : undefined,
+        value: f.dir ? `${rel}/` : rel,
+      };
+    });
+  }, [menuOpen, trigger?.kind, trigger?.query, caps, sessionId, files]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => setActive(0), [trigKey, trigger?.query]);
+
+  // The typeahead grows out of the caret: where the trigger character sits, measured once per trigger.
+  const [originX, setOriginX] = useState(0);
+  useLayoutEffect(() => {
+    const ta = ref.current;
+    if (!menuOpen || !trigger || !ta) return;
+    const c = card.current;
+    const z = parseFloat(document.documentElement.style.zoom) || 1;
+    const inset = c ? (ta.getBoundingClientRect().left - c.getBoundingClientRect().left) / z : 0;
+    setOriginX(caretLeft(ta, trigger.start) + inset);
+  }, [menuOpen, trigKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const ctx: CommandCtx = useMemo(() => ({ sessionId, openModel: () => openComposerMenu('model'), openMode: () => openComposerMenu('mode') }), [sessionId]);
+
+  const accept = (row: SuggestRow | undefined) => {
+    if (!row || !trigger) return;
+    let end = caret;
+    while (end < text.length && !/\s/.test(text[end])) end++;
+    const before = text.slice(0, trigger.start);
+    const after = text.slice(end);
+    if (row.kind === 'app') {
+      const cmd = APP_COMMANDS.find((c) => c.name === row.name);
+      if (!cmd) return;
+      if (cmd.argumentHint) {
+        const ins = `/${cmd.name} `;
+        setText(before + ins + after.replace(/^\s+/, ''), before.length + ins.length);
+        return;
+      }
+      setText(after.replace(/^\s+/, ''), 0);
+      cmd.run(ctx, '');
+      return;
+    }
+    const ins = trigger.kind === 'slash' ? `/${row.name} ` : trigger.kind === 'skill' ? `$${row.name} ` : row.kind === 'dir' ? `@${row.value}` : `@${row.value} `;
+    const rest = ins.endsWith(' ') && after.startsWith(' ') ? after.slice(1) : after;
+    setText(before + ins + rest, before.length + ins.length);
+  };
+
+  // ── attachments ──
+
+  const addFiles = useCallback(
+    async (list: File[]) => {
+      if (!list.length) return;
+      const current = useStore.getState().drafts[key]?.attachments ?? [];
+      const { added, refused } = await readFiles(list, { images, current, pathOf: pathForFile });
+      if (added.length) setDraft(key, { attachments: [...(useStore.getState().drafts[key]?.attachments ?? []), ...added] });
+      if (refused) toast(refused);
+      focus();
+    },
+    [key, images, setDraft, toast, focus],
+  );
+
+  const removeAttachment = useCallback(
+    (id: string) => {
+      setDraft(key, { attachments: (useStore.getState().drafts[key]?.attachments ?? []).filter((a) => a.id !== id) });
+      focus();
+    },
+    [key, setDraft, focus],
+  );
+
+  const { over: dropping, host: dropHost } = useStageDrop(card, addFiles);
+
+  const mention = () => {
+    const ta = ref.current;
+    const at = ta ? ta.selectionStart : text.length;
+    const pre = text.slice(0, at);
+    const ins = (pre && !/\s$/.test(pre) ? ' ' : '') + '@';
+    setText(pre + ins + text.slice(at), at + ins.length);
+    setDismissed(null);
+    window.requestAnimationFrame(focus);
+  };
+
+  // ── sending ──
+
+  /**
+   * The send motion, drawn on a layer over the field (the field itself is already empty and
+   * live): the sent text rolls up about 12px behind the field's top edge and fades (80 ms), and
+   * the next placeholder rises from 8px below (100 ms, two frames later). The backdrop gets a pulse.
+   */
+  const rollOut = (sent: string, next: string | null) => {
+    pulseFrom(card.current, 1);
+    const field = ref.current?.parentElement;
+    if (!field || !sent) return;
+    const layer = document.createElement('div');
+    layer.className = 'cmp-roll';
+    layer.setAttribute('aria-hidden', 'true');
+    const old = document.createElement('div');
+    old.textContent = sent;
+    layer.appendChild(old);
+    const out = play(old, [{ transform: 'translateY(0px)', opacity: 1 }, { transform: 'translateY(-12px)', opacity: 0 }], { duration: 80, easing: 'cubic-bezier(0.3, 0, 0.6, 1)', fill: 'forwards' });
+    if (!out) return;
+    field.appendChild(layer);
+    let last: Animation = out;
+    if (next) {
+      const ph = document.createElement('div');
+      ph.className = 'cmp-roll-ph';
+      ph.textContent = next;
+      layer.appendChild(ph);
+      card.current?.setAttribute('data-rolling', '');
+      last = play(ph, [{ transform: 'translateY(8px)', opacity: 0 }, { transform: 'translateY(0px)', opacity: 1 }], { duration: 100, delay: 33, easing: EASE_OUT, fill: 'both' }) ?? out;
+    }
+    const done = () => {
+      layer.remove();
+      card.current?.removeAttribute('data-rolling');
+    };
+    last.finished.then(done, done);
+  };
+
+  // A quieter pulse when the turn ends; the steer hint has had its turn once the first one ends.
+  const wasBusy = useRef(busy);
+  useEffect(() => {
+    if (wasBusy.current && !busy && variant === 'session') {
+      pulseFrom(card.current, 0.45);
+      if (sessionId) hinted.add(sessionId);
+    }
+    wasBusy.current = busy;
+  }, [busy, variant, sessionId]);
+
+  const clear = () => {
+    setDraft(key, { text: '', attachments: [] });
+    pendingCaret.current = 0;
+    setRecall(null);
+  };
+
+  const submit = async (steer = false) => {
+    if (shell) {
+      const command = text.slice(1).trim();
+      if (!command || !sessionId) return;
+      useStore.getState().setUi({ railOpen: true, railTab: 'terminal', pendingCommand: { id: Date.now(), sessionId, command } });
+      clear();
+      return;
+    }
+    if (!canSend) return;
+    const m = /^\/([\w:.-]+)(?:\s+([\s\S]*))?$/.exec(trimmed);
+    if (m && !attachments.length) {
+      const cmd = appCommandsFor(sessionId).find((c) => c.name === m[1]);
+      if (cmd) {
+        clear();
+        cmd.run(ctx, (m[2] ?? '').trim());
+        return;
+      }
+    }
+    const draft = { text, attachments };
+    const out = parcel(trimmed, attachments);
+    if (sessionId && busy) hinted.add(sessionId);
+    // In a session the next placeholder is always the queueing one: the turn is running (or about to).
+    rollOut(text, variant === 'session' ? 'Queue a follow-up' : null);
+    clear();
+    if (sessionId) {
+      await sendMessage(sessionId, out.text, out.attachments, steer && busy ? { steer: true } : {});
+      return;
+    }
+    // From home: the composer starts its glide to the dock at once, before the session exists.
+    if (homeChoice()) beginHandoff(card.current);
+    if (!(await startFromHome(out.text, out.attachments))) {
+      cancelHandoff();
+      setDraft(key, draft);
+    }
+  };
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
+  const onSend = useCallback((steer: boolean) => void submitRef.current(steer), []);
+  const onStop = useCallback(() => sessionId && void interrupt(sessionId), [sessionId]);
+
+  // ── the queue ──
+
+  /**
+   * Edit puts a queued message back into the composer. With a draft already there, the two swap:
+   * the draft takes the message's place in the queue, so nothing typed is lost.
+   */
+  const editQueued = useCallback(
+    async (q: QueuedMessage) => {
+      if (!sessionId) return;
+      const d = useStore.getState().drafts[key];
+      const curText = d?.text ?? '';
+      const curAtts = d?.attachments ?? [];
+      let got: QueuedMessage | null = q;
+      if (curText.trim() || curAtts.length) {
+        const out = parcel(curText.trim(), curAtts);
+        await updateQueued(sessionId, q.id, out.text, out.attachments);
+      } else got = await takeQueued(sessionId, q.id);
+      if (!got) return;
+      setDraft(key, { attachments: got.attachments ?? [] });
+      setText(got.text);
+      setRecall(null);
+      window.requestAnimationFrame(focus);
+    },
+    [sessionId, key, setDraft, setText, focus],
+  );
+
+  // ── ultracode ──
+
+  const toggleUltra = useCallback(
+    (on: boolean) => {
+      setUltraLocal(on);
+      if (sessionId) void setUltracode(sessionId, on);
+      else setHomeUltracode(on);
+    },
+    [sessionId],
+  );
+
+  const userTexts = () => {
+    const d = sessionId ? useStore.getState().data[sessionId] : undefined;
+    if (!d) return [];
+    const out: string[] = [];
+    for (const id of d.roots) {
+      const it = d.items[id];
+      if (it?.type === 'user' && it.text.trim()) out.push(it.text);
+    }
+    return out;
+  };
+
+  const cycleMode = () => {
+    const modes = caps?.modes ?? [];
+    if (modes.length < 2) return;
+    const i = modes.findIndex((m) => m.id === choice.mode?.id);
+    choice.setMode(modes[(i + 1) % modes.length].id);
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    const mod = MAC ? e.metaKey : e.ctrlKey;
+    const ta = e.currentTarget;
+
+    if (menuOpen) {
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && rows.length) {
+        e.preventDefault();
+        setActive((a) => (e.key === 'ArrowDown' ? (a + 1) % rows.length : (a - 1 + rows.length) % rows.length));
+        return;
+      }
+      if (((e.key === 'Enter' && !e.shiftKey && !mod) || (e.key === 'Tab' && !e.shiftKey)) && rows.length) {
+        e.preventDefault();
+        accept(rows[active]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setDismissed(trigKey);
+        return;
+      }
+    }
+
+    if (e.key === 'Tab' && e.shiftKey && !mod) {
+      e.preventDefault();
+      cycleMode();
+      return;
+    }
+    if (e.key === 'Tab' && !mod && ghost) {
+      e.preventDefault();
+      setText(ghost);
+      return;
+    }
+    if (e.key === 'Enter') {
+      if (variant === 'session' && busy && !shell) {
+        // While a turn runs: the send keys queue, the same keys with the modifier steer.
+        const steerKeys = sendWithEnter ? mod && !e.shiftKey : mod && e.shiftKey;
+        const queueKeys = sendWithEnter ? !mod && !e.shiftKey : mod && !e.shiftKey;
+        if (steerKeys || queueKeys) {
+          e.preventDefault();
+          void submit(steerKeys && steerable);
+        }
+        return;
+      }
+      const send = sendWithEnter ? !e.shiftKey || mod : mod;
+      if (send) {
+        e.preventDefault();
+        void submit();
+      }
+      return;
+    }
+    if (variant === 'session' && !e.shiftKey && !mod && !e.altKey) {
+      // The last queued message comes back into the field for editing before history recall.
+      if (e.key === 'ArrowUp' && text === '' && !attachments.length && recall === null && queue.length && sessionId) {
+        e.preventDefault();
+        void editQueued(queue[queue.length - 1]);
+        return;
+      }
+      if (e.key === 'ArrowUp' && (text === '' || recall !== null) && !text.slice(0, ta.selectionStart).includes('\n')) {
+        const list = userTexts();
+        const next = recall === null ? 0 : recall + 1;
+        if (next < list.length) {
+          e.preventDefault();
+          setRecall(next);
+          setText(list[list.length - 1 - next]);
+        }
+        return;
+      }
+      if (e.key === 'ArrowDown' && recall !== null && !text.slice(ta.selectionEnd).includes('\n')) {
+        e.preventDefault();
+        const list = userTexts();
+        if (recall <= 0) {
+          setRecall(null);
+          setText('');
+        } else {
+          setRecall(recall - 1);
+          setText(list[list.length - recall] ?? '');
+        }
+      }
+    }
+  };
+
+  const onChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
+    pendingCaret.current = null;
+    setDraft(key, { text: e.target.value });
+    setCaret(e.target.selectionStart);
+    if (recall !== null) setRecall(null);
+  };
+
+  const queueing = variant === 'session' && busy && !shell;
+  const placeholder = ghost || (shell && text === '!') ? '' : variant === 'home' ? 'Describe a task or ask a question' : queueing ? 'Queue a follow-up' : 'Reply';
+  const steerHint = queueing && steerable && !text && !attachments.length && !!sessionId && !hinted.has(sessionId);
+
+  return (
+    <div className="composer" data-variant={variant}>
+      {menuOpen && (
+        <SuggestMenu
+          id={listId}
+          anchor={card}
+          rows={rows}
+          active={active}
+          placement={variant === 'home' ? 'down' : 'up'}
+          originX={originX}
+          loading={trigger?.kind === 'mention' && filesLoading}
+          empty={trigger?.kind === 'mention' ? 'No matching files' : trigger?.kind === 'skill' ? 'No matching skills' : 'No matching commands. Enter sends it to the agent'}
+          onHover={setActive}
+          onPick={(i) => {
+            accept(rows[i]);
+            focus();
+          }}
+        />
+      )}
+
+      {variant === 'session' && sessionId && <QueueTray sessionId={sessionId} queue={queue} running={busy} steerable={steerable} onEdit={editQueued} onFocusComposer={focus} />}
+
+      <div
+        ref={card}
+        className="cmp-card"
+        data-spot
+        data-ultra={ultra || undefined}
+        data-shell={shell || undefined}
+        data-empty={!text && !attachments.length ? '' : undefined}
+        onMouseDown={(e) => {
+          const t = e.target as HTMLElement;
+          if (t === e.currentTarget || t.classList.contains('cmp-bar') || t.classList.contains('cmp-side')) {
+            e.preventDefault();
+            focus();
+          }
+        }}
+      >
+        {attachments.length > 0 && <AttachmentRow items={attachments} onRemove={removeAttachment} />}
+
+        <div className="cmp-field">
+          <Highlight ref={hl} text={ghost ? '' : text} caps={caps} sessionId={sessionId} shell={shell} />
+          <textarea
+            ref={ref}
+            className="cmp-input"
+            data-composer=""
+            value={text}
+            rows={1}
+            placeholder={placeholder}
+            aria-label={variant === 'home' ? 'Describe a task' : queueing ? 'Queue a follow-up' : 'Message'}
+            role="combobox"
+            aria-expanded={menuOpen}
+            aria-controls={menuOpen ? listId : undefined}
+            aria-autocomplete="list"
+            aria-activedescendant={menuOpen && rows.length ? `${listId}-${active}` : undefined}
+            spellCheck={false}
+            onChange={onChange}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+            onScroll={syncHighlight}
+            onKeyDown={onKeyDown}
+            onPaste={(e) => {
+              const list = [...e.clipboardData.files];
+              if (!list.length) return;
+              e.preventDefault();
+              void addFiles(list);
+            }}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+          />
+          <textarea ref={mirror} className="cmp-input cmp-mirror" rows={1} tabIndex={-1} readOnly aria-hidden />
+          {ghost && (
+            <div className="cmp-ghost" aria-hidden>
+              <span className="cmp-ghost-text">{ghost}</span>
+              <Kbd combo="tab" className="cmp-ghost-key" />
+            </div>
+          )}
+          {shell && text === '!' && (
+            <div className="cmp-ghost" aria-hidden>
+              <span className="cmp-ghost-pre">!</span> Run a shell command in the terminal
+            </div>
+          )}
+          {steerHint && (
+            <div className="cmp-steer-hint" aria-hidden>
+              <Kbd combo={sendWithEnter ? 'mod+enter' : 'mod+shift+enter'} />
+              steers it into this turn
+            </div>
+          )}
+        </div>
+
+        <div className="cmp-bar">
+          <div className="cmp-side">
+            {shell ? (
+              <span className="cmp-shell" key="shell">
+                <Icon name="prompt" size={13} />
+                Shell
+              </span>
+            ) : (
+              <>
+                <RM.Root modal={false}>
+                  <Tip label={images ? 'Attach files or images' : 'Attach files'} side="top">
+                    <RM.Trigger asChild>
+                      <button type="button" className="cmp-attach" aria-label="Attach">
+                        <PlusGlyph />
+                      </button>
+                    </RM.Trigger>
+                  </Tip>
+                  <RM.Portal>
+                    <RM.Content className="pop cm-pop" data-spot side={popSide} align="start" sideOffset={8} collisionPadding={10} style={{ width: 220 }} onCloseAutoFocus={(e) => e.preventDefault()}>
+                      <RM.Item className="menu-item" onSelect={() => fileInput.current?.click()}>
+                        <Icon name={images ? 'image' : 'file-plus'} size={15} />
+                        <span className="grow">{images ? 'Add files or images' : 'Add files'}</span>
+                      </RM.Item>
+                      <RM.Item className="menu-item" onSelect={mention}>
+                        <Icon name="at" size={15} />
+                        <span className="grow">Mention a file</span>
+                        <Kbd combo="@" />
+                      </RM.Item>
+                    </RM.Content>
+                  </RM.Portal>
+                </RM.Root>
+                <ModeMenu choice={choice} side={popSide} onClosed={focus} />
+                {ultraOffered && <UltraToggle on={ultra} onToggle={toggleUltra} />}
+              </>
+            )}
+          </div>
+          <SendHint on={queueing && canSend} steerable={steerable} sendWithEnter={sendWithEnter} />
+          <div className="cmp-side cmp-right">
+            <ModelPopover choice={choice} side={popSide} onClosed={focus} />
+            <ModelEffort choice={choice} />
+            <SendKey
+              canSend={canSend}
+              busy={busy}
+              showStop={showStop}
+              steerable={steerable}
+              ultracode={ultra}
+              sendWithEnter={sendWithEnter}
+              shell={shell}
+              stoppable={variant === 'session' && !!sessionId}
+              onSend={onSend}
+              onStop={onStop}
+            />
+          </div>
+        </div>
+
+        {ultraOffered && <UltraEdge on={ultra} card={card} />}
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            void addFiles([...(e.target.files ?? [])]);
+            e.target.value = '';
+          }}
+        />
+      </div>
+
+      {dropping && <StageDrop host={dropHost} images={images} />}
+      {variant === 'home' && <HomeChips onClosed={focus} />}
+    </div>
+  );
+}

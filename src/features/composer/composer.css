@@ -1,0 +1,1631 @@
+/* The composer: a near-black slab, a step darker than the stage, no border at rest. Its hairline
+   lights near the pointer (data-spot); focus is a soft ivory ring. Monochrome throughout. */
+
+.composer {
+  position: relative;
+  width: 100%;
+}
+
+.cmp-card {
+  --cmp-fill: #08080a;
+  position: relative;
+  z-index: 1;
+  container: cmp / inline-size;
+  padding: 9px 11px 10px;
+  border-radius: 20px;
+  background-color: var(--cmp-fill);
+  /* An antialias fringe so the slab keeps its edge on the near-black stage (not a border). */
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.045);
+}
+
+/* Home: the slab floats over the backdrop. Nearly opaque ink and no backdrop blur: a blur here
+   was re-computed on every backdrop frame and every hover repaint, the largest single cost on
+   the home screen (measured in Electron), for a difference the near-opaque fill hides anyway. */
+.composer[data-variant='home'] .cmp-card {
+  background-color: rgb(8 8 10 / 0.94);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.05), var(--shadow-composer);
+}
+
+/* The focus ring lives on its own layer so it can fade in (opacity only) without animating a shadow. */
+.cmp-card::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 21px;
+  box-shadow: 0 0 0 1.5px rgb(242 241 238 / 0.2);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 90ms var(--ease-out);
+}
+
+.cmp-card:has(> .cmp-field > textarea.cmp-input:focus)::after {
+  opacity: 1;
+}
+
+/* ── text ── */
+
+.cmp-field {
+  position: relative;
+}
+
+.cmp-input {
+  display: block;
+  width: 100%;
+  padding: 5px 3px;
+  border: 0;
+  background: none;
+  resize: none;
+  font-size: var(--t-body);
+  line-height: 22px;
+  color: var(--text);
+  caret-color: var(--text);
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.16) transparent;
+}
+
+.cmp-input[data-ready] {
+  transition: height var(--d-2) var(--ease-out);
+}
+
+.cmp-input::placeholder {
+  color: var(--text-3);
+  opacity: 1;
+}
+
+.cmp-input:focus,
+.cmp-input:focus-visible {
+  outline: none;
+}
+
+.cmp-mirror {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 0 !important;
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.cmp-card[data-shell] .cmp-input {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  font-variant-ligatures: none;
+}
+
+/* The suggestion sits on one line: the text truncates and the Tab hint stays beside it. */
+.cmp-ghost {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  padding: 5px 3px;
+  font-size: var(--t-body);
+  line-height: 22px;
+  color: var(--text-3);
+  white-space: pre;
+  pointer-events: none;
+  opacity: 0.78;
+  animation: fade-in var(--d-3) var(--ease);
+}
+
+.cmp-card[data-shell] .cmp-ghost {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+}
+
+.cmp-ghost-pre {
+  color: transparent;
+}
+
+.cmp-ghost-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmp-ghost-key {
+  flex-shrink: 0;
+  margin-left: 8px;
+  align-self: center;
+}
+
+/* Once per session while a turn runs: which keys steer. Right-aligned on the placeholder's line. */
+.cmp-steer-hint {
+  position: absolute;
+  top: 5px;
+  right: 3px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 22px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+  pointer-events: none;
+  animation: fade-in var(--d-3) var(--ease) 120ms backwards;
+}
+
+@container cmp (max-width: 460px) {
+  .cmp-steer-hint {
+    display: none;
+  }
+}
+
+/* Sending: the text rolls up behind the field's top edge and the next placeholder rises in. */
+.cmp-roll {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.cmp-roll > div {
+  padding: 5px 3px;
+  font-size: var(--t-body);
+  line-height: 22px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: var(--text);
+}
+
+.cmp-roll > .cmp-roll-ph {
+  position: absolute;
+  inset: 0 0 auto;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.cmp-card[data-rolling] .cmp-input::placeholder {
+  color: transparent;
+}
+
+/* ── toolbar: every control 28 px, one centre line ── */
+
+.cmp-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  height: 28px;
+}
+
+.cmp-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 28px;
+}
+
+.cmp-right {
+  gap: 2px;
+  flex-shrink: 1;
+}
+
+.cmp-attach,
+.uc-toggle {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale 80ms var(--ease-out);
+}
+
+.cmp-attach {
+  margin-right: 2px;
+  color: var(--text-2);
+  background-color: var(--fill-2);
+}
+
+.cmp-attach:hover {
+  color: var(--text);
+  background-color: var(--fill-3);
+}
+
+.cmp-attach:active {
+  scale: 0.94;
+}
+
+.cmp-attach[aria-expanded='true'] {
+  color: var(--text);
+  background-color: var(--fill-3);
+}
+
+/* Drawn on whole pixels from the button's centre, so it never sits half a pixel off. */
+.cmp-plus {
+  display: block;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  transition: rotate 140ms var(--ease-out);
+}
+
+.cmp-attach:hover .cmp-plus,
+.cmp-attach:focus-visible .cmp-plus {
+  rotate: 90deg;
+}
+
+.cmp-attach[aria-expanded='true'] .cmp-plus {
+  rotate: 45deg;
+}
+
+/* Text chips in the toolbar (mode, model). */
+.tb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  min-width: 0;
+  padding: 0 10px 0 9px;
+  border-radius: var(--r-pill);
+  font-size: var(--t-ui);
+  white-space: nowrap;
+  color: var(--text-2);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.tb-chip:hover,
+.tb-chip[aria-expanded='true'] {
+  color: var(--text);
+  background-color: var(--fill-2);
+}
+
+.tb-chip:active {
+  background-color: var(--fill-3);
+}
+
+.tb-chip svg {
+  flex-shrink: 0;
+  color: var(--text-3);
+  transition: color var(--d-1) var(--ease);
+}
+
+.tb-chip:hover svg,
+.tb-chip[aria-expanded='true'] svg {
+  color: var(--text-2);
+}
+
+.tb-chip[aria-expanded='true'] > :not(svg) {
+  opacity: 0.7;
+}
+
+/* Mode: one fill step at rest, like a button. Every mode is neutral ivory, bypass included. */
+.cm-mode {
+  color: var(--text);
+  font-weight: var(--w-medium);
+  background-color: var(--fill-2);
+}
+
+.cm-mode:hover,
+.cm-mode[aria-expanded='true'] {
+  background-color: var(--fill-3);
+}
+
+.cm-mode svg,
+.cm-mode:hover svg {
+  color: var(--text-2);
+}
+
+.cm-mode-label {
+  min-width: 0;
+}
+
+.cm-model {
+  gap: 5px;
+  padding: 0 8px 0 10px;
+}
+
+.cm-model-name {
+  min-width: 0;
+  color: var(--text);
+}
+
+.cm-model .caret {
+  opacity: 0.7;
+}
+
+/* Narrow composer (side panel open, larger Interface size): the mode label folds into its icon
+   first; past that the model name truncates. Nothing overlaps. */
+@container cmp (max-width: 470px) {
+  .cm-mode {
+    padding: 0;
+    width: 28px;
+    justify-content: center;
+  }
+  .cm-mode .cm-mode-label {
+    display: none;
+  }
+}
+
+/* ── a label whose content changes: fade, resize, fade ── */
+
+.morph {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.morph-in {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.morph-old {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  translate: 0 -50%;
+  display: inline-flex;
+  gap: 5px;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: morph-out 60ms linear forwards;
+}
+
+@keyframes morph-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.chip-skel {
+  display: inline-block;
+  height: 16px;
+  margin: 0 6px;
+}
+
+/* Shell mode badge. */
+.cmp-shell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px 0 9px;
+  border-radius: var(--r-pill);
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text);
+  background-color: var(--fill-2);
+  animation: fade-in var(--d-2) var(--ease-out);
+}
+
+/* ── effort: a row of level bars ── */
+
+.ef {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  flex-shrink: 0;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.ef:hover,
+.ef:focus-visible {
+  background-color: var(--fill-2);
+}
+
+.ef:focus-visible {
+  box-shadow: 0 0 0 1.5px var(--focus);
+}
+
+.ef-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 13px;
+}
+
+.ef-bar {
+  position: relative;
+  width: 3px;
+  border-radius: 1.5px;
+  background-color: rgb(255 255 255 / 0.13);
+  overflow: hidden;
+}
+
+.ef:hover .ef-bar {
+  background-color: rgb(255 255 255 / 0.18);
+}
+
+.ef-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--text-2);
+  transform: scaleY(0);
+  transform-origin: 50% 100%;
+  transition: transform 140ms var(--ease-out);
+}
+
+.ef-fill[data-on] {
+  transform: none;
+}
+
+.ef:hover .ef-fill,
+.ef:focus-visible .ef-fill {
+  background-color: var(--text);
+}
+
+/* The level's name, above the bars for a moment after a change. */
+.ef-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  translate: -50% 3px;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--grain) 0 0 / var(--grain-size), var(--panel-4);
+  box-shadow: var(--glass-edge), var(--shadow-pop);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 100ms var(--ease),
+    translate 140ms var(--ease-out);
+}
+
+.ef-tip[data-on] {
+  opacity: 1;
+  translate: -50% 0;
+}
+
+.ef-tip-in {
+  display: block;
+  animation: fade-in 90ms var(--ease);
+}
+
+/* ── ultracode ── */
+
+.uc-toggle {
+  color: var(--text-3);
+}
+
+.uc-toggle:hover {
+  color: var(--text);
+  background-color: var(--fill-2);
+}
+
+.uc-toggle:active {
+  scale: 0.94;
+}
+
+.uc-toggle[data-on] {
+  color: var(--text);
+  background-color: var(--fill-2);
+}
+
+.uc-glyph {
+  display: block;
+  overflow: visible;
+}
+
+.uc-glyph path {
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition:
+    translate 140ms var(--ease-out),
+    opacity 120ms var(--ease);
+}
+
+/* Off: the second head rests under the first and dim; hovering lifts both a step. */
+.uc-toggle:not([data-on]) .uc-g2 {
+  opacity: 0.45;
+}
+
+.uc-toggle:is(:hover, :focus-visible) .uc-g1 {
+  translate: 0 -1.5px;
+}
+
+.uc-toggle:is(:hover, :focus-visible) .uc-g2 {
+  translate: 0 -0.5px;
+}
+
+/* The edge light: leaf segments travel the card's rounded edge (offset-path follows its shape). */
+.uc {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/* A faint steady ring while it is on. */
+.uc::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgb(242 241 238 / 0.09);
+  animation: fade-in 300ms var(--ease) backwards;
+}
+
+.uc[data-phase='drain']::after {
+  opacity: 0;
+  transition: opacity 400ms var(--ease);
+}
+
+.uc-run,
+.uc-charge {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.uc i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 9px;
+  height: 1.5px;
+  border-radius: 1px;
+  offset-path: inset(0 round 20px);
+  offset-anchor: 50% 50%;
+  offset-rotate: auto;
+  background-color: var(--text);
+  will-change: offset-distance;
+}
+
+/* The slow band: the head is solid light, the tail breaks into dither and fades. */
+.uc-run i {
+  opacity: calc(0.92 - var(--i) * 0.039);
+  animation: uc-travel 9s linear infinite;
+  animation-delay: calc(var(--i) * -0.032s);
+  transition: opacity 260ms var(--ease);
+}
+
+.uc-run i:nth-child(-n + 4) {
+  height: 2px;
+  box-shadow: 0 0 6px 1px rgb(242 241 238 / 0.35);
+}
+
+.uc-run i:nth-child(n + 6) {
+  background: var(--dither-edge) 0 0 / 8px 3px;
+  image-rendering: pixelated;
+}
+
+.uc[data-phase='charge'] .uc-run i {
+  opacity: 0;
+}
+
+.uc[data-phase='drain'] .uc-run i {
+  opacity: 0;
+  transition-duration: 300ms;
+  transition-delay: calc((22 - var(--i)) * 11ms);
+}
+
+.uc[data-paused] i {
+  animation-play-state: paused;
+}
+
+/* The charge: one fast lap of a brighter, longer band, then it hands over to the slow one. */
+.uc-charge i {
+  height: 2px;
+  width: 12px;
+  opacity: calc(1 - var(--i) * 0.042);
+  animation: uc-travel 720ms cubic-bezier(0.45, 0, 0.2, 1) 1 both;
+  animation-delay: calc(var(--i) * 3ms);
+}
+
+@keyframes uc-travel {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uc i {
+    display: none;
+  }
+}
+
+/* ── send and stop keys share one slot ── */
+
+.cmp-keys {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.cmp-keys > * {
+  grid-area: 1 / 1;
+}
+
+/* Send: a solid ivory disc with a dark glyph. With nothing to send it is just a dim glyph in a faint ring. */
+.cmp-send,
+.cmp-stop {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-inverse);
+  background-color: var(--text);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale 80ms var(--ease-out);
+}
+
+.cmp-send:hover {
+  background-color: #fff;
+}
+
+.cmp-send:active {
+  scale: 0.94;
+}
+
+.cmp-send[data-on]:not([data-ready]) {
+  color: var(--text-4);
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  pointer-events: none;
+}
+
+/* The two keys swap in one frame. The stop key never moves, pulses or changes on hover. */
+.cmp-send:not([data-on]),
+.cmp-stop:not([data-on]) {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.cmp-stop {
+  transition: none;
+}
+
+.cmp-stop-sq {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background-color: currentColor;
+}
+
+/* The glyph's parts move between send, queue and steer (and gain a second head for ultracode). */
+.sk-glyph {
+  display: block;
+  overflow: visible;
+}
+
+.sk-glyph path {
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform-box: view-box;
+  transition:
+    transform 150ms var(--ease-out),
+    opacity 110ms var(--ease);
+}
+
+.sk-arrow {
+  transform-box: view-box;
+  transform-origin: 8px 8.4px;
+  transition: transform 170ms var(--ease-out);
+}
+
+.sk-shaft {
+  transform-origin: 8px 3.6px;
+}
+
+.sk-head2 {
+  opacity: 0;
+}
+
+.sk-line {
+  opacity: 0;
+  transform-origin: 8px 12px;
+  transform: translateY(2px) scaleX(0.4);
+}
+
+.sk-glyph[data-glyph='queue'] .sk-arrow {
+  transform: translateY(-1px);
+}
+
+.sk-glyph[data-glyph='queue'] .sk-shaft {
+  transform: scaleY(0.36);
+}
+
+.sk-glyph[data-glyph='queue'] .sk-line {
+  opacity: 1;
+  transform: none;
+}
+
+.sk-glyph[data-glyph='steer'] .sk-arrow {
+  transform: rotate(45deg);
+}
+
+.sk-glyph[data-double] .sk-head {
+  transform: translateY(-1.25px);
+}
+
+.sk-glyph[data-double] .sk-head2 {
+  opacity: 1;
+  transform: translateY(3.4px);
+}
+
+.cmp-send[data-ready]:is(:hover, :focus-visible) .sk-glyph[data-glyph='send'] .sk-arrow {
+  transform: translateY(-1px);
+}
+
+/* The key hint while a turn runs: in the toolbar's free space, right next to the keys. */
+.sk-hint {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sk-hint-in {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+  white-space: nowrap;
+  opacity: 0;
+  translate: 4px 0;
+  transition:
+    opacity 110ms var(--ease),
+    translate 140ms var(--ease-out);
+}
+
+.sk-hint[data-on] .sk-hint-in {
+  opacity: 1;
+  translate: 0 0;
+  animation: fade-in 90ms var(--ease);
+}
+
+/* ── full-stage drop state ── */
+
+.stage-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  background-color: rgb(8 8 10 / 0.72);
+  pointer-events: none;
+  animation: fade-in 120ms var(--ease);
+}
+
+.stage-drop::before {
+  content: '';
+  position: absolute;
+  inset: 14px;
+  border-radius: var(--r-xl);
+  box-shadow: inset 0 0 0 1px rgb(242 241 238 / 0.14);
+}
+
+.stage-drop-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 18px 0 15px;
+  border-radius: var(--r-pill);
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text);
+  background: var(--grain) 0 0 / var(--grain-size), var(--panel-3);
+  box-shadow: var(--glass-edge), var(--shadow-pop);
+  animation: drop-rise 160ms var(--ease-out);
+}
+
+.stage-drop-label svg {
+  color: var(--text-2);
+}
+
+@keyframes drop-rise {
+  from {
+    translate: 0 6px;
+  }
+}
+
+/* ── attachments ── */
+
+.att-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 3px 8px;
+}
+
+.att {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.att-img {
+  width: 52px;
+  height: 52px;
+}
+
+.att-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+  outline: 1px solid var(--line-2);
+  outline-offset: -1px;
+}
+
+.att-file {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  max-width: 260px;
+  padding: 0 11px 0 9px;
+  border-radius: var(--r-pill);
+  color: var(--text);
+  background-color: var(--fill-2);
+}
+
+.att-file-icon {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.att-file-name {
+  min-width: 0;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+}
+
+.att-file-meta {
+  flex-shrink: 0;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+}
+
+.att-x {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: var(--text-inverse);
+  background-color: var(--text-2);
+  opacity: 0;
+  scale: 0.8;
+  transition:
+    opacity var(--d-1) var(--ease),
+    scale var(--d-1) var(--ease-out),
+    background-color var(--d-1) var(--ease);
+}
+
+.att:hover .att-x,
+.att:focus-within .att-x {
+  opacity: 1;
+  scale: 1;
+}
+
+.att-x:hover {
+  background-color: var(--text);
+}
+
+.att-x:focus-visible {
+  border-radius: 50%;
+}
+
+/* ── typeahead ── */
+
+/* Grows out of the caret (SuggestMenu drives the clip with a spring); rows keep their size. */
+.sg.pop {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  translate: none;
+  animation: none;
+}
+
+.sg-list {
+  min-height: 0;
+  scroll-padding: 4px;
+}
+
+.sg-group {
+  padding: 7px 8px 3px;
+  font-size: var(--t-micro);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+}
+
+.sg-group:first-child {
+  padding-top: 4px;
+}
+
+.sg-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 10px;
+  color: var(--text-2);
+  cursor: default;
+  scroll-margin: 4px;
+  transform-origin: 50% 100%;
+  transition:
+    background-color 80ms var(--ease-out),
+    color 80ms var(--ease-out);
+}
+
+.sg-row[data-active] {
+  color: var(--text);
+  background-color: var(--hl);
+}
+
+.sg-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  max-width: 64%;
+  flex-shrink: 0;
+}
+
+.sg-label {
+  flex-shrink: 0;
+  max-width: 100%;
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sg-hint {
+  min-width: 0;
+  max-width: 200px;
+  font-size: var(--t-ui);
+  color: var(--text-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sg-detail {
+  flex: 1;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 16px;
+  text-align: right;
+  font-size: var(--t-small);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Folders as labels: UI font, elided from the start so the nearest folders stay readable. */
+.sg-path {
+  direction: rtl;
+  unicode-bidi: plaintext;
+}
+
+.sg-hit {
+  background: none;
+  color: var(--text);
+  font-weight: var(--w-semi);
+  text-decoration: underline;
+  text-decoration-color: rgb(255 255 255 / 0.28);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+
+.sg-empty {
+  padding: 7px 8px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* ── menus and popovers opened from the composer ── */
+
+.cm-pop {
+  padding: 4px;
+}
+
+.cm-row {
+  gap: 10px;
+  min-height: 28px;
+  padding: 3px 8px;
+  align-items: center;
+}
+
+.cm-row-name {
+  font-size: var(--t-ui);
+  color: var(--text);
+}
+
+.cm-row-path {
+  font-size: var(--t-ui);
+  color: var(--text);
+}
+
+.cm-check {
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.menu-item.cm-row .cm-check svg {
+  color: var(--text);
+}
+
+/* Model and mode menus: one family. Short rows (lead, name, check), no headers, no descriptions. */
+.mm-pop {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  max-height: calc(var(--radix-dropdown-menu-content-available-height, 100vh) / var(--ui-zoom, 1));
+}
+
+.mm-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: min(340px, calc(46 * var(--vh)));
+}
+
+.mm-list > *,
+.mm-pop > :not(.mm-list) {
+  flex-shrink: 0;
+}
+
+.mm-row {
+  gap: 9px;
+  min-height: 28px;
+  padding: 3px 8px;
+  font-size: var(--t-ui);
+  color: var(--text-2);
+}
+
+.mm-row[data-current] {
+  color: var(--text);
+}
+
+/* The agent's mark keeps its own colour; rows that are not in use show it dimmed. */
+.mm-mark {
+  opacity: 0.55;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.menu-item.mm-row[data-current] .mm-mark,
+.menu-item.mm-row[data-highlighted] .mm-mark {
+  opacity: 1;
+}
+
+.mm-lead {
+  color: var(--text-3);
+}
+
+.mm-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.mm-hit {
+  font-weight: var(--w-semi);
+  color: var(--text);
+}
+
+.mm-check {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.menu-item.mm-row .mm-check svg {
+  color: var(--text);
+}
+
+.mm-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin: 0 0 2px;
+  padding: 0 8px;
+  border-radius: 10px;
+  color: var(--text-3);
+}
+
+.mm-search:focus-within {
+  color: var(--text-2);
+}
+
+.mm-field {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: none;
+  font-size: var(--t-ui);
+  color: var(--text);
+}
+
+.mm-field::placeholder {
+  color: var(--text-3);
+}
+
+.mm-field:focus-visible {
+  outline: none;
+}
+
+.mm-empty {
+  padding: 7px 8px 8px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.mm-sep {
+  margin: 4px 6px;
+}
+
+.mm-foot-static {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 8px 3px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* ── queued messages: a tray tucked behind the composer's top edge ── */
+
+/* The clip is the tray's resting box: the tray unfolds up out of the card and folds back into it. */
+.cq-clip {
+  position: relative;
+  z-index: 0;
+  margin-bottom: -20px;
+  border-radius: 18px 18px 0 0;
+  overflow: hidden;
+}
+
+.cq-clip:empty {
+  display: none;
+}
+
+.cq {
+  padding-bottom: 20px;
+  border-radius: 18px 18px 0 0;
+  background-color: var(--panel);
+}
+
+.cq-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 2px 14px 0;
+  font-size: var(--t-small);
+  color: var(--text-2);
+}
+
+.cq-head-icon {
+  color: var(--text-3);
+}
+
+.cq-title {
+  font-weight: var(--w-medium);
+}
+
+.cq-count {
+  color: var(--text-3);
+}
+
+/* An odometer: the old value leaves its clipped line as the new one arrives. */
+.roll {
+  display: inline-grid;
+  overflow: hidden;
+  line-height: 1.25;
+  vertical-align: bottom;
+}
+
+.roll > * {
+  grid-area: 1 / 1;
+}
+
+.roll-new {
+  animation: roll-in-up 150ms var(--ease-out) both;
+}
+
+.roll-old {
+  animation: roll-out-up 110ms var(--ease-in) forwards;
+}
+
+.roll[data-dir='down'] .roll-new {
+  animation-name: roll-in-down;
+}
+
+.roll[data-dir='down'] .roll-old {
+  animation-name: roll-out-down;
+}
+
+@keyframes roll-in-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes roll-out-up {
+  to {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+}
+
+@keyframes roll-in-down {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+}
+
+@keyframes roll-out-down {
+  to {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+.cq-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: 152px;
+  padding: 0 6px 6px;
+}
+
+.cq-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 3px 0 8px;
+  border-radius: 9px;
+  outline: none;
+  cursor: grab;
+  overflow: hidden;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.cq-row:hover,
+.cq-row:focus-within {
+  background-color: var(--fill-1);
+}
+
+/* The keyboard row: one fill step and dithered light falling off from its leading edge. */
+.cq-row:focus-visible {
+  background-color: var(--fill-2);
+}
+
+.cq-row:focus-visible::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--dither-fade) left top / var(--dither-fade-size) repeat-y;
+  image-rendering: pixelated;
+  opacity: 0.07;
+  pointer-events: none;
+}
+
+/* Lifted while dragged: a layer up, with the floating shadow; the others make room on a spring. */
+.cq-row[data-lifted] {
+  z-index: 2;
+  cursor: grabbing;
+  overflow: visible;
+  background-color: var(--panel-3);
+  box-shadow: var(--glass-edge), var(--shadow-pop);
+}
+
+.cq-n {
+  width: 12px;
+  flex-shrink: 0;
+  font-size: var(--t-micro);
+  color: var(--text-4);
+  text-align: center;
+}
+
+.cq-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-ui);
+  color: var(--text-2);
+}
+
+.cq-row:is(:hover, :focus-within, [data-lifted]) .cq-text {
+  color: var(--text);
+}
+
+.cq-att {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+}
+
+.cq-actions {
+  display: flex;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.cq-row:is(:hover, :focus-within, :focus-visible) .cq-actions {
+  opacity: 1;
+}
+
+.cq-row[data-lifted] .cq-actions {
+  opacity: 0;
+}
+
+/* Each action is an icon; on hover or focus a pill grows out of it to the left with its label. */
+.cq-act {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 24px;
+  border-radius: 12px;
+  color: var(--text-3);
+  transition: color var(--d-1) var(--ease);
+}
+
+.cq-act > svg {
+  position: relative;
+  z-index: 1;
+}
+
+.cq-act-pill {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 24px 0 10px;
+  border-radius: 12px;
+  background-color: #08080a;
+  white-space: nowrap;
+  clip-path: inset(0 0 0 calc(100% - 26px) round 12px);
+  opacity: 0;
+  transition:
+    clip-path 110ms var(--ease-out),
+    opacity 80ms var(--ease);
+}
+
+.cq-act-label {
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text);
+  opacity: 0;
+  transition: opacity 90ms var(--ease) 40ms;
+}
+
+.cq-act:is(:hover, :focus-visible) {
+  z-index: 2;
+  color: var(--text);
+  outline: none;
+}
+
+.cq-act:is(:hover, :focus-visible) .cq-act-pill {
+  opacity: 1;
+  clip-path: inset(0 0 0 0 round 12px);
+}
+
+.cq-act:focus-visible .cq-act-pill {
+  box-shadow: inset 0 0 0 1px var(--focus);
+}
+
+.cq-act:is(:hover, :focus-visible) .cq-act-label {
+  opacity: 1;
+}
+
+.cq-act:active .cq-act-pill {
+  background-color: #000;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cq-act-pill {
+    transition: opacity 80ms linear;
+  }
+}
+
+/* ── mention pills: a layer behind the field with the same metrics ── */
+
+.cmp-hl {
+  position: absolute;
+  inset: 0;
+  height: auto;
+  color: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  pointer-events: none;
+  overflow: hidden;
+  scrollbar-color: transparent transparent;
+  user-select: none;
+}
+
+.cmp-card[data-shell] .cmp-hl {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  font-variant-ligatures: none;
+}
+
+/* The pill never changes the text's box: a near-black fill grown by a spread (about 22px tall) and a
+   faint neutral rim. */
+.cmp-pill {
+  color: transparent;
+  border-radius: 11px;
+  background: var(--pill-bg, #000);
+  box-shadow:
+    0 0 0 2px var(--pill-bg, #000),
+    0 0 0 3px var(--pill);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.cmp-pill[data-kind='mention'],
+.cmp-pill[data-kind='command'],
+.cmp-pill[data-kind='skill'] {
+  --pill-bg: #1a1a1e;
+  --pill: rgb(255 255 255 / 0.1);
+}
+
+.cmp-pill[data-kind='shell'] {
+  --pill: rgb(255 255 255 / 0.16);
+}
+
+.cmp-field > textarea.cmp-input:not(.cmp-mirror) {
+  position: relative;
+}
+
+/* ── home: the next session's agent, folder and branch ── */
+
+.home-chips-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 10px;
+  padding: 0 4px;
+  min-width: 0;
+}
+
+.hc {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 9px 0 8px;
+  border-radius: var(--r-pill);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+  white-space: nowrap;
+  min-width: 0;
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+button.hc:hover,
+.hc[aria-expanded='true'] {
+  color: var(--text);
+  background-color: var(--fill-2);
+}
+
+button.hc:active {
+  background-color: var(--fill-3);
+}
+
+.hc-icon {
+  color: var(--text-3);
+}
+
+.hc-caret {
+  color: var(--text-3);
+  opacity: 0.7;
+  margin-left: -1px;
+}
+
+.hc[data-missing] {
+  color: var(--amber);
+}
+
+.hc[data-missing] .hc-icon,
+.hc[data-missing] .hc-caret {
+  color: var(--amber);
+}
+
+.hc-static {
+  max-width: 220px;
+  color: var(--text-3);
+}
+
+.hc-account {
+  max-width: 180px;
+  font-weight: var(--w-regular);
+  color: var(--text-3);
+}
+
+.hc-group + .hc-group {
+  margin-top: 2px;
+}
+
+/* An agent's accounts, nested under it. */
+.hc-acct {
+  gap: 10px;
+  min-height: 28px;
+  padding: 3px 9px 3px 33px;
+  font-size: var(--t-small);
+}
+
+.hc-acct[data-current] {
+  color: var(--text);
+}
+
+.hc-signin {
+  font-size: var(--t-small);
+  color: var(--amber);
+}
+
+/* ── the home-to-session hand-off: the card copy that flies to the dock ── */
+
+.handoff-ghost .cmp-card::after {
+  opacity: 0;
+}
