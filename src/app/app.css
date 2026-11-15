@@ -1,0 +1,485 @@
+/* The shell: sidebar on the bare canvas, the stage as a flat sheet with one hairline, an optional rail. */
+
+.app {
+  position: relative;
+  display: flex;
+  height: 100%;
+  padding: var(--gap);
+  isolation: isolate;
+}
+
+.app-side {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  margin-right: var(--gap);
+  overflow: hidden;
+  transition:
+    width var(--d-3) var(--ease-out),
+    margin var(--d-3) var(--ease-out),
+    opacity var(--d-1) var(--ease);
+}
+
+.app[data-sidebar='false'] .app-side {
+  width: 0;
+  margin-right: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.app-side > * {
+  width: var(--sidebar-w);
+  height: 100%;
+}
+
+.stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background-color: var(--sheet);
+  overflow: hidden;
+}
+
+.stage-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.stage-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-rail {
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.app-rail-inner {
+  width: var(--rail-w);
+  height: 100%;
+  padding-left: var(--gap);
+}
+
+/* ── topbar ── */
+
+.topbar {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--topbar-h);
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+.topbar-home {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.topbar-home:hover {
+  background-color: var(--fill-2);
+}
+
+.topbar-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 6px;
+}
+
+.topbar-name {
+  font-weight: var(--w-medium);
+  letter-spacing: -0.005em;
+}
+
+.topbar-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-3);
+  font-size: var(--t-small);
+  flex-shrink: 1;
+}
+
+.topbar-crumb svg {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.topbar-crumb svg:not(:first-child) {
+  margin-left: 6px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.flip-x svg {
+  transform: scaleX(-1);
+}
+
+.ctx-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.ctx-meter:hover {
+  background-color: var(--fill-2);
+  color: var(--text);
+}
+
+.ctx-meter[data-warn] {
+  color: var(--amber);
+}
+
+/* ── capabilities popover ── */
+
+.caps-trigger {
+  position: relative;
+}
+
+.caps-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.caps-pop {
+  padding: 4px;
+}
+
+.caps-row {
+  align-items: flex-start;
+  padding-block: 6px;
+}
+
+.caps-row > svg {
+  margin-top: 2px;
+}
+
+.caps-row[data-on] > svg {
+  color: var(--text);
+}
+
+.caps-row .switch {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.caps-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.caps-label {
+  line-height: 20px;
+}
+
+.caps-row[data-on] .caps-label {
+  color: var(--text);
+}
+
+.caps-state {
+  font-size: var(--t-micro);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.caps-foot {
+  padding: 4px 9px 6px;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+}
+
+.caps-state[data-tone='waiting'] {
+  color: var(--amber);
+}
+
+.caps-state[data-tone='error'] {
+  color: var(--red);
+}
+
+.caps-remote {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 3px 3px 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background-color: rgb(0 0 0 / 0.22);
+}
+
+/* A link and a pairing code shown as labels: the UI font, figures that line up. */
+.caps-link,
+.caps-code {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-sans);
+  font-size: var(--t-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.caps-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.caps-link:focus-visible {
+  outline: 1.5px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.caps-copy {
+  width: 26px;
+  height: 26px;
+}
+
+.offline {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 99px;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  border: 1px solid var(--line-2);
+  color: var(--text-2);
+  background: var(--grain) 0 0 / var(--grain-size), var(--panel-2);
+  box-shadow: var(--shadow-pop);
+  animation: rise-in var(--d-3) var(--ease-out);
+
+}
+
+/* ── desktop shell ──
+   Only inside the Electron app (html[data-desktop] is set from the preload). The bars that run
+   along the top of the window drag it; their controls stay clickable. The native window controls
+   float over the top corner, so the bar under them keeps that corner free. */
+
+html[data-desktop] .app::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--gap);
+  -webkit-app-region: drag;
+}
+
+html[data-desktop] :is(.topbar, .side-brand, .rail-head) {
+  -webkit-app-region: drag;
+}
+
+html[data-desktop] :is(.topbar, .side-brand, .rail-head) :is(button, a, input, textarea, select, [role], [tabindex]),
+html[data-desktop] .rail-resize {
+  -webkit-app-region: no-drag;
+}
+
+/* ── title strip (Windows, Linux) ──
+   html[data-wco] is set while the native minimise / maximise / close buttons float over the top
+   right corner (useTitleStrip in App.tsx sets it, with their width as --wco-w and one button's
+   width as --caption-w, both already divided by the root zoom). The strip is the window gap plus
+   the top bar, and the native overlay is sized to exactly that, so everything in the top row
+   (sidebar brand, top bar, panel header) is centred on the strip's middle line, like the native
+   glyphs. Nothing of the app sits under the native buttons. */
+html[data-wco] {
+  --wco-w: 138px;
+  --caption-w: 46px;
+  --strip-h: calc(var(--gap) + var(--topbar-h));
+}
+
+html[data-wco] :is(.topbar, .side-brand, .app-rail .rail-head) {
+  padding-bottom: var(--gap);
+}
+
+/* No panel: the top bar's actions join the native buttons as one row of equal caption buttons,
+   the full strip tall, a hairline between the two groups. */
+html[data-wco] .app:not(:has(> .app-rail)) .topbar {
+  padding-right: calc(var(--wco-w) + var(--caption-actions-w, calc(4 * var(--caption-w))) - var(--gap) + 8px);
+}
+
+html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions {
+  position: fixed;
+  top: 0;
+  right: var(--wco-w);
+  z-index: 5;
+  height: var(--strip-h);
+  gap: 0;
+  margin: 0;
+  -webkit-app-region: drag;
+}
+
+html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions::after {
+  content: '';
+  align-self: center;
+  width: 1px;
+  height: 16px;
+  margin: 0 3px 0 4px;
+  background: var(--line-2);
+}
+
+html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > :is(.icon-btn, .ctx-meter) {
+  justify-content: center;
+  height: 100%;
+  min-width: var(--caption-w);
+  border-radius: 0;
+  color: var(--text-2);
+  -webkit-app-region: no-drag;
+}
+
+html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > .ctx-meter {
+  padding: 0 14px;
+}
+
+html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > :is(.icon-btn, .ctx-meter):hover,
+html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > :is(.icon-btn, .ctx-meter)[data-state='open'] {
+  color: var(--text);
+  background-color: var(--fill-3);
+}
+
+html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > :is(.icon-btn, .ctx-meter):active {
+  background-color: var(--fill-4);
+}
+
+html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > .ctx-meter[data-warn] {
+  color: var(--amber);
+}
+
+/* A toggled button (the panel) keeps its state as a brighter glyph, not a block of fill. */
+html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions > .icon-btn[data-active='true'] {
+  color: var(--text);
+  background-color: transparent;
+}
+
+html[data-wco] .app:not(:has(> .app-rail)) .topbar-actions .caps-dot {
+  top: calc(50% - 10px);
+  right: calc(50% - 11px);
+}
+
+/* With the panel open the native buttons float over its header: the actions stay at the end of
+   the stage's top bar, a little larger than in the browser, on the same centre line. */
+html[data-wco] .app:has(> .app-rail) .topbar {
+  padding-right: 6px;
+}
+
+html[data-wco] .app:has(> .app-rail) .topbar-actions > :is(.icon-btn, .ctx-meter) {
+  height: 32px;
+  min-width: 32px;
+  justify-content: center;
+}
+
+/* Dialogs centre in the window below the strip, so none reaches under the native buttons. */
+html[data-wco] .dialog {
+  top: calc(50% + var(--strip-h) / 2);
+  max-height: calc(100 * var(--vh) - var(--strip-h) - 32px);
+}
+
+html[data-wco] .dialog.settings-dialog {
+  height: min(640px, calc(100 * var(--vh) - var(--strip-h) - 32px));
+}
+
+html[data-wco] .palette {
+  top: max(calc(var(--strip-h) + 16px), calc(13 * var(--vh)));
+}
+
+html[data-wco] .app-rail .rail-head {
+  padding-right: calc(var(--wco-w) - var(--gap) + 6px);
+}
+
+/* The panel's own close button would sit beside the window's; the top bar toggle (Mod+J) remains. */
+html[data-wco] .app-rail .rail-close {
+  display: none;
+}
+
+/* macOS: the traffic lights sit at the top left, over the sidebar's first row or the top bar. */
+html[data-desktop='darwin'] .side-brand {
+  padding-left: calc(78px - var(--gap) - 2px);
+}
+
+html[data-desktop='darwin'] .app[data-sidebar='false'] .topbar {
+  padding-left: calc(78px - var(--gap));
+}
+
+/* ── toasts ── */
+
+.toasts {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 400px;
+  padding: 9px 13px 9px 11px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  text-align: left;
+  font-size: var(--t-ui);
+  color: var(--text);
+  background: var(--grain) 0 0 / var(--grain-size), var(--panel-2);
+  box-shadow: var(--shadow-pop);
+}
+
+.toast svg {
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+
+.toast[data-level='error'] svg {
+  color: var(--red);
+}
+
+.toast[data-level='success'] svg {
+  color: var(--text);
+}
