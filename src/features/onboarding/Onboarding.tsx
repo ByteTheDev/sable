@@ -1,7 +1,7 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { animate, AnimatePresence, motion, useAnimate, useMotionTemplate, useMotionValue, usePresence, useReducedMotion, type Transition, type Variants } from 'motion/react';
 import { Backdrop } from '@/art/Backdrop';
-import { Ring } from '@/art/Logo';
+import { MARK_CELLS, markCell, Ring } from '@/art/Logo';
 import { ConnectCard } from '@/features/connect/Connect';
 import { connectableAgents, isSignedIn } from '@/features/connect/plan';
 import { Icon } from '@/icons';
@@ -132,9 +132,11 @@ export function Onboarding() {
         document.documentElement.dataset.handover = '';
         const from = layoutBox(travel);
         const to = layoutBox(target);
-        const shown = travel.getBoundingClientRect().width / zoom();
+        // Land glyph on glyph: the mark as shown now (step scale included) onto the home mark's cells.
+        const box = (travel.querySelector('.onb-mark-scale') ?? travel).getBoundingClientRect().width / zoom();
+        const shown = (box * markCell(MARK_BOX)) / MARK_BOX;
         parts.push(
-          run(travel, { x: to.x + to.w / 2 - (from.x + from.w / 2), y: to.y + to.h / 2 - (from.y + from.h / 2), scale: shown ? to.w / shown : 1 }, { type: 'spring', stiffness: 300, damping: 34, mass: 0.9 }),
+          run(travel, { x: to.x + to.w / 2 - (from.x + from.w / 2), y: to.y + to.h / 2 - (from.y + from.h / 2), scale: shown ? markCell(to.w) / shown : 1 }, { type: 'spring', stiffness: 300, damping: 34, mass: 0.9 }),
         );
       } else if (travel) parts.push(run(travel, { opacity: 0 }, { duration: 0.2 }));
       void Promise.all(parts.map((p) => new Promise<void>((resolve) => void p.then(resolve, resolve)))).then(finish);
@@ -248,25 +250,23 @@ function layoutBox(el: HTMLElement) {
 
 // ── the mark ──
 
-/** LogoMark's tiles (src/art/Logo.tsx), drawn here so each can move on its own. */
-const TILES = [
-  { x: 2, y: 2, s: 12.4, r: 3.5, a: 1 },
-  { x: 16.6, y: 2, s: 5.4, r: 1.75, a: 0.78 },
-  { x: 2, y: 16.6, s: 5.4, r: 1.75, a: 0.78 },
-  { x: 16.6, y: 9, s: 5.4, r: 1.75, a: 0.54 },
-  { x: 9, y: 16.6, s: 5.4, r: 1.75, a: 0.54 },
-  { x: 17.5, y: 17.5, s: 3.6, r: 1.2, a: 0.3 },
-];
+/** The mark's box on the first step, and the home screen's mark it hands over to (Home.tsx). */
+const MARK_BOX = 64;
+const HOME_MARK = 36;
+
+/** The scale that makes the mark exactly the home screen's on the later steps (same cells, same pixels). */
+const smallScale = () => markCell(HOME_MARK) / markCell(MARK_BOX);
 
 /**
- * The mark keeps its place across steps and only changes size. On every step change its tiles
- * ripple once in the direction of travel (the big tile first going forward, the smallest first
- * going back), like pieces settling into a new arrangement. At rest it is exactly LogoMark.
+ * The mark keeps its place across steps and only changes size. On every step change its cells
+ * ripple once along the diagonal in the direction of travel (the solid corner first going
+ * forward, the dithered corner first going back). At rest it is exactly LogoMark.
  */
 function OnbMark({ step, dir, reduce }: { step: number; dir: Dir; reduce: boolean }) {
-  const [scope
-, run] = useAnimate();
+  const [scope, run] = useAnimate();
   const first = useRef(true);
+  const cell = markCell(MARK_BOX);
+  const at = (MARK_BOX - cell * 4) / 2;
 
   useEffect(() => {
     if (first.current) {
@@ -274,11 +274,11 @@ function OnbMark({ step, dir, reduce }: { step: number; dir: Dir; reduce: boolea
       return;
     }
     if (reduce || !scope.current) return;
-    const rects = [...(scope.current as SVGElement).querySelectorAll('rect')];
-    const order = dir > 0 ? rects : [...rects].reverse();
-    order.forEach((el, i) => {
-      void run(el, { scale: [1, 0.72, 1.06, 1] }, { duration: 0.36, delay: i * 0.028, ease: 'easeOut', times: [0, 0.32, 0.72, 1] });
-    });
+    for (const el of (scope.current as SVGElement).querySelectorAll<SVGRectElement>('rect')) {
+      const d = Number(el.dataset.d);
+      const i = dir > 0 ? d : 6 - d;
+      void run(el, { scale: [1, 0.6, 1.08, 1] }, { duration: 0.34, delay: i * 0.03, ease: 'easeOut', times: [0, 0.3, 0.7, 1] });
+    }
   }, [step, dir, reduce, run, scope]);
 
   return (
@@ -287,13 +287,13 @@ function OnbMark({ step, dir, reduce }: { step: number; dir: Dir; reduce: boolea
         <motion.span
           className="onb-mark-scale"
           initial={{ opacity: 0, scale: reduce ? 1 : 0.86 }}
-          animate={{ opacity: 1, scale: step === 0 ? 1 : 0.5 }}
+          animate={{ opacity: 1, scale: step === 0 ? 1 : smallScale() }}
           transition={reduce ? { duration: 0.15 } : MARK}
         >
-          <svg ref={scope} viewBox="0 0 24 24" width={64} height={64} aria-hidden className="onb-mark-svg">
+          <svg ref={scope} viewBox={`0 0 ${MARK_BOX} ${MARK_BOX}`} width={MARK_BOX} height={MARK_BOX} shapeRendering="crispEdges" aria-hidden className="onb-mark-svg">
             <g fill="var(--text)">
-              {TILES.map((t, i) => (
-                <rect key={i} x={t.x} y={t.y} width={t.s} height={t.s} rx={t.r} opacity={t.a} />
+              {MARK_CELLS.map(([c, r]) => (
+                <rect key={`${c}${r}`} data-d={c + r} x={at + c * cell} y={at + r * cell} width={cell} height={cell} />
               ))}
             </g>
           </svg>

@@ -1,38 +1,51 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import type { ProviderId } from '@shared/protocol';
 import './art.css';
 
-/** The mark's tiles in viewBox units: the big tile, then the pieces breaking off it, each a step dimmer. */
-const TILES = [
-  { x: 2, y: 2, s: 12.4, r: 3.5, a: 1 },
-  { x: 16.6, y: 2, s: 5.4, r: 1.75, a: 0.78 },
-  { x: 2, y: 16.6, s: 5.4, r: 1.75, a: 0.78 },
-  { x: 16.6, y: 9, s: 5.4, r: 1.75, a: 0.54 },
-  { x: 9, y: 16.6, s: 5.4, r: 1.75, a: 0.54 },
-  { x: 17.5, y: 17.5, s: 3.6, r: 1.2, a: 0.3 },
-];
+/**
+ * The Sable mark: a 4 x 4 field of square cells, the app's ordered dither. A solid block of ink
+ * whose last corner dissolves into the field: two cells drop out and the corner cell holds on by
+ * a single point. Flat, one material, never a gradient. The same outline (in cell units) draws
+ * the app icon (scripts/make-icon.mjs) and the favicon (public/favicon.svg).
+ */
+export const MARK_PATH = 'M0 0H4V2H3V3H2V4H0Z M3 3H4V4H3Z';
 
 /**
- * The Sable mark: one tile breaking into smaller ones. A single ivory material with a
- * soft, static light from above; colour belongs to the light around it, never to the mark.
+ * The mark's cells as [column, row], in the order a 4 x 4 Bayer matrix switches them on: drawn in
+ * this order, the block fills in as an ordered-dither ramp from empty to solid.
  */
+export const MARK_CELLS: readonly (readonly [number, number])[] = [
+  [0, 0], [2, 2], [2, 0], [0, 2], [1, 1], [3, 3], [3, 1], [1, 3],
+  [1, 0], [3, 0], [1, 2], [0, 1], [2, 1], [0, 3],
+];
+
+/** Device pixels per layout pixel, including the Interface size zoom (read without a style flush). */
+function deviceScale() {
+  if (typeof window === 'undefined') return 1;
+  const zoom = Number(document.documentElement.style.getPropertyValue('--ui-zoom')) || 1;
+  return (window.devicePixelRatio || 1) * zoom;
+}
+
+/**
+ * The cell size, in layout pixels, for a mark drawn in a `size` box: about two thirds of the box
+ * across four cells, rounded to whole device pixels so every edge lands on a pixel and all
+ * cells come out exactly equal.
+ */
+export function markCell(size: number) {
+  const k = deviceScale();
+  return Math.max(2, Math.round((size * k) / 6)) / k;
+}
+
 export function LogoMark({ size = 22, className }: { size?: number; className?: string }) {
-  const id = useId();
+  const { cell, at } = useMemo(() => {
+    const c = markCell(size);
+    return { cell: c, at: (size - c * 4) / 2 };
+  }, [size]);
   return (
     <span className={`logo-mark ${className ?? ''}`} style={{ width: size, height: size }}>
-      <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden>
-        <defs>
-          <linearGradient id={id} x1="0" y1="2" x2="0" y2="22" gradientUnits="userSpaceOnUse">
-            <stop offset="0" style={{ stopColor: 'var(--text)' }} />
-            <stop offset="1" style={{ stopColor: 'var(--text)', stopOpacity: 0.86 }} />
-          </linearGradient>
-        </defs>
-        <g fill={`url(#${id})`}>
-          {TILES.map((t, i) => (
-            <rect key={i} x={t.x} y={t.y} width={t.s} height={t.s} rx={t.r} opacity={t.a} />
-          ))}
-        </g>
+      <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} shapeRendering="crispEdges" aria-hidden>
+        <path d={MARK_PATH} transform={`translate(${at} ${at}) scale(${cell})`} fill="var(--text)" />
       </svg>
     </span>
   );
@@ -45,10 +58,16 @@ export const INTRO_DELAY = 120;
 /** Delay plus the fade-in: once shown, the intro stays at least this long so it never flickers. */
 export const INTRO_MIN = 420;
 
+/** Each cell's fade, and the gap between cells switching on: the block is whole about 0.35 s in. */
+const CELL_FADE = 0.12;
+const CELL_STEP = 0.016;
+
 /**
- * The launch intro: the whole mark fades and settles once (no stagger, no glow, no loop),
- * then eases out as the app rises in (render it inside AnimatePresence). It starts after
- * a short delay, so a bridge that is ready at once never shows it.
+ * The launch intro: the mark develops once the way the backdrop is drawn, its cells switching on
+ * in ordered-dither order (sparse, then a checker, then solid), each with a short fade so nothing
+ * flashes. No loop, no glow. It then eases out as the app rises in (render it inside
+ * AnimatePresence). It starts after a short delay, so a bridge that is ready at once never shows
+ * it. With reduced motion the whole mark simply fades in.
  */
 export function LogoIntro({ ready, size = 52 }: { ready: boolean; size?: number }) {
   const reduce = useReducedMotion();
@@ -58,18 +77,38 @@ export function LogoIntro({ ready, size = 52 }: { ready: boolean; size?: number 
     const t = window.setTimeout(() => setSlow(true), 1500);
     return () => window.clearTimeout(t);
   }, [ready]);
+  const cell = useMemo(() => markCell(size), [size]);
+  const at = (size - cell * 4) / 2;
+  const delay = INTRO_DELAY / 1000;
 
   return (
     <motion.div
       className="logo-intro"
       role="status"
       aria-label="Starting Sable"
-      initial={{ opacity: 0, scale: reduce ? 1 : 0.96 }}
+      initial={{ opacity: reduce ? 0 : 1, scale: reduce ? 1 : 0.97 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, transition: { duration: 0.2, ease: 'easeOut' } }}
-      transition={{ duration: reduce ? 0.2 : 0.3, delay: INTRO_DELAY / 1000, ease: EASE_OUT }}
+      transition={{ duration: reduce ? 0.2 : 0.5, delay, ease: EASE_OUT }}
     >
-      <LogoMark size={size} />
+      <span className="logo-mark" style={{ width: size, height: size }}>
+        <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} shapeRendering="crispEdges" aria-hidden>
+          <g fill="var(--text)">
+            {MARK_CELLS.map(([c, r], i) => (
+              <motion.rect
+                key={i}
+                x={at + c * cell}
+                y={at + r * cell}
+                width={cell}
+                height={cell}
+                initial={reduce ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: CELL_FADE, delay: delay + i * CELL_STEP, ease: 'easeOut' }}
+              />
+            ))}
+          </g>
+        </svg>
+      </span>
       <AnimatePresence>
         {slow && !ready && (
           <motion.p

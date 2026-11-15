@@ -26,7 +26,8 @@
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  /* The mark's cells sit 4 px inside its 20 px box: 7 px here makes the visible gap 11. */
+  gap: 7px;
   height: 32px;
   padding: 0 10px 0 8px;
   margin-left: -1px;

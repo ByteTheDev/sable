@@ -1,10 +1,14 @@
 // Renders the Sable mark (src/art/Logo.tsx, public/favicon.svg) as the desktop app icon:
-// build/icon.ico (16, 24, 32, 48, 64, 128, 256 px, PNG-compressed entries) and build/icon.png (512 px).
-// Each size is drawn as a vector at its own pixel size in headless Edge (or Chrome) through
-// playwright-core, the same way scripts/shot.mjs launches it. 16 and 24 px use a simplified,
-// pixel-snapped drawing: the full mark's smallest tiles turn to mush at that size.
+// build/icon.ico (16, 20, 24, 32, 40, 48, 64, 96, 128, 256 px, PNG-compressed entries) and
+// build/icon.png (512 px). Each size is drawn at its own pixel size in headless Edge (or Chrome)
+// through playwright-core, the same way scripts/shot.mjs launches it.
 //
-//   node scripts/make-icon.mjs
+// The mark is a 4 x 4 field of square cells: a solid block whose last corner dissolves into
+// ordered dither (two cells out, the corner cell holding on by a point). Every size is hinted by
+// hand: the cell is a whole number of pixels, so no edge ever falls on half a pixel. The plate is
+// flat ink (one hairline from 48 px up, so it holds its edge on a dark taskbar).
+//
+//   node scripts/make-icon.mjs [--previews]   (previews go to scratch/icon/)
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,44 +16,36 @@ import { chromium } from 'playwright-core';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'build');
-const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
+const ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 96, 128, 256];
 
-/** The full mark's tiles in the favicon's 32-unit space: the big tile, then pieces breaking off it, each a step dimmer. */
-const FULL = [
-  { x: 6, y: 6, s: 12.6, r: 3.6, a: 1 },
-  { x: 20.8, y: 6, s: 5.2, r: 1.7, a: 0.78 },
-  { x: 6, y: 20.8, s: 5.2, r: 1.7, a: 0.78 },
-  { x: 20.8, y: 13.4, s: 5.2, r: 1.7, a: 0.54 },
-  { x: 13.4, y: 20.8, s: 5.2, r: 1.7, a: 0.54 },
-  { x: 21.6, y: 21.6, s: 3.6, r: 1.2, a: 0.3 },
-];
+/** The mark's outline in cell units (same as MARK_PATH in src/art/Logo.tsx). */
+const MARK_PATH = 'M0 0H4V2H3V3H2V4H0Z M3 3H4V4H3Z';
 
-/** Small sizes: the big tile and three whole pieces on whole pixels (units are pixels of that size). */
-const SMALL = {
-  16: { r: 3.5, tiles: [{ x: 3, y: 3, s: 6, r: 1.3, a: 1 }, { x: 10, y: 3, s: 3, r: 0.5, a: 0.8 }, { x: 3, y: 10, s: 3, r: 0.5, a: 0.8 }, { x: 10, y: 10, s: 3, r: 0.5, a: 0.5 }] },
-  24: { r: 5.5, tiles: [{ x: 4, y: 4, s: 9, r: 2.4, a: 1 }, { x: 15, y: 4, s: 5, r: 1.4, a: 0.8 }, { x: 4, y: 15, s: 5, r: 1.4, a: 0.8 }, { x: 15, y: 15, s: 5, r: 1.4, a: 0.5 }] },
-};
+/**
+ * Cell size in pixels per icon size: the glyph spans about 55% of the canvas (a little less on
+ * the big tiles, where a solid block reads heavier), more at the smallest sizes so the cells
+ * stay readable. Every value keeps the glyph centred on whole pixels.
+ */
+const CELL = { 16: 3, 20: 3, 24: 4, 32: 5, 40: 6, 48: 7, 64: 9, 96: 13, 128: 17, 256: 35, 512: 69 };
+
+const INK = '#0c0c0e';
+const IVORY = '#f2f1ee';
 
 function svg(size) {
-  const small = SMALL[size];
+  const cell = CELL[size];
   // Large icons sit a hair inside their canvas, as Windows icons do; small ones use every pixel.
-  const inset = small ? 0 : Math.round(size / 32);
+  const inset = size >= 32 ? Math.round(size / 32) : 0;
   const side = size - inset * 2;
-  const k = small ? 1 : side / 32;
-  const radius = small ? small.r : 8 * k;
-  const tiles = (small ? small.tiles : FULL)
-    .map((t) => `<rect x="${inset + t.x * k}" y="${inset + t.y * k}" width="${t.s * k}" height="${t.s * k}" rx="${t.r * k}" opacity="${t.a}"/>`)
-    .join('');
-  const edge = Math.max(1, size / 128);
+  const radius = size <= 16 ? 3.5 : +(side * 0.225).toFixed(2);
+  // The block's weight sits up and left of its box (the missing cells are bottom right): from
+  // 64 px up the glyph moves a whole pixel or two toward that corner so it looks centred.
+  const nudge = size >= 64 ? Math.round(cell * 0.07) : 0;
+  const at = (size - cell * 4) / 2 + nudge;
+  const hair = size >= 48 ? Math.max(1, Math.round(size / 128)) : 0;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#18181b"/><stop offset="1" stop-color="#09090a"/></linearGradient>
-    <linearGradient id="lit" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.16"/><stop offset="0.45" stop-color="#fff" stop-opacity="0.03"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
-    <linearGradient id="ivory" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f7f6f3"/><stop offset="1" stop-color="#dedcd6"/></linearGradient>
-  </defs>
-  <rect x="${inset}" y="${inset}" width="${side}" height="${side}" rx="${radius}" fill="url(#bg)"/>
-  ${small ? '' : `<rect x="${inset + edge / 2}" y="${inset + edge / 2}" width="${side - edge}" height="${side - edge}" rx="${radius - edge / 2}" fill="none" stroke="url(#lit)" stroke-width="${edge}"/>`}
-  <g fill="url(#ivory)">${tiles}</g>
+  <rect x="${inset}" y="${inset}" width="${side}" height="${side}" rx="${radius}" fill="${INK}"/>
+  ${hair ? `<rect x="${inset + hair / 2}" y="${inset + hair / 2}" width="${side - hair}" height="${side - hair}" rx="${radius - hair / 2}" fill="none" stroke="#fff" stroke-opacity="0.1" stroke-width="${hair}"/>` : ''}
+  <path transform="translate(${at} ${at}) scale(${cell})" fill="${IVORY}" d="${MARK_PATH}" shape-rendering="crispEdges"/>
 </svg>`;
 }
 
@@ -94,7 +90,11 @@ try {
   mkdirSync(out, { recursive: true });
   writeFileSync(path.join(out, 'icon.ico'), ico(images));
   writeFileSync(path.join(out, 'icon.png'), await render(512));
-  for (const { size, png } of images) if (process.argv.includes('--previews')) writeFileSync(path.join(root, 'scratch', `icon-${size}.png`), png);
+  if (process.argv.includes('--previews')) {
+    const dir = path.join(root, 'scratch', 'icon');
+    mkdirSync(dir, { recursive: true });
+    for (const { size, png } of images) writeFileSync(path.join(dir, `app-${size}.png`), png);
+  }
   console.log(`Wrote build/icon.ico (${ICO_SIZES.join(', ')} px) and build/icon.png (512 px)`);
 } finally {
   await browser.close();
