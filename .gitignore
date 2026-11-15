@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-electron
+.vite
+*.log
+.DS_Store
+.sable
+scratch
+release
+release-next
+dist-resources
+release-sable

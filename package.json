@@ -1,0 +1,114 @@
+{
+  "name": "sable",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Sable: a desktop agentic development environment for Claude Code and Codex.",
+  "author": {
+    "name": "Leonxlnx"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Leonxlnx/sable"
+  },
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "serve": "tsx server/standalone.ts",
+    "desktop:build": "pnpm build && node scripts/build-electron.mjs",
+    "desktop": "pnpm desktop:build && electron .",
+    "desktop:pack": "pnpm desktop:build && electron-builder --dir",
+    "desktop:dist": "pnpm desktop:build && electron-builder",
+    "desktop:dist:next": "pnpm desktop:build && electron-builder --config.directories.output=release-next",
+    "desktop:dist:sable": "pnpm desktop:build && electron-builder --config.directories.output=release-sable",
+    "perf": "node scripts/perf-electron.mjs",
+    "desktop:icon": "node scripts/make-icon.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.325",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@lobehub/icons-static-svg": "1.102.0",
+    "@phosphor-icons/react": "^2.1.10",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^45.3.2",
+    "electron-builder": "^26.18.0",
+    "esbuild": "0.28.2",
+    "marked": "^16.0.0",
+    "motion": "^14.14.0",
+    "playwright-core": "^1.65.1",
+    "radix-ui": "^1.8.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^3.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vite": "^8.3.8",
+    "vitest": "^4.0.0",
+    "ws": "^8.18.0",
+    "zustand": "^5.0.0"
+  },
+  "build": {
+    "appId": "io.github.leonxlnx.sable",
+    "productName": "Sable",
+    "copyright": "Copyright © 2026 Leonxlnx",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json",
+      "!**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-resources/claude",
+        "to": "claude"
+      }
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "electronLanguages": [
+      "en-US"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "executableName": "Sable",
+      "artifactName": "Sable-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sable",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "uninstallDisplayName": "Sable",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
