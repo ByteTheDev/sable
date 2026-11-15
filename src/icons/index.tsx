@@ -23,7 +23,6 @@ import { GitPullRequestIcon } from '@phosphor-icons/react/dist/csr/GitPullReques
 import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { TerminalIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { ListChecksIcon } from '@phosphor-icons/react/dist/csr/ListChecks';
-import { ChartDonutIcon } from '@phosphor-icons/react/dist/csr/ChartDonut';
 import { GaugeIcon } from '@phosphor-icons/react/dist/csr/Gauge';
 import { ClockCounterClockwiseIcon } from '@phosphor-icons/react/dist/csr/ClockCounterClockwise';
 import { ChatCircleIcon } from '@phosphor-icons/react/dist/csr/ChatCircle';
@@ -143,6 +142,13 @@ import { TagIcon } from '@phosphor-icons/react/dist/csr/Tag';
 import { WebhooksLogoIcon } from '@phosphor-icons/react/dist/csr/WebhooksLogo';
 import { DevicesIcon } from '@phosphor-icons/react/dist/csr/Devices';
 import { CursorClickIcon } from '@phosphor-icons/react/dist/csr/CursorClick';
+import { ChartPieSliceIcon } from '@phosphor-icons/react/dist/csr/ChartPieSlice';
+import { MagnifyingGlassPlusIcon } from '@phosphor-icons/react/dist/csr/MagnifyingGlassPlus';
+import { MagnifyingGlassMinusIcon } from '@phosphor-icons/react/dist/csr/MagnifyingGlassMinus';
+import { MonitorIcon } from '@phosphor-icons/react/dist/csr/Monitor';
+import { DeviceTabletIcon } from '@phosphor-icons/react/dist/csr/DeviceTablet';
+import { DeviceMobileIcon } from '@phosphor-icons/react/dist/csr/DeviceMobile';
+import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import './icons.css';
 
 /** One icon vocabulary for the whole app. Names describe meaning, not the glyph. */
@@ -170,7 +176,9 @@ const ICONS = {
   terminal: TerminalWindowIcon,
   prompt: TerminalIcon,
   tasks: ListChecksIcon,
-  context: ChartDonutIcon,
+  context: ChartPieSliceIcon,
+  /** The capability switches in the top bar (browser control, computer use, remote control). */
+  capabilities: SlidersHorizontalIcon,
   gauge: GaugeIcon,
   history: ClockCounterClockwiseIcon,
   chat: ChatCircleIcon,
@@ -290,6 +298,12 @@ const ICONS = {
   hook: WebhooksLogoIcon,
   devices: DevicesIcon,
   'cursor-click': CursorClickIcon,
+  'zoom-in': MagnifyingGlassPlusIcon,
+  'zoom-out': MagnifyingGlassMinusIcon,
+  monitor: MonitorIcon,
+  tablet: DeviceTabletIcon,
+  phone: DeviceMobileIcon,
+  reload: ArrowClockwiseIcon,
 } satisfies Record<string, PhIcon>;
 
 export type IconName = keyof typeof ICONS;

@@ -94,6 +94,18 @@ svg[data-icon] {
   & svg[data-icon='caret-updown'] {
     scale: 1 1.18;
   }
+  /* window controls */
+  & svg[data-icon='wc-min'] {
+    translate: 0 1px;
+  }
+  & svg[data-icon='wc-max'],
+  & svg[data-icon='wc-restore'],
+  & svg[data-icon='capabilities'] {
+    scale: 1.1;
+  }
+  & svg[data-icon='wc-close'] {
+    rotate: 90deg;
+  }
 }
 
 /* The panel toggle is the sidebar icon mirrored: it leans toward its own side. */
