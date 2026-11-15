@@ -4,6 +4,7 @@ import type { DirEntry } from '@shared/protocol';
 import { Icon, type IconName } from '@/icons';
 import { bridge } from '@/lib/bridge';
 import { relPath } from '@/lib/format';
+import { focusComposer } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { IconButton, Spinner } from '@/ui';
 import { StatusLetter } from './ChangesTab';
@@ -247,7 +248,7 @@ export function FilesTab({ sessionId, cwd }: { sessionId: string; cwd: string })
         )}
       </AnimatePresence>
       <div className="rail-col fl-layer fl-main" data-away={preview ? '' : undefined} inert={!!preview}>
-            <div className="fl-top">
+            <div className="rail-bar rail-bar-field">
               <label className="fl-filter">
                 <Icon name="search" size={14} />
                 <input
@@ -273,19 +274,21 @@ export function FilesTab({ sessionId, cwd }: { sessionId: string; cwd: string })
                   </button>
                 )}
               </label>
-              <IconButton icon="collapse" label="Collapse folders" size={14} disabled={!expanded.size} onClick={() => setExpanded(new Set())} />
-              <IconButton
-                icon="refresh"
-                label="Reload"
-                size={14}
-                onClick={() => {
-                  load(cwd, true);
-                  for (const k of expanded) {
-                    const r = rows.find((x) => normKey(x.entry.path) === k);
-                    if (r) load(r.entry.path, true);
-                  }
-                }}
-              />
+              <span className="rail-bar-actions">
+                <IconButton icon="collapse" label="Collapse folders" size={14} disabled={!expanded.size} onClick={() => setExpanded(new Set())} />
+                <IconButton
+                  icon="refresh"
+                  label="Reload"
+                  size={14}
+                  onClick={() => {
+                    load(cwd, true);
+                    for (const k of expanded) {
+                      const r = rows.find((x) => normKey(x.entry.path) === k);
+                      if (r) load(r.entry.path, true);
+                    }
+                  }}
+                />
+              </span>
             </div>
             <div className="rail-scroll scroll">
               {!root || (root.loading && !root.entries) ? (
@@ -313,6 +316,7 @@ export function FilesTab({ sessionId, cwd }: { sessionId: string; cwd: string })
                         status={r.entry.dir ? undefined : changes.files.get(relPath(r.entry.path, cwd).toLowerCase())}
                         changedInside={r.entry.dir && changes.folders.has(relPath(r.entry.path, cwd).toLowerCase())}
                         query={q}
+                        cwd={cwd}
                         onActivate={activate}
                         onFocus={setFocus}
                       />
@@ -333,6 +337,7 @@ const TreeRow = memo(function TreeRow({
   status,
   changedInside,
   query,
+  cwd,
   onActivate,
   onFocus,
 }: {
@@ -342,6 +347,7 @@ const TreeRow = memo(function TreeRow({
   status?: string;
   changedInside: boolean;
   query: string;
+  cwd: string;
   onActivate: (e: DirEntry) => void;
   onFocus: (k: string) => void;
 }) {
@@ -355,7 +361,7 @@ const TreeRow = memo(function TreeRow({
       aria-selected={focused}
       tabIndex={focused ? 0 : -1}
       data-key={k}
-      className="fl-row"
+      className="fl-row rail-row-host"
       data-ignored={entry.ignored || undefined}
       data-dir={entry.dir || undefined}
       style={{ '--depth': depth } as CSSProperties}
@@ -367,8 +373,22 @@ const TreeRow = memo(function TreeRow({
       </span>
       <Icon name={entry.dir ? (open ? 'folder-open' : 'folder') : fileIcon(entry.name)} size={15} className="fl-icon" />
       <span className="fl-name truncate">{highlight(entry.name, query)}</span>
-      {status && <StatusLetter status={status} small />}
-      {!status && changedInside && <span className="fl-dot" aria-label="Contains changes" />}
+      <span className="rail-row-deco fl-deco">
+        {status && <StatusLetter status={status} small />}
+        {!status && changedInside && <span className="fl-dot" aria-label="Contains changes" />}
+      </span>
+      <span className="rail-row-acts fl-acts">
+        <IconButton
+          icon="at"
+          label="Mention in chat"
+          size={14}
+          tabIndex={-1}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            focusComposer('@' + relPath(entry.path, cwd) + (entry.dir ? '/ ' : ' '), { append: true });
+          }}
+        />
+      </span>
     </div>
   );
 });

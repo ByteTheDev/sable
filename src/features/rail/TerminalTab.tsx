@@ -4,7 +4,7 @@ import { Icon } from '@/icons';
 import { parseAnsi } from '@/lib/ansi';
 import { baseName, formatDuration } from '@/lib/format';
 import { useNow } from '@/lib/view-hooks';
-import { Kbd, Tip } from '@/ui';
+import { IconButton, Tip } from '@/ui';
 import { clearRuns, getHistory, getRuns, killLatest, killRun, runCommand, useTermVersion, type TermRun } from './term-store';
 
 const STICK = 40;
@@ -121,6 +121,18 @@ export function TerminalTab({ sessionId, cwd, active }: { sessionId: string; cwd
 
   return (
     <div className="rail-col tm">
+      <div className="rail-bar">
+        <Tip label={cwd}>
+          <span className="rail-bar-title truncate">
+            <Icon name="folder" size={14} />
+            <span className="truncate">{baseName(cwd)}</span>
+          </span>
+        </Tip>
+        <span className="rail-bar-actions">
+          {running && <IconButton icon="stop" label="Stop the newest command" keys="Ctrl+c" size={12} onClick={() => killLatest(sessionId)} />}
+          {runs.length > 0 && <IconButton icon="broom" label="Clear" keys="Ctrl+l" size={14} onClick={() => clearRuns(sessionId)} />}
+        </span>
+      </div>
       <div
         className="rail-scroll scroll tm-scroll"
         ref={scroller}
@@ -134,9 +146,7 @@ export function TerminalTab({ sessionId, cwd, active }: { sessionId: string; cwd
         }}
       >
         {runs.length === 0 ? (
-          <p className="rail-empty tm-empty">
-            Commands run in <span className="tm-cwd">{baseName(cwd)}</span> and their output appears here.
-          </p>
+          <p className="rail-empty">No commands run yet.</p>
         ) : (
           <div className="tm-runs" ref={runsBox}>
             {runs.map((r) => (
@@ -164,27 +174,7 @@ export function TerminalTab({ sessionId, cwd, active }: { sessionId: string; cwd
             autoComplete="off"
             autoCapitalize="off"
           />
-          <Tip label={cwd}>
-            <span className="tm-where">
-              <Icon name="folder" size={12} />
-              <span className="truncate">{baseName(cwd)}</span>
-            </span>
-          </Tip>
         </label>
-        <div className="tm-hints">
-          <span>
-            <Kbd combo="enter" /> run
-          </span>
-          <span>
-            <Kbd combo="up" /> history
-          </span>
-          <span>
-            <Kbd combo="Ctrl+c" /> stop
-          </span>
-          <span>
-            <Kbd combo="Ctrl+l" /> clear
-          </span>
-        </div>
       </div>
     </div>
   );

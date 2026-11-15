@@ -72,76 +72,105 @@
 .rail-head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  height: var(--topbar-h);
-  padding: 0 8px 0 8px;
+  gap: 8px;
+  /* The row is the top bar's 44 px; the hairline under it comes on top, so both rows share one centre line. */
+  height: calc(var(--topbar-h) + 1px);
+  padding: 0 8px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--line);
 }
 
+/* The tab row reads as one set with the top bar's icon buttons and the window controls: 28 px pills,
+   16 px line icons in --text-3, a fill step on hover, 2 px apart. The selected tab is a dithered pill
+   with its name (when there is room), the name opening on a spring. */
 .rail-tabs {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   overflow: hidden;
 }
 
 .rail-tab {
-  flex-shrink: 0;
+  position: relative;
   isolation: isolate;
-  padding: 0 9px;
-  gap: 6px;
-}
-
-.rail-tab[data-icon-only] {
-  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  white-space: nowrap;
+  color: var(--text-3);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale 80ms var(--ease-out);
 }
 
 .rail-tab svg {
-  color: var(--text-3);
-  transition: color var(--d-1) var(--ease);
+  flex-shrink: 0;
 }
 
-.rail-tab:hover svg {
-  color: var(--text-2);
+.rail-tab:hover {
+  background-color: var(--fill-2);
+  color: var(--text);
 }
 
-/* The selected pill (a flat fill) slides between tabs; the tab itself stays transparent. */
+.rail-tab:active {
+  scale: 0.96;
+}
+
 .rail-tab[data-on] {
   color: var(--text);
   background-color: transparent;
 }
 
-.rail-tab[data-on] svg {
-  color: var(--text);
+.rail-tab[data-on]:active {
+  scale: none;
 }
 
 .rail-tab-pill {
   position: absolute;
   inset: 0;
   z-index: -1;
-  border-radius: 7px;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity var(--d-2) var(--ease);
 }
 
-.rail-tab .count {
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 5px;
-  display: inline-grid;
-  place-items: center;
+.rail-tab[data-on] .rail-tab-pill {
+  opacity: 1;
+}
+
+/* The name's box animates its width (motion); the text inside keeps its own size and never wraps. */
+.rail-tab-label {
+  display: block;
+  overflow: hidden;
+}
+
+.rail-tab-label > span {
+  display: block;
+  padding: 0 2px 0 7px;
+}
+
+/* A count is a figure beside the icon, not a chip: small, tabular, one step dimmer than the name. */
+.rail-tab-count {
+  padding-left: 5px;
+  padding-right: 1px;
+  font-size: var(--t-micro);
   font-weight: var(--w-medium);
-  background: var(--fill-2);
-  color: var(--text-2);
   line-height: 1;
+  color: var(--text-3);
 }
 
-.rail-tab[data-on] .count {
-  background: rgb(255 255 255 / 0.1);
-  color: var(--text);
-}
-
-.rail-tab[data-icon-only] .count {
-  margin-left: -2px;
+.rail-tab:hover .rail-tab-count,
+.rail-tab[data-on] .rail-tab-count {
+  color: var(--text-2);
 }
 
 .rail-tab:focus-visible {
@@ -150,6 +179,12 @@
 
 .rail-close {
   margin-left: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-tab:active {
+    scale: none;
+  }
 }
 
 /* ── panes ── */
@@ -182,6 +217,99 @@
     opacity var(--d-2) var(--ease),
     transform var(--d-2) var(--ease-out),
     visibility 0s;
+}
+
+/* ── one anatomy for every pane ──
+   A pane is: an optional bar (40 px, the pane's subject on the left in --text, a dim figure after it,
+   26 px icon actions at the right), then its content, lists in 30 px rows inset 8 px, or a single
+   calm sentence when there is nothing to show. Secondary row actions take the place of the row's
+   end decorations (counts, status) while it is hovered or holds focus. */
+.rail {
+  --rail-row-h: 30px;
+  --rail-bar-h: 40px;
+}
+
+.rail-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--rail-bar-h);
+  padding: 0 8px 0 16px;
+  flex-shrink: 0;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* A bar that starts with a field or a button aligns that control, not text, with the rows. */
+.rail-bar-field {
+  padding-left: 8px;
+}
+
+.rail-bar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 1;
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.rail-bar-title > svg {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.rail-bar-meta {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.rail-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.rail-bar .icon-btn,
+.rail-row-acts .icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+.rail-row-host {
+  position: relative;
+}
+
+.rail-row-deco {
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.rail-row-acts {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  display: flex;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.rail-row-acts .icon-btn {
+  color: var(--text-2);
+}
+
+.rail-row-host:is(:hover, :focus-within) > .rail-row-acts {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.rail-row-host:is(:hover, :focus-within) .rail-row-deco {
+  opacity: 0;
 }
 
 .rail-col {
@@ -225,11 +353,13 @@
 
 .rail-h-btn {
   margin-left: auto;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
 }
 
-.rail-empty {
+/* Empty and loading states: one calm sentence at the same height in every pane, with or without a bar. */
+.rail-empty,
+.rail-loading {
   padding: 40px 28px;
   text-align: center;
   font-size: var(--t-ui);
@@ -243,9 +373,10 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 40px 20px;
-  font-size: var(--t-ui);
-  color: var(--text-3);
+}
+
+.rail-pane > .rail-scroll:first-child > :is(.rail-empty, .rail-loading):only-child {
+  padding-top: calc(40px + var(--rail-bar-h));
 }
 
 .rail-link {
@@ -295,32 +426,6 @@
 
 /* ───────────── changes ───────────── */
 
-.ch-summary {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 44px;
-  padding: 0 8px 0 16px;
-  flex-shrink: 0;
-  font-size: var(--t-small);
-  color: var(--text-3);
-}
-
-.ch-branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex-shrink: 1;
-  font-weight: var(--w-medium);
-  color: var(--text);
-}
-
-.ch-branch > svg {
-  color: var(--text-3);
-  flex-shrink: 0;
-}
-
 .ch-ab {
   display: inline-flex;
   align-items: center;
@@ -333,26 +438,15 @@
 .ch-totals {
   display: inline-flex;
   gap: 6px;
-  white-space: nowrap;
-  font-size: var(--t-small);
-}
-
-.ch-tools {
-  display: flex;
-  gap: 0;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.ch-hint {
-  margin: 4px 16px 10px;
-  font-size: var(--t-small);
-  line-height: 1.5;
-  color: var(--text-3);
 }
 
 .ch-list {
   padding: 0 8px 16px;
+}
+
+/* The secondary actions sit where the line counts are, just before the caret. */
+.ch-acts {
+  right: 26px;
 }
 
 /* Commit box: pinned under the list, a hairline above. */
@@ -406,6 +500,7 @@ textarea.field.ch-commit-field {
 }
 
 .ch-item {
+  position: relative;
   border: 1px solid transparent;
   border-radius: var(--r-md);
   transition: background-color var(--d-1) var(--ease);
@@ -422,9 +517,9 @@ textarea.field.ch-commit-field {
   align-items: center;
   gap: 9px;
   width: 100%;
-  height: 32px;
+  height: var(--rail-row-h);
   padding: 0 8px;
-  border-radius: 9px;
+  border-radius: 8px;
   text-align: left;
   transition: background var(--d-1) var(--ease);
 }
@@ -553,14 +648,6 @@ textarea.field.ch-commit-field {
   border-radius: 0 0 var(--r-xl) var(--r-xl);
 }
 
-.fl-top {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 10px 8px 8px 12px;
-  flex-shrink: 0;
-}
-
 .fl-filter {
   position: relative;
   display: flex;
@@ -568,9 +655,9 @@ textarea.field.ch-commit-field {
   gap: 7px;
   flex: 1;
   min-width: 0;
-  height: 30px;
+  height: 28px;
   margin-right: 4px;
-  padding: 0 8px 0 10px;
+  padding: 0 6px 0 9px;
   border: 1px solid var(--line-2);
   border-radius: var(--r-sm);
   background-color: rgb(0 0 0 / 0.22);
@@ -624,7 +711,7 @@ textarea.field.ch-commit-field {
 }
 
 .fl-tree {
-  padding: 2px 8px 18px;
+  padding: 0 8px 16px;
 }
 
 .fl-row {
@@ -633,7 +720,7 @@ textarea.field.ch-commit-field {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  height: var(--rail-row-h);
   padding: 0 8px 0 calc(4px + var(--indent));
   border-radius: 8px;
   font-size: var(--t-ui);
@@ -744,11 +831,7 @@ textarea.field.ch-commit-field {
 /* ── preview ── */
 
 .fp-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 12px 0 8px;
-  flex-shrink: 0;
+  padding-right: 14px;
 }
 
 .fp-crumbs {
@@ -790,7 +873,7 @@ textarea.field.ch-commit-field {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 12px 10px 14px;
+  padding: 2px 14px 10px 16px;
   flex-shrink: 0;
 }
 
@@ -861,20 +944,17 @@ textarea.field.ch-commit-field {
 /* ───────────── terminal ───────────── */
 
 .tm-scroll {
-  padding: 12px 12px 8px;
+  padding: 0 12px 8px;
+}
+
+/* The empty sentence lines up with every other pane's: the scroller's side padding is the row inset. */
+.tm-scroll > .rail-empty {
+  margin: 0 -12px;
 }
 
 .tm-scroll:focus-visible {
   outline: 1px solid var(--line-2);
   outline-offset: -1px;
-}
-
-.tm-empty {
-  padding-top: 56px;
-}
-
-.tm-cwd {
-  color: var(--text-2);
 }
 
 .tm-runs {
@@ -1094,52 +1174,23 @@ textarea.field.ch-commit-field {
   color: var(--text-4);
 }
 
-.tm-where {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 40%;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 6px;
-  border: 1px solid var(--line);
-  font-size: var(--t-micro);
-  color: var(--text-3);
-  background-color: var(--fill-1);
-  flex-shrink: 0;
-}
-
-.tm-where svg {
-  flex-shrink: 0;
-}
-
-.tm-hints {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  margin-top: 8px;
-  padding: 0 4px;
-  font-size: var(--t-micro);
-  color: var(--text-4);
-}
-
-.tm-hints > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.tm-hints .kbd {
-  min-width: 17px;
-  height: 17px;
-  font-size: 10.5px;
-}
 
 /* ───────────── tasks ───────────── */
 
+.tk-stack {
+  gap: 18px;
+  padding: 0 8px 16px;
+}
+
+/* In the bar: a short track after the figure, at the bar's right edge. */
 .tk-progress {
+  flex: 0 0 72px;
   height: 3px;
-  margin: 0 2px 10px;
+  margin: 0 8px 0 auto;
+}
+
+.tk-stack .rail-h {
+  margin: 0 8px 6px;
 }
 
 .tk-list {
@@ -1293,6 +1344,16 @@ textarea.field.ch-commit-field {
 
 /* ───────────── context ───────────── */
 
+/* Cards sit on the rows' 8 px inset; section headings align their text with the bar's. */
+.cx-stack {
+  gap: 20px;
+  padding: 0 8px 16px;
+}
+
+.cx-stack .rail-h {
+  margin: 0 8px 8px;
+}
+
 .cx-card {
   padding: 16px;
 }
@@ -1348,16 +1409,9 @@ textarea.field.ch-commit-field {
   color: var(--text-2);
 }
 
-.cx-left,
-.cx-model {
+.cx-left {
   font-size: var(--t-small);
   color: var(--text-3);
-}
-
-.cx-refresh {
-  position: absolute;
-  top: -6px;
-  right: -6px;
 }
 
 .cx-legend {

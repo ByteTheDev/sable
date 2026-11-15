@@ -4,6 +4,7 @@ import { Collapse } from '@/components/Collapse';
 import { DiffView } from '@/components/DiffView';
 import { Icon } from '@/icons';
 import { plural, relPath } from '@/lib/format';
+import { focusComposer } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { IconButton, Spinner, Tip } from '@/ui';
 import { STATUS_TONE, commitAll, gitKey, isSmall, loadAllDiffs, loadDiff, refreshGit, useRepo, type DiffEntry } from './git-state';
@@ -87,8 +88,8 @@ function RepoChanges({ cwd }: { cwd: string }) {
 
   return (
     <div className="rail-col">
-      <div className="ch-summary">
-        <span className="ch-branch truncate">
+      <div className="rail-bar">
+        <span className="rail-bar-title ch-branch truncate">
           <Icon name="branch" size={14} />
           <span className="truncate">{status.branch ?? 'No branch'}</span>
           {!!status.ahead && (
@@ -108,7 +109,7 @@ function RepoChanges({ cwd }: { cwd: string }) {
             </Tip>
           )}
         </span>
-        <span className="ch-totals num">
+        <span className="rail-bar-meta ch-totals num">
           {status.files.length > 0 && (
             <>
               {status.additions > 0 && <span className="dv-add">+{status.additions.toLocaleString('en-US')}</span>}
@@ -117,7 +118,7 @@ function RepoChanges({ cwd }: { cwd: string }) {
             </>
           )}
         </span>
-        <span className="ch-tools">
+        <span className="rail-bar-actions">
           {status.files.length > 0 && (
             <IconButton
               icon={allOpen ? 'collapse' : 'expand'}
@@ -257,19 +258,20 @@ const FileRow = memo(function FileRow({
   const [dir, base] = splitPath(file.path);
   const diff = entry?.state === 'ok' ? entry.diff : entry?.state === 'loading' ? entry.prev : undefined;
   return (
-    <li className="ch-item" data-open={open || undefined}>
+    <li className="ch-item rail-row-host" data-open={open || undefined}>
       <button type="button" className="ch-row" aria-expanded={open} onClick={() => onToggle(file.path)}>
         <StatusLetter status={file.status} />
         <span className="ch-path">
           {dir && <span className="ch-dir">{dir}</span>}
           <span className="ch-base">{base}</span>
         </span>
-        <span className="ch-stat num">
+        <span className="ch-stat num rail-row-deco">
           {!!file.additions && <span className="dv-add">+{file.additions}</span>}
           {!!file.deletions && <span className="dv-del">−{file.deletions}</span>}
         </span>
         <Icon name="caret-right" size={10} className="ch-caret" />
       </button>
+      <RowActions path={file.path} deleted={file.status === 'D'} />
       <Collapse open={open}>
         <div className="ch-diff">
           {diff ? (
@@ -291,6 +293,20 @@ const FileRow = memo(function FileRow({
     </li>
   );
 });
+
+/**
+ * A changed file's secondary actions: they take the place of its line counts while the row is
+ * hovered or focused (the panel's one pattern for secondary actions, see .rail-row-acts).
+ */
+function RowActions({ path, deleted }: { path: string; deleted?: boolean }) {
+  const setUi = useStore((s) => s.setUi);
+  return (
+    <span className="rail-row-acts ch-acts">
+      <IconButton icon="at" label="Mention in chat" size={14} onClick={() => focusComposer('@' + path + ' ', { append: true })} />
+      {!deleted && <IconButton icon="file-text" label="Open file" size={14} onClick={() => setUi({ railFile: path })} />}
+    </span>
+  );
+}
 
 export function StatusLetter({ status, small }: { status: string; small?: boolean }) {
   const s = STATUS_TONE[status] ?? STATUS_TONE.M;
@@ -352,12 +368,14 @@ function SessionEdits({ sessionId, cwd }: { sessionId: string; cwd: string }) {
 
   return (
     <div className="rail-col">
-      <div className="ch-summary">
-        <span className="ch-branch truncate">
-          <Icon name="pencil" size={14} />
-          <span className="truncate">Edited in this session</span>
-        </span>
-        <span className="ch-totals num">
+      <div className="rail-bar">
+        <Tip label="This folder is not a git repository">
+          <span className="rail-bar-title ch-branch truncate">
+            <Icon name="pencil" size={14} />
+            <span className="truncate">Edited in this session</span>
+          </span>
+        </Tip>
+        <span className="rail-bar-meta ch-totals num">
           {files.length > 0 && (
             <>
               {adds > 0 && <span className="dv-add">+{adds.toLocaleString('en-US')}</span>}
@@ -366,7 +384,7 @@ function SessionEdits({ sessionId, cwd }: { sessionId: string; cwd: string }) {
             </>
           )}
         </span>
-        <span className="ch-tools">
+        <span className="rail-bar-actions">
           {files.length > 0 && (
             <IconButton icon={allOpen ? 'collapse' : 'expand'} label={allOpen ? 'Collapse all' : 'Expand all'} size={14} onClick={() => setOpen(allOpen ? new Set() : new Set(files.map((f) => f.path)))} />
           )}
@@ -374,29 +392,29 @@ function SessionEdits({ sessionId, cwd }: { sessionId: string; cwd: string }) {
       </div>
       <div className="rail-scroll scroll">
         {files.length === 0 ? (
-          <p className="rail-empty">This folder is not a git repository, and nothing has been edited in this session yet.</p>
+          <p className="rail-empty">Nothing has been edited in this session yet.</p>
         ) : (
           <>
-            <p className="ch-hint">This folder is not a git repository, so these are the edits made in this session.</p>
             <ul className="ch-list">
               {files.map((f) => {
                 const [dir, base] = splitPath(f.path);
                 const isOpen = open.has(f.path);
                 return (
-                  <li key={f.path} className="ch-item" data-open={isOpen || undefined}>
+                  <li key={f.path} className="ch-item rail-row-host" data-open={isOpen || undefined}>
                     <button type="button" className="ch-row" aria-expanded={isOpen} onClick={() => toggle(f.path)}>
                       <StatusLetter status={f.status === 'added' ? 'A' : f.status === 'deleted' ? 'D' : f.status === 'renamed' ? 'R' : 'M'} />
                       <span className="ch-path">
                         {dir && <span className="ch-dir">{dir}</span>}
                         <span className="ch-base">{base}</span>
                       </span>
-                      {f.edits > 1 && <span className="ch-edits">{f.edits} edits</span>}
-                      <span className="ch-stat num">
+                      <span className="ch-stat num rail-row-deco">
+                        {f.edits > 1 && <span className="ch-edits">{f.edits} edits</span>}
                         {!!f.additions && <span className="dv-add">+{f.additions}</span>}
                         {!!f.deletions && <span className="dv-del">−{f.deletions}</span>}
                       </span>
                       <Icon name="caret-right" size={10} className="ch-caret" />
                     </button>
+                    <RowActions path={f.path} deleted={f.status === 'deleted'} />
                     <Collapse open={isOpen}>
                       <div className="ch-diff">
                         <DiffView diff={f} showHeader={false} maxLines={240} lineNumbers={f.edits === 1} />

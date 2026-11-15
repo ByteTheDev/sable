@@ -80,9 +80,18 @@ export function ContextTab({ sessionId, active }: { sessionId: string; active: b
   if (!session) return null;
   const pct = view ? Math.min(100, (view.total / view.max) * 100) : 0;
 
+  const modelName = view?.model ? modelNameById(view.model, caps?.models) : session.model ? modelNameById(session.model, caps?.models) : '';
+
   return (
+    <div className="rail-col">
+      <div className="rail-bar">
+        <span className="rail-bar-title truncate">{modelName || 'Context window'}</span>
+        <span className="rail-bar-actions">
+          <IconButton icon="refresh" label="Refresh" size={14} className={loading ? 'is-spinning' : undefined} onClick={load} />
+        </span>
+      </div>
     <div className="rail-scroll scroll">
-      <div className="rail-stack">
+      <div className="rail-stack cx-stack">
         <section className="cx-card card" aria-label="Context window">
           {view ? (
             <>
@@ -101,9 +110,7 @@ export function ContextTab({ sessionId, active }: { sessionId: string; active: b
                       ? `${formatTokens(Math.max(0, view.max - view.total - view.buffer))} left before it compacts`
                       : `${formatTokens(Math.max(0, view.max - view.total))} free`}
                   </div>
-                  {view.model && <div className="cx-model truncate">{modelNameById(view.model, caps?.models)}</div>}
                 </div>
-                <IconButton icon="refresh" label="Refresh" size={14} className={`cx-refresh ${loading ? 'is-spinning' : ''}`} onClick={load} />
               </div>
               {view.detailed ? (
                 <ul className="cx-legend">
@@ -168,6 +175,7 @@ export function ContextTab({ sessionId, active }: { sessionId: string; active: b
 
         {provider && <Limits limits={limits} onRefresh={() => void refreshLimits(provider)} />}
       </div>
+    </div>
     </div>
   );
 }

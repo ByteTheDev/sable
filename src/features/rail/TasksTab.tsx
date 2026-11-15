@@ -31,20 +31,28 @@ export function TasksTab({ sessionId }: { sessionId: string }) {
   const done = todos.filter((t) => t.status === 'completed').length;
 
   return (
+    <div className="rail-col">
+      <div className="rail-bar">
+        {todos.length > 0 ? (
+          <>
+            <span className="rail-bar-title num">
+              {done} of {todos.length} done
+            </span>
+            <span className="tk-progress meter" role="progressbar" aria-valuemin={0} aria-valuemax={todos.length} aria-valuenow={done} aria-label="Tasks done">
+              <span className="meter-fill" style={{ '--p': done / todos.length } as CSSProperties} />
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="rail-bar-title">Sub-agents</span>
+            <span className="rail-bar-meta num">{agents.length}</span>
+          </>
+        )}
+      </div>
     <div className="rail-scroll scroll">
-      <div className="rail-stack">
+      <div className="rail-stack tk-stack">
         {todos.length > 0 && (
           <section className="tk-section" aria-label="Tasks">
-            <div className="rail-h">
-              <span>Tasks</span>
-              <span className="rail-h-meta num">
-                {done} of {todos.length} done
-              </span>
-            </div>
-            <div className="tk-progress meter" role="progressbar"
- aria-valuemin={0} aria-valuemax={todos.length} aria-valuenow={done} aria-label="Tasks done">
-              <span className="meter-fill" style={{ '--p': done / todos.length } as CSSProperties} />
-            </div>
             <ol className="tk-list">
               {todos.map((t, i) => (
                 <li key={t.id ?? i} className="tk-item" data-status={t.status}>
@@ -63,10 +71,12 @@ export function TasksTab({ sessionId }: { sessionId: string }) {
 
         {agents.length > 0 && (
           <section className="tk-section" aria-label="Sub-agents">
-            <div className="rail-h">
-              <span>Sub-agents</span>
-              <span className="rail-h-meta num">{plural(agents.length, 'agent')}</span>
-            </div>
+            {todos.length > 0 && (
+              <div className="rail-h">
+                <span>Sub-agents</span>
+                <span className="rail-h-meta num">{agents.length}</span>
+              </div>
+            )}
             <ul className="ag-list">
               {agents.map((id) => (
                 <AgentRow key={id} sessionId={sessionId} id={id} />
@@ -75,6 +85,7 @@ export function TasksTab({ sessionId }: { sessionId: string }) {
           </section>
         )}
       </div>
+    </div>
     </div>
   );
 }

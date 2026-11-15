@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { Icon, type IconName } from '@/icons';
 import { clamp } from '@/lib/format';
 import { useStore, type RailTab } from '@/state/store';
-import { IconButton, Tip, cx } from '@/ui';
+import { IconButton, Tip } from '@/ui';
 import { BrowserTab } from './BrowserTab';
 import { ChangesTab, useChangeCount } from './ChangesTab';
 import { ContextTab } from './ContextTab';
@@ -70,9 +70,6 @@ function RailInner({ sessionId }: { sessionId: string }) {
     lastFile.current = railFile;
   }, [railFile, setUi]);
 
-  const root = useRef<HTMLDivElement>(null);
-  const compact = useCompact(root);
-
   const panes: Record<RailTab, ReactNode> = {
     changes: <ChangesTab sessionId={sessionId} cwd={cwd} />,
     files: <FilesTab sessionId={sessionId} cwd={cwd} />,
@@ -83,11 +80,11 @@ function RailInner({ sessionId }: { sessionId: string }) {
   };
 
   return (
-    <div className="rail" ref={root} data-spot="">
+    <div className="rail" data-spot="">
       <ResizeHandle />
       <header className="rail-head">
-        <RailTabs sessionId={sessionId} cwd={cwd} tab={tab} compact={compact} onPick={(t) => setUi({ railTab: t })} />
-        <IconButton icon="x" label="Close panel" keys="mod+j" size={14} className="rail-close" onClick={() => setUi({ railOpen: false })} />
+        <RailTabs sessionId={sessionId} cwd={cwd} tab={tab} onPick={(t) => setUi({ railTab: t })} />
+        <IconButton icon="x" label="Close panel" keys="mod+j" className="rail-close" onClick={() => setUi({ railOpen: false })} />
       </header>
       <div className="rail-body">
         {TABS.map((t) =>
@@ -102,32 +99,51 @@ function RailInner({ sessionId }: { sessionId: string }) {
   );
 }
 
-type Density = 'full' | 'compact' | 'icons';
-
-/**
- * How much of the tab row fits: every label, the active tab's label only, or icons only
- * (the narrowest panel).
- */
-function useCompact(ref: React.RefObject<HTMLElement | null>): Density {
-  const [density, setDensity] = useState<Density>('full');
+/** The tab row's width, observed (it excludes the close button and, in the desktop app, the window controls). */
+function useRowWidth(ref: React.RefObject<HTMLElement | null>): number {
+  const [w, setW] = useState(0);
   useEffect(() => {
-    // The tab row itself: its width excludes the close button and, in the desktop app, the window controls.
-    const el = ref.current?.querySelector<HTMLElement>('.rail-tabs');
+    const el = ref.current;
     if (!el) return;
-    const measure = (w: number) => setDensity(w >= 520 ? 'full' : w >= 300 ? 'compact' : 'icons');
-    measure(el.clientWidth);
-    const ro = new ResizeObserver(([e]) => measure(e.contentRect.width));
+    setW(el.clientWidth);
+    const ro = new ResizeObserver(([e]) => setW(Math.round(e.contentRect.width)));
     ro.observe(el);
     return () => ro.disconnect();
   }, [ref]);
-  return density;
+  return w;
 }
 
-function RailTabs({ sessionId, cwd, tab, compact, onPick }: { sessionId: string; cwd: string; tab: RailTab; compact: Density; onPick: (t: RailTab) => void }) {
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+
+/** A label's width in the tab's own font, without touching layout. */
+function textWidth(text: string, el: HTMLElement | null): number {
+  if (measureCtx === undefined) measureCtx = document.createElement('canvas').getContext('2d');
+  if (!measureCtx || !el) return text.length * 7.5;
+  const cs = getComputedStyle(el);
+  measureCtx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  return measureCtx.measureText(text).width;
+}
+
+/** Fixed parts of the row: six 28 px tabs 2 px apart; a name adds its text and 9 px; a count (two figures) about 20 px. */
+const TAB = 28;
+const TAB_GAP = 2;
+const COUNT_ROOM = 20;
+
+/** The selected tab's name opens and closes with the same spring as the panel itself. */
+const LABEL_SPRING = { type: 'spring', stiffness: 520, damping: 40, mass: 0.7 } as const;
+
+function RailTabs({ sessionId, cwd, tab, onPick }: { sessionId: string; cwd: string; tab: RailTab; onPick: (t: RailTab) => void }) {
   const changes = useChangeCount(sessionId, cwd);
   const tasks = useOpenTaskCount(sessionId);
   const counts: Partial<Record<RailTab, number>> = { changes, tasks };
   const list = useRef<HTMLDivElement>(null);
+  const width = useRowWidth(list);
+  // The selected tab shows its name only when the row fits the longest name and two-figure counts, so
+  // the decision never flips while counts load or from one tab to the next; otherwise the row is icons only.
+  const font = list.current?.querySelector<HTMLElement>('.rail-tab') ?? null;
+  const longest = width > 0 ? Math.max(...TABS.map((t) => textWidth(t.label, font))) : 0;
+  const need = TABS.length * TAB + (TABS.length - 1) * TAB_GAP + 2 * COUNT_ROOM + Math.ceil(longest) + 9;
+  const labels = width > 0 && width >= need;
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') return;
@@ -140,13 +156,12 @@ function RailTabs({ sessionId, cwd, tab, compact, onPick }: { sessionId: string;
 
   return (
     <div className="tabs rail-tabs" role="tablist" aria-label="Panel" ref={list} onKeyDown={onKey}>
-      {TABS.map((t) => {
+      {TABS.map((t, i) => {
         const active = t.id === tab;
         const count = counts[t.id];
-        const iconOnly = compact === 'icons' || (compact === 'compact' && !active);
-        const button = (
+        return (
+          <Tip key={t.id} label={t.label} keys={`alt+${i + 1}`}>
             <button
-              key={t.id}
               type="button"
               role="tab"
               data-tab={t.id}
@@ -154,24 +169,30 @@ function RailTabs({ sessionId, cwd, tab, compact, onPick }: { sessionId: string;
               aria-controls={`rail-pane-${t.id}`}
               aria-label={count ? `${t.label}, ${count}` : t.label}
               tabIndex={active ? 0 : -1}
-              className={cx('tab', 'rail-tab')}
+              className="rail-tab"
               data-on={active || undefined}
-              data-icon-only={iconOnly || undefined}
+              data-count={count ? '' : undefined}
               onClick={() => onPick(t.id)}
             >
-              {active && <motion.span layoutId="rail-tab-pill" className="rail-tab-pill dither-sel" transition=
-{{ type: 'spring', stiffness: 520, damping: 40 }} />}
-              <Icon name={t.icon} size={15} />
-              {!iconOnly && <span className="rail-tab-label">{t.label}</span>}
-              {!!count && <span className="count num">{count > 999 ? '999+' : count}</span>}
+              <span className="rail-tab-pill dither-sel" aria-hidden />
+              <Icon name={t.icon} size={16} />
+              <AnimatePresence initial={false}>
+                {active && labels && (
+                  <motion.span
+                    key="label"
+                    className="rail-tab-label"
+                    initial={{ width: 0, opacity: 0 }}
+                    animate={{ width: 'auto', opacity: 1 }}
+                    exit={{ width: 0, opacity: 0 }}
+                    transition={LABEL_SPRING}
+                  >
+                    <span>{t.label}</span>
+                  </motion.span>
+                )}
+              </AnimatePresence>
+              {!!count && <span className="rail-tab-count num">{count > 999 ? '999+' : count}</span>}
             </button>
-        );
-        return iconOnly ? (
-          <Tip key={t.id} label={t.label}>
-            {button}
           </Tip>
-        ) : (
-          button
         );
       })}
     </div>
@@ -200,14 +221,24 @@ function ResizeHandle() {
     let w = startW;
     setDragging(true);
     document.documentElement.dataset.railResizing = '';
+    // While dragging, the two boxes that use the width get it inline: --rail-w lives on .app and is
+    // inherited, so changing it every move would restyle the whole window (thousands of elements).
+    // It is written once, on release.
+    const inner = rail?.querySelector<HTMLElement>(':scope > .app-rail-inner') ?? null;
+    const railWas = rail?.style.width ?? '';
     const move = (ev: PointerEvent) => {
       w = clamp(startW + (startX - ev.clientX) / z, MIN_W, max);
-      applyWidth(w);
+      const px = `${Math.round(w)}px`;
+      if (rail) rail.style.width = px;
+      if (inner) inner.style.width = px;
     };
     const up = () => {
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
       el.removeEventListener('pointercancel', up);
+      applyWidth(w);
+      if (rail) rail.style.width = railWas;
+      inner?.style.removeProperty('width');
       delete document.documentElement.dataset.railResizing;
       setDragging(false);
       try {

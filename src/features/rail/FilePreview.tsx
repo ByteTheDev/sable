@@ -60,7 +60,7 @@ export function FilePreview({ path, cwd, status, onBack }: { path: string; cwd: 
         }
       }}
     >
-      <div className="fp-head">
+      <div className="rail-bar rail-bar-field fp-head">
         <IconButton icon="arrow-left" label="Back to files" size={14} onClick={onBack} />
         <nav className="fp-crumbs" aria-label="Path">
           {segments.map((seg, i) => (
