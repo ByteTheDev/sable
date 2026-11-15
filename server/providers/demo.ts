@@ -1,0 +1,390 @@
+/**
+ * The scripted "demo" provider: a fake coding agent that replays realistic sessions
+ * against a fictional TypeScript project, streaming token by token. It exercises the
+ * whole normalized timeline model (thinking, text, every tool kind, permissions,
+ * questions, plans, sub-agents, notices, usage) without spending model quota.
+ *
+ *   speed: constructor option or SABLE_DEMO_SPEED (1 = realistic, 0 = no delays).
+ */
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import type {
+  SessionOptions,
+  AuthState,
+  Capabilities,
+  ContextBreakdown,
+  Effort,
+  HistoryEntry,
+  McpServerInfo,
+  NoticeItem,
+  ProviderInfo,
+  RateLimit,
+  TextItem,
+  TimelineItem,
+  ToolItem,
+  TurnItem,
+  UserItem,
+} from '../../shared/protocol';
+import type { SessionRuntime } from '../core/runtime';
+import type { Provider, ProviderContext, ProviderSession } from './types';
+import {
+  DEFAULT_MODEL,
+  MCP_SERVERS,
+  MODELS,
+  PRICING,
+  capabilities,
+  contextBreakdown,
+  pastSessions,
+  rateLimits,
+} from './demo-catalog';
+import { pickScenario, SCENARIOS, deniedReply } from './demo-scenarios';
+import { Aborted, BASE_CONTEXT, CONTEXT_WINDOW, Denied, Halt, Script } from './demo-script';
+
+export interface DemoOptions {
+  /** Delay multiplier: 1 = realistic pacing, 0 = instant (tests). */
+  speed?: number;
+}
+
+function resolveSpeed(opt?: number): number {
+  if (typeof opt === 'number' && Number.isFinite(opt) && opt >= 0) return opt;
+  const env = Number(process.env.SABLE_DEMO_SPEED);
+  if (process.env.SABLE_DEMO_SPEED !== undefined && Number.isFinite(env) && env >= 0) return env;
+  return 1;
+}
+
+/** Made-up people for extra demo accounts, picked by account id. */
+const DEMO_PEOPLE = [
+  { email: 'ada@lovelace.dev', plan: 'Max' },
+  { email: 'grace@hopper.dev', plan: 'Pro' },
+  { email: 'alan@turing.dev', plan: 'Team' },
+  { email: 'margaret@hamilton.dev', plan: 'Max' },
+  { email: 'linus@kernel.dev', plan: 'Pro' },
+];
+
+function seedOf(id: string) {
+  let h = 7;
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return h;
+}
+
+export class DemoProvider implements Provider {
+  readonly id = 'demo' as const;
+  readonly name = 'Demo';
+  private speed: number;
+  /** Extra accounts keep their pretend sign-in in their own folder; the default is always signed in. */
+  private authFile?: string;
+  private pendingLogin?: { timer: NodeJS.Timeout; settle: () => void };
+
+  constructor(
+    private ctx: ProviderContext,
+    opts: DemoOptions = {},
+  ) {
+    this.speed = resolveSpeed(opts.speed);
+    if (ctx.account?.dir) this.authFile = path.join(ctx.account.dir, 'demo-auth.json');
+  }
+
+  private auth(): AuthState {
+    if (!this.authFile) return { loggedIn: true, method: 'local', email: 'demo@sable.local', plan: 'Demo' };
+    try {
+      if (!existsSync(this.authFile)) return { loggedIn: false };
+      const a = JSON.parse(readFileSync(this.authFile, 'utf8')) as { email: string; plan: string };
+      return { loggedIn: true, method: 'local', email: a.email, plan: a.plan };
+    } catch {
+      return { loggedIn: false };
+    }
+  }
+
+  async info(): Promise<ProviderInfo> {
+    return { id: 'demo', name: 'Demo', installed: true, version: '1.0', auth: this.auth() };
+  }
+
+  /** A pretend browser sign-in: announces itself, then finishes after a moment. */
+  login(): Promise<void> {
+    const file = this.authFile;
+    if (!file) return Promise.resolve();
+    void this.cancelLogin();
+    this.ctx.emit({ type: 'auth.progress', provider: 'demo', state: 'url', message: 'The demo signs in by itself in a moment.' });
+    return new Promise((resolve) => {
+      const settle = () => {
+        this.pendingLogin = undefined;
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        const person = DEMO_PEOPLE[seedOf(this.ctx.account!.id) % DEMO_PEOPLE.length];
+        try {
+          writeFileSync(file, JSON.stringify(person));
+        } catch {
+          /* the folder is gone: the account was removed */
+        }
+        settle();
+      }, 2200 * this.speed);
+      this.pendingLogin = { timer, settle };
+    });
+  }
+
+  async cancelLogin() {
+    const p = this.pendingLogin;
+    if (!p) return;
+    clearTimeout(p.timer);
+    p.settle();
+  }
+
+  async logout() {
+    if (this.authFile) rmSync(this.authFile, { force: true });
+  }
+
+  async caps(): Promise<Capabilities> {
+    return capabilities();
+  }
+
+  async limits(): Promise<RateLimit[]> {
+    if (!this.authFile) return rateLimits();
+    if (!this.auth().loggedIn) return [];
+    // Each extra account has its own, steady usage.
+    const seed = seedOf(this.ctx.account!.id);
+    return rateLimits().map((l, i) => ({ ...l, percent: 6 + ((seed >>> (i * 5)) % 88) }));
+  }
+
+  async history(cwd?: string, limit?: number): Promise<HistoryEntry[]> {
+    return pastSessions(cwd)
+      .slice(0, limit ?? undefined)
+      .map(({ prompt: _p, reply: _r, readPath: _f, ...entry }) => entry);
+  }
+
+  async open(rt: SessionRuntime, opts: { loadTranscript?: boolean }): Promise<ProviderSession> {
+    rt.setCaps(capabilities());
+    const patch: Parameters<SessionRuntime['update']>[0] = {};
+    if (!rt.meta.model) patch.model = DEFAULT_MODEL;
+    const model = MODELS.find((m) => m.id === (patch.model ?? rt.meta.model)) ?? MODELS[0];
+    if (!rt.meta.effort) patch.effort = model.defaultEffort;
+    if (rt.meta.usage.contextWindow === undefined) {
+      patch.usage = { ...rt.meta.usage, contextTokens: rt.meta.usage.contextTokens ?? BASE_CONTEXT, contextWindow: CONTEXT_WINDOW };
+    }
+    const resumeId = rt.meta.providerSessionId;
+    patch.providerSessionId = resumeId ?? `demo-${randomUUID()}`;
+    rt.update(patch);
+    if (resumeId && opts.loadTranscript) rt.reset(transcript(rt, resumeId));
+    this.ctx.log(`demo session ${rt.id} opened (${resumeId ? 'resumed' : 'new'})`);
+    const session = new DemoSession(rt, this.speed, this.ctx);
+    if (rt.meta.options) void session.setOptions(rt.meta.options);
+    return session;
+  }
+
+  async dispose() {
+    await this.cancelLogin();
+  }
+}
+
+/** A short finished exchange for a resumed session. */
+function transcript(rt: SessionRuntime, providerSessionId: string): TimelineItem[] {
+  const all = pastSessions(rt.meta.cwd);
+  const past = all.find((p) => p.providerSessionId === providerSessionId) ?? all[0];
+  const t0 = past.updatedAt - 95_000;
+  const abs = path.join(rt.meta.cwd, past.readPath);
+  const items: TimelineItem[] = [
+    { id: randomUUID(), ts: t0, type: 'user', text: past.prompt, state: 'sent' } satisfies UserItem,
+    {
+      id: randomUUID(),
+      ts: t0 + 4_000,
+      type: 'tool',
+      name: 'Read',
+      kind: 'read',
+      title: `Read ${past.readPath.split('/').pop()}`,
+      status: 'done',
+      detail: { path: abs },
+      input: { file_path: abs },
+      result: { file: { path: abs, startLine: 1, numLines: 48, totalLines: 48 } },
+      endedAt: t0 + 4_300,
+    } satisfies ToolItem,
+    { id: randomUUID(), ts: t0 + 9_000, type: 'text', text: past.reply, streaming: false } satisfies TextItem,
+    { id: randomUUID(), ts: t0 + 21_000, type: 'turn', durationMs: 21_000, costUsd: 0.0412, inputTokens: 24_310, outputTokens: 286, stopReason: 'end_turn' } satisfies TurnItem,
+    {
+      id: randomUUID(),
+      ts: Date.now(),
+      type: 'notice',
+      variant: 'info',
+      text: 'Session resumed',
+      detail: `Conversation restored from ${new Date(past.updatedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`,
+    } satisfies NoticeItem,
+  ];
+  return items;
+}
+
+class DemoSession implements ProviderSession {
+  private queue: UserItem[] = [];
+  private current?: AbortController;
+  /** The running turn's script (steered messages go to it). */
+  private script?: Script;
+  private ultracode = false;
+  private allowed = new Set<string>();
+  private rotation = 0;
+  private model: string;
+  private effort?: Effort;
+  private mode: string;
+
+  constructor(
+    private rt: SessionRuntime,
+    private speed: number,
+    private ctx: ProviderContext,
+  ) {
+    this.model = rt.meta.model;
+    this.effort = rt.meta.effort;
+    this.mode = rt.meta.mode;
+  }
+
+  async send(item: UserItem): Promise<void> {
+    if (this.current && item.steered && this.script) {
+      this.script.steer(item);
+      return;
+    }
+    if (this.current) {
+      this.queue.push(item);
+      if (item.state !== 'queued') this.rt.patch<UserItem>(item.id, { state: 'queued' });
+      return;
+    }
+    this.start(item);
+  }
+
+  private start(item: UserItem) {
+    const ctrl = new AbortController();
+    this.current = ctrl;
+    if (item.state === 'queued') this.rt.taken(item.id);
+    this.rt.beginTurn('Thinking');
+    void this.play(item, ctrl);
+  }
+
+  private async play(item: UserItem, ctrl: AbortController) {
+    const model = this.rt.meta.model || this.model || DEFAULT_MODEL;
+    const effort = this.rt.meta.effort ?? this.effort;
+    const s = new Script({
+      rt: this.rt,
+      signal: ctrl.signal,
+      speed: this.speed,
+      pricing: PRICING[model] ?? PRICING[DEFAULT_MODEL],
+      allowed: this.allowed,
+      thinking: effort !== 'minimal',
+    });
+    this.script = s;
+    const { id, rotated } = pickScenario(item.text, this.rt.meta.mode || this.mode, this.rotation);
+    if (rotated) this.rotation++;
+    let error: string | undefined;
+    try {
+      await s.sleep(250 + Math.random() * 350);
+      if (id !== 'command') s.step();
+      const result = await SCENARIOS[id]({ s, prompt: item.text, item, model });
+      if (result && 'error' in result) error = result.error;
+    } catch (err) {
+      if (this.current !== ctrl || err instanceof Aborted) {
+        // Interrupted or closed: interrupt() already settled the timeline.
+        if (this.current === ctrl) this.rt.settle('cancelled');
+      } else if (err instanceof Halt) {
+        this.rt.settle('cancelled');
+      } else if (err instanceof Denied) {
+        try {
+          await s.say(deniedReply(err));
+          s.finish({ suggestion: 'Go ahead, but keep the existing public API unchanged' });
+        } catch {
+          /* interrupted while reacting */
+        }
+      } else {
+        error = (err as Error).message ?? String(err);
+        this.ctx.log('demo scenario failed', err);
+        this.rt.settle('error');
+        this.rt.notice('error', 'Demo scenario failed', error);
+      }
+    }
+    this.complete(ctrl, error);
+  }
+
+  /** Ends the turn owned by `ctrl` (idempotent) and starts the next queued message. */
+  private complete(ctrl: AbortController, error?: string) {
+    if (this.current !== ctrl) return;
+    this.current = undefined;
+    // Steered messages the turn did not get to go first in the next one.
+    const left = this.script?.takeSteers() ?? [];
+    this.script = undefined;
+    this.queue.unshift(...left);
+    this.rt.endTurn(error);
+    const next = this.queue.shift();
+    if (next) this.start(next);
+  }
+
+  async interrupt(): Promise<void> {
+    const ctrl = this.current;
+    if (!ctrl) return;
+    ctrl.abort();
+    // Steered messages not taken yet stay unanswered: the bridge hands them back to the queue.
+    this.script?.takeSteers();
+    this.rt.settle('cancelled');
+    this.rt.notice('interrupted', 'Interrupted');
+    this.complete(ctrl);
+  }
+
+  async setModel(model: string): Promise<void> {
+    const prev = this.model;
+    this.model = model;
+    if (prev && prev !== model && this.rt.items.length) {
+      const name = MODELS.find((m) => m.id === model)?.name ?? model;
+      this.rt.notice('model', `Switched to ${name}`);
+    }
+  }
+
+  async setEffort(effort: Effort): Promise<void> {
+    this.effort = effort;
+  }
+
+  async setMode(mode: string): Promise<void> {
+    this.mode = mode;
+  }
+
+  /** Pretend ultracode: remembered, so the UI can be built against it. */
+  async setUltracode(on: boolean): Promise<void> {
+    this.ultracode = on;
+  }
+
+  async rewind(itemId: string, restoreFiles: boolean): Promise<{ ok: boolean; message?: string }> {
+    if (this.current) return { ok: false, message: 'Stop the current turn before rewinding.' };
+    const idx = this.rt.items.findIndex((i) => i.id === itemId);
+    if (idx < 0) return { ok: false, message: 'That message is no longer in the conversation.' };
+    const removed = this.rt.items.slice(idx);
+    const edits = removed.filter((i) => i.type === 'tool' && (i.kind === 'edit' || i.kind === 'write') && i.status === 'done').length;
+    this.rt.reset(this.rt.items.slice(0, idx));
+    this.rt.notice(
+      'rewind',
+      'Conversation rewound',
+      restoreFiles ? `Restored ${edits} file change${edits === 1 ? '' : 's'} to their earlier state` : 'Files were left as they are',
+    );
+    return { ok: true };
+  }
+
+  async context(): Promise<ContextBreakdown | null> {
+    const u = this.rt.meta.usage;
+    return contextBreakdown(u.contextTokens, u.turns, this.rt.meta.model || this.model);
+  }
+
+  async mcp(): Promise<McpServerInfo[]> {
+    return MCP_SERVERS.map((s) => ({ ...s, tools: s.tools?.map((t) => ({ ...t })) }));
+  }
+
+  /** Pretend capabilities, so the UI can be shown and tested without a real agent. */
+  async setOptions(options: SessionOptions) {
+    const rt = this.rt;
+    rt.update({
+      remote: options.remoteControl ? { url: `https://example.com/sable-demo/${rt.meta.providerSessionId ?? rt.id}`, status: 'Continue on another device (demo link)', tone: 'ok' } : undefined,
+      capState: {
+        browser: options.browser ? { status: 'Connected to Chrome (demo)', tone: 'ok' } : undefined,
+        computerUse: options.computerUse ? { status: 'Asks before using an app (demo)', tone: 'ok' } : undefined,
+      },
+    });
+  }
+
+  async close(): Promise<void> {
+    this.queue = [];
+    const ctrl = this.current;
+    if (!ctrl) return;
+    // The app settles and ends the turn itself after close().
+    this.current = undefined;
+    ctrl.abort();
+  }
+}

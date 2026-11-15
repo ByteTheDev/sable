@@ -1,0 +1,993 @@
+/**
+ * Scripted sessions for the demo provider. Every scenario works on the fictional
+ * relay-api project (demo-codebase.ts) so paths, code, diffs and test output agree.
+ */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import type { Question, Todo, UserItem } from '../../shared/protocol';
+import { makeFileDiff } from '../../shared/diff';
+import * as C from './demo-codebase';
+import { COMMANDS, SKILLS, contextBreakdown } from './demo-catalog';
+import { BASE_CONTEXT, Denied, type OutLine, type Script, between } from './demo-script';
+
+// ───────────────────────────────── content file ─────────────────────────────────
+
+let sections: Map<string, string> | undefined;
+
+/** A named section of demo-content.md with {{placeholders}} filled in. */
+export function content(name: string, vars: Record<string, string | number> = {}): string {
+  if (!sections) {
+    const raw = readFileSync(fileURLToPath(new URL('./demo-content.md', import.meta.url)), 'utf8').replace(/\r\n/g, '\n');
+    sections = new Map();
+    const parts = raw.split(/^@@ ([a-z0-9-]+)[ \t]*$/m);
+    for (let i = 1; i < parts.length; i += 2) sections.set(parts[i], parts[i + 1].trim());
+  }
+  const text = sections.get(name);
+  if (text === undefined) throw new Error(`demo content section missing: ${name}`);
+  return text.replace(/\{\{(\w+)\}\}/g, (m, key: string) => (key in vars ? String(vars[key]) : m));
+}
+
+// ─────────────────────────────────── types ──────────────────────────────────────
+
+export interface ScenarioContext {
+  s: Script;
+  prompt: string;
+  item: UserItem;
+  model: string;
+}
+
+export type ScenarioResult = void | { error: string };
+export type Scenario = (ctx: ScenarioContext) => Promise<ScenarioResult>;
+
+// ─────────────────────────────────── helpers ────────────────────────────────────
+
+const fmt = (n: number) => n.toLocaleString('en-US');
+const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+const clock = () => new Date().toTimeString().slice(0, 8);
+
+function todoList(items: [content: string, activeForm: string][], statuses: Todo['status'][]): Todo[] {
+  return items.map(([content, activeForm], i) => ({ id: String(i + 1), content, activeForm, status: statuses[i] ?? 'pending' }));
+}
+
+interface TestFile {
+  file: string;
+  tests: number;
+  ms: number;
+}
+
+const BASE_TEST_FILES: TestFile[] = [
+  { file: 'tests/tokens.test.ts', tests: 6, ms: 12 },
+  { file: 'tests/session.test.ts', tests: 9, ms: 19 },
+  { file: 'tests/auth.test.ts', tests: 4, ms: 41 },
+  { file: 'tests/routes.test.ts', tests: 6, ms: 104 },
+];
+
+function vitestHeader(cwd: string, filter?: string): OutLine[] {
+  return [
+    ['', 60],
+    ['> relay-api@0.9.2 test', 40],
+    [`> vitest run${filter ? ' ' + filter : ''}`, 40],
+    ['', 500],
+    [` RUN  v2.1.4 ${cwd}`, 700],
+    ['', 300],
+  ];
+}
+
+function vitestPass(cwd: string, files: TestFile[]): OutLine[] {
+  const total = files.reduce((n, f) => n + f.tests, 0);
+  return [
+    ...vitestHeader(cwd),
+    ...files.map((f): OutLine => [` ✓ ${f.file} (${f.tests} tests) ${f.ms}ms`, between(250, 700)]),
+    ['', 200],
+    [` Test Files  ${files.length} passed (${files.length})`, 30],
+    [`      Tests  ${total} passed (${total})`, 30],
+    [`   Start at  ${clock()}`, 30],
+    ['   Duration  1.38s (transform 208ms, setup 0ms, collect 471ms, tests 176ms, environment 1ms, prepare 377ms)', 30],
+  ];
+}
+
+/** The regression from the first middleware edit: unknown tokens get `session_missing`. */
+function vitestFail(cwd: string): OutLine[] {
+  const failing = 'rejects unknown session tokens with invalid_session';
+  const src = C.AUTH_TEST_TS.split('\n');
+  const line = C.lineOf(C.AUTH_TEST_TS, "toEqual({ error: 'invalid_session' })");
+  const col = src[line - 1].indexOf('toEqual') + 1;
+  const frame = (n: number) => `    ${String(n).padStart(2)}| ${src[n - 1]}`;
+  const total = BASE_TEST_FILES.reduce((n, f) => n + f.tests, 0);
+  const msg = "expected { error: 'session_missing' } to deeply equal { error: 'invalid_session' }";
+  return [
+    ...vitestHeader(cwd),
+    [' ✓ tests/tokens.test.ts (6 tests) 14ms', 400],
+    [' ✓ tests/session.test.ts (9 tests) 21ms', 450],
+    [' ❯ tests/auth.test.ts (4 tests | 1 failed) 48ms', 600],
+    [`   × requireAuth > ${failing} 9ms`, 30],
+    [`     → ${msg}`, 30],
+    [' ✓ tests/routes.test.ts (6 tests) 112ms', 650],
+    ['', 200],
+    ['⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯', 30],
+    ['', 20],
+    [` FAIL  tests/auth.test.ts > requireAuth > ${failing}`, 30],
+    [`AssertionError: ${msg}`, 30],
+    ['', 20],
+    ['- Expected', 20],
+    ['+ Received', 20],
+    ['', 20],
+    ['  {', 20],
+    ['-   "error": "invalid_session",', 20],
+    ['+   "error": "session_missing",', 20],
+    ['  }', 20],
+    ['', 20],
+    [` ❯ tests/auth.test.ts:${line}:${col}`, 30],
+    [frame(line - 2), 15],
+    [frame(line - 1), 15],
+    [frame(line), 15],
+    [`      |${' '.repeat(col)}^`, 15],
+    [frame(line + 1), 15],
+    ['', 20],
+    ['⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯', 30],
+    ['', 20],
+    [' Test Files  1 failed | 3 passed (4)', 30],
+    [`      Tests  1 failed | ${total - 1} passed (${total})`, 30],
+    [`   Start at  ${clock()}`, 30],
+    ['   Duration  1.42s (transform 212ms, setup 0ms, collect 486ms, tests 195ms, environment 1ms, prepare 391ms)', 30],
+  ];
+}
+
+export function deniedReply(d: Denied): string {
+  if (d.feedback) {
+    return `Understood, I won't go ahead with ${d.subject}. You said: “${d.feedback}”\n\nI've stopped here so nothing else changes. Tell me how you'd like to approach it and I'll continue from the current state.`;
+  }
+  return `Okay, I've skipped ${d.subject} and stopped here so nothing else changes. Let me know if you'd like a different approach, or ask me to continue and I'll pick up where I left off.`;
+}
+
+// ─────────────────────────────── 1. flagship refactor ───────────────────────────
+
+async function flagshipExplore(s: Script) {
+  await s.think(
+    "The goal is to pull expiry handling out of `requireAuth`. Before changing anything I want to know every place that reads or writes `expiresAt`. If the middleware and the store both make expiry decisions, there may be a third copy somewhere, in the routes or the admin router. I'll grep for `expiresAt` and `Date.now()` across `src/`, then read the store and the middleware side by side.",
+  );
+  await s.say("I'll start by finding everywhere session expiry is decided today.");
+  await s.glob('src/**/*.ts', C.globFiles('src/', '.ts'));
+  await s.grep('expiresAt|Date\\.now\\(\\)', C.grep(/expiresAt|Date\.now\(\)/, 'src/'), { path: 'src' });
+  await s.readMany([
+    { rel: 'src/server/session.ts', content: C.SESSION_TS },
+    { rel: 'src/auth/middleware.ts', content: C.MIDDLEWARE_TS },
+  ]);
+  await s.think(
+    "So expiry is only enforced in the middleware: `session.expiresAt < Date.now()`, followed by a hard-coded `30 * 60 * 1000` renewal. That duplicates `DEFAULT_TTL_MS` and silently ignores a custom `ttlMs`: `tests/auth.test.ts` builds the store with a 60 s TTL, but the first request bumps every session to 30 minutes. `routes.ts` only echoes `expiresAt` in the login response, so it can stay. `src/lib/clock.ts` already exports a `Clock` interface that nothing uses yet, and the store should take it.\n\nPlan: `validate(id)` returns a union with a failure reason, evicts expired entries on lookup and renews from `this.ttlMs`. The middleware then becomes a thin mapping from reason to response.",
+  );
+}
+
+const FLAGSHIP_TODOS: [string, string][] = [
+  ['Add SessionStore.validate() with an injectable clock', 'Adding SessionStore.validate()'],
+  ['Make requireAuth delegate to sessions.validate()', 'Updating requireAuth'],
+  ['Run the test suite', 'Running the test suite'],
+];
+
+async function flagshipImplement(s: Script, careful: boolean) {
+  await s.todos(todoList(FLAGSHIP_TODOS, ['in_progress']));
+  await s.edit('src/server/session.ts', C.SESSION_TS, C.SESSION_TS_AFTER, {
+    description: 'Add validate() returning a SessionCheck union; inject Clock; renew from ttlMs',
+  });
+  await s.todos(todoList(FLAGSHIP_TODOS, ['completed', 'in_progress']));
+
+  if (careful) {
+    await s.edit('src/auth/middleware.ts', C.MIDDLEWARE_TS, C.MIDDLEWARE_TS_FIXED, {
+      description: 'Delegate to sessions.validate() and keep the public error codes',
+    });
+    await s.todos(todoList(FLAGSHIP_TODOS, ['completed', 'completed', 'in_progress']));
+    await s.bash('npm test', { description: 'Run the test suite', lines: vitestPass(s.cwd, BASE_TEST_FILES), activity: 'Running the test suite' });
+    await s.todos(todoList(FLAGSHIP_TODOS, ['completed', 'completed', 'completed']));
+    await s.say(content('flagship-summary-careful'));
+    return;
+  }
+
+  await s.edit('src/auth/middleware.ts', C.MIDDLEWARE_TS, C.MIDDLEWARE_TS_AFTER, {
+    description: 'Replace inline expiry checks and renewal with sessions.validate()',
+  });
+  await s.todos(todoList(FLAGSHIP_TODOS, ['completed', 'completed', 'in_progress']));
+  await s.bash('npm test', { description: 'Run the test suite', lines: vitestFail(s.cwd), exitCode: 1, activity: 'Running the test suite' });
+
+  await s.think(
+    "The failure is the error code. Before, an unknown token produced `invalid_session`. My template string turns the reason `missing` into `session_missing`. The test is right: these strings are what clients branch on, so they're part of the API. I shouldn't derive public codes from internal reason names at all. An explicit `Record<SessionFailure, string>` keeps them stable, and it also makes the compiler flag a new reason that has no code.",
+  );
+  await s.say(
+    "One failure, and it's a real regression: unknown tokens now get `session_missing` instead of `invalid_session`. Clients depend on those codes, so I'll map reasons to codes explicitly instead of deriving them from internal names.",
+  );
+  const withFix: [string, string][] = [...FLAGSHIP_TODOS.slice(0, 2), ['Keep public error codes stable', 'Pinning public error codes'], FLAGSHIP_TODOS[2]];
+  await s.todos(todoList(withFix, ['completed', 'completed', 'in_progress', 'pending']));
+  await s.edit('src/auth/middleware.ts', C.MIDDLEWARE_TS_AFTER, C.MIDDLEWARE_TS_FIXED, {
+    description: 'Pin public error codes in a FAILURE_CODES table',
+  });
+  await s.todos(todoList(withFix, ['completed', 'completed', 'completed', 'in_progress']));
+  await s.bash('npm test', { description: 'Run the test suite again', lines: vitestPass(s.cwd, BASE_TEST_FILES), activity: 'Re-running the test suite' });
+  await s.todos(todoList(withFix, ['completed', 'completed', 'completed', 'completed']));
+  await s.say(content('flagship-summary'));
+}
+
+const flagship: Scenario = async ({ s }) => {
+  await flagshipExplore(s);
+  await s.say(
+    "Expiry is only enforced in the middleware. It compares `expiresAt` to `Date.now()` and renews with a hard-coded 30 minutes, which silently ignores any `ttlMs` passed to the store. I'll move both decisions into `SessionStore` and turn the middleware into a thin adapter.",
+  );
+  await flagshipImplement(s, false);
+  s.finish({ suggestion: 'Add unit tests for SessionStore.validate() covering the expired and revoked paths' });
+};
+
+// ───────────────────────────────────── 2. plan ──────────────────────────────────
+
+async function rateLimitExplore(s: Script) {
+  await s.think(
+    "Login is `POST /auth/login` in `src/server/routes.ts`. First I'll check whether any rate limiting exists already (`rateLimit`, `429`, `Retry-After`) and whether `express-rate-limit` is a dependency, then read the route and the clock helper.",
+  );
+  await s.grep('rateLimit|express-rate-limit|429|Retry-After', C.grep(/rateLimit|express-rate-limit|429|Retry-After/));
+  await s.readMany([
+    { rel: 'src/server/routes.ts', content: C.ROUTES_TS },
+    { rel: 'src/lib/clock.ts', content: C.CLOCK_TS },
+  ]);
+  await s.think(
+    "There's no existing limiter and no dependency for one. We run a single instance, so a small in-memory fixed window keyed on IP plus normalized email is enough, and it can reuse `Clock` so the tests stay deterministic. It needs a reset on successful login and a periodic sweep to bound memory. Lockout is out of scope, since it would let attackers lock users out.",
+  );
+}
+
+const RATE_TODOS: [string, string][] = [
+  ['Create src/auth/rate-limit.ts', 'Creating the login limiter'],
+  ['Apply the limiter to POST /auth/login', 'Wiring the limiter into routes'],
+  ['Add tests/rate-limit.test.ts', 'Writing limiter tests'],
+  ['Run the test suite', 'Running the test suite'],
+];
+
+async function rateLimitImplement(s: Script) {
+  await s.todos(todoList(RATE_TODOS, ['in_progress']));
+  await s.write('src/auth/rate-limit.ts', C.RATE_LIMIT_TS, { description: 'Fixed-window login limiter keyed by IP + email' });
+  await s.todos(todoList(RATE_TODOS, ['completed', 'in_progress']));
+  await s.edit('src/server/routes.ts', C.ROUTES_TS, C.ROUTES_TS_AFTER, { description: 'Mount the limiter on login, reset it on success, sweep periodically' });
+  await s.todos(todoList(RATE_TODOS, ['completed', 'completed', 'in_progress']));
+  await s.write('tests/rate-limit.test.ts', C.RATE_LIMIT_TEST_TS, { description: 'Limit, rollover, email normalization, reset on success' });
+  await s.todos(todoList(RATE_TODOS, ['completed', 'completed', 'completed', 'in_progress']));
+  const files = [...BASE_TEST_FILES, { file: 'tests/rate-limit.test.ts', tests: 4, ms: 63 }];
+  await s.bash('npm test', { description: 'Run the test suite', lines: vitestPass(s.cwd, files), activity: 'Running the test suite' });
+  await s.todos(todoList(RATE_TODOS, ['completed', 'completed', 'completed', 'completed']));
+  await s.say(content('ratelimit-summary'));
+}
+
+const plan: Scenario = async ({ s, prompt }) => {
+  const topic = /refactor|fix|session|expir/i.test(prompt) ? 'flagship' : 'ratelimit';
+  if (topic === 'flagship') await flagshipExplore(s);
+  else await rateLimitExplore(s);
+
+  const planText = content(topic === 'flagship' ? 'plan-flagship' : 'plan-ratelimit');
+  s.activity('Writing the plan');
+  const id = await s.tool({ name: 'ExitPlanMode', kind: 'plan', title: 'Present plan', input: { plan: planText }, streamInput: true });
+  s.patchTool(id, { detail: { plan: planText } });
+  const { option, message } = await s.requestPermission(id, {
+    toolName: 'ExitPlanMode',
+    kind: 'plan',
+    title: 'Ready to code?',
+    detail: { plan: planText },
+    options: [
+      { id: 'approve-accept-edits', label: 'Approve and auto-accept edits', tone: 'always' },
+      { id: 'approve', label: 'Approve, ask before each edit', tone: 'allow' },
+      { id: 'keep-planning', label: 'Keep planning', tone: 'deny' },
+    ],
+  });
+
+  if (option.tone === 'deny') {
+    s.patchTool(id, { status: 'denied', endedAt: Date.now(), result: { text: message ? `Keep planning: ${message}` : 'Keep planning' } });
+    await s.say(
+      message
+        ? `Got it, I'll keep planning and won't touch any files yet. I'll rework the plan around your note: *${message}*. Is there anything else you want changed before I present it again?`
+        : "Okay, I'll keep planning and won't touch any files yet. Which part should change: the approach, the scope, or the files involved?",
+    );
+    s.finish({ suggestion: message ? 'Show me the revised plan' : 'Keep the scope smaller: skip the tests for now' });
+    return;
+  }
+
+  s.complete(id, { text: 'Plan approved' });
+  const mode = option.tone === 'always' ? 'acceptEdits' : 'default';
+  s.setMode(mode);
+  s.notice('mode', mode === 'acceptEdits' ? 'Plan approved · auto-accepting edits' : 'Plan approved · asking before each edit');
+
+  if (topic === 'flagship') {
+    await s.say("Plan approved. Starting with the store, then the middleware, then I'll run the suite.");
+    await flagshipImplement(s, true);
+    s.finish({ suggestion: 'Add unit tests for SessionStore.validate() covering the expired and revoked paths' });
+  } else {
+    await s.say('Plan approved. Implementing it now.');
+    await rateLimitImplement(s);
+    s.finish({ suggestion: "Set app.set('trust proxy', 1) in createApp so req.ip is the real client address" });
+  }
+};
+
+// ─────────────────────────────────── 3. questions ───────────────────────────────
+
+const LOGGER_QUESTIONS: Question[] = [
+  {
+    header: 'Logger',
+    question: 'Which logging library should I use?',
+    multiSelect: false,
+    options: [
+      { label: 'pino', description: 'Fastest JSON logger, with built-in redaction. Adds one dependency (recommended)' },
+      { label: 'winston', description: 'Flexible transports and formats, but heavier and slower' },
+      { label: 'console + JSON', description: 'No dependency: a thin wrapper that writes one JSON object per line' },
+    ],
+  },
+  {
+    header: 'Fields',
+    question: 'Which fields should every request log line include?',
+    multiSelect: true,
+    options: [
+      { label: 'Request ID', description: 'Taken from x-request-id or generated, and echoed back on the response' },
+      { label: 'User ID', description: 'From the authenticated session, when there is one' },
+      { label: 'Latency', description: 'Response time in milliseconds' },
+      { label: 'Route template', description: 'e.g. /admin/users/:id instead of the raw URL, so dashboards can group by endpoint' },
+    ],
+  },
+];
+
+type Lib = 'pino' | 'winston' | 'console';
+
+function loggerSource(lib: Lib): string {
+  if (lib === 'pino') {
+    return [
+      "import pino from 'pino';",
+      '',
+      'export const logger = pino({',
+      "  level: process.env.LOG_LEVEL ?? 'info',",
+      "  base: { service: 'relay-api' },",
+      '  timestamp: pino.stdTimeFunctions.isoTime,',
+      "  redact: ['req.headers.authorization', 'req.headers.cookie'],",
+      '});',
+      '',
+      'export type Logger = typeof logger;',
+      '',
+    ].join('\n');
+  }
+  if (lib === 'winston') {
+    return [
+      "import winston from 'winston';",
+      '',
+      'export const logger = winston.createLogger({',
+      "  level: process.env.LOG_LEVEL ?? 'info',",
+      "  defaultMeta: { service: 'relay-api' },",
+      '  format: winston.format.combine(winston.format.timestamp(), winston.format.json()),',
+      '  transports: [new winston.transports.Console()],',
+      '});',
+      '',
+      'export type Logger = typeof logger;',
+      '',
+    ].join('\n');
+  }
+  return [
+    "type Level = 'debug' | 'info' | 'warn' | 'error';",
+    '',
+    'const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };',
+    'const threshold = LEVELS[process.env.LOG_LEVEL as Level] ?? LEVELS.info;',
+    '',
+    'export type Fields = Record<string, unknown>;',
+    '',
+    'export interface Logger {',
+    '  debug(fields: Fields, msg: string): void;',
+    '  info(fields: Fields, msg: string): void;',
+    '  warn(fields: Fields, msg: string): void;',
+    '  error(fields: Fields, msg: string): void;',
+    '  child(bindings: Fields): Logger;',
+    '}',
+    '',
+    '/** Writes one JSON object per line; errors go to stderr. */',
+    'export function createLogger(bindings: Fields = {}): Logger {',
+    '  const write = (level: Level) => (fields: Fields, msg: string) => {',
+    '    if (LEVELS[level] < threshold) return;',
+    '    const line = JSON.stringify({ time: new Date().toISOString(), level, msg, ...bindings, ...fields });',
+    "    (level === 'error' ? process.stderr : process.stdout).write(line + '\\n');",
+    '  };',
+    '  return {',
+    "    debug: write('debug'),",
+    "    info: write('info'),",
+    "    warn: write('warn'),",
+    "    error: write('error'),",
+    '    child: (more) => createLogger({ ...bindings, ...more }),',
+    '  };',
+    '}',
+    '',
+    "export const logger = createLogger({ service: 'relay-api' });",
+    '',
+  ].join('\n');
+}
+
+function requestLogSource(lib: Lib, fields: Set<string>): string {
+  const rid = fields.has('Request ID');
+  const uid = fields.has('User ID');
+  const lat = fields.has('Latency');
+  const route = fields.has('Route template');
+  const l: string[] = [];
+  if (rid) l.push("import { randomUUID } from 'node:crypto';");
+  l.push("import type { NextFunction, Request, Response } from 'express';", "import { logger } from '../lib/logger';", '');
+  l.push('/** Logs one structured line per request once the response has been sent. */');
+  l.push('export function requestLog(req: Request, res: Response, next: NextFunction) {');
+  if (lat) l.push('  const start = process.hrtime.bigint();');
+  if (rid) l.push("  const requestId = req.header('x-request-id') ?? randomUUID();", "  res.setHeader('x-request-id', requestId);");
+  if (lat || rid) l.push('');
+  l.push("  res.on('finish', () => {", '    const fields: Record<string, unknown> = {', '      method: req.method,');
+  l.push(route ? "      route: req.route ? req.baseUrl + req.route.path : 'unmatched'," : '      url: req.originalUrl,');
+  l.push('      status: res.statusCode,');
+  if (rid) l.push('      requestId,');
+  if (lat) l.push('      durationMs: Math.round(Number(process.hrtime.bigint() - start) / 1e4) / 100,');
+  l.push('    };');
+  if (uid) l.push('    if (req.session) fields.userId = req.session.userId;');
+  l.push(lib === 'winston' ? "    logger.info('request completed', fields);" : "    logger.info(fields, 'request completed');");
+  l.push('  });', '', '  next();', '}', '');
+  return l.join('\n');
+}
+
+function sampleLine(lib: Lib, fields: Set<string>): string {
+  const req: Record<string, unknown> = { method: 'GET', [fields.has('Route template') ? 'route' : 'url']: '/me', status: 200 };
+  if (fields.has('Request ID')) req.requestId = '3f9c1e52-8b7a-4d16-a0e4-6c2d9b51f7a3';
+  if (fields.has('Latency')) req.durationMs = 3.41;
+  if (fields.has('User ID')) req.userId = 'u_1';
+  const time = new Date().toISOString();
+  if (lib === 'pino') return JSON.stringify({ level: 30, time, service: 'relay-api', ...req, msg: 'request completed' });
+  if (lib === 'winston') return JSON.stringify({ level: 'info', message: 'request completed', ...req, service: 'relay-api', timestamp: time });
+  return JSON.stringify({ time, level: 'info', msg: 'request completed', service: 'relay-api', ...req });
+}
+
+const questions: Scenario = async ({ s }) => {
+  await s.think(
+    "Structured logging touches every request, and two decisions change the shape of the code: which library to use (a dependency or not), and which fields go on each line. The user-ID field also depends on where the middleware is mounted relative to `requireAuth`. Guessing wrong means rewriting both files, so I'll ask first.",
+  );
+  await s.say("I'll add structured request logging. Two choices shape the code, so I'll ask before writing anything.");
+  const id = await s.tool({ name: 'AskUserQuestion', kind: 'question', title: 'Ask 2 questions', detail: { questions: LOGGER_QUESTIONS }, input: { questions: LOGGER_QUESTIONS } });
+  const answers = await s.ask(LOGGER_QUESTIONS, id);
+  if (!answers) {
+    s.patchTool(id, { status: 'cancelled', endedAt: Date.now(), result: { text: 'Questions dismissed' } });
+    await s.say(
+      "No problem, I'll wait. When you're ready, tell me which logger you prefer and which fields matter, and I'll pick it up from there. Nothing has been changed yet.",
+    );
+    s.finish({ suggestion: 'Use pino and log request ID, latency and route template' });
+    return;
+  }
+
+  const pick = (q: Question) => answers[q.question] ?? (q.header ? answers[q.header] : undefined) ?? [];
+  const libAnswer = (pick(LOGGER_QUESTIONS[0])[0] ?? 'pino').toLowerCase();
+  const lib: Lib = libAnswer.includes('winston') ? 'winston' : libAnswer.includes('console') ? 'console' : 'pino';
+  const fields = new Set(pick(LOGGER_QUESTIONS[1]));
+  s.complete(id, { answers, text: `Logger: ${lib}; fields: ${[...fields].join(', ') || 'none beyond method, URL and status'}` });
+
+  const libName = lib === 'console' ? 'a dependency-free JSON logger' : lib;
+  await s.think(
+    `${lib === 'console' ? 'No dependency then. A small wrapper with the same `(fields, msg)` call shape as pino keeps a later switch cheap.' : `${lib} it is.`} The middleware should log on \`finish\` rather than up front, so the status code and latency are known.${fields.has('User ID') ? ' `req.session` is only set once `requireAuth` has run, but by `finish` it has, so mounting early is fine.' : ''}`,
+  );
+  if (lib !== 'console') {
+    await s.bash(`npm install ${lib}`, {
+      description: `Install ${lib}`,
+      key: 'npm install',
+      startDelay: 600,
+      lines: [
+        ['', 1800],
+        [`added ${lib === 'pino' ? 11 : 28} packages, and audited ${lib === 'pino' ? 214 : 231} packages in 3s`, 40],
+        ['', 30],
+        ['38 packages are looking for funding', 30],
+        ['  run `npm fund` for details', 30],
+        ['', 30],
+        ['found 0 vulnerabilities', 30],
+      ],
+    });
+  }
+  await s.write('src/lib/logger.ts', loggerSource(lib), { description: `Shared ${libName} instance` });
+  await s.write('src/server/request-log.ts', requestLogSource(lib, fields), { description: 'One structured line per finished request' });
+  await s.edit('src/app.ts', C.APP_TS, C.APP_TS_WITH_LOGGING, { description: 'Mount requestLog after cookieParser()' });
+  await s.bash('npx tsc --noEmit', { description: 'Typecheck the project', key: 'npx tsc', lines: [['', 2200]] });
+
+  const fieldNames = ['method', fields.has('Route template') ? 'route template' : 'URL', 'status'];
+  if (fields.has('Request ID')) fieldNames.push('request ID');
+  if (fields.has('User ID')) fieldNames.push('user ID (when authenticated)');
+  if (fields.has('Latency')) fieldNames.push('latency in ms');
+  await s.say(
+    content('logging-summary', {
+      library: lib === 'console' ? 'a small dependency-free JSON logger' : lib,
+      fields: fieldNames.map((f) => `\`${f}\``).join(', '),
+      sample: sampleLine(lib, fields),
+    }),
+  );
+  s.finish({ suggestion: 'Include the request ID in errorHandler logs as well' });
+};
+
+// ─────────────────────────────────── 4. sub-agents ──────────────────────────────
+
+const agents: Scenario = async ({ s }) => {
+  await s.think(
+    'This spans the route handlers and the tests, and the two halves are independent: (1) where do 401/403 responses come from and are they consistent, and (2) what do the tests actually cover. Two parallel Explore agents will be faster than doing it serially, and I can cross-check their findings afterwards.',
+  );
+  await s.say("I'll split this into two parallel investigations. One maps every place an auth failure becomes an HTTP response, the other checks what the tests cover.");
+
+  const specA = {
+    subagent: 'Explore',
+    description: 'Map auth error responses',
+    prompt:
+      'Find every place in src/ where an authentication or authorization failure becomes an HTTP response: 401/403 responses, thrown auth errors and error-handler mappings. For each one, report file:line, status code and response body shape. Call out inconsistencies.',
+  };
+  const specB = {
+    subagent: 'Explore',
+    description: 'Audit auth test coverage',
+    prompt:
+      'Review tests/ for coverage of authentication failures: which error codes and status codes are asserted, and which auth code paths in src/auth and src/server have no test. Report the gaps concretely.',
+  };
+  s.activity('Running 2 agents');
+  const a = await s.tool({ name: 'Task', kind: 'agent', title: specA.description, detail: specA, input: { subagent_type: specA.subagent, description: specA.description, prompt: specA.prompt } });
+  const b = await s.tool({ name: 'Task', kind: 'agent', title: specB.description, detail: specB, input: { subagent_type: specB.subagent, description: specB.description, prompt: specB.prompt } });
+  s.start(a);
+  s.start(b);
+
+  const lines = {
+    mwLine: C.lineOf(C.MIDDLEWARE_TS, 'res.status(401)'),
+    routesLine: C.lineOf(C.ROUTES_TS, 'invalid_credentials'),
+    adminLine: C.lineOf(C.ADMIN_TS, 'status(403)'),
+    webhookLine: C.lineOf(C.WEBHOOKS_TS, 'verifyToken('),
+  };
+
+  const runA = async () => {
+    const o = { parentId: a };
+    await s.think('Start with explicit status codes, then look for thrown errors that reach the error handler without a mapping.', a);
+    await s.grep('status\\((401|403)\\)', C.grep(/status\((401|403)\)/, 'src/'), { ...o, path: 'src' });
+    await s.read('src/server/admin.ts', C.ADMIN_TS, o);
+    await s.grep('TokenError|verifyToken', C.grep(/TokenError|verifyToken/, 'src/'), { ...o, path: 'src' });
+    await s.readMany(
+      [
+        { rel: 'src/server/webhooks.ts', content: C.WEBHOOKS_TS },
+        { rel: 'src/server/errors.ts', content: C.ERRORS_TS },
+      ],
+      o,
+    );
+    const report = content('agents-report-a', lines);
+    await s.say(report, a);
+    s.complete(a, { text: report });
+  };
+
+  const runB = async () => {
+    const o = { parentId: b };
+    await s.pause(250, 500);
+    await s.glob('tests/**/*.test.ts', C.globFiles('tests/'), o);
+    await s.grep("toBe\\((401|403)\\)|error: '", C.grep(/toBe\((401|403)\)|error: '/, 'tests/'), { ...o, path: 'tests' });
+    await s.read('tests/auth.test.ts', C.AUTH_TEST_TS, o);
+    await s.read('tests/routes.test.ts', C.ROUTES_TEST_TS, o);
+    const report = content('agents-report-b');
+    await s.say(report, b);
+    s.complete(b, { text: report });
+  };
+
+  await Promise.all([runA(), runB()]);
+  s.activity('Synthesizing findings');
+  await s.think(
+    "Both reports agree on the shape. Two items are real bugs rather than style issues: the webhook 500 (it pages on-call, and the provider's retries amplify it) and the inconsistent admin body. Coverage gaps line up with those same paths. I'll rank them by impact and say which fixes are safe right now.",
+  );
+  await s.say(content('agents-synthesis', lines));
+  s.finish({ suggestion: 'Map TokenError to a 401 in errorHandler and add the missing auth tests' });
+};
+
+// ──────────────────────────────────── 5. web search ─────────────────────────────
+
+const search: Scenario = async ({ s }) => {
+  await s.think(
+    "Node's shutdown semantics changed between versions: `closeIdleConnections()` arrived in 18.2, and `server.close()` started dropping idle keep-alive sockets in 19. I'd rather check the current docs than rely on memory, then map the answer onto `src/main.ts`, which as far as I remember never closes the server.",
+  );
+  await s.websearch(
+    'node.js http server graceful shutdown SIGTERM closeIdleConnections',
+    [
+      { title: 'HTTP: server.close([callback]) | Node.js v22 Documentation', url: 'https://nodejs.org/api/http.html#serverclosecallback' },
+      { title: 'HTTP: server.closeAllConnections() | Node.js v22 Documentation', url: 'https://nodejs.org/api/http.html#servercloseallconnections' },
+      { title: 'Health Checks and Graceful Shutdown | Express', url: 'https://expressjs.com/en/advanced/healthcheck-graceful-shutdown.html' },
+      { title: 'Process: Signal events | Node.js v22 Documentation', url: 'https://nodejs.org/api/process.html#signal-events' },
+      { title: 'godaddy/terminus: graceful shutdown and health checks for Node.js', url: 'https://github.com/godaddy/terminus' },
+      { title: 'Pod Lifecycle: Termination of Pods | Kubernetes', url: 'https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination' },
+    ],
+    content('search-websummary'),
+  );
+  await s.fetch('https://nodejs.org/api/http.html#serverclosecallback', 'What do server.close, closeIdleConnections and closeAllConnections do, and since which versions?', content('search-fetch-node'));
+  await s.fetch('https://expressjs.com/en/advanced/healthcheck-graceful-shutdown.html', 'What does Express recommend for graceful shutdown?', content('search-fetch-express'));
+  await s.read('src/main.ts', C.MAIN_TS);
+  await s.say(content('search-answer'));
+  s.finish({ suggestion: 'Apply the shutdown handler to src/main.ts and add a readiness endpoint' });
+};
+
+// ─────────────────────────────── 6. markdown showcase ───────────────────────────
+
+const markdown: Scenario = async ({ s }) => {
+  await s.think(
+    'An overview of the auth layer should cover the components, the request flow, the public error codes and the trade-offs, with real snippets from `session.ts` and the middleware. A Locust script is a useful extra for load-testing the hot path.',
+  );
+  await s.say(content('markdown-showcase'));
+  s.finish({ suggestion: 'Save this as docs/auth.md in the repo' });
+};
+
+// ──────────────────────────────────── 7. errors ─────────────────────────────────
+
+const MIGRATE_FAIL_STDERR = [
+  'Error: connect ECONNREFUSED 127.0.0.1:5432',
+  '    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1611:16) {',
+  '  errno: -111,',
+  "  code: 'ECONNREFUSED',",
+  "  syscall: 'connect',",
+  "  address: '127.0.0.1',",
+  '  port: 5432',
+  '}',
+].join('\n');
+
+const MIGRATE_HEAD: OutLine[] = [
+  ['', 40],
+  ['> relay-api@0.9.2 migrate', 30],
+  ['> node-pg-migrate up', 30],
+  ['', 900],
+];
+
+const errors: Scenario = async ({ s, prompt }) => {
+  const failHard = /fail\s*hard/i.test(prompt);
+  s.activity('Waiting for the API');
+  s.notice('retry', 'API overloaded · retrying in 2s (attempt 1 of 10)', '529 overloaded_error');
+  await s.pause(2000);
+  await s.think('I need to apply the pending migrations. `package.json` has a `migrate` script wrapping `node-pg-migrate up`, so I\'ll run that.');
+  await s.say("I'll run the pending database migrations.");
+  await s.bash('npm run migrate', { description: 'Apply database migrations', key: 'npm run', lines: MIGRATE_HEAD, exitCode: 1, stderr: MIGRATE_FAIL_STDERR });
+
+  if (failHard) {
+    await s.think('Postgres refused the connection. Before going further I should check whether the container is running.');
+    s.activity('Waiting for the API');
+    s.notice('retry', 'API overloaded · retrying in 4s (attempt 2 of 10)', '529 overloaded_error');
+    await s.pause(4000);
+    s.notice('retry', 'API overloaded · retrying in 8s (attempt 3 of 10)', '529 overloaded_error');
+    await s.pause(8000);
+    const error = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
+    s.notice('error', 'Request failed after 3 attempts', error);
+    s.finish({ error });
+    return { error };
+  }
+
+  await s.think(
+    "`ECONNREFUSED 127.0.0.1:5432` means nothing is listening on the Postgres port. It's not a credentials or schema problem. The repo has a `docker-compose.yml`, so the database is probably just not running. I'll check the container state before changing anything.",
+  );
+  await s.bash('docker compose ps', { description: 'Check running containers', readonly: true, lines: [['NAME      IMAGE     COMMAND   SERVICE   CREATED   STATUS    PORTS', 400]] });
+  await s.say('The Postgres container isn’t running. Starting it, then retrying the migrations.');
+  await s.bash('docker compose up -d postgres', {
+    description: 'Start the Postgres container',
+    key: 'docker compose',
+    lines: [
+      ['[+] Running 2/2', 900],
+      [' ✔ Network relay-api_default       Created                              0.1s', 300],
+      [' ✔ Container relay-api-postgres-1  Started                              0.6s', 700],
+    ],
+  });
+  await s.bash('npm run migrate', {
+    description: 'Apply database migrations',
+    key: 'npm run',
+    lines: [
+      ...MIGRATE_HEAD,
+      ['> Migrating files:', 60],
+      ['> - 1731412800000_add-sessions-table', 40],
+      ['> - 1731499200000_add-user-roles', 40],
+      ['### MIGRATION 1731412800000_add-sessions-table (UP) ###', 300],
+      ['CREATE TABLE "sessions" (', 20],
+      ['  "id" text PRIMARY KEY,', 20],
+      ['  "user_id" text NOT NULL REFERENCES "users" ON DELETE CASCADE,', 20],
+      ['  "created_at" timestamptz NOT NULL DEFAULT now(),', 20],
+      ['  "expires_at" timestamptz NOT NULL,', 20],
+      ['  "revoked" boolean NOT NULL DEFAULT false', 20],
+      [');', 20],
+      ['CREATE INDEX "sessions_expires_at_index" ON "sessions" ("expires_at");', 20],
+      ['INSERT INTO "public"."pgmigrations" (name, run_on) VALUES (\'1731412800000_add-sessions-table\', NOW());', 200],
+      ['', 20],
+      ['### MIGRATION 1731499200000_add-user-roles (UP) ###', 300],
+      ['ALTER TABLE "users"', 20],
+      ['  ADD "roles" text[] DEFAULT \'{}\' NOT NULL;', 20],
+      ['CREATE INDEX "users_roles_index" ON "users" USING gin ("roles");', 20],
+      ['INSERT INTO "public"."pgmigrations" (name, run_on) VALUES (\'1731499200000_add-user-roles\', NOW());', 200],
+      ['', 20],
+      ['', 20],
+      ['Migrations complete!', 40],
+    ],
+  });
+  await s.say(content('error-summary'));
+  s.finish({ suggestion: 'Add a db:up script so npm run dev starts Postgres automatically' });
+};
+
+// ─────────────────────────────────── 8. MCP + skill ─────────────────────────────
+
+const mcp: Scenario = async ({ s }) => {
+  await s.think(
+    "The GitHub MCP server is connected, so I can search issues directly instead of asking for links. Then the project's `changelog` skill defines the entry format, and I should load it rather than guess the conventions.",
+  );
+  await s.mcp(
+    'github',
+    'search_issues',
+    { query: 'repo:relay-labs/relay-api is:issue is:open session', per_page: 5 },
+    {
+      total_count: 3,
+      items: [
+        { number: 214, title: 'Session map grows until restart', state: 'open', labels: ['bug', 'auth'], comments: 4, updated_at: '2026-11-10T09:12:44Z' },
+        { number: 209, title: 'Admin 403 returns { message } instead of { error }', state: 'open', labels: ['api'], comments: 1, updated_at: '2026-11-03T16:40:02Z' },
+        { number: 188, title: 'Expose active session count per user', state: 'open', labels: ['enhancement'], comments: 0, updated_at: '2026-10-21T11:05:37Z' },
+      ],
+    },
+    { title: 'Search GitHub issues' },
+  );
+  await s.mcp(
+    'github',
+    'get_issue',
+    { owner: 'relay-labs', repo: 'relay-api', issue_number: 214 },
+    {
+      number: 214,
+      title: 'Session map grows until restart',
+      user: 'mkovacs',
+      body: 'Heap snapshots on prod show the sessions Map holding ~180k entries after a week. Most are long expired. /admin/sessions reports the same inflated number. We only reject expired sessions in requireAuth; nothing ever deletes them.',
+      labels: ['bug', 'auth'],
+      assignees: [],
+      comments: [
+        { user: 'jtan', body: 'Confirmed locally. Memory grows ~40 MB/day at current traffic.' },
+        { user: 'mkovacs', body: 'Evicting on lookup would handle most of it; a periodic sweep would catch the rest.' },
+      ],
+    },
+    { title: 'Read issue #214' },
+  );
+  await s.skill(
+    'changelog',
+    'Draft an Unreleased entry for the session expiry refactor',
+    'Loaded skill “changelog” from .claude/skills/changelog/SKILL.md\n\n- Keep a Changelog 1.1 format; newest first\n- Group under Added / Changed / Deprecated / Removed / Fixed / Security\n- One line per change, user-facing wording, reference issues as (#123)\n- Only include changes that are merged or in the working tree',
+  );
+  await s.say(content('mcp-answer'));
+  s.finish({ suggestion: 'Add the entry to CHANGELOG.md and comment on #214 that it is fixed' });
+};
+
+// ─────────────────────────────────── 10. long / stress ──────────────────────────
+
+const long: Scenario = async ({ s }) => {
+  await s.think(
+    'A full handbook: architecture first, then each module in request order, then testing, local setup, deployment and the operational knowledge that is not written down anywhere. Code snippets have to match the current sources.',
+  );
+  await s.say(content('long-stress'));
+  s.finish({ suggestion: 'Split the handbook into docs/ pages and link them from the README' });
+};
+
+// ─────────────────────────────────── 11. greeting ───────────────────────────────
+
+const greeting: Scenario = async ({ s }) => {
+  await s.say(
+    "Hi, I'm set up in `relay-api` and can see the Express app, the session store and the auth middleware. What would you like to work on?",
+  );
+  s.finish({ suggestion: 'Refactor the session expiry logic out of the auth middleware' });
+};
+
+// ─────────────────────────────────── 9. commands ────────────────────────────────
+
+function contextReport(s: Script, model: string): string {
+  const b = contextBreakdown(s.contextTokens, s.rt.meta.usage.turns, model);
+  const rows = b.categories.map((c) => `| ${c.name} | ${k(c.tokens)} | ${((c.tokens / b.maxTokens) * 100).toFixed(1)}% |`);
+  return [`**${model}** · ${k(b.totalTokens)} / ${k(b.maxTokens)} tokens (${b.percent}%)`, '', '| Category | Tokens | Share |', '|---|---:|---:|', ...rows].join('\n');
+}
+
+function costReport(s: Script): string {
+  const u = s.rt.meta.usage;
+  return [
+    '| | |',
+    '|---|---|',
+    `| Total cost | $${(u.costUsd ?? 0).toFixed(4)} |`,
+    `| Input tokens | ${fmt(u.inputTokens)} fresh · ${fmt(u.cacheReadTokens ?? 0)} cached |`,
+    `| Output tokens | ${fmt(u.outputTokens)} |`,
+    `| Turns | ${u.turns} |`,
+    `| Context | ${k(u.contextTokens ?? BASE_CONTEXT)} / ${k(u.contextWindow ?? 200_000)} |`,
+  ].join('\n');
+}
+
+const FLAGSHIP_DIFFS = () => [
+  makeFileDiff('src/auth/middleware.ts', C.MIDDLEWARE_TS, C.MIDDLEWARE_TS_FIXED),
+  makeFileDiff('src/server/session.ts', C.SESSION_TS, C.SESSION_TS_AFTER),
+];
+
+function diffStat(): OutLine[] {
+  const diffs = FLAGSHIP_DIFFS();
+  const width = Math.max(...diffs.map((d) => d.path.length));
+  const max = Math.max(...diffs.map((d) => d.additions + d.deletions));
+  const rows = diffs.map((d): OutLine => {
+    const n = d.additions + d.deletions;
+    const scale = Math.min(1, 40 / max);
+    const plus = '+'.repeat(Math.round(d.additions * scale));
+    const minus = '-'.repeat(Math.round(d.deletions * scale));
+    return [` ${d.path.padEnd(width)} | ${String(n).padStart(2)} ${plus}${minus}`, 20];
+  });
+  const add = diffs.reduce((n, d) => n + d.additions, 0);
+  const del = diffs.reduce((n, d) => n + d.deletions, 0);
+  return [...rows, [` ${diffs.length} files changed, ${add} insertions(+), ${del} deletions(-)`, 20]];
+}
+
+const review: Scenario = async ({ s }) => {
+  await s.bash('git status --short', { description: 'List changed files', readonly: true, lines: [' M src/auth/middleware.ts', ' M src/server/session.ts'] });
+  await s.bash('git diff --stat', { description: 'Summarize the diff', readonly: true, lines: diffStat() });
+  await s.readMany([
+    { rel: 'src/server/session.ts', content: C.SESSION_TS_AFTER },
+    { rel: 'src/auth/middleware.ts', content: C.MIDDLEWARE_TS_FIXED },
+  ]);
+  const afterRefactor = { ...C.SOURCES, 'src/server/session.ts': C.SESSION_TS_AFTER, 'src/auth/middleware.ts': C.MIDDLEWARE_TS_FIXED };
+  await s.grep('sessions\\.get\\(', C.grep(/sessions\.get\(/, '', afterRefactor));
+  await s.think(
+    '`validate()` is correct, and the error-code table keeps the contract. The remaining risks are API-shape issues: `validate` has a side effect its name hides, `get()` still bypasses expiry, and the revoked path is untested.',
+  );
+  await s.say(content('review'));
+  s.finish({ suggestion: 'Add the session_revoked test from the review' });
+};
+
+const init: Scenario = async ({ s }) => {
+  await s.glob('**/*', C.FILES);
+  await s.readMany([
+    { rel: 'package.json', content: C.PACKAGE_JSON },
+    { rel: 'src/app.ts', content: C.APP_TS },
+  ]);
+  await s.write('CLAUDE.md', content('init-claude-md') + '\n', { description: 'Project notes for future sessions' });
+  await s.say(content('init-summary'));
+  s.finish({ suggestion: 'Add a section on the release process to CLAUDE.md' });
+};
+
+const prComments: Scenario = async ({ s }) => {
+  await s.bash('gh pr view --json number,title,headRefName', {
+    description: 'Find the current pull request',
+    readonly: true,
+    lines: ['{"headRefName":"refactor/session-expiry","number":231,"title":"Move session expiry into SessionStore"}'],
+  });
+  await s.mcp(
+    'github',
+    'list_pull_request_comments',
+    { owner: 'relay-labs', repo: 'relay-api', pull_number: 231 },
+    [
+      { user: 'jtan', path: 'src/server/session.ts', line: 52, body: 'validate() renews the session. Can we make that obvious from the name or a doc comment?' },
+      { user: 'jtan', path: 'src/auth/middleware.ts', line: 7, body: 'Nice, pinning the codes here is exactly right.' },
+      { user: 'mkovacs', path: 'tests/auth.test.ts', line: null, body: 'Missing a session_revoked case.' },
+    ],
+    { title: 'Read PR #231 comments' },
+  );
+  await s.say(
+    [
+      '**PR #231 · Move session expiry into SessionStore** has 3 review comments, and two need action:',
+      '',
+      '1. **@jtan on `src/server/session.ts:52`**: `validate()` renewing the session is a hidden side effect. A doc comment covers it, or a rename to `validateAndRenew()` if you prefer an explicit name.',
+      '2. **@mkovacs on `tests/auth.test.ts`**: add a `session_revoked` test.',
+      '3. @jtan approved the `FAILURE_CODES` table. No action needed.',
+      '',
+      'Both actionable items are small. Want me to address them and push to `refactor/session-expiry`?',
+    ].join('\n'),
+  );
+  s.finish({ suggestion: 'Address both comments and push' });
+};
+
+const deployCheck: Scenario = async ({ s }) => {
+  await s.todos(
+    todoList(
+      [
+        ['Typecheck', 'Typechecking'],
+        ['Run tests', 'Running tests'],
+        ['Check pending migrations', 'Checking migrations'],
+        ['Verify required env vars are documented', 'Checking env vars'],
+      ],
+      ['in_progress'],
+    ),
+  );
+  await s.bash('npm run build', { description: 'Typecheck and compile', key: 'npm run', lines: [['', 40], ['> relay-api@0.9.2 build', 30], ['> tsc -p tsconfig.json', 30], ['', 2600]] });
+  await s.bash('npm test', { description: 'Run the test suite', lines: vitestPass(s.cwd, BASE_TEST_FILES) });
+  await s.bash('npx node-pg-migrate up --dry-run', {
+    description: 'List pending migrations',
+    key: 'npx node-pg-migrate',
+    lines: [['> Migrating files:', 900], ['No migrations to run!', 60]],
+  });
+  await s.grep('process\\.env', ['src/lib/config.ts:14:const env = ConfigSchema.parse(process.env);'], { path: 'src' });
+  await s.todos(
+    todoList(
+      [
+        ['Typecheck', 'Typechecking'],
+        ['Run tests', 'Running tests'],
+        ['Check pending migrations', 'Checking migrations'],
+        ['Verify required env vars are documented', 'Checking env vars'],
+      ],
+      ['completed', 'completed', 'completed', 'completed'],
+    ),
+  );
+  await s.say(
+    [
+      '**Ready to deploy.**',
+      '',
+      '| Check | Result |',
+      '|---|---|',
+      '| Typecheck | ✅ clean |',
+      '| Tests | ✅ 25/25 |',
+      '| Migrations | ✅ none pending |',
+      '| Env vars | ✅ all read through `src/lib/config.ts`, no direct `process.env` access |',
+    ].join('\n'),
+  );
+  s.finish();
+};
+
+function helpReport(): string {
+  return [
+    '**Commands**',
+    '',
+    ...COMMANDS.map((c) => `- \`/${c.name}${c.argumentHint ? ' ' + c.argumentHint : ''}\`: ${c.description}${c.source ? ` *(${c.source})*` : ''}`),
+    '',
+    '**Skills**',
+    '',
+    ...SKILLS.filter((x) => x.enabled !== false).map((x) => `- \`/${x.name}\`: ${x.description}`),
+  ].join('\n');
+}
+
+async function skillCommand(s: Script, name: string, args: string) {
+  const skill = SKILLS.find((x) => x.name === name)!;
+  await s.skill(name, args || undefined, `Loaded skill “${name}”${skill.path ? ` from ${skill.path}` : ''}\n\n${skill.description}.`);
+  await s.say(skill.followup);
+  s.finish();
+}
+
+/** Slash commands: built-ins, project/user commands and skills; anything else is an error notice. */
+export const command: Scenario = async (ctx) => {
+  const { s, prompt, model } = ctx;
+  const [head, ...rest] = prompt.trim().slice(1).split(/\s+/);
+  const name = head.toLowerCase();
+  const args = rest.join(' ');
+  switch (name) {
+    case 'compact': {
+      s.activity('Compacting conversation');
+      await s.pause(1200, 1800);
+      const before = s.contextTokens;
+      const after = Math.round(BASE_CONTEXT + Math.min(9_000, Math.max(1_200, (before - BASE_CONTEXT) * 0.18)));
+      s.setContext(Math.min(before, after));
+      s.notice(
+        'compact',
+        'Conversation compacted',
+        `Summarized ${fmt(before)} → ${fmt(Math.min(before, after))} tokens. Earlier turns are replaced by a summary; open files and todos are kept.${args ? `\n\nFocus: ${args}` : ''}`,
+      );
+      return;
+    }
+    case 'context':
+      s.notice('command', 'Context usage', contextReport(s, model));
+      return;
+    case 'cost':
+      s.notice('command', 'Session cost', costReport(s));
+      return;
+    case 'help':
+      s.notice('command', 'Available commands', helpReport());
+      return;
+    case 'review':
+      return review(ctx);
+    case 'init':
+      return init(ctx);
+    case 'pr-comments':
+      return prComments(ctx);
+    case 'deploy-check':
+      return deployCheck(ctx);
+  }
+  if (SKILLS.some((x) => x.name === name)) return skillCommand(s, name, args);
+  s.notice('error', `Unknown command: /${head}`, 'Type / to see the available commands and skills.');
+};
+
+// ─────────────────────────────────── selection ──────────────────────────────────
+
+export const SCENARIOS = { flagship, plan, questions, agents, search, markdown, errors, mcp, long, greeting, command } satisfies Record<string, Scenario>;
+export type ScenarioId = keyof typeof SCENARIOS;
+
+/** Rotation for prompts that match no keyword, so repeated prompts show different things. */
+export const ROTATION: ScenarioId[] = ['flagship', 'agents', 'search', 'questions', 'mcp', 'markdown'];
+
+const KEYWORDS: [RegExp, ScenarioId][] = [
+  [/\b(long|stress)\b/i, 'long'],
+  [/\b(markdown|showcase)\b/i, 'markdown'],
+  [/\bmcp\b/i, 'mcp'],
+  [/\b(agents?|sub-?agents?|parallel|research)\b/i, 'agents'],
+  [/\b(search|web|docs?|documentation)\b/i, 'search'],
+  [/\b(questions?|ask|choose)\b/i, 'questions'],
+  [/\bplan(ning)?\b/i, 'plan'],
+  [/\berrors?\b|\bfail\s*hard\b/i, 'errors'],
+  [/\b(refactor\w*|fix\w*)\b/i, 'flagship'],
+];
+
+const GREETING = /^\s*(hi|hello|hey|hiya|yo|good (morning|afternoon|evening))\b[\s!.,?\p{Emoji_Presentation}a-z]*$/iu;
+
+export function pickScenario(prompt: string, mode: string, rotation: number): { id: ScenarioId; rotated: boolean } {
+  const text = prompt.trim();
+  if (text.startsWith('/')) return { id: 'command', rotated: false };
+  if (mode === 'plan') return { id: 'plan', rotated: false };
+  for (const [re, id] of KEYWORDS) if (re.test(text)) return { id, rotated: false };
+  if (GREETING.test(text) && text.split(/\s+/).length <= 4) return { id: 'greeting', rotated: false };
+  return { id: ROTATION[rotation % ROTATION.length], rotated: true };
+}
