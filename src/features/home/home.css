@@ -1,0 +1,78 @@
+.home {
+  position: absolute;
+  inset: calc(var(--topbar-h) * -1) 0 0 0;
+  overflow: hidden;
+}
+
+/*
+ * The field darkens itself behind the centre column; this adds a last, very wide breath of
+ * shade under the headline and composer, with no edge anywhere.
+ */
+.home-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(min(760px, 70%) min(420px, 52%) at 50% 44%, rgb(12 12 14 / 0.5) 0%, rgb(12 12 14 / 0.22) 55%, transparent 100%);
+}
+
+.home-col {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  padding: calc(var(--topbar-h) + 12px) 28px 32px;
+}
+
+.home-center {
+  width: min(720px, 100%);
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* An emptier page wants its weight a touch above true centre: the optical middle. */
+  padding-bottom: calc(11 * var(--vh));
+}
+
+.home-title {
+  margin: 20px 0 28px;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.home-composer {
+  width: 100%;
+}
+
+@media (max-height: 740px) {
+  .home-center {
+    padding-bottom: calc(6 * var(--vh));
+  }
+  .home-title {
+    margin: 16px 0 22px;
+  }
+}
+
+/* ── leaving for the new session: the headline breaks up upward (lib/dissolve draws the cells),
+   the chips and banner fade; App fades the view (and its backdrop) as the session's band comes in ── */
+
+.home-mark,
+.home-title-in {
+  display: inline-block;
+  transition:
+    opacity 90ms linear,
+    translate 260ms var(--ease-out);
+}
+
+.home[data-leaving] .home-mark,
+.home[data-leaving] .home-title-in {
+  opacity: 0;
+  translate: 0 -10px;
+}
+
+.home[data-leaving] .home-chips-row,
+.home[data-leaving] .home-center > :last-child:not(.home-composer) {
+  opacity: 0;
+  translate: 0 -6px;
+  transition:
+    opacity 140ms var(--ease),
+    translate 220ms var(--ease-out);
+}
