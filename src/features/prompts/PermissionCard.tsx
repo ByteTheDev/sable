@@ -1,0 +1,208 @@
+import { useState } from 'react';
+import type { PermissionOption, PermissionRequest } from '@shared/protocol';
+import { CodeBlock } from '@/components/CodeBlock';
+import { DiffView } from '@/components/DiffView';
+import { Markdown } from '@/components/Markdown';
+import { Glyph, Icon, TOOL_ICON } from '@/icons';
+import { langFromPath } from '@/lib/format';
+import { respondPermission } from '@/state/actions';
+import { focusComposer } from '@/state/hooks';
+import { useStore } from '@/state/store';
+import { PathLabel } from '@/ui';
+import { usePromptKeys } from './keys';
+
+export const KeyHint = ({ k }: { k: string }) => <span className="pk">{k}</span>;
+
+/** One labelled value. Code (commands, patterns) is set in the code font; a path is a label in the UI font. */
+function Field({ label, value, mono, path }: { label: string; value?: string; mono?: boolean; path?: boolean }) {
+  if (!value) return null;
+  return (
+    <div className="pc-field">
+      <span className="pc-field-label">{label}</span>
+      {path ? <PathLabel path={value} className="pc-field-value" /> : <span className={mono ? 'pc-field-value mono' : 'pc-field-value'}>{value}</span>}
+    </div>
+  );
+}
+
+function Subject({ req, input }: { req: PermissionRequest; input: unknown }) {
+  const d = req.detail;
+  switch (req.kind) {
+    case 'bash':
+      return d.command ? (
+        <pre className="pc-cmd well scroll">
+          <span className="pc-cmd-prompt">$ </span>
+          {d.command}
+        </pre>
+      ) : null;
+    case 'edit':
+    case 'write':
+      if (req.diff?.length)
+        return (
+          <div className="pc-scroll pc-diffs scroll">
+            {req.diff.map((f) => (
+              <DiffView key={f.path} diff={f} />
+            ))}
+          </div>
+        );
+      if (d.content ?? d.newText) return <CodeBlock code={(d.content ?? d.newText)!} lang={langFromPath(d.path)} title={d.path} maxHeight={260} />;
+      return <Field label="File" value={d.path} path />;
+    case 'plan':
+      return d.plan ? (
+        <div className="pc-plan scroll">
+          <Markdown text={d.plan} />
+        </div>
+      ) : null;
+    case 'fetch':
+    case 'websearch': {
+      const v = d.url ?? d.query;
+      return v ? (
+        <div className="pc-target well">
+          <Icon name={d.url ? 'link' : 'search'} size={14} />
+          <span className="pc-target-text">{v}</span>
+        </div>
+      ) : null;
+    }
+    case 'mcp': {
+      const json = input && typeof input === 'object' && Object.keys(input).length ? JSON.stringify(input, null, 2) : null;
+      return (
+        <div className="pc-stack">
+          {(d.server || d.tool) && (
+            <div className="pc-mcp">
+              <span>{d.server}</span>
+              {d.server && d.tool && <span className="pc-mcp-sep">·</span>}
+              <span>{d.tool}</span>
+            </div>
+          )}
+          {json && <CodeBlock code={json} lang="json" maxHeight={220} />}
+        </div>
+      );
+    }
+    default:
+      return (
+        <div className="pc-fields">
+          <Field label="Command" value={d.command} mono />
+          <Field label="Path" value={d.path} path />
+          <Field label="Pattern" value={d.pattern} mono />
+          <Field label="Files" value={d.glob} mono />
+          <Field label="Address" value={d.url} mono />
+          <Field label="Query" value={d.query} />
+          <Field label="Agent" value={d.subagent} />
+          <Field label="Skill" value={d.skill} />
+          <Field label="Task" value={d.prompt} />
+        </div>
+      );
+  }
+}
+
+/** A tool waiting for approval: what it wants to do, and one key per answer. */
+export function PermissionCard({ sessionId, req, more }: { sessionId: string; req: PermissionRequest; more: number }) {
+  const [feedback, setFeedback] = useState(false);
+  const [message, setMessage] = useState('');
+  const [sent, setSent] = useState(false);
+  const input = useStore((s) => (req.itemId ? (s.data[sessionId]?.items[req.itemId] as { input?: unknown } | undefined)?.input : undefined));
+  const deny = req.options.find((o) => o.tone === 'deny');
+  // Enter takes the lit (allow) answer; without one, the first.
+  const primary = req.options.find((o) => o.tone === 'allow') ?? req.options[0];
+  const tool = TOOL_ICON[req.kind] ?? TOOL_ICON.other;
+
+  const respond = (o: PermissionOption, msg?: string) => {
+    if (sent) return;
+    setSent(true);
+    void respondPermission(sessionId, req.id, o.id, msg);
+    focusComposer();
+  };
+
+  const choose = (o: PermissionOption) => {
+    if (o.tone === 'deny' && req.allowFeedback) setFeedback(true);
+    else respond(o);
+  };
+
+  usePromptKeys(!feedback && !sent, (e) => {
+    if (/^[1-9]$/.test(e.key)) {
+      const o = req.options[Number(e.key) - 1];
+      if (o) {
+        e.preventDefault();
+        choose(o);
+      }
+    } else if (e.key === 'Enter' && !e.shiftKey && primary) {
+      e.preventDefault();
+      choose(primary);
+    } else if (e.key === 'Escape' && deny) {
+      e.preventDefault();
+      choose(deny);
+    }
+  });
+
+  const keyFor = (o: PermissionOption, i: number) => (o === primary ? '↵' : o === deny ? 'Esc' : String(i + 1));
+
+  return (
+    <section className="pc glass-card" data-spot data-kind={req.kind} aria-label={req.title} aria-live="polite">
+      <header className="pc-head">
+        <Glyph name={tool.icon} tone="var(--amber)" size={30} />
+        <div className="pc-titles">
+          <h3 className="pc-title">{req.title}</h3>
+          {req.description && req.description.trim() !== req.title.trim() && <p className="pc-desc">{req.description}</p>}
+        </div>
+        {more > 0 && <span className="pc-more">{more} more waiting</span>}
+      </header>
+
+      <div className="pc-body">
+        <Subject req={req} input={input} />
+        {req.reason && (
+          <p className="pc-reason">
+            <Icon name="shield-warning" size={14} />
+            {req.reason}
+          </p>
+        )}
+      </div>
+
+      {feedback && deny ? (
+        <div className="pc-foot pc-feedback">
+          <input
+            className="field pc-feedback-field"
+            autoFocus
+            placeholder="Tell the agent what to do instead"
+            aria-label="Tell the agent what to do instead"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                respond(deny, message.trim() || undefined);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setFeedback(false);
+                focusComposer();
+              }
+            }}
+          />
+          <button type="button" className="btn btn-ghost" onClick={() => (setFeedback(false), focusComposer())}>
+            Back
+          </button>
+          <button type="button" className="btn" onClick={() => respond(deny, message.trim() || undefined)}>
+            {deny.label}
+            <KeyHint k="↵" />
+          </button>
+        </div>
+      ) : (
+        <div className="pc-foot">
+          {req.options.map((o, i) => (
+            <button
+              key={o.id}
+              type="button"
+              disabled={sent}
+              className={o.tone === 'allow' ? 'btn btn-primary' : o.tone === 'always' ? 'btn' : 'btn btn-ghost'}
+              data-tone={o.tone}
+              onClick={() => choose(o)}
+            >
+              <span>{o.label}</span>
+              {o.hint && <span className="pc-hint">{o.hint}</span>}
+              <KeyHint k={keyFor(o, i)} />
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
