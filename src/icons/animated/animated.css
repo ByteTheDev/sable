@@ -1,15 +1,24 @@
 /* ── Animated icons ──
    The parts of an icon from `parts.tsx` move when the control holding it is hovered or focused
    (`:focus-visible`); rows of dense lists do not count as controls (see triggers). Each motion plays once per
-   hover, 200 to 450 ms, and its last frame is the rest pose, so nothing jumps when it ends; leaving
+   hover, 240 to 480 ms with its lags, and its last frame is the rest pose, so nothing jumps when it ends; leaving
    early simply drops the animation. Only transform, opacity and stroke dashes animate (the globe's
    meridians animate `rx`), on the parts of the one icon under the pointer: no layout, no filter.
    Travel is on the 256 grid: 16 units are one pixel at 16 px. */
 
-svg[data-icon] {
+/* One vocabulary for the whole family. Two curves: a part that leaves fast and lands long (each step
+   of a motion decelerates into the next, so anticipation, peak and settle are keyframes, never a
+   bouncing curve), and a part that travels round or across. Three lengths: a stroke that draws or a
+   caret; one part with anticipation, peak and settle; several parts in overlap. One lag: how far a
+   follower trails its leader (staggers are multiples of it). Peaks sit near 40 to 50 percent, the
+   overshoot back near 75, and nothing runs past 480 ms with its lag. */
+:root {
   --ai-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ai-io: cubic-bezier(0.65, 0, 0.35, 1);
-  --ai-back: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ai-d1: 240ms;
+  --ai-d2: 360ms;
+  --ai-d3: 440ms;
+  --ai-lag: 40ms;
 }
 
 svg[data-anim] {
@@ -33,310 +42,368 @@ svg[data-anim] {
    `data-still` on the control). */
 :is(button, a, [role='button'], [role='tab']):not(.row-btn, .work-line, .menu-item, .srow-main, [class$='-row'], [class*='-row '], [data-still]):is(:hover, :focus-visible),
 [data-ai-play] {
-  /* pin: it lifts off the board and drops back in */
-  & svg[data-icon='pin'][data-anim] .pin { animation: ai-pin 440ms var(--ai-out); }
+  /* pin: it lifts off the board and drops back in; two marks jump where it lands */
+  & svg[data-icon='pin'][data-anim] {
+    & .pin { animation: ai-pin var(--ai-d3) var(--ai-out); }
+    & .mk { animation: ai-pin-mark var(--ai-d3) var(--ai-out); }
+    & .m1 { --ax: -1; --ay: -1; }
+    & .m2 { --ax: 1; --ay: 1; }
+  }
 
-  /* new session: the strokes draw outward from the centre, across then down */
+  /* new session: the four arms gather to the centre, then spring past their length one after another, clockwise */
   & svg[data-icon='plus'][data-anim] {
-    & :is(.ph1, .ph2) { animation: ai-draw 230ms var(--ai-out) both; }
-    & :is(.v1, .v2) { animation: ai-draw 230ms 110ms var(--ai-out) both; }
+    & :is(.ph1, .ph2, .v1, .v2) { animation: ai-arm var(--ai-d2) var(--ai-out); }
+    & .v1 { --ay: -1; }
+    & .ph2 { --ax: 1; animation-delay: calc(var(--ai-lag) * 0.75); }
+    & .v2 { --ay: 1; animation-delay: calc(var(--ai-lag) * 1.5); }
+    & .ph1 { --ax: -1; animation-delay: calc(var(--ai-lag) * 2.25); }
   }
 
-  /* search: the lens makes a small searching loop, a glint slides over the glass */
+  /* search: the glass pulls focus (it closes in and springs back), the handle follows late, a glint runs round inside it */
   & svg[data-icon='search'][data-anim] {
-    & .lens { animation: ai-search-lens 440ms var(--ai-io); }
-    & .glint { animation: ai-search-glint 440ms var(--ai-out); }
+    & .ring { transform-origin: 112px 112px; animation: ai-search-ring var(--ai-d3) var(--ai-out); }
+    & .handle { animation: ai-search-handle var(--ai-d3) var(--ai-lag) var(--ai-out); }
+    & .glint { animation: ai-search-glint var(--ai-d3) var(--ai-io); }
   }
 
-  /* history: the minute hand runs back a full turn, the hour hand resists, the arrowhead nudges */
+  /* history: the ring winds back along its arrow, the minute hand runs back a full turn, the hour hand is dragged after it */
   & svg[data-icon='history'][data-anim] {
-    & .min { transform-origin: 128px 128px; animation: ai-history-min 460ms var(--ai-io); }
-    & .hour { transform-origin: 128px 128px; animation: ai-history-hour 460ms var(--ai-out); }
-    & .head { animation: ai-history-head 460ms var(--ai-out); }
+    & :is(.ring, .head) { transform-origin: 128px 128px; animation: ai-history-ring var(--ai-d3) var(--ai-out); }
+    & .min { transform-origin: 128px 128px; animation: ai-history-min var(--ai-d3) var(--ai-io); }
+    & .hour { transform-origin: 128px 128px; animation: ai-history-hour var(--ai-d3) var(--ai-lag) var(--ai-out); }
   }
 
   /* more: the dots pass a small wave */
-  & svg[data-icon='dots'][data-anim] :is(.d1, .d2, .d3) { animation: ai-dot-y 340ms var(--ai-out); }
-  & svg[data-icon='dots-vertical'][data-anim] :is(.d1, .d2, .d3) { animation: ai-dot-x 340ms var(--ai-out); }
-  & svg[data-anim] .d2 { animation-delay: 55ms !important; }
-  & svg[data-anim] .d3 { animation-delay: 110ms !important; }
+  & svg[data-icon='dots'][data-anim] :is(.d1, .d2, .d3) { animation: ai-dot-y var(--ai-d2) var(--ai-out); }
+  & svg[data-icon='dots-vertical'][data-anim] :is(.d1, .d2, .d3) { animation: ai-dot-x var(--ai-d2) var(--ai-out); }
+  & svg:is([data-icon='dots'], [data-icon='dots-vertical'])[data-anim] .d2 { animation-delay: calc(var(--ai-lag) * 1.5); }
+  & svg:is([data-icon='dots'], [data-icon='dots-vertical'])[data-anim] .d3 { animation-delay: calc(var(--ai-lag) * 3); }
 
   /* archive: the lid lifts off its hinge, the slot drops, the box takes the lid back */
   & svg[data-icon='archive'][data-anim] {
-    & .lid { transform-origin: 24px 96px; animation: ai-archive-lid 440ms var(--ai-out); }
-    & .slot { animation: ai-archive-slot 440ms var(--ai-out); }
-    & .box { animation: ai-archive-box 440ms var(--ai-out); }
+    & .lid { transform-origin: 24px 96px; animation: ai-archive-lid var(--ai-d3) var(--ai-out); }
+    & .slot { animation: ai-archive-slot var(--ai-d3) var(--ai-out); }
+    & .box { animation: ai-archive-box var(--ai-d3) var(--ai-out); }
   }
 
   /* trash: the lid lifts and tilts on its right end, then drops back */
   & svg[data-icon='trash'][data-anim] {
-    & .lid { transform-origin: 216px 56px; animation: ai-trash-lid 420ms var(--ai-out); }
-    & .can { animation: ai-trash-can 420ms var(--ai-out); }
+    & .lid { transform-origin: 216px 56px; animation: ai-trash-lid var(--ai-d3) var(--ai-out); }
+    & .can { animation: ai-trash-can var(--ai-d3) var(--ai-out); }
   }
 
-  /* compose and edit: the pen writes a short stroke */
-  & svg:is([data-icon='compose'], [data-icon='pencil'])[data-anim] .pen { animation: ai-pen 440ms var(--ai-io); }
+  /* compose and edit: the pen comes down and writes; the line it leaves fades as it lifts */
+  & svg:is([data-icon='compose'], [data-icon='pencil'])[data-anim] {
+    & .pen { animation: ai-pen var(--ai-d3) var(--ai-out); }
+    & .ink { animation: ai-ink var(--ai-d3) var(--ai-out); }
+  }
 
   /* copy: the back sheet slides out and returns, the front one gives a little */
   & svg[data-icon='copy'][data-anim] {
-    & .back { animation: ai-copy-back 400ms var(--ai-out); }
-    & .front { animation: ai-copy-front 400ms var(--ai-out); }
+    & .back { animation: ai-copy-back var(--ai-d3) var(--ai-out); }
+    & .front { animation: ai-copy-front var(--ai-d3) var(--ai-out); }
   }
 
-  /* close: the two strokes cross in, one after the other */
+  /* close: the two strokes gather to the crossing and spring back out, one a beat behind */
   & svg[data-icon='x'][data-anim] {
-    & .s1 { animation: ai-draw 200ms var(--ai-out) both; }
-    & .s2 { animation: ai-draw 200ms 90ms var(--ai-out) both; }
+    & :is(.s1, .s2) { transform-origin: 128px 128px; animation: ai-gather var(--ai-d2) var(--ai-out); }
+    & .s2 { animation-delay: var(--ai-lag); }
   }
 
-  /* folder: the tab lifts and a sheet peeks out */
+  /* folder: the tab presses, lifts, and a sheet rises out beside it; the folder gives when it drops back */
   & svg[data-icon='folder'][data-anim] {
-    & .flap { animation: ai-folder-tab 440ms var(--ai-out); }
-    & .sheet { animation: ai-folder-sheet 440ms var(--ai-out); }
+    & .flap { animation: ai-folder-tab var(--ai-d3) var(--ai-out); }
+    & .sheet { transform-origin: 174px 80px; animation: ai-folder-sheet var(--ai-d3) var(--ai-out); }
+    & .body { animation: ai-folder-body var(--ai-d3) var(--ai-out); }
   }
 
   /* folder-plus: the plus rises out and drops into the folder, which gives */
   & svg[data-icon='folder-plus'][data-anim] {
-    & .plus { animation: ai-fplus-plus 450ms var(--ai-out); }
-    & .body { animation: ai-fplus-body 450ms var(--ai-out); }
+    & .plus { animation: ai-fplus-plus var(--ai-d3) var(--ai-out); }
+    & .body { animation: ai-fplus-body var(--ai-d3) var(--ai-out); }
   }
 
-  /* settings: a ratchet click of one tooth, the hub closes and opens like an iris */
+  /* settings: two ratchet clicks, half a tooth each; the hub closes on the first and opens on the second */
   & svg[data-icon='settings'][data-anim] {
-    & .teeth { transform-origin: 128px 128px; animation: ai-gear-teeth 440ms var(--ai-out); }
-    & .hub { transform-origin: 128px 128px; animation: ai-gear-hub 440ms var(--ai-out); }
+    & .teeth { transform-origin: 128px 128px; animation: ai-gear-teeth var(--ai-d3) var(--ai-out); }
+    & .hub { transform-origin: 128px 128px; animation: ai-gear-hub var(--ai-d3) var(--ai-out); }
   }
 
   /* arrows: the head leads, the shaft follows */
-  & svg[data-icon='arrow-right'][data-anim] { & .head { animation: ai-lead-x 380ms var(--ai-out); } & .shaft { animation: ai-follow-x 380ms var(--ai-out); } }
-  & svg[data-icon='arrow-left'][data-anim] { --ai-dir: -1; & .head { animation: ai-lead-x 380ms var(--ai-out); } & .shaft { animation: ai-follow-x 380ms var(--ai-out); } }
-  & svg[data-icon='arrow-down'][data-anim] { & .head { animation: ai-lead-y 380ms var(--ai-out); } & .shaft { animation: ai-follow-y 380ms var(--ai-out); } }
-  & svg[data-icon='arrow-up'][data-anim] { --ai-dir: -1; & .head { animation: ai-lead-y 380ms var(--ai-out); } & .shaft { animation: ai-follow-y 380ms var(--ai-out); } }
+  & svg[data-icon='arrow-right'][data-anim] { & .head { animation: ai-lead-x var(--ai-d2) var(--ai-out); } & .shaft { animation: ai-follow-x var(--ai-d2) var(--ai-out); } }
+  & svg[data-icon='arrow-left'][data-anim] { --ai-dir: -1; & .head { animation: ai-lead-x var(--ai-d2) var(--ai-out); } & .shaft { animation: ai-follow-x var(--ai-d2) var(--ai-out); } }
+  & svg[data-icon='arrow-down'][data-anim] { & .head { animation: ai-lead-y var(--ai-d2) var(--ai-out); } & .shaft { animation: ai-follow-y var(--ai-d2) var(--ai-out); } }
+  & svg[data-icon='arrow-up'][data-anim] { --ai-dir: -1; & .head { animation: ai-lead-y var(--ai-d2) var(--ai-out); } & .shaft { animation: ai-follow-y var(--ai-d2) var(--ai-out); } }
 
-  /* carets: a nudge in their direction */
-  & svg[data-icon='caret-right'][data-anim] .c { animation: ai-lead-x 320ms var(--ai-out); }
-  & svg[data-icon='caret-left'][data-anim] .c { --ai-dir: -1; animation: ai-lead-x 320ms var(--ai-out); }
-  & svg[data-icon='caret-down'][data-anim] .c { animation: ai-lead-y 320ms var(--ai-out); }
-  & svg[data-icon='caret-up'][data-anim] .c { --ai-dir: -1; animation: ai-lead-y 320ms var(--ai-out); }
+  /* carets: they press in their direction, flatten against it and spring back */
+  & svg[data-icon^='caret-'][data-anim] .c { transform-origin: 128px 128px; }
+  & svg[data-icon='caret-right'][data-anim] .c { animation: ai-caret-x var(--ai-d1) var(--ai-out); }
+  & svg[data-icon='caret-left'][data-anim] .c { --ai-dir: -1; animation: ai-caret-x var(--ai-d1) var(--ai-out); }
+  & svg[data-icon='caret-down'][data-anim] .c { animation: ai-caret-y var(--ai-d1) var(--ai-out); }
+  & svg[data-icon='caret-up'][data-anim] .c { --ai-dir: -1; animation: ai-caret-y var(--ai-d1) var(--ai-out); }
+
+  /* auto: the front mark leaps, the rear one chases and runs into it */
+  & svg[data-icon='fast-forward'][data-anim] {
+    & .t2 { animation: ai-ff-lead var(--ai-d3) var(--ai-out); }
+    & .t1 { animation: ai-ff-chase var(--ai-d3) var(--ai-out); }
+  }
 
   /* check: the tick draws itself */
-  & svg[data-icon='check'][data-anim] .tick { animation: ai-draw 280ms var(--ai-out) both; }
+  & svg[data-icon='check'][data-anim] .tick { animation: ai-draw var(--ai-d2) var(--ai-out) both; }
 
   /* sidebar and panel: the divider slides, the pane it stands for fills as it narrows */
   & svg[data-icon='sidebar'][data-anim] {
-    & .div { animation: ai-side-div 420ms var(--ai-out); }
-    & .pane { transform-origin: 32px 128px; animation: ai-side-pane 420ms var(--ai-out); }
+    & .div { animation: ai-side-div var(--ai-d3) var(--ai-out); }
+    & .pane { transform-origin: 32px 128px; animation: ai-side-pane var(--ai-d3) var(--ai-out); }
   }
 
   /* capabilities and sliders: the knobs slide along their lines, the lines follow */
   & svg:is([data-icon='capabilities'], [data-icon='sliders'])[data-anim] {
-    & .k1 { animation: ai-knob1 420ms var(--ai-back); }
-    & .l1 { animation: ai-knob1-l 420ms var(--ai-back); }
-    & .r1 { animation: ai-knob1-r 420ms var(--ai-back); }
-    & .k2 { animation: ai-knob2 420ms 60ms var(--ai-back); }
-    & .l2 { animation: ai-knob2-l 420ms 60ms var(--ai-back); }
-    & .r2 { animation: ai-knob2-r 420ms 60ms var(--ai-back); }
+    & .k1 { animation: ai-knob1 var(--ai-d3) var(--ai-out); }
+    & .l1 { animation: ai-knob1-l var(--ai-d3) var(--ai-out); }
+    & .r1 { animation: ai-knob1-r var(--ai-d3) var(--ai-out); }
+    & .k2 { animation: ai-knob2 var(--ai-d3) calc(var(--ai-lag) * 1.5) var(--ai-out); }
+    & .l2 { animation: ai-knob2-l var(--ai-d3) calc(var(--ai-lag) * 1.5) var(--ai-out); }
+    & .r2 { animation: ai-knob2-r var(--ai-d3) calc(var(--ai-lag) * 1.5) var(--ai-out); }
   }
 
   /* plan: the needle swings and settles */
-  & svg[data-icon='compass'][data-anim] .needle { transform-origin: 128px 128px; animation: ai-needle 450ms var(--ai-out); }
+  & svg[data-icon='compass'][data-anim] .needle { transform-origin: 128px 128px; animation: ai-needle var(--ai-d3) var(--ai-out); }
 
   /* ask: the hand rises and gives a small wave */
-  & svg[data-icon='hand'][data-anim] .palm { transform-origin: 128px 240px; animation: ai-hand 440ms var(--ai-out); }
+  & svg[data-icon='hand'][data-anim] .palm { transform-origin: 128px 240px; animation: ai-hand var(--ai-d3) var(--ai-out); }
 
   /* bypass: the flame flickers, the inner tongue licks up */
   & svg[data-icon='fire'][data-anim] {
-    & .outer { transform-origin: 128px 232px; animation: ai-fire-outer 420ms var(--ai-io); }
-    & .inner { animation: ai-fire-inner 420ms var(--ai-io); }
+    & .outer { transform-origin: 128px 232px; animation: ai-fire-outer var(--ai-d3) var(--ai-io); }
+    & .inner { animation: ai-fire-inner var(--ai-d3) var(--ai-io); }
   }
 
-  /* changes: the two halves trade places a little */
+  /* changes: each node fires its arrow (the node gives, the line leaves it, the head lunges), first one way, then back */
   & svg[data-icon='diff'][data-anim] {
-    & .left { animation: ai-diff-left 420ms var(--ai-out); }
-    & .right { animation: ai-diff-right 420ms var(--ai-out); }
+    & .n1 { transform-origin: 56px 64px; animation: ai-node-fire var(--ai-d3) var(--ai-out); }
+    & .l1 { animation: ai-diff-line var(--ai-d3) var(--ai-out); }
+    & .h1 { --ax: 1; --ay: 1; animation: ai-diff-head var(--ai-d3) var(--ai-out); }
+    & .n2 { transform-origin: 200px 192px; animation: ai-node-fire var(--ai-d3) calc(var(--ai-lag) * 1.5) var(--ai-out); }
+    & .l2 { animation: ai-diff-line var(--ai-d3) calc(var(--ai-lag) * 1.5) var(--ai-out); }
+    & .h2 { --ax: -1; --ay: -1; animation: ai-diff-head var(--ai-d3) calc(var(--ai-lag) * 1.5) var(--ai-out); }
   }
 
   /* browser: the meridians sweep out as a sphere turning in depth */
   & svg[data-icon='globe'][data-anim] {
-    & .ma { animation: ai-globe-a 480ms var(--ai-io); }
-    & .mb { animation: ai-globe-b 480ms var(--ai-io); }
-    & .mc { animation: ai-globe-c 480ms var(--ai-io); }
+    & .ma { animation: ai-globe-a var(--ai-d3) var(--ai-io); }
+    & .mb { animation: ai-globe-b var(--ai-d3) var(--ai-io); }
+    & .mc { animation: ai-globe-c var(--ai-d3) var(--ai-io); }
   }
 
-  /* terminal: the prompt steps right and the caret blinks once */
+  /* terminal: the prompt kicks, the caret blinks and types two steps, then returns to a new line */
   & svg[data-icon='terminal'][data-anim] {
-    & .chev { animation: ai-term-chev 440ms var(--ai-out); }
-    & .cursor { animation: ai-term-caret 440ms var(--ai-out); }
+    & .chev { animation: ai-term-chev var(--ai-d3) var(--ai-out); }
+    & .cursor { animation: ai-term-caret var(--ai-d3) steps(1, end); }
   }
 
-  /* tasks: the ticks draw one after another */
+  /* tasks: the ticks draw one after another, each line answers its tick */
   & svg[data-icon='tasks'][data-anim] {
-    & .k1 { animation: ai-draw 200ms var(--ai-out) both; }
-    & .k2 { animation: ai-draw 200ms 90ms var(--ai-out) both; }
-    & .k3 { animation: ai-draw 200ms 180ms var(--ai-out) both; }
+    & .k1 { animation: ai-draw var(--ai-d1) var(--ai-out) both; }
+    & .k2 { animation: ai-draw var(--ai-d1) calc(var(--ai-lag) * 2.5) var(--ai-out) both; }
+    & .k3 { animation: ai-draw var(--ai-d1) calc(var(--ai-lag) * 4.5) var(--ai-out) both; }
+    & .t1 { animation: ai-task-line var(--ai-d1) calc(var(--ai-lag) * 1.5) var(--ai-out); }
+    & .t2 { animation: ai-task-line var(--ai-d1) calc(var(--ai-lag) * 3.5) var(--ai-out); }
+    & .t3 { animation: ai-task-line var(--ai-d1) calc(var(--ai-lag) * 5.5) var(--ai-out); }
   }
 
-  /* context: the slice opens out of the pie */
-  & svg[data-icon='context'][data-anim] .slice { animation: ai-slice 420ms var(--ai-out); }
+  /* context: the slice opens out of the pie, the pie gives the other way a beat later */
+  & svg[data-icon='context'][data-anim] {
+    & .slice { animation: ai-slice var(--ai-d3) var(--ai-out); }
+    & .pie { animation: ai-pie var(--ai-d3) var(--ai-lag) var(--ai-out); }
+  }
 
   /* branch: the branch grows out of the trunk toward its node, which answers */
   & svg[data-icon='branch'][data-anim] {
-    & .twig { animation: ai-draw-rev 320ms var(--ai-out) both; }
-    & .n3 { transform-origin: 200px 64px; animation: ai-node 440ms var(--ai-out); }
+    & .twig { animation: ai-draw-rev var(--ai-d2) var(--ai-out) both; }
+    & .n3 { transform-origin: 200px 64px; animation: ai-node var(--ai-d3) var(--ai-out); }
   }
 
-  /* refresh: each arc draws itself around and its arrowhead arrives */
+  /* refresh, reload, rewind: the arrow lunges along its arc (the tail runs up behind the head), then the arc pays back out. Never blank. */
   & svg[data-icon='refresh'][data-anim] {
-    & .a1 { animation: ai-draw-arc 320ms var(--ai-io) both; }
-    & .hd1 { animation: ai-arrive-dr 440ms var(--ai-out) both; }
-    & .a2 { animation: ai-draw-arc 320ms 60ms var(--ai-io) both; }
-    & .hd2 { animation: ai-arrive-ul 440ms 60ms var(--ai-out) both; }
+    & .a1 { animation: ai-pull var(--ai-d3) var(--ai-io); }
+    & .hd1 { --ax: 1; --ay: 1; animation: ai-lunge var(--ai-d3) var(--ai-out); }
+    & .a2 { animation: ai-pull var(--ai-d3) var(--ai-lag) var(--ai-io); }
+    & .hd2 { --ax: -1; --ay: -1; animation: ai-lunge var(--ai-d3) var(--ai-lag) var(--ai-out); }
   }
   & svg[data-icon='reload'][data-anim] {
-    & .arc { animation: ai-draw-arc 340ms var(--ai-io) both; }
-    & .head { animation: ai-arrive-dr 440ms var(--ai-out) both; }
+    & .arc { animation: ai-pull var(--ai-d3) var(--ai-io); }
+    & .head { --ax: 1; --ay: 1; animation: ai-lunge var(--ai-d3) var(--ai-out); }
   }
   & svg[data-icon='rewind'][data-anim] {
-    & .arc { animation: ai-draw-arc 340ms var(--ai-io) both; }
-    & .head { animation: ai-arrive-dl 440ms var(--ai-out) both; }
+    & .arc { animation: ai-pull var(--ai-d3) var(--ai-io); }
+    & .head { --ax: -1; --ay: 1; animation: ai-lunge var(--ai-d3) var(--ai-out); }
+  }
+
+  /* clear: the broom draws back and sweeps, two specks fly ahead of it */
+  & svg[data-icon='broom'][data-anim] {
+    & .brush { transform-origin: 164px 24px; animation: ai-broom var(--ai-d3) var(--ai-out); }
+    & .dust { animation: ai-dust var(--ai-d3) var(--ai-out); }
+    & .u2 { --ay: -1.5; animation-delay: var(--ai-lag); }
   }
 
   /* stop: the square compresses */
-  & svg[data-icon='stop'][data-anim] .sq { transform-origin: 128px 128px; animation: ai-stop 320ms var(--ai-out); }
+  & svg[data-icon='stop'][data-anim] .sq { transform-origin: 128px 128px; animation: ai-stop var(--ai-d2) var(--ai-out); }
 
-  /* account: the head nods up, the shoulders follow */
+  /* account: the head ducks and comes up, the shoulders crouch and rise after it */
   & svg[data-icon='user'][data-anim] {
-    & .head { animation: ai-user-head 420ms var(--ai-out); }
-    & .body { animation: ai-user-body 420ms var(--ai-out); }
+    & .head { animation: ai-user-head var(--ai-d3) var(--ai-out); }
+    & .body { transform-origin: 128px 200px; animation: ai-user-body var(--ai-d3) var(--ai-out); }
   }
 
   /* usage: the needle sweeps back and settles */
-  & svg[data-icon='gauge'][data-anim] .needle { transform-origin: 104.2px 184px; animation: ai-gauge 450ms var(--ai-out); }
+  & svg[data-icon='gauge'][data-anim] .needle { transform-origin: 104.2px 184px; animation: ai-gauge var(--ai-d3) var(--ai-out); }
 
   /* permissions: the shield lifts, the tick draws */
   & svg[data-icon='shield'][data-anim] {
-    & .shell { animation: ai-lift 420ms var(--ai-out); }
-    & .tick { animation: ai-draw 240ms 120ms var(--ai-out) both; }
+    & .shell { animation: ai-lift var(--ai-d3) var(--ai-out); }
+    & .tick { animation: ai-draw var(--ai-d1) calc(var(--ai-lag) * 3) var(--ai-out) both; }
   }
 
   /* MCP: the plug seats, the sparks jump */
   & svg[data-icon='mcp'][data-anim] {
-    & .plug { transform-origin: 128px 128px; animation: ai-plug 440ms var(--ai-out); }
-    & .sp1 { animation: ai-spark-ul 440ms var(--ai-out); }
-    & .sp2 { animation: ai-spark-dr 440ms var(--ai-out); }
+    & .plug { transform-origin: 128px 128px; animation: ai-plug var(--ai-d3) var(--ai-out); }
+    & .sp1 { animation: ai-spark-ul var(--ai-d3) var(--ai-out); }
+    & .sp2 { animation: ai-spark-dr var(--ai-d3) var(--ai-out); }
   }
 
   /* agents: the middle one stands up, the others follow */
   & svg[data-icon='agents'][data-anim] {
-    & .pm { animation: ai-person 440ms var(--ai-out); }
-    & :is(.pl, .pr) { animation: ai-person-side 440ms 70ms var(--ai-out); }
+    & .pm { animation: ai-person var(--ai-d3) var(--ai-out); }
+    & :is(.pl, .pr) { animation: ai-person-side var(--ai-d3) calc(var(--ai-lag) * 2) var(--ai-out); }
   }
 
   /* memory: the right page turns over the spine */
-  & svg[data-icon='memory'][data-anim] .rp { transform-origin: 128px 128px; animation: ai-page 460ms var(--ai-io); }
+  & svg[data-icon='memory'][data-anim] .rp { transform-origin: 128px 128px; animation: ai-page var(--ai-d3) var(--ai-io); }
 
   /* shortcuts: the keys go down in turn */
   & svg[data-icon='keyboard'][data-anim] {
-    & .r1 { animation: ai-key 200ms var(--ai-out); }
-    & .r2 { animation: ai-key 200ms 60ms var(--ai-out); }
-    & .sp { animation: ai-key 220ms 130ms var(--ai-out); }
-    & .r3 { animation: ai-key 200ms 170ms var(--ai-out); }
-    & .r3b { animation-delay: 200ms; }
+    & .r1 { animation: ai-key var(--ai-d1) var(--ai-out); }
+    & .r2 { animation: ai-key var(--ai-d1) calc(var(--ai-lag) * 1.5) var(--ai-out); }
+    & .sp { animation: ai-key var(--ai-d1) calc(var(--ai-lag) * 3.5) var(--ai-out); }
+    & .r3 { animation: ai-key var(--ai-d1) calc(var(--ai-lag) * 4.5) var(--ai-out); }
+    & .r3b { animation-delay: calc(var(--ai-lag) * 5); }
   }
 
-  /* about: the dot hops, the stem takes it */
+  /* about: the dot hops, the stem gives under it and springs */
   & svg[data-icon='info'][data-anim] {
-    & .dot { animation: ai-info-dot 440ms var(--ai-out); }
-    & .stem { animation: ai-info-stem 440ms var(--ai-out); }
+    & .dot { animation: ai-info-dot var(--ai-d3) var(--ai-out); }
+    & .stem { transform-origin: 128px 176px; animation: ai-info-stem var(--ai-d3) var(--ai-out); }
   }
 
   /* download and save: the arrow drops into the tray, the tray gives */
   & svg[data-icon='download'][data-anim] {
-    & .arrow { animation: ai-dl-arrow 420ms var(--ai-out); }
-    & .tray { animation: ai-dl-tray 420ms var(--ai-out); }
+    & .arrow { animation: ai-dl-arrow var(--ai-d3) var(--ai-out); }
+    & .tray { animation: ai-dl-tray var(--ai-d3) var(--ai-out); }
   }
 
   /* expand and collapse: the two arrows push apart or draw in */
   & svg[data-icon='expand'][data-anim] {
-    & .a1 { animation: ai-out-a1 380ms var(--ai-out); }
-    & .a2 { animation: ai-out-a2 380ms var(--ai-out); }
+    & .a1 { animation: ai-out-a1 var(--ai-d2) var(--ai-out); }
+    & .a2 { animation: ai-out-a2 var(--ai-d2) var(--ai-out); }
   }
   & svg[data-icon='collapse'][data-anim] {
-    & .a1 { animation: ai-out-a2 380ms var(--ai-out); }
-    & .a2 { animation: ai-out-a1 380ms var(--ai-out); }
+    & .a1 { animation: ai-out-a2 var(--ai-d2) var(--ai-out); }
+    & .a2 { animation: ai-out-a1 var(--ai-d2) var(--ai-out); }
   }
 
   /* open outside: the arrow leaves the box and comes back */
-  & svg[data-icon='external'][data-anim] .arrow { animation: ai-ext 400ms var(--ai-out); }
+  & svg[data-icon='external'][data-anim] .arrow { animation: ai-ext var(--ai-d3) var(--ai-out); }
 
   /* hooks: the three nodes fire in turn around the loop */
   & svg[data-icon='hook'][data-anim] {
-    & .hl { animation: ai-hook-l 380ms var(--ai-out); }
-    & .hb { animation: ai-hook-b 380ms 70ms var(--ai-out); }
-    & .hr { animation: ai-hook-r 380ms 140ms var(--ai-out); }
+    & .hl { animation: ai-hook-l var(--ai-d2) var(--ai-out); }
+    & .hb { animation: ai-hook-b var(--ai-d2) calc(var(--ai-lag) * 2) var(--ai-out); }
+    & .hr { animation: ai-hook-r var(--ai-d2) calc(var(--ai-lag) * 3) var(--ai-out); }
   }
 
   /* skills: the piece lifts out and snaps back in */
-  & svg[data-icon='skill'][data-anim] .piece { animation: ai-piece 420ms var(--ai-out); }
+  & svg[data-icon='skill'][data-anim] .piece { animation: ai-piece var(--ai-d3) var(--ai-out); }
 
   /* models: the folds twitch, one after the other */
   & svg[data-icon='brain'][data-anim] {
-    & .fl { animation: ai-fold-l 360ms var(--ai-out); }
-    & .fr { animation: ai-fold-r 360ms 90ms var(--ai-out); }
+    & .fl { animation: ai-fold-l var(--ai-d2) var(--ai-out); }
+    & .fr { animation: ai-fold-r var(--ai-d2) calc(var(--ai-lag) * 2.5) var(--ai-out); }
   }
 
   /* appearance: the fan lifts, the swatch hole pops */
   & svg[data-icon='swatches'][data-anim] {
-    & .fan { animation: ai-lift 420ms var(--ai-out); }
-    & .dot { transform-origin: 76px 180px; animation: ai-swatch-dot 420ms var(--ai-out); }
+    & .fan { animation: ai-lift var(--ai-d3) var(--ai-out); }
+    & .dot { transform-origin: 76px 180px; animation: ai-swatch-dot var(--ai-d3) var(--ai-out); }
   }
 
   /* read: the lines of text write in */
   & svg[data-icon='file-text'][data-anim] {
-    & .ln1 { animation: ai-line-in 300ms var(--ai-out) both; }
-    & .ln2 { animation: ai-line-in 300ms 90ms var(--ai-out) both; }
+    & .ln1 { animation: ai-line-in var(--ai-d2) var(--ai-out) both; }
+    & .ln2 { animation: ai-line-in var(--ai-d2) calc(var(--ai-lag) * 2.5) var(--ai-out) both; }
   }
 
   /* agent: the eyes blink */
   & svg[data-icon='robot'][data-anim] {
-    & .eye { transform-origin: 128px 108px; animation: ai-robot-eye 380ms var(--ai-out); }
-    & .bot { animation: ai-lift 380ms var(--ai-out); }
+    & .eye { transform-origin: 128px 108px; animation: ai-robot-eye var(--ai-d2) var(--ai-out); }
+    & .bot { animation: ai-lift var(--ai-d2) var(--ai-out); }
   }
 
   /* queue: the play mark steps forward, the lines shuffle */
   & svg[data-icon='queue'][data-anim] {
-    & .play { animation: ai-lead-x 380ms var(--ai-out); }
-    & .q1 { animation: ai-shuffle 360ms var(--ai-out); }
-    & .q2 { animation: ai-shuffle 360ms 50ms var(--ai-out); }
-    & .q3 { animation: ai-shuffle 360ms 100ms var(--ai-out); }
+    & .play { animation: ai-lead-x var(--ai-d2) var(--ai-out); }
+    & .q1 { animation: ai-shuffle var(--ai-d2) var(--ai-out); }
+    & .q2 { animation: ai-shuffle var(--ai-d2) calc(var(--ai-lag) * 1.5) var(--ai-out); }
+    & .q3 { animation: ai-shuffle var(--ai-d2) calc(var(--ai-lag) * 2.5) var(--ai-out); }
   }
 
   /* image: the sun rises over the hills */
-  & svg[data-icon='image'][data-anim] .sun { animation: ai-sun 420ms var(--ai-out); }
+  & svg[data-icon='image'][data-anim] .sun { animation: ai-sun var(--ai-d3) var(--ai-out); }
 
   /* link: the two links pull apart and snap together */
   & svg[data-icon='link'][data-anim] {
-    & .lr { animation: ai-out-a1 380ms var(--ai-out); }
-    & .ll { animation: ai-out-a2 380ms var(--ai-out); }
+    & .lr { animation: ai-out-a1 var(--ai-d2) var(--ai-out); }
+    & .ll { animation: ai-out-a2 var(--ai-d2) var(--ai-out); }
   }
 
   /* preview: a blink, then a look aside */
   & svg[data-icon='eye'][data-anim] {
-    & .lid { transform-origin: 128px 128px; animation: ai-blink 460ms var(--ai-out); }
-    & .pupil { transform-origin: 128px 128px; animation: ai-pupil 460ms var(--ai-out); }
+    & .lid { transform-origin: 128px 128px; animation: ai-blink var(--ai-d3) var(--ai-out); }
+    & .pupil { transform-origin: 128px 128px; animation: ai-pupil var(--ai-d3) var(--ai-out); }
   }
 
   /* bell: it swings, the clapper lags behind */
   & svg[data-icon='bell'][data-anim] {
-    & .shell { transform-origin: 128px 24px; animation: ai-bell 450ms var(--ai-out); }
-    & .clap { transform-origin: 128px 24px; animation: ai-clap 450ms var(--ai-out); }
+    & .shell { transform-origin: 128px 24px; animation: ai-bell var(--ai-d3) var(--ai-out); }
+    & .clap { transform-origin: 128px 24px; animation: ai-clap var(--ai-d3) var(--ai-out); }
   }
 
-  /* window controls (drawn in WindowControls.tsx on a 16 px grid) */
-  & svg[data-icon='wc-min'] path { animation: ai-wc-min 320ms var(--ai-out); }
-  & svg[data-icon='wc-max'] rect { animation: ai-wc-max 300ms var(--ai-out) both; }
-  & svg[data-icon='wc-restore'] path { animation: ai-wc-restore 340ms var(--ai-out); }
-  & svg[data-icon='wc-close'] path { animation: ai-wc-close 260ms var(--ai-out) both; }
+  /* window controls (drawn in WindowControls.tsx on a 16 px grid): minimise sinks and narrows, maximise
+     gathers and grows, restore brings its two windows together, close gathers to its crossing */
+  & svg[data-icon='wc-min'] path { transform-origin: 8px 8.5px; animation: ai-wc-min var(--ai-d2) var(--ai-out); }
+  & svg[data-icon='wc-max'] rect { transform-origin: 8px 8px; animation: ai-wc-max var(--ai-d2) var(--ai-out); }
+  & svg[data-icon='wc-restore'] path { animation: ai-wc-restore var(--ai-d2) var(--ai-out); }
+  & svg[data-icon='wc-restore'] rect { animation: ai-wc-restore-front var(--ai-d2) var(--ai-lag) var(--ai-out); }
+  & svg[data-icon='wc-close'] path { transform-origin: 8px 8px; animation: ai-wc-close var(--ai-d2) var(--ai-out); }
+}
+
+/* The composer's add button (a plus drawn on its own 14 px grid, one path of two strokes): the
+   strokes gather to the crossing, then the glyph springs a little past its size (`ai-plus-breathe`,
+   started by composer.css on the glyph itself). */
+:is(.cmp-attach:is(:hover, :focus-visible):not([aria-expanded='true']), [data-ai-play]) .cmp-plus path {
+  animation: ai-plus-gather var(--ai-d2) var(--ai-out);
+}
+/* (the dev sheet's copy of the glyph; in the composer, composer.css starts this one) */
+[data-ai-play] .cmp-plus {
+  animation: ai-plus-breathe var(--ai-d2) var(--ai-out);
+}
+
+/* The send key at rest (ready, not pressed; its parts are drawn in SendKey.tsx on a 16 px grid): the
+   arrow coils like a spring (the head sinks, the shaft shortens) and stands up ready. Pressing it
+   belongs to composer/launch.ts. Not with the second head (ultracode), which holds a transform. */
+:is(.cmp-send[data-ready]:is(:hover, :focus-visible), [data-ai-play]) .sk-glyph[data-glyph='send']:not([data-double]) {
+  & .sk-head { animation: ai-send-head var(--ai-d2) var(--ai-out); }
+  & .sk-shaft { animation: ai-send-shaft var(--ai-d2) var(--ai-out); }
 }
 
 /* ── keyframes ── */
@@ -423,42 +490,38 @@ svg[data-anim] {
   78% { opacity: 1; transform: translate(2px, -2px); }
   100% { opacity: 1; transform: translate(0, 0); }
 }
-/* The composer's add button (a plus drawn on its own 14 px grid): it gathers and breathes out. */
 @keyframes ai-plus-breathe {
-  30% { scale: 0.72; }
-  65% { scale: 1.14; }
-}
-/* Arcs (refresh, reload, rewind) start half drawn: the icon never thins out to nothing. */
-@keyframes ai-draw-arc {
-  from { stroke-dasharray: 1 2; stroke-dashoffset: 0.55; }
-  to { stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+  0%, 34% { scale: 1; }
+  66% { scale: 1.1; }
+  86% { scale: 0.98; }
 }
 @keyframes ai-draw-rev {
   from { stroke-dasharray: 1 2; stroke-dashoffset: -0.86; }
   to { stroke-dasharray: 1 2; stroke-dashoffset: 0; }
 }
-@keyframes ai-search-lens {
-  25% { transform: translate(-14px, 4px); }
-  50% { transform: translate(-6px, -14px); }
-  75% { transform: translate(8px, -6px); }
+@keyframes ai-search-ring {
+  18% { transform: translate(4px, 4px) scale(1.04); }
+  52% { transform: translate(-9px, -9px) scale(0.83); }
+  80% { transform: translate(2px, 2px) scale(1.03); }
 }
 @keyframes ai-search-glint {
-  0% { opacity: 0; transform: translate(0, 0); }
-  30% { opacity: 0.9; }
-  70% { opacity: 0.9; transform: translate(34px, 34px); }
-  100% { opacity: 0; transform: translate(44px, 44px); }
+  0%, 24% { opacity: 0; stroke-dasharray: 0.5 2; stroke-dashoffset: 0.55; }
+  36% { opacity: 0.9; }
+  74% { opacity: 0.9; }
+  92%, 100% { opacity: 0; stroke-dasharray: 0.5 2; stroke-dashoffset: -1.05; }
 }
 @keyframes ai-history-min {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(-360deg); }
+  0%, 10% { transform: rotate(0deg); }
+  100% { transform: rotate(-360deg); }
 }
 @keyframes ai-history-hour {
-  30% { transform: rotate(-24deg); }
-  70% { transform: rotate(4deg); }
+  44% { transform: rotate(-38deg); }
+  78% { transform: rotate(5deg); }
 }
-@keyframes ai-history-head {
-  35% { transform: translate(-10px, 10px); }
-  70% { transform: translate(2px, -2px); }
+@keyframes ai-history-ring {
+  16% { transform: rotate(7deg); }
+  52% { transform: rotate(-22deg); }
+  80% { transform: rotate(3deg); }
 }
 @keyframes ai-dot-y {
   35% { transform: translateY(-26px); }
@@ -489,9 +552,11 @@ svg[data-anim] {
   82% { transform: translateY(3px); }
 }
 @keyframes ai-pen {
-  22% { transform: translate(-10px, 10px); }
-  52% { transform: translate(14px, 4px); }
-  78% { transform: translate(-3px, -2px); }
+  16% { transform: translate(-5px, 4px); }
+  32% { transform: translate(5px, 0); }
+  48% { transform: translate(16px, 4px); }
+  64% { transform: translate(27px, 0); }
+  84% { transform: translate(-2px, -3px); }
 }
 @keyframes ai-copy-back {
   45% { transform: translate(20px, -20px); }
@@ -501,14 +566,18 @@ svg[data-anim] {
   45% { transform: translate(-5px, 5px); }
 }
 @keyframes ai-folder-tab {
-  35% { transform: translateY(-12px); }
-  70% { transform: translateY(2px); }
+  12% { transform: translateY(3px); }
+  40% { transform: translateY(-13px); }
+  66% { transform: translateY(-9px); }
+  88% { transform: translateY(2px); }
 }
 @keyframes ai-folder-sheet {
-  0% { opacity: 0; transform: translateY(18px); }
-  35% { opacity: 1; transform: translateY(-6px); }
-  65% { opacity: 1; transform: translateY(0); }
-  100% { opacity: 0; transform: translateY(18px); }
+  0%, 12% { opacity: 0; transform: scaleY(0.2); }
+  20% { opacity: 1; }
+  46% { opacity: 1; transform: scaleY(1.14); }
+  64% { opacity: 1; transform: scaleY(1); }
+  86% { opacity: 1; transform: scaleY(0.2); }
+  94%, 100% { opacity: 0; transform: scaleY(0.2); }
 }
 @keyframes ai-fplus-plus {
   0% { opacity: 1; transform: translateY(0); }
@@ -524,14 +593,17 @@ svg[data-anim] {
 }
 @keyframes ai-gear-teeth {
   0% { transform: rotate(0deg); }
-  22% { transform: rotate(-8deg); }
-  58% { transform: rotate(65deg); }
-  78% { transform: rotate(58.5deg); }
+  14% { transform: rotate(-6deg); }
+  40% { transform: rotate(33deg); }
+  52% { transform: rotate(30deg); }
+  58% { transform: rotate(27deg); }
+  84% { transform: rotate(62.5deg); }
   100% { transform: rotate(60deg); }
 }
 @keyframes ai-gear-hub {
-  28% { transform: scale(0.66); }
-  66% { transform: scale(1.1); }
+  38% { transform: scale(0.68); }
+  56% { transform: scale(0.74); }
+  84% { transform: scale(1.1); }
 }
 @keyframes ai-lead-x {
   40% { transform: translateX(calc(var(--ai-dir, 1) * 22px)); }
@@ -559,12 +631,12 @@ svg[data-anim] {
   74% { opacity: 0.12; transform: scaleX(1.09); }
   100% { opacity: 0; transform: scaleX(1); }
 }
-@keyframes ai-knob1 { 45% { transform: translateX(30px); } }
-@keyframes ai-knob1-l { 45% { stroke-dasharray: 0.3977 2; } }
-@keyframes ai-knob1-r { 45% { stroke-dasharray: 0.3295 2; } }
-@keyframes ai-knob2 { 45% { transform: translateX(-30px); } }
-@keyframes ai-knob2-l { 45% { stroke-dasharray: 0.4205 2; } }
-@keyframes ai-knob2-r { 45% { stroke-dasharray: 0.3068 2; } }
+@keyframes ai-knob1 { 42% { transform: translateX(38px); } 76% { transform: translateX(-4px); } }
+@keyframes ai-knob1-l { 42% { stroke-dasharray: 0.4432 2; } 76% { stroke-dasharray: 0.2045 2; } }
+@keyframes ai-knob1-r { 42% { stroke-dasharray: 0.2841 2; } 76% { stroke-dasharray: 0.5227 2; } }
+@keyframes ai-knob2 { 42% { transform: translateX(-40px); } 76% { transform: translateX(4px); } }
+@keyframes ai-knob2-l { 42% { stroke-dasharray: 0.3636 2; } 76% { stroke-dasharray: 0.6136 2; } }
+@keyframes ai-knob2-r { 42% { stroke-dasharray: 0.3636 2; } 76% { stroke-dasharray: 0.1136 2; } }
 @keyframes ai-needle {
   25% { transform: rotate(-32deg); }
   55% { transform: rotate(16deg); }
@@ -583,13 +655,14 @@ svg[data-anim] {
   30% { transform: translateY(-14px); opacity: 0.55; }
   62% { transform: translateY(4px); opacity: 1; }
 }
-@keyframes ai-diff-left {
-  40% { transform: translateY(20px); }
-  74% { transform: translateY(-4px); }
+@keyframes ai-diff-line {
+  0%, 14%, 100% { stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+  46% { stroke-dasharray: 1 2; stroke-dashoffset: -0.34; }
 }
-@keyframes ai-diff-right {
-  40% { transform: translateY(-20px); }
-  74% { transform: translateY(4px); }
+@keyframes ai-diff-head {
+  14% { transform: translate(calc(var(--ax) * -4px), calc(var(--ay) * -4px)); }
+  46% { transform: translate(calc(var(--ax) * 15px), calc(var(--ay) * 15px)); }
+  76% { transform: translate(calc(var(--ax) * -2px), calc(var(--ay) * -2px)); }
 }
 /* The globe turns by one meridian: a rolls out to the rim and fades, b crosses the centre into a's
    place, c comes in from the far rim into b's. Its last frame shows what rest shows, so the swap back
@@ -611,16 +684,19 @@ svg[data-anim] {
   100% { opacity: 0; }
 }
 @keyframes ai-term-chev {
-  38% { transform: translateX(20px); }
-  70% { transform: translateX(-3px); }
+  24% { transform: translateX(14px); }
+  50% { transform: translateX(-2px); }
+  60%, 82% { transform: translateX(0); }
+  90% { transform: translateX(5px); }
 }
 @keyframes ai-term-caret {
   0% { opacity: 1; transform: translateX(0); }
-  38% { opacity: 1; transform: translateX(14px); }
-  39% { opacity: 0; }
-  70% { opacity: 0; transform: translateX(0); }
-  71% { opacity: 1; }
-  100% { opacity: 1; transform: translateX(0); }
+  12% { opacity: 0; transform: translateX(0); }
+  26% { opacity: 1; transform: translateX(0); }
+  40% { opacity: 1; transform: translateX(14px); }
+  54% { opacity: 1; transform: translateX(28px); }
+  70% { opacity: 0; transform: translateX(28px); }
+  82%, 100% { opacity: 1; transform: translateX(0); }
 }
 @keyframes ai-slice {
   40% { transform: translate(-18px, -10px); }
@@ -632,32 +708,28 @@ svg[data-anim] {
   75% { transform: scale(1.1); }
   100% { transform: scale(1); }
 }
-@keyframes ai-arrive-dr {
-  0%, 30% { opacity: 0; transform: translate(-16px, -16px); }
-  72% { opacity: 1; transform: translate(3px, 3px); }
-  100% { opacity: 1; transform: translate(0, 0); }
+@keyframes ai-pull {
+  0%, 100% { stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+  42% { stroke-dasharray: 1 2; stroke-dashoffset: -0.4; }
 }
-@keyframes ai-arrive-ul {
-  0%, 30% { opacity: 0; transform: translate(16px, 16px); }
-  72% { opacity: 1; transform: translate(-3px, -3px); }
-  100% { opacity: 1; transform: translate(0, 0); }
-}
-@keyframes ai-arrive-dl {
-  0%, 30% { opacity: 0; transform: translate(16px, -16px); }
-  72% { opacity: 1; transform: translate(-3px, 3px); }
-  100% { opacity: 1; transform: translate(0, 0); }
+@keyframes ai-lunge {
+  12% { transform: translate(calc(var(--ax) * -3px), calc(var(--ay) * -3px)); }
+  42% { transform: translate(calc(var(--ax) * 11px), calc(var(--ay) * 11px)); }
+  74% { transform: translate(calc(var(--ax) * -2px), calc(var(--ay) * -2px)); }
 }
 @keyframes ai-stop {
   35% { transform: scale(1.08, 0.82); }
   70% { transform: scale(0.97, 1.04); }
 }
 @keyframes ai-user-head {
-  38% { transform: translateY(-22px); }
-  72% { transform: translateY(4px); }
+  16% { transform: translateY(5px); }
+  46% { transform: translateY(-22px); }
+  76% { transform: translateY(3px); }
 }
 @keyframes ai-user-body {
-  50% { transform: translateY(-6px); }
-  82% { transform: translateY(1px); }
+  20% { transform: scaleY(0.88); }
+  54% { transform: scaleY(1.16); }
+  82% { transform: scaleY(0.98); }
 }
 @keyframes ai-gauge {
   28% { transform: rotate(-52deg); }
@@ -700,13 +772,16 @@ svg[data-anim] {
   45% { transform: translateY(14px); }
 }
 @keyframes ai-info-dot {
-  30% { transform: translateY(-32px); }
-  58% { transform: translateY(6px); }
-  78% { transform: translateY(-2px); }
+  12% { transform: translateY(4px); }
+  36% { transform: translateY(-28px); }
+  58% { transform: translateY(7px); }
+  80% { transform: translateY(-2px); }
 }
 @keyframes ai-info-stem {
-  52% { transform: translateY(0); }
-  62% { transform: translateY(5px); }
+  12% { transform: scaleY(0.94); }
+  36% { transform: scaleY(1.06); }
+  60% { transform: scaleY(0.8); }
+  82% { transform: scaleY(1.04); }
 }
 @keyframes ai-blink {
   18% { transform: scaleY(0.12); }
@@ -730,23 +805,124 @@ svg[data-anim] {
   78% { transform: rotate(-5deg); }
 }
 @keyframes ai-wc-min {
-  40% { transform: translateY(1.5px); }
-  72% { transform: translateY(-0.4px); }
+  36% { transform: translateY(2px) scaleX(0.56); }
+  70% { transform: translateY(-0.4px) scaleX(1.08); }
 }
 @keyframes ai-wc-max {
-  from { stroke-dasharray: 34 34; stroke-dashoffset: 26; }
-  to { stroke-dasharray: 34 34; stroke-dashoffset: 0; }
+  30% { transform: scale(0.76); }
+  66% { transform: scale(1.1); }
+  86% { transform: scale(0.98); }
 }
 @keyframes ai-wc-restore {
-  45% { transform: translate(-1px, 1px); }
-  78% { transform: translate(0.25px, -0.25px); }
+  40% { transform: translate(-1.1px, 1.1px); }
+  74% { transform: translate(0.25px, -0.25px); }
 }
 @keyframes ai-wc-close {
-  from { stroke-dasharray: 11.4 12; stroke-dashoffset: 11.4; }
-  to { stroke-dasharray: 11.4 12; stroke-dashoffset: 0; }
+  0%, 100% { stroke-dasharray: 11.4 24; stroke-dashoffset: 0; transform: scale(1); }
+  34% { stroke-dasharray: 5 24; stroke-dashoffset: -3.2; transform: scale(1); }
+  66% { stroke-dasharray: 11.4 24; stroke-dashoffset: 0; transform: scale(1.1); }
+  86% { stroke-dasharray: 11.4 24; stroke-dashoffset: 0; transform: scale(0.98); }
+}
+
+/* An arm of the plus (a line from the centre out): it shortens toward the centre, then springs past its length. */
+@keyframes ai-arm {
+  0%, 100% { stroke-dasharray: 1 2; transform: translate(0, 0); }
+  30% { stroke-dasharray: 0.4 2; transform: translate(0, 0); }
+  62% { stroke-dasharray: 1 2; transform: translate(calc(var(--ax, 0) * 13px), calc(var(--ay, 0) * 13px)); }
+  82% { stroke-dasharray: 1 2; transform: translate(calc(var(--ax, 0) * -2px), calc(var(--ay, 0) * -2px)); }
+}
+/* A whole stroke gathering to its middle and springing back out (pathLength 1). */
+@keyframes ai-gather {
+  0%, 100% { stroke-dasharray: 1 2; stroke-dashoffset: 0; transform: scale(1); }
+  34% { stroke-dasharray: 0.44 2; stroke-dashoffset: -0.28; transform: scale(1); }
+  66% { stroke-dasharray: 1 2; stroke-dashoffset: 0; transform: scale(1.1); }
+  86% { stroke-dasharray: 1 2; stroke-dashoffset: 0; transform: scale(0.98); }
+}
+/* The same for the composer's plus: two strokes of 9.5 in one path (dashes restart on each). */
+@keyframes ai-plus-gather {
+  0%, 64%, 100% { stroke-dasharray: 9.5 20; stroke-dashoffset: 0; }
+  32% { stroke-dasharray: 4.2 20; stroke-dashoffset: -2.65; }
+}
+@keyframes ai-search-handle {
+  18% { transform: translate(5px, 5px); }
+  52% { transform: translate(-20px, -20px); }
+  80% { transform: translate(4px, 4px); }
+}
+@keyframes ai-ink {
+  0%, 16% { opacity: 1; stroke-dasharray: 1 2; stroke-dashoffset: 1.05; }
+  64% { opacity: 1; stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+  100% { opacity: 0; stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+}
+@keyframes ai-pin-mark {
+  0%, 56% { opacity: 0; transform: translate(0, 0); }
+  66% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(calc(var(--ax) * 9px), calc(var(--ay) * 9px)); }
+}
+@keyframes ai-folder-body {
+  84% { transform: translateY(0); }
+  92% { transform: translateY(4px); }
+}
+@keyframes ai-caret-x {
+  40% { transform: translateX(calc(var(--ai-dir, 1) * 20px)) scaleX(0.8); }
+  72% { transform: translateX(calc(var(--ai-dir, 1) * -4px)) scaleX(1.05); }
+}
+@keyframes ai-caret-y {
+  40% { transform: translateY(calc(var(--ai-dir, 1) * 20px)) scaleY(0.8); }
+  72% { transform: translateY(calc(var(--ai-dir, 1) * -4px)) scaleY(1.05); }
+}
+@keyframes ai-ff-lead {
+  14% { transform: translateX(-6px); }
+  44% { transform: translateX(20px); }
+  74% { transform: translateX(-3px); }
+}
+@keyframes ai-ff-chase {
+  24% { transform: translateX(-8px); }
+  58% { transform: translateX(20px); }
+  84% { transform: translateX(-2px); }
+}
+@keyframes ai-node-fire {
+  16% { transform: scale(0.74); }
+  46% { transform: scale(1.14); }
+  76% { transform: scale(0.98); }
+}
+@keyframes ai-task-line {
+  40% { transform: translateX(10px); }
+  74% { transform: translateX(-2px); }
+}
+
+@keyframes ai-wc-restore-front {
+  40% { transform: translate(0.7px, -0.7px); }
+  74% { transform: translate(-0.2px, 0.2px); }
+}
+@keyframes ai-pie {
+  40% { transform: translate(5px, 3px); }
+  74% { transform: translate(-1px, -1px); }
+}
+@keyframes ai-broom {
+  20% { transform: rotate(-5deg); }
+  52% { transform: rotate(9deg); }
+  80% { transform: rotate(-2deg); }
+}
+@keyframes ai-dust {
+  0%, 34% { opacity: 0; transform: translate(14px, 0); }
+  50% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(-14px, calc(var(--ay, -0.4) * 10px)); }
+}
+@keyframes ai-send-head {
+  30% { transform: translateY(1.5px); }
+  64% { transform: translateY(-0.9px); }
+}
+@keyframes ai-send-shaft {
+  30% { transform: translateY(1.5px) scaleY(0.84); }
+  64% { transform: translateY(-0.9px) scaleY(1.09); }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .sk-glyph path,
+  .cmp-plus path {
+    animation: none !important;
+  }
+
   svg[data-anim] *,
   svg[data-icon^='wc-'] * {
     animation: none !important;

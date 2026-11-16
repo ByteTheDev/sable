@@ -254,3 +254,30 @@ html[data-gallery] body {
   mix-blend-mode: difference;
   color: #fff;
 }
+
+/* The director's sheet (`?gallery&strip`): eight frames at 16 px, then the same eight at 4x. */
+.isheet-strip .isheet-row {
+  grid-template-columns: 96px max-content max-content;
+  gap: 14px;
+}
+
+.isheet-strip .isheet-size > .isheet-cell:nth-child(3) {
+  margin-right: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.isheet-strip .isheet-size > .isheet-cmp {
+  isolation: isolate;
+  background: #000;
+  color: #fff;
+}
+
+.isheet-strip .isheet-size > button.isheet-cell {
+  margin-right: 6px;
+}
+
+.isheet-big {
+  width: 76px;
+  height: 76px;
+}

@@ -9,8 +9,8 @@
 /* ── icons answer the control they sit in ──
    Icons with a drawn version move their parts (animated/animated.css). Every other icon gets one
    quiet nudge per hover or focus: a small step in its direction and back, or a soft settle, on
-   its own box (individual `translate`, so rules that set `transform` still hold). Nothing turns,
-   nothing grows, nothing loops. */
+   its own box (individual `translate`, so rules that set `transform` still hold), in the length and
+   curve of the animated set (animated/animated.css). Nothing turns, nothing grows, nothing loops. */
 @keyframes icon-nudge {
   45% { translate: var(--nx, 0) var(--ny, -1px); }
   78% { translate: calc(var(--nx, 0) * -0.2) calc(var(--ny, -1px) * -0.2); }
@@ -18,7 +18,7 @@
 
 :is(button, a, [role='button'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='tab'], [role='option']):is(:hover, :focus-visible, [data-highlighted])
   svg[data-icon]:not([data-anim], [data-icon^='wc-']) {
-  animation: icon-nudge 300ms var(--ease-out);
+  animation: icon-nudge var(--ai-d1) var(--ai-out);
 
   /* direction */
   &:is([data-icon='to-bottom'], [data-icon='download'], [data-icon='arrow-line-down']) { --ny: 1.5px; }

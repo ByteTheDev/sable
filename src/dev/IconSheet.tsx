@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { ANIMATED_NAMES, Icon, IconOriginal, type IconName } from '@/icons';
+import { SendGlyphSvg } from '@/features/composer/SendKey';
 
 /**
  * Every animated icon at 16, 20 and 24 px: the Phosphor original, the drawing at rest, and its
@@ -8,6 +10,45 @@ import { ANIMATED_NAMES, Icon, IconOriginal, type IconName } from '@/icons';
  */
 const SIZES = [16, 20, 24] as const;
 const FRAMES = [50, 110, 170, 230, 300, 380];
+/** `?gallery&strip` is the director's sheet: eight frames of each motion at 16 px and at 4x. */
+const STRIP = new URLSearchParams(location.search).has('strip');
+const STRIP_FRAMES = [30, 90, 150, 210, 270, 330, 390, 450];
+const WANT = new URLSearchParams(location.search).get('icons')?.split(',') ?? null;
+
+function caption(icon: string, parts: ReactNode) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" data-icon={icon} aria-hidden>
+      {parts}
+    </svg>
+  );
+}
+
+/** Glyphs drawn outside the icon set that answer a hover with motion from animated.css: the composer's add and send keys. */
+const EXTRAS: { name: string; node: ReactNode }[] = [
+  {
+    name: 'attach',
+    node: (
+      <svg className="cmp-plus" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+        <path d="M7 2.25v9.5M2.25 7h9.5" />
+      </svg>
+    ),
+  },
+  { name: 'send', node: <SendGlyphSvg glyph="send" /> },
+  // The caption glyphs, as WindowControls.tsx draws them.
+  { name: 'wc-min', node: caption('wc-min', <path d="M3.5 8.5h9" />) },
+  { name: 'wc-max', node: caption('wc-max', <rect x="3.5" y="3.5" width="9" height="9" rx="1.75" />) },
+  {
+    name: 'wc-restore',
+    node: caption(
+      'wc-restore',
+      <>
+        <rect x="3.5" y="5.5" width="7" height="7" rx="1.5" />
+        <path d="M5.5 5.5V5a1.5 1.5 0 0 1 1.5-1.5h4A1.5 1.5 0 0 1 12.5 5v4a1.5 1.5 0 0 1-1.5 1.5h-.5" />
+      </>,
+    ),
+  },
+  { name: 'wc-close', node: caption('wc-close', <path d="M4 4l8 8M12 4l-8 8" />) },
+];
 
 /** `?gallery&icons=a,b,c` shows only those icons; `?gallery&icons=26-` a slice by position (for shots). */
 function pick(): IconName[] {
@@ -55,6 +96,65 @@ export function IconSheet() {
       live = false;
     };
   }, [names]);
+
+  if (STRIP) {
+    return (
+      <div className="isheet isheet-strip" ref={root}>
+        {names.map((name) => (
+          <div key={name} className="isheet-row" data-name={name}>
+            <span className="isheet-name">
+              {name}
+              <span className="isheet-diff num">{diffs[name] ?? '…'}</span>
+            </span>
+            <span className="isheet-size">
+              <span className="isheet-cell isheet-cmp" data-cmp={`${name}-16`}>
+                <IconOriginal name={name} size={16} />
+                <span className="isheet-over">
+                  <Icon name={name} size={16} />
+                </span>
+              </span>
+              <button type="button" className="isheet-cell" aria-label={`Play ${name}`}>
+                <Icon name={name} size={16} />
+              </button>
+              {STRIP_FRAMES.map((t) => (
+                <span key={t} className="isheet-cell" data-ai-play="" data-t={t}>
+                  <Icon name={name} size={16} />
+                </span>
+              ))}
+            </span>
+            <span className="isheet-size">
+              {STRIP_FRAMES.map((t) => (
+                <span key={t} className="isheet-cell isheet-big" data-ai-play="" data-t={t}>
+                  <Icon name={name} size={64} />
+                </span>
+              ))}
+            </span>
+          </div>
+        ))}
+        {EXTRAS.filter((x) => !WANT || WANT.includes(x.name)).map((x) => (
+          <div key={x.name} className="isheet-row" data-name={x.name}>
+            <span className="isheet-name">{x.name}</span>
+            <span className="isheet-size">
+              <span className="isheet-cell" />
+              <span className="isheet-cell">{x.node}</span>
+              {STRIP_FRAMES.map((t) => (
+                <span key={t} className="isheet-cell" data-ai-play="" data-t={t}>
+                  {x.node}
+                </span>
+              ))}
+            </span>
+            <span className="isheet-size">
+              {STRIP_FRAMES.map((t) => (
+                <span key={t} className="isheet-cell isheet-big" data-ai-play="" data-t={t}>
+                  <span style={{ zoom: 4, display: 'grid' }}>{x.node}</span>
+                </span>
+              ))}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="isheet" ref={root}>
