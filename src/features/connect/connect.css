@@ -114,6 +114,30 @@
   display: none;
 }
 
+/* Several accounts: the label leads and renames in place when clicked. */
+.acc-label {
+  min-width: 0;
+  max-width: 240px;
+  margin: 0 -4px;
+  padding: 0 4px;
+  border-radius: 5px;
+  font-size: 13.5px;
+  font-weight: var(--w-medium);
+  color: var(--text);
+  text-align: left;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.acc-label:hover:not(:disabled) {
+  background-color: var(--fill-2);
+  cursor: text;
+}
+
+.acc-label:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
 .acc-default {
   display: inline-flex;
   align-items: center;
@@ -166,6 +190,12 @@
   color: oklch(0.8 0.1 24);
 }
 
+/* A confirmation names exactly what goes (a folder path): it wraps rather than cutting that off. */
+.acc[data-confirm] .acc-sub .roll-item {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .acc-error .roll-item {
   white-space: normal;
   overflow-wrap: anywhere;
@@ -181,9 +211,24 @@
   gap: 4px;
 }
 
-/* Secondary text actions: quiet until pointed at. */
+/* Secondary text actions: quiet, and on a signed-in row only there while the row is pointed at or focused. */
 .acc-quiet {
   color: var(--text-3);
+}
+
+.cc:not([data-compact]) .acc[data-phase='in']:not([data-confirm]) .acc-actions {
+  opacity: 0;
+  transition: opacity var(--d-1) var(--ease-out);
+}
+
+.cc:not([data-compact]) .acc[data-phase='in']:is(:hover, :focus-within) .acc-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .cc:not([data-compact]) .acc[data-phase='in'] .acc-actions {
+    opacity: 1;
+  }
 }
 
 .acc-quiet:hover,

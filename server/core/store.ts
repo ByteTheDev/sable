@@ -11,6 +11,10 @@ export interface StoredAccount {
   provider: ProviderId;
   label: string;
   createdAt: number;
+  /** A folder the user already had ("Use an existing folder"): used in place, forgotten on removal, never deleted. */
+  dir?: string;
+  /** The label was given by Sable ("Account 2"): the first sign-in names the account instead. */
+  autoLabel?: boolean;
 }
 
 interface StateFile {

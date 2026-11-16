@@ -11,6 +11,8 @@ import { homeAccountId, openSettings, setHomeAccount } from '@/state/actions';
 import { accountName } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { Kbd, PathLabel, Tip } from '@/ui';
+import { planWord } from '@/features/accounts/model';
+import { LimitDot } from '@/features/usage';
 import { type Choice } from './choice';
 import { Morph } from './Morph';
 
@@ -312,8 +314,8 @@ function AgentMenu({ onClosed }: { onClosed: () => void }) {
   const accountOf = (id: ProviderId) => homeAccountId(id, { ui: { ...useStore.getState().ui, homeAccount }, providers });
   const mine = providers[provider]?.accounts ?? [];
   const chipPick = mine.find((a) => a.id === accountOf(provider));
-  // The demo agent's address is made up: name its accounts by label.
-  const chipAccount = mine.length > 1 ? (provider === 'demo' && chipPick ? chipPick.label : accountName(chipPick)) : undefined;
+  // The account shows only when there is a choice; its label, never an address.
+  const chipAccount = mine.length > 1 ? accountName(chipPick) : undefined;
 
   return (
     <RM.Root modal={false}>
@@ -324,6 +326,7 @@ function AgentMenu({ onClosed }: { onClosed: () => void }) {
             {PROVIDER_NAME[provider]}
             {chipAccount && <span className="hc-account truncate">{chipAccount}</span>}
           </Morph>
+          {chipPick && mine.length > 1 && <LimitDot provider={provider} accountId={chipPick.id} />}
           <Icon name="caret-down" size={10} className="hc-caret" />
         </button>
       </RM.Trigger>
@@ -350,7 +353,8 @@ function AgentMenu({ onClosed }: { onClosed: () => void }) {
                 <RM.Item className="menu-item cm-row" onSelect={() => (p.auth.loggedIn || several ? setUi({ homeProvider: p.id }) : openSettings('accounts'))}>
                   <ProviderMark provider={p.id} size={15} className="hc-mark" />
                   <span className="cm-row-name grow">{PROVIDER_NAME[p.id]}</span>
-                  <span className="cm-check">{p.id === provider ? <Icon name="check" size={14} /> : !p.auth.loggedIn && !several && <span className="hc-signin">Sign in</span>}</span>
+                  {/* With several accounts the check goes on the account, not twice. */}
+                  <span className="cm-check">{p.id === provider && !several ? <Icon name="check" size={14} /> : !p.auth.loggedIn && !several && <span className="hc-signin">Sign in</span>}</span>
                 </RM.Item>
                 {several &&
                   accounts.map((a) => (
@@ -359,13 +363,17 @@ function AgentMenu({ onClosed }: { onClosed: () => void }) {
                       className="menu-item hc-acct"
                       data-current={(p.id === provider && a.id === chosen) || undefined}
                       onSelect={() => {
+                        if (!a.auth.loggedIn) return openSettings('accounts');
                         setHomeAccount(p.id, a.id);
                         setUi({ homeProvider: p.id });
                       }}
                     >
-                      <span className="grow truncate">{p.id === 'demo' ? a.label : accountName(a)}</span>
-                      {!a.auth.loggedIn && <span className="hc-signin">Not signed in</span>}
-                      <span className="cm-check">{p.id === provider && a.id === chosen && <Icon name="check" size={14} />}</span>
+                      <span className="grow truncate">{accountName(a)}</span>
+                      <span className="hc-plan">{a.auth.loggedIn ? planWord(a) : 'Sign in'}</span>
+                      <span className="hc-acct-end">
+                        <LimitDot provider={p.id} accountId={a.id} />
+                        {p.id === provider && a.id === chosen && <Icon name="check" size={14} />}
+                      </span>
                     </RM.Item>
                   ))}
               </RM.Group>

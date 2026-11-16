@@ -8,6 +8,7 @@ import {
   type AppState,
   type BridgeEvent,
   type Capabilities,
+  type NoticeItem,
   type Project,
   type ProviderId,
   type ProviderInfo,
@@ -22,6 +23,8 @@ import { SessionRuntime, autoTitle } from './core/runtime';
 import { Store, type StoredAccount } from './core/store';
 import { DiskCache } from './core/cache';
 import type { Provider, ProviderContext } from './providers/types';
+import { findAccountFolders, folderLabel, labelFromAuth, pickNextAccount } from './accounts/folders';
+import { handoverText } from './accounts/handover';
 import { VERSION } from './version';
 
 type Handler<M extends RpcName> = (params: RpcMethods[M]['params']) => Promise<RpcMethods[M]['result']> | RpcMethods[M]['result'];
@@ -33,6 +36,10 @@ export interface AppOptions {
   quiet?: boolean;
   /** How long after serving a cached answer the fresh one is fetched (tests shorten these). */
   refreshDelays?: { info?: number; caps?: number };
+  /** The user's home folder, where "Use an existing folder" looks for agent config folders (tests point it elsewhere). */
+  userHome?: string;
+  /** How long a sign-in may wait for the browser before it is given up (tests shorten it). */
+  loginTimeoutMs?: number;
 }
 
 export { VERSION };
@@ -67,10 +74,23 @@ export class App {
   private disposers: (() => void | Promise<void>)[] = [];
   /** Sessions of an agent that is not available in this build (the Demo outside development): kept on disk, not shown. */
   private hidden: SessionMeta[] = [];
+  private userHome: string;
+  private loginTimeoutMs: number;
+  /** Sign-ins given up after `loginTimeoutMs`; the rejection that follows is not an error. */
+  private loginTimedOut = new Set<string>();
+  /**
+   * A summary of the conversation so far, sent ahead of the next message after a session moved to
+   * an account that could not take the conversation itself (by session id).
+   */
+  private handovers = new Map<string, string>();
+  /** Automatic continues already made per session, as `${messageId}:${accountId}` (never the same twice). */
+  private autoContinued = new Map<string, Set<string>>();
 
   constructor(opts: AppOptions) {
     this.quiet = !!opts.quiet;
     this.delays = opts.refreshDelays ?? {};
+    this.userHome = opts.userHome ?? homedir();
+    this.loginTimeoutMs = opts.loginTimeoutMs ?? LOGIN_TIMEOUT_MS;
     this.store = new Store(opts.home);
     this.cache = new DiskCache(this.store.dir);
     for (const make of opts.providers) {
@@ -174,9 +194,10 @@ export class App {
     }
   }
 
-  /** Where an extra account's config lives. */
+  /** Where an extra account's config lives: Sable's own folder for it, or the folder the user registered. */
   accountDir(provider: ProviderId, accountId: string) {
-    return path.join(this.store.dir, 'accounts', provider, accountId);
+    const own = this.store.state.accounts.find((a) => a.provider === provider && a.id === accountId)?.dir;
+    return own ?? path.join(this.store.dir, 'accounts', provider, accountId);
   }
 
   private findAccount(provider: ProviderId, accountId: string): StoredAccount | undefined {
@@ -225,6 +246,7 @@ export class App {
           limits: this.limitsCache.get(accountKey(provider, a.id)),
           dir: own ? undefined : this.accountDir(provider, a.id),
           problem: own ? undefined : info?.problem,
+          ...(a.dir ? { external: true } : {}),
         };
       }),
     );
@@ -273,6 +295,7 @@ export class App {
         limits: this.limitsCache.get(accountKey(provider, a.id)) ?? prev?.limits,
         dir: a.id === DEFAULT_ACCOUNT ? undefined : this.accountDir(provider, a.id),
         problem: prev?.problem,
+        ...(a.dir ? { external: true } : {}),
       };
     });
     return Promise.resolve({ ...cached, accounts });
@@ -390,11 +413,139 @@ export class App {
       ...(rt.turnActive ? { steered: true } : {}),
     });
     try {
-      await handle.send(item);
+      await handle.send(this.withHandover(rt, item));
     } catch (err) {
       rt.notice('error', 'Could not send the message', (err as Error).message);
       rt.endTurn((err as Error).message);
     }
+  }
+
+  /** The message as the agent gets it: after a move to another account without the conversation, the summary goes first (once). */
+  private withHandover(rt: SessionRuntime, item: UserItem): UserItem {
+    const summary = this.handovers.get(rt.id);
+    if (!summary) return item;
+    this.handovers.delete(rt.id);
+    return { ...item, text: `${summary}\n\n---\n\n${item.text}` };
+  }
+
+  // ── accounts at a limit ──
+
+  /** Limits known per account of `provider`: what the usage service remembers, then what came in this run. */
+  private async knownLimits(provider: ProviderId): Promise<Map<string, { limits?: RateLimit[]; planLimits?: boolean }>> {
+    const out = new Map<string, { limits?: RateLimit[]; planLimits?: boolean }>();
+    if (this.handlers.has('usage.limits')) {
+      const reports = await this.call('usage.limits', {}).catch(() => []);
+      for (const r of reports) if (r.provider === provider) out.set(r.accountId, { limits: r.limits, planLimits: r.planLimits });
+    }
+    for (const a of this.accountList(provider)) {
+      const l = this.limitsCache.get(accountKey(provider, a.id));
+      if (l?.length) out.set(a.id, { ...out.get(a.id), limits: l });
+    }
+    return out;
+  }
+
+  /** The signed-in account of `provider` with the most room, other than `current`; undefined when none has room. */
+  async nextAccount(provider: ProviderId, current: string): Promise<string | undefined> {
+    const [info, known] = await Promise.all([this.providerInfo(provider), this.knownLimits(provider)]);
+    return pickNextAccount(
+      current,
+      (info.accounts ?? []).map((a) => ({ id: a.id, signedIn: a.auth.loggedIn, isDefault: a.isDefault, limits: known.get(a.id)?.limits ?? a.limits, planLimits: known.get(a.id)?.planLimits })),
+    );
+  }
+
+  /**
+   * A turn was refused at a plan limit: the notice learns which account, when the window resets and
+   * which account could carry on. With "Continue with the next account at a limit" on, the session
+   * moves there and the refused message goes out again (once per message and account).
+   */
+  private async onLimitHit(rt: SessionRuntime, notice: NoticeItem) {
+    const provider = rt.meta.provider;
+    const accountId = rt.meta.accountId ?? DEFAULT_ACCOUNT;
+    const known = await this.knownLimits(provider);
+    const own = (known.get(accountId)?.limits ?? []).filter((l) => l.percent >= 100);
+    // Every window that is used up has to reset before the account can work again.
+    const full = own.sort((a, b) => (b.resetsAt ?? 0) - (a.resetsAt ?? 0))[0];
+    const next = await this.nextAccount(provider, accountId).catch(() => undefined);
+    const limit = { ...notice.limit, provider, accountId, resetsAt: notice.limit?.resetsAt ?? full?.resetsAt, window: notice.limit?.window ?? full?.label, ...(next ? { next } : {}) };
+    rt.patch<NoticeItem>(notice.id, { limit });
+    if (!next || !this.store.state.settings.continueAtLimit || rt.turnActive) return;
+    const refused = this.refusedMessage(rt);
+    const done = this.autoContinued.get(rt.id) ?? new Set<string>();
+    const key = `${refused?.id ?? ''}:${next}`;
+    if (done.has(key)) return;
+    done.add(key);
+    this.autoContinued.set(rt.id, done);
+    await this.switchAccount(rt, next, { retry: true });
+  }
+
+  /** The message the last limit notice refused: the user message just before it. */
+  private refusedMessage(rt: SessionRuntime): UserItem | undefined {
+    const at = rt.items.findLastIndex((i) => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
+    if (at < 0) return undefined;
+    for (let i = at - 1; i >= 0; i--) {
+      const it = rt.items[i];
+      if (it.type === 'user' && !it.parentId) return it;
+    }
+    return undefined;
+  }
+
+  /**
+   * Moves an idle session to another account of its agent. The conversation is carried into that
+   * account's folder so the same conversation resumes there; when that is not possible, a new one
+   * starts and the next message carries a summary of this one.
+   */
+  async switchAccount(rt: SessionRuntime, accountId: string, opts: { retry?: boolean } = {}): Promise<RpcMethods['session.switchAccount']['result']> {
+    this.hydrate(rt);
+    if (rt.turnActive) throw new Error('The agent is still working. Stop it first.');
+    const provider = rt.meta.provider;
+    const fromId = rt.meta.accountId ?? DEFAULT_ACCOUNT;
+    const target = this.provider(provider, accountId);
+    const label = this.findAccount(provider, accountId)?.label ?? 'another account';
+    if (fromId === accountId) return { ok: true, carried: 'none' };
+    const refused = opts.retry ? this.refusedMessage(rt) : undefined;
+
+    rt.cancelPrompts();
+    await rt.handle?.close().catch(() => {});
+    rt.handle = undefined;
+
+    let carried: 'conversation' | 'summary' | 'none' = 'none';
+    const id = rt.meta.providerSessionId;
+    if (id) {
+      let fromHome: string | undefined;
+      try {
+        fromHome = this.provider(provider, fromId).configHome?.();
+      } catch {
+        /* the old account was removed: nothing to copy from */
+      }
+      const adopted = !!fromHome && !!target.adoptConversation && (await target.adoptConversation(fromHome, id).catch((err) => (this.log('could not carry the conversation over', (err as Error).message), false)));
+      if (adopted) carried = 'conversation';
+      else {
+        rt.update({ providerSessionId: undefined });
+        const summary = handoverText(rt.items, { skip: refused?.id });
+        if (summary) {
+          this.handovers.set(rt.id, summary);
+          carried = 'summary';
+        }
+      }
+    }
+    rt.update({ accountId: accountId === DEFAULT_ACCOUNT ? undefined : accountId, status: 'idle', lastError: undefined });
+    this.persistSessions();
+
+    const open = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
+    if (open) rt.patch<NoticeItem>(open.id, { limit: { ...open.limit, continuedWith: accountId } });
+    if (!open || carried === 'summary') {
+      rt.notice('info', carried === 'summary' ? `New conversation with ${label}` : `Continued with ${label}`, carried === 'summary' ? 'It starts with a summary of this one' : undefined);
+    }
+    if (refused) {
+      const handle = await this.ensureHandle(rt);
+      try {
+        await handle.send(this.withHandover(rt, refused));
+      } catch (err) {
+        rt.notice('error', 'Could not send the message', (err as Error).message);
+        rt.endTurn((err as Error).message);
+      }
+    }
+    return { ok: true, carried };
   }
 
   /**
@@ -402,6 +553,8 @@ export class App {
    * end). After an interrupt, a close or a failure the queue waits for the user.
    */
   private afterTurn(rt: SessionRuntime, error?: string) {
+    const hit = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.provider);
+    if (hit) void this.onLimitHit(rt, hit).catch((err) => this.log('limit follow-up failed', (err as Error).message));
     if (error || rt.stopRequested) {
       // Steered messages the agent never took go back to the queue, to send or edit again.
       const untaken = rt.items.filter((i): i is UserItem => i.type === 'user' && !!i.steered && i.state === 'queued' && !i.parentId);
@@ -492,20 +645,44 @@ export class App {
       const p = this.provider(provider, accountId);
       const key = accountKey(provider, accountId);
       this.loginCancelled.delete(key);
+      this.loginTimedOut.delete(key);
       this.emit({ type: 'auth.progress', provider, accountId, state: 'started' });
+      // A sign-in nobody finishes in the browser is given up, so the flow never hangs on "waiting".
+      const timer = setTimeout(() => {
+        this.loginTimedOut.add(key);
+        this.loginCancelled.add(key);
+        void p.cancelLogin().catch(() => {});
+        this.emit({ type: 'auth.progress', provider, accountId, state: 'timeout' });
+      }, this.loginTimeoutMs);
+      timer.unref?.();
       void p
         .login()
         .then(async () => {
+          if (this.loginTimedOut.has(key)) return;
           const info = await this.emitProvider(provider, accountId);
-          const signedIn = info.accounts?.find((a) => a.id === accountId)?.auth.loggedIn;
-          if (signedIn) this.emit({ type: 'auth.progress', provider, accountId, state: 'done' });
-          else if (!this.loginCancelled.has(key)) this.emit({ type: 'auth.progress', provider, accountId, state: 'cancelled' });
+          const signedIn = info.accounts?.find((a) => a.id === accountId)?.auth;
+          if (signedIn?.loggedIn) {
+            // A new account takes its name from the sign-in ("Account 2" becomes "Ada").
+            const stored = this.store.state.accounts.find((a) => a.provider === provider && a.id === accountId);
+            const name = stored?.autoLabel ? labelFromAuth(signedIn, this.accountList(provider).filter((a) => a.id !== accountId).map((a) => a.label)) : undefined;
+            if (stored && name) {
+              stored.label = name;
+              stored.autoLabel = false;
+              this.store.saveState();
+              await this.emitProvider(provider);
+            }
+            this.emit({ type: 'auth.progress', provider, accountId, state: 'done' });
+          } else if (!this.loginCancelled.has(key)) this.emit({ type: 'auth.progress', provider, accountId, state: 'cancelled' });
         })
         .catch((err: Error) => {
           // Cancelling kills the CLI, which rejects the login: already reported as 'cancelled'.
           if (!this.loginCancelled.has(key)) this.emit({ type: 'auth.progress', provider, accountId, state: 'error', message: err.message });
         })
-        .finally(() => this.loginCancelled.delete(key));
+        .finally(() => {
+          clearTimeout(timer);
+          this.loginCancelled.delete(key);
+          this.loginTimedOut.delete(key);
+        });
       return { started: true };
     });
     this.register('auth.cancel', async ({ provider, accountId = DEFAULT_ACCOUNT }) => {
@@ -525,10 +702,31 @@ export class App {
       this.provider(provider); // throws when the provider is not available
       const id = randomUUID().replace(/-/g, '').slice(0, 10);
       mkdirSync(this.accountDir(provider, id), { recursive: true });
-      this.store.state.accounts.push({ id, provider, label: label?.trim() || this.nextLabel(provider), createdAt: Date.now() });
+      const named = label?.trim().slice(0, 60);
+      this.store.state.accounts.push({ id, provider, label: named || this.nextLabel(provider), createdAt: Date.now(), ...(named ? {} : { autoLabel: true }) });
       this.store.saveState();
       const info = await this.emitProvider(provider);
       return { ...info, account: info.accounts!.find((a) => a.id === id)! };
+    });
+    this.register('account.addExisting', async ({ provider, dir, label }) => {
+      this.provider(provider);
+      const abs = path.resolve(dir.trim().replace(/^~(?=$|[\\/])/, this.userHome));
+      if (!isDir(abs)) throw new Error(`Folder not found: ${abs}`);
+      const taken = this.accountList(provider).find((a) => a.id !== DEFAULT_ACCOUNT && sameDir(this.accountDir(provider, a.id), abs));
+      if (taken) throw new Error(`That folder is already the account ${taken.label}.`);
+      if (sameDir(abs, path.join(this.userHome, provider === 'codex' ? '.codex' : '.claude'))) throw new Error('That folder is the built-in account.');
+      const id = randomUUID().replace(/-/g, '').slice(0, 10);
+      this.store.state.accounts.push({ id, provider, label: label?.trim().slice(0, 60) || folderLabel(provider, abs), createdAt: Date.now(), dir: abs });
+      this.store.saveState();
+      // Its sign-in comes from the CLI, asked now.
+      const info = await this.emitProvider(provider, id);
+      return { ...info, account: info.accounts!.find((a) => a.id === id)! };
+    });
+    this.register('account.folders', ({ provider }) => {
+      const known = this.accountList(provider)
+        .filter((a) => a.id !== DEFAULT_ACCOUNT)
+        .map((a) => this.accountDir(provider, a.id));
+      return findAccountFolders(provider, this.userHome, known);
     });
     this.register('account.rename', ({ provider, accountId, label }) => {
       const acc = this.findAccount(provider, accountId);
@@ -544,7 +742,9 @@ export class App {
     });
     this.register('account.remove', async ({ provider, accountId }) => {
       if (accountId === DEFAULT_ACCOUNT) throw new Error('The default account cannot be removed');
-      if (!this.findAccount(provider, accountId)) throw new Error('Account not found');
+      const stored = this.findAccount(provider, accountId);
+      if (!stored) throw new Error('Account not found');
+      const external = !!stored.dir;
       const mine = [...this.sessions.values()].filter((rt) => rt.meta.provider === provider && rt.meta.accountId === accountId);
       const busy = mine.filter((rt) => rt.meta.status === 'running' || rt.meta.status === 'awaiting' || rt.meta.status === 'starting');
       if (busy.length) throw new Error(busy.length === 1 ? 'A session with this account is still working. Stop it first.' : `${busy.length} sessions with this account are still working. Stop them first.`);
@@ -571,7 +771,8 @@ export class App {
         this.emit({ type: 'settings.updated', settings: this.store.state.settings });
       }
       this.store.saveState();
-      this.removeAccountDir(provider, accountId);
+      // A folder the user brought is only forgotten; Sable's own folder for the account is deleted.
+      if (!external) this.removeAccountDir(provider, accountId);
       return this.emitProvider(provider);
     });
 
@@ -780,6 +981,7 @@ export class App {
       if (!handle.rewind) return { ok: false, message: 'This provider cannot rewind.' };
       return handle.rewind(itemId, restoreFiles);
     });
+    this.register('session.switchAccount', ({ sessionId, accountId, retry }) => this.switchAccount(this.runtime(sessionId), accountId, { retry }));
     this.register('session.context', async ({ sessionId }) => (await this.runtime(sessionId).handle?.context?.()) ?? null);
     this.register('session.setOptions', async ({ sessionId, options }) => {
       const rt = this.runtime(sessionId);
@@ -837,6 +1039,11 @@ function isDir(dir: string) {
     return false;
   }
 }
+
+const sameDir = (a: string, b: string) => path.resolve(a).replace(/[\\/]+$/, '').toLowerCase() === path.resolve(b).replace(/[\\/]+$/, '').toLowerCase();
+
+/** How long a sign-in may wait for the browser. */
+const LOGIN_TIMEOUT_MS = 10 * 60_000;
 
 /** How long after start-up cached provider info is checked against the CLI. */
 const INFO_REFRESH_DELAY_MS = 15_000;

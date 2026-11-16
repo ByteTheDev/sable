@@ -1,7 +1,9 @@
 import { VERSION } from '../version';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
+import { carryCodexConversation } from '../accounts/handover';
 import type {
   AuthState,
   SessionMeta,
@@ -13,6 +15,7 @@ import type {
   HistoryEntry,
   McpServerInfo,
   ModelInfo,
+  NoticeItem,
   PermissionOption,
   ProviderInfo,
   Question,
@@ -148,6 +151,23 @@ export class CodexProvider implements Provider {
 
   constructor(readonly ctx: ProviderContext) {
     if (ctx.account?.dir) this.env = { CODEX_HOME: ctx.account.dir };
+  }
+
+  /** The CODEX_HOME this account's Codex uses: its own, the user's CODEX_HOME, or ~/.codex. */
+  configHome(): string {
+    return this.env?.CODEX_HOME ?? process.env.CODEX_HOME ?? path.join(homedir(), '.codex');
+  }
+
+  /** Copies the thread's rollout from another account's CODEX_HOME into this one (see accounts/handover). */
+  async adoptConversation(fromHome: string, threadId: string): Promise<boolean> {
+    return carryCodexConversation(fromHome, this.configHome(), threadId);
+  }
+
+  /** The used-up window of the last known limits (for a refused turn's notice). */
+  fullWindow(): RateLimit | undefined {
+    return mapLimits([...this.snapshots.values()])
+      .filter((l) => l.percent >= 100)
+      .sort((a, b) => (b.resetsAt ?? 0) - (a.resetsAt ?? 0))[0];
   }
 
   // ── idle stop ──
@@ -1143,6 +1163,13 @@ class CodexSession implements ProviderSession {
         const e = p as ErrorNotification;
         const msg = e.error?.message ?? 'Codex error';
         if (!e.willRetry) this.turnError = msg;
+        // Refused at a plan limit ("You've hit your usage limit…"): a limit notice the bridge can act on.
+        const info = (e.error as { codexErrorInfo?: unknown } | undefined)?.codexErrorInfo;
+        if (!e.willRetry && (info === 'usageLimitExceeded' || /usage limit/i.test(msg))) {
+          const full = this.provider.fullWindow();
+          rt.add<NoticeItem>({ type: 'notice', variant: 'error', text: msg, detail: e.error?.additionalDetails ?? undefined, limit: { resetsAt: full?.resetsAt, window: full?.label } });
+          return;
+        }
         rt.notice(e.willRetry ? 'retry' : 'error', msg, e.error?.additionalDetails ?? undefined);
         return;
       }

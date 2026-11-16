@@ -121,10 +121,13 @@ export function useLimitLevel(provider: ProviderId | undefined, accountId?: stri
   });
 }
 
-/** How an account reads in one line: its email once signed in, otherwise its label. */
+/**
+ * How an account reads in one line: its label (new accounts are named after their sign-in, and the
+ * user renames them in place), the email only when there is no label.
+ */
 export function accountName(a: AccountInfo | undefined): string {
   if (!a) return 'Removed account';
-  return (a.auth.loggedIn && a.auth.email) || a.label;
+  return a.label || (a.auth.loggedIn && a.auth.email) || 'Account';
 }
 
 /**

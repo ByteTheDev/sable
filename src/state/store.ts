@@ -50,7 +50,7 @@ export type RailTab = 'changes' | 'files' | 'browser' | 'terminal' | 'tasks' | '
 export type SettingsSection = 'general' | 'appearance' | 'accounts' | 'usage' | 'models' | 'permissions' | 'mcp' | 'hooks' | 'skills' | 'agents' | 'memory' | 'shortcuts' | 'about';
 
 export interface AuthFlow {
-  state: 'started' | 'url' | 'done' | 'error' | 'cancelled';
+  state: 'started' | 'url' | 'done' | 'error' | 'cancelled' | 'timeout';
   url?: string;
   message?: string;
 }

@@ -29,6 +29,7 @@ import type {
   McpServerInfo,
   ModeInfo,
   ModelInfo,
+  NoticeItem,
   PermissionOption,
   ProviderInfo,
   RateLimit,
@@ -46,6 +47,7 @@ import { killTree, runCli, spawnCli } from '../util/proc';
 import { baseName, describeTool, flattenContent, mapResult, normalizeTodos, peekPartialInput, previewDiff } from './claude-tools';
 import type { Provider, ProviderContext, ProviderSession, WarmChoice } from './types';
 import { claudePlan } from './plans';
+import { carryClaudeConversation } from '../accounts/handover';
 import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
 import { widgetServer } from './claude-widget';
 import { WIDGET_SERVER, WIDGET_TOOL_ID, widgetsEnabled } from './widget-tool';
@@ -172,6 +174,9 @@ export class ClaudeProvider implements Provider {
   private limitsAt = 0;
   private limitsRun?: Promise<RateLimit[]>;
   private limitsProbeAt = 0;
+  /** The usage endpoint refused: no unasked reads until then. */
+  private limitsRefusedUntil = 0;
+  private limitsRefusedLogged = false;
   readonly sessions = new Set<ClaudeSession>();
   /** The account's own config folder; undefined for the built-in default account. */
   private readonly configDir?: string;
@@ -455,6 +460,9 @@ export class ClaudeProvider implements Provider {
   readLimits(q: Query, minGapMs = 15_000): Promise<RateLimit[]> {
     if (this.limitsRun) return this.limitsRun;
     if (Date.now() - this.limitsAt < minGapMs) return Promise.resolve(this.limitsCache);
+    // The usage endpoint refused lately (the CLI remembers that for up to an hour): asking again
+    // only adds load. Turns keep the windows current through rate_limit_event meanwhile.
+    if (minGapMs > 0 && Date.now() < this.limitsRefusedUntil) return Promise.resolve(this.limitsCache);
     const run = this.readLimitsNow(q).finally(() => {
       if (this.limitsRun === run) this.limitsRun = undefined;
     });
@@ -465,13 +473,18 @@ export class ClaudeProvider implements Provider {
   private async readLimitsNow(q: Query, retried = false): Promise<RateLimit[]> {
     try {
       const u = (await withTimeout(q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }), 10_000, 'usage')) as Obj;
-      // A process that just started may not have fetched them yet: ask once more a moment later.
-      if (!u?.rate_limits && u?.rate_limits_available && !retried) {
-        await new Promise((r) => setTimeout(r, 2500));
-        return this.readLimitsNow(q, true);
-      }
+      void retried;
       this.limitsAt = Date.now();
       const rl = u?.rate_limits as Obj | null;
+      // Available but empty: the usage endpoint refused (HTTP 429, remembered by the CLI per
+      // sign-in for up to an hour) and the process has no reply headers to fall back on yet. A
+      // quick retry cannot help; keep the last known windows and wait for a turn's rate_limit_event.
+      if (!rl && u?.rate_limits_available) {
+        this.limitsRefusedUntil = Date.now() + LIMITS_REFUSED_BACKOFF_MS;
+        if (!this.limitsRefusedLogged) this.ctx.log('claude: the usage endpoint gave no plan limits; using the last known ones and the limits turns report');
+        this.limitsRefusedLogged = true;
+        return this.limitsCache;
+      }
       // No subscription and no plan limits: an API key or a cloud provider. (Without the
       // subscription missing too it is only a token that cannot read them: say nothing.)
       if (!rl && u?.rate_limits_available === false && !u?.subscription_type) {
@@ -515,15 +528,40 @@ export class ClaudeProvider implements Provider {
     return this.limitsCache;
   }
 
-  /** A request was refused at a limit: mark that window full until the next read says more. */
-  markLimitReached(info: Obj | undefined) {
-    if (info?.status !== 'rejected' || !info.rateLimitType) return;
-    const id = String(info.rateLimitType);
-    const row = this.limitsCache.find((l) => l.id === id);
-    if (!row) return;
-    const resetsAt = typeof info.resetsAt === 'number' ? (info.resetsAt < 1e12 ? info.resetsAt * 1000 : info.resetsAt) : row.resetsAt;
-    this.limitsCache = this.limitsCache.map((l) => (l === row ? { ...l, percent: 100, resetsAt } : l));
-    this.ctx.emit({ type: 'limits.updated', provider: 'claude', limits: this.limitsCache, meta: {} });
+  /**
+   * A `rate_limit_event` from a turn: the CLI sends one with the first reply of a process and again
+   * whenever a window moves by a percent, with every window it tracks (`unifiedWindows`, read from
+   * the reply's headers, so it costs nothing and works when the usage endpoint refuses). A refusal
+   * marks its window full. Returns the window that refused the turn, if it did.
+   */
+  onRateLimit(info: Obj | undefined): { resetsAt?: number; window?: string } | undefined {
+    if (!info) return undefined;
+    const rows = new Map(this.limitsCache.map((l) => [l.id, l]));
+    let changed = false;
+    const put = (id: string, utilization: unknown, resetsAt: unknown, full = false) => {
+      const known = LIMIT_WINDOWS[id];
+      if (!known) return;
+      const prev = rows.get(id);
+      const pct = full ? 100 : typeof utilization === 'number' ? Math.round(Math.max(0, Math.min(1, utilization)) * 100) : prev?.percent;
+      if (pct === undefined) return;
+      const reset = epochMs(resetsAt) ?? prev?.resetsAt;
+      rows.set(id, { id, label: known.label, percent: pct, resetsAt: reset, windowMins: known.mins });
+      changed = changed || pct !== prev?.percent || reset !== prev?.resetsAt;
+    };
+    const windows = info.unifiedWindows as Obj | undefined;
+    if (windows && typeof windows === 'object') for (const [id, w] of Object.entries(windows)) put(id, (w as Obj)?.utilization, (w as Obj)?.resetsAt, (w as Obj)?.status === 'rejected');
+    const type = info.rateLimitType ? String(info.rateLimitType) : undefined;
+    const rejected = info.status === 'rejected';
+    if (type) put(type, info.utilization, info.resetsAt, rejected);
+    if (changed) {
+      const rank = (id: string) => LIMIT_ORDER.indexOf(id) + 1 || 99;
+      this.limitsCache = [...rows.values()].sort((a, b) => rank(a.id) - rank(b.id));
+      this.limitsAt = Date.now();
+      this.ctx.emit({ type: 'limits.updated', provider: 'claude', limits: this.limitsCache, meta: { planLimits: true } });
+    }
+    if (!rejected) return undefined;
+    const row = type ? rows.get(type) : undefined;
+    return { resetsAt: row?.resetsAt ?? epochMs(info.resetsAt), window: row?.label };
   }
 
   /**
@@ -555,6 +593,16 @@ export class ClaudeProvider implements Provider {
         /* already gone */
       }
     }
+  }
+
+  /** The config folder this account's Claude Code uses: its own, the user's CLAUDE_CONFIG_DIR, or ~/.claude. */
+  configHome(): string {
+    return this.configDir ?? OWN_CONFIG_DIR ?? path.join(homedir(), '.claude');
+  }
+
+  /** Copies the conversation's transcript files from another account's folder into this one (see accounts/handover). */
+  async adoptConversation(fromHome: string, providerSessionId: string): Promise<boolean> {
+    return carryClaudeConversation(fromHome, this.configHome(), providerSessionId);
   }
 
   async history(cwd?: string, limit = 40): Promise<HistoryEntry[]> {
@@ -590,6 +638,18 @@ export class ClaudeProvider implements Provider {
 }
 
 const WARM_TTL_MS = 3 * 60_000;
+/** How long after the usage endpoint refused before Sable asks it again unasked. */
+const LIMITS_REFUSED_BACKOFF_MS = 10 * 60_000;
+/** Plan windows as `rate_limit_event` names them, with the rows the usage answer gives them. */
+const LIMIT_WINDOWS: Record<string, { label: string; mins: number }> = {
+  five_hour: { label: '5-hour limit', mins: 300 },
+  seven_day: { label: 'Weekly · all models', mins: 10_080 },
+  seven_day_opus: { label: 'Weekly · Opus', mins: 10_080 },
+  seven_day_sonnet: { label: 'Weekly · Sonnet', mins: 10_080 },
+};
+const LIMIT_ORDER = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'];
+/** Epoch seconds or milliseconds to milliseconds. */
+const epochMs = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? (v < 1e12 ? v * 1000 : v) : undefined);
 const CHROME_SERVER = 'claude-in-chrome';
 const COMPUTER_USE_SERVER = 'computer-use';
 
@@ -654,6 +714,9 @@ class ClaudeSession implements ProviderSession {
   private restartPending = false;
   /** The running process has reported its own capabilities (better than the probe's). */
   liveCaps = false;
+  /** This turn was refused at a plan limit: the window that refused it, and the notice that says so. */
+  private limitHit?: { resetsAt?: number; window?: string };
+  private limitNoticeId?: string;
 
   constructor(
     private rt: SessionRuntime,
@@ -1118,10 +1181,16 @@ class ClaudeSession implements ProviderSession {
         return this.onResult(any);
       case 'system':
         return this.onSystem(any);
-      case 'rate_limit_event':
-        this.provider.markLimitReached(any.rate_limit_info);
-        void (this.q && this.provider.readLimits(this.q));
+      case 'rate_limit_event': {
+        // The windows come with the event itself: no usage read needed.
+        const hit = this.provider.onRateLimit(any.rate_limit_info);
+        if (hit) {
+          this.limitHit = hit;
+          const n = this.limitNoticeId ? this.rt.get<NoticeItem>(this.limitNoticeId) : undefined;
+          if (n?.limit && !n.limit.resetsAt) this.rt.patch<NoticeItem>(n.id, { limit: { ...n.limit, ...hit } });
+        }
         return;
+      }
       case 'prompt_suggestion':
         this.rt.setSuggestion(any.suggestion);
         return;
@@ -1235,6 +1304,8 @@ class ClaudeSession implements ProviderSession {
       this.retryNotice = undefined;
     }
     const streamed = msg.id && this.streamedMessages.has(msg.id);
+    // Refused at a plan limit: the CLI's own words ("usage limit reached…") become the limit notice, not a reply.
+    const atLimit = m.error === 'rate_limit' && !parentId;
     if (synthetic) for (const t of texts) this.syntheticTexts.add(t);
     for (const b of (msg.content as Obj[] | undefined) ?? []) {
       if (b.type === 'tool_use' || b.type === 'server_tool_use') {
@@ -1243,13 +1314,21 @@ class ClaudeSession implements ProviderSession {
           rt.add<ToolItem>({ id: b.id, type: 'tool', name: b.name, ...view, status: 'pending', parentId });
         }
         this.toolReady(b.id, b.name, b.input ?? {});
-      } else if (!streamed && b.type === 'text' && b.text) {
+      } else if (!streamed && !atLimit && b.type === 'text' && b.text) {
         rt.add<TextItem>({ type: 'text', text: b.text, streaming: false, parentId });
       } else if (!streamed && b.type === 'thinking' && b.thinking) {
         rt.add<ThinkingItem>({ type: 'thinking', text: b.thinking, streaming: false, endedAt: Date.now(), parentId });
       }
     }
-    if (m.error) rt.notice('error', errorLabel(m.error));
+    if (atLimit) {
+      if (!this.limitNoticeId) {
+        const said = texts.join(' ');
+        // Older CLIs say "Claude AI usage limit reached|<reset time in epoch seconds>".
+        const stamp = epochMs(Number(/\|(\d{9,13})\b/.exec(said)?.[1]));
+        const detail = said.replace(/\|\d{9,13}\b/, '').trim() || undefined;
+        this.limitNoticeId = rt.add<NoticeItem>({ type: 'notice', variant: 'error', text: errorLabel(m.error), detail, limit: { resetsAt: this.limitHit?.resetsAt ?? stamp, window: this.limitHit?.window } }).id;
+      }
+    } else if (m.error) rt.notice('error', errorLabel(m.error));
     // Local command output carries zero usage: it says nothing about the context size.
     if (!parentId && !synthetic) {
       const u = msg.usage as Obj | undefined;
@@ -1370,6 +1449,8 @@ class ClaudeSession implements ProviderSession {
     if (!rt.turnActive) return;
     this.interrupted = false;
     this.outstanding = 0;
+    this.limitHit = undefined;
+    this.limitNoticeId = undefined;
     rt.settle(interrupted ? 'cancelled' : error ? 'error' : 'cancelled');
     if (interrupted) rt.notice('interrupted', 'Interrupted');
     rt.endTurn(error);

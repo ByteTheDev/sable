@@ -6,7 +6,9 @@ import { CopyButton } from '@/components/CopyButton';
 import { Icon } from '@/icons';
 import { resetIn } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
-import { addAccount, cancelLogin, login, logout, openSettings, refreshLimits, refreshProvider, removeAccount, renameAccount, setDefaultAccount } from '@/state/actions';
+import { tildePath } from '@/lib/format';
+import { openAddAccount } from '@/features/accounts/model';
+import { cancelLogin, login, logout, openSettings, refreshLimits, refreshProvider, removeAccount, renameAccount, setDefaultAccount } from '@/state/actions';
 import { useAccounts } from '@/state/hooks';
 import { accountKey, useStore, type AuthFlow } from '@/state/store';
 import { cx, IconButton, Menu, MenuContent, MenuItem, MenuSep, MenuTrigger, Spinner } from '@/ui';
@@ -19,7 +21,7 @@ const ease = [0.16, 1, 0.3, 1] as const;
 const ROLL = { type: 'spring', stiffness: 560, damping: 42, mass: 0.8 } as const;
 
 type RowPhase = 'loading' | 'missing' | 'started' | 'url' | 'error' | 'success' | 'leaving' | 'in' | 'out';
-type Confirm = 'out' | 'switch' | 'remove' | null;
+type Confirm = 'out' | 'remove' | null;
 
 /**
  * One agent and the subscription it is connected with. A single account reads as one row
@@ -30,21 +32,11 @@ export function ConnectCard({ provider, primary = false, compact = false }: { pr
   const info = useStore((s) => s.providers[provider]);
   const listed = useAccounts(provider);
   const name = PROVIDER_NAME[provider];
-  const [busy, setBusy] = useState(false);
 
   // Older bridges send no account list: the provider's own sign-in is its one account.
   const accounts: AccountInfo[] = listed.length || !info ? listed : [{ id: DEFAULT_ACCOUNT, provider, label: 'Main', isDefault: true, auth: info.auth }];
   const multi = accounts.length > 1;
   const firstOut = primary ? accounts.find((a) => !a.auth.loggedIn)?.id : undefined;
-
-  const add = async () => {
-    setBusy(true);
-    try {
-      await addAccount(provider, { signIn: true });
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const mark = <ProviderMark provider={provider} size={compact ? 22 : 24} className="cc-mark" />;
 
@@ -74,8 +66,8 @@ export function ConnectCard({ provider, primary = false, compact = false }: { pr
       )}
 
       {!compact && info?.installed && (
-        <button type="button" className="acc-add" disabled={busy} onClick={() => void add()}>
-          {busy ? <Spinner size={13} /> : <Icon name="plus" size={14} />}
+        <button type="button" className="acc-add" onClick={() => openAddAccount(provider)}>
+          <Icon name="plus" size={14} />
           Add account
         </button>
       )}
@@ -157,11 +149,12 @@ function AccountRow({
   const limits = useStore((s) => s.limits[key]) ?? account.limits;
   const accountId = account.id === DEFAULT_ACCOUNT ? undefined : account.id;
   const own = account.id === DEFAULT_ACCOUNT;
+  const home = useStore((s) => s.home);
   const row = useRef<HTMLDivElement>(null);
 
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [renaming, setRenaming] = useState(false);
-  const [busy, setBusy] = useState<'out' | 'remove' | 'refresh' | 'in' | 'switch' | null>(null);
+  const [busy, setBusy] = useState<'out' | 'remove' | 'refresh' | 'in' | null>(null);
   const [celebrate, setCelebrate] = useState(false);
   const [dismissed, setDismissed] = useState<AuthFlow | undefined>(undefined);
   const cancelledAt = useRef(0);
@@ -185,11 +178,10 @@ function AccountRow({
   }, [flow]);
 
   const signedIn = account.auth.loggedIn;
-  const live = flow && flow !== dismissed && (flow.state === 'started' || flow.state === 'url' || flow.state === 'error') ? flow : undefined;
+  const live = flow && flow !== dismissed && (flow.state === 'started' || flow.state === 'url' || flow.state === 'error' || flow.state === 'timeout') ? flow : undefined;
   let phase: RowPhase;
-  if (live) phase = live.state as RowPhase;
+  if (live) phase = live.state === 'timeout' ? 'error' : (live.state as RowPhase);
   else if (celebrate) phase = 'success';
-  else if (busy === 'switch') phase = signedIn ? 'leaving' : 'started';
   else if (busy === 'in') phase = 'started';
   else phase = signedIn ? 'in' : 'out';
 
@@ -212,16 +204,6 @@ function AccountRow({
     setBusy('in');
     void login(provider, accountId).finally(() => setBusy((b) => (b === 'in' ? null : b)));
   };
-  // Another subscription: sign out, then straight into the sign-in flow, in place.
-  const switchPlan = () => {
-    setDismissed(flow);
-    setConfirm(null);
-    setBusy('switch');
-    void (async () => {
-      await logout(provider, accountId);
-      await login(provider, accountId);
-    })().finally(() => setBusy((b) => (b === 'switch' ? null : b)));
-  };
   const cancel = () => {
     cancelledAt.current = Date.now();
     setBusy(null);
@@ -230,14 +212,14 @@ function AccountRow({
 
   const plan = planLabel(account.auth);
   const email = signedIn ? account.auth.email : undefined;
-  // The label tells accounts apart once there are several ("Work", "Personal").
-  const label = multi && account.label && account.label !== email ? account.label : undefined;
   const showLimits = !compact && signedIn && !!limits?.length && phase === 'in' && !confirm;
+  const folder = account.dir ? tildePath(account.dir, home) : '';
 
   const sub: { key: string; text: ReactNode; tone?: 'error' | 'quiet' } = confirm
     ? {
         key: `confirm-${confirm}`,
-        text: confirm === 'remove' ? 'Remove this account and its profile folder?' : confirm === 'switch' ? 'Sign out, then sign in with another subscription?' : 'Sign out of this subscription?',
+        // Say exactly what goes: Sable's own folder for the account, or nothing at all for a folder the user brought.
+        text: confirm === 'remove' ? (account.external ? `Forget this account? ${folder} stays as it is.` : `Delete ${folder || 'its folder'}? Its sessions stay readable.`) : 'Sign out of this account?',
       }
     : phase === 'started'
       ? { key: 'started', text: <><Ring size={11} label={null} />Opening the sign-in page</> }
@@ -246,12 +228,12 @@ function AccountRow({
         : phase === 'leaving'
           ? { key: 'leaving', text: <><Spinner size={11} />Signing out</> }
           : phase === 'error'
-            ? { key: `error-${live?.message ?? ''}`, text: live?.message || 'Sign-in did not finish', tone: 'error' }
+            ? { key: `error-${live?.state}-${live?.message ?? ''}`, text: live?.state === 'timeout' ? 'Sign-in timed out' : live?.message || 'Sign-in did not finish', tone: 'error' }
             : phase === 'success'
               ? { key: 'success', text: <><DrawnCheck />Signed in</> }
               : phase === 'in'
-                ? { key: `in-${label ?? ''}-${email ?? ''}`, text: [label, email ?? account.auth.org].filter(Boolean).join(' · ') || 'Signed in', tone: 'quiet' }
-                : { key: 'out', text: account.problem ?? (label ? `${label} · Not signed in` : 'Not signed in') };
+                ? { key: `in-${email ?? ''}`, text: email ?? account.auth.org ?? 'Signed in', tone: 'quiet' }
+                : { key: 'out', text: account.problem ?? 'Not signed in' };
 
   const actionsKey = confirm ? `c-${confirm}` : phase === 'url' && live?.url ? 'url-link' : phase;
 
@@ -283,6 +265,11 @@ function AccountRow({
           ) : (
             <span className="acc-top">
               {heading && <span className="acc-agent">{heading}</span>}
+              {multi && (
+                <button type="button" className="acc-label truncate" aria-label={`${account.label}. Rename`} onClick={() => setRenaming(true)} disabled={compact}>
+                  {account.label}
+                </button>
+              )}
               <Roll k={plan ?? '-'} className="acc-plan">
                 {plan ?? ''}
               </Roll>
@@ -306,11 +293,7 @@ function AccountRow({
                 {confirm === 'remove' ? (
                   <button type="button" className="btn btn-sm btn-danger" disabled={busy === 'remove'} onClick={() => void run('remove', async () => (await removeAccount(provider, account.id)) || setConfirm(null))}>
                     {busy === 'remove' ? <Spinner size={12} /> : <Icon name="trash" size={14} />}
-                    Remove
-                  </button>
-                ) : confirm === 'switch' ? (
-                  <button type="button" className="btn btn-sm" onClick={switchPlan}>
-                    Continue
+                    {account.external ? 'Forget' : 'Remove'}
                   </button>
                 ) : (
                   <button type="button" className="btn btn-sm btn-danger" disabled={busy === 'out'} onClick={() => void run('out', () => logout(provider, accountId)).then(() => setConfirm(null))}>
@@ -320,14 +303,9 @@ function AccountRow({
                 )}
               </>
             ) : phase === 'in' ? (
-              <>
-                <button type="button" className="btn btn-sm btn-ghost acc-quiet" onClick={() => setConfirm('switch')}>
-                  Use another subscription
-                </button>
-                <button type="button" className="btn btn-sm btn-ghost acc-quiet" onClick={() => setConfirm('out')}>
-                  Sign out
-                </button>
-              </>
+              <button type="button" className="btn btn-sm btn-ghost acc-quiet" onClick={() => setConfirm('out')}>
+                Sign out
+              </button>
             ) : phase === 'out' ? (
               <button type="button" className={cx('btn btn-sm', primary && 'btn-primary')} onClick={signIn}>
                 <Icon name="sign-in" size={14} />
@@ -385,7 +363,7 @@ function AccountRow({
                 <>
                   <MenuSep />
                   <MenuItem icon="trash" tone="danger" onSelect={() => setConfirm('remove')}>
-                    Remove
+                    {account.external ? 'Forget' : 'Remove'}
                   </MenuItem>
                 </>
               )}
@@ -424,7 +402,7 @@ export function Roll({ k, children, className, right, title }: { k: string; chil
 }
 
 /** A check that draws itself once. */
-function DrawnCheck() {
+export function DrawnCheck() {
   return (
     <svg className="drawn-check" viewBox="0 0 16 16" width="13" height="13" aria-hidden>
       <circle cx="8" cy="8" r="7" />

@@ -3,12 +3,15 @@ import type { ProviderId } from '@shared/protocol';
 import { ConnectCard } from '@/features/connect/Connect';
 import { connectableAgents } from '@/features/connect/plan';
 import { Icon } from '@/icons';
-import { refreshLimits } from '@/state/actions';
+import { refreshLimits, setSettings } from '@/state/actions';
 import { useStore } from '@/state/store';
+import { Switch } from '@/ui';
+import '@/features/accounts/accounts.css';
 
 export function Accounts() {
   const providers = useStore((s) => s.providers);
   const ready = useStore((s) => s.ready);
+  const carryOn = useStore((s) => !!s.settings.continueAtLimit);
   const order = connectableAgents(providers);
 
   // Fresh limits for every signed-in account, once per visit (and when one signs in).
@@ -31,6 +34,10 @@ export function Accounts() {
           <ConnectCard key={id} provider={id} primary={id === firstOut} />
         ))}
       </div>
+      <label className="acct-auto" data-spot>
+        <span className="acct-auto-label">Continue with the next account at a limit</span>
+        <Switch checked={carryOn} onChange={(v) => void setSettings({ continueAtLimit: v })} label="Continue with the next account at a limit" />
+      </label>
       <p className="set-foot-note">
         <Icon name="lock" size={14} />
         <span>Sign-in happens in your browser through each agent's own CLI, so Sable never sees your password or tokens. Every account you add is a separate profile with its own settings and history.</span>

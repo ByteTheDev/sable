@@ -89,6 +89,13 @@ export interface Provider {
   prewarm?(choice: WarmChoice): Promise<void>;
   /** Stops the warm process, if any. */
   discardWarm?(): Promise<void>;
+  /** The config folder this account's agent reads and writes (its transcripts live there). */
+  configHome?(): string;
+  /**
+   * Makes a conversation stored under another account of this agent (`fromHome`, that account's
+   * `configHome()`) resumable by this one. True when this account can now resume `providerSessionId`.
+   */
+  adoptConversation?(fromHome: string, providerSessionId: string): Promise<boolean>;
   dispose(): Promise<void>;
 }
 

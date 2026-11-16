@@ -58,6 +58,30 @@ export interface AccountInfo {
   /** The account's config folder; absent for the built-in default (the CLI's own). */
   dir?: string;
   problem?: string;
+  /** A folder the user already had ("Use an existing folder"): removing the account forgets it, never deletes it. */
+  external?: boolean;
+}
+
+/** A config folder under the home folder that looks like an agent's own, offered by "Use an existing folder". */
+export interface AccountFolder {
+  dir: string;
+  /** The folder's name as shown ("claude-work"). */
+  name: string;
+}
+
+/** A turn the agent refused because the account is at a plan limit (on the notice that says so). */
+export interface LimitHit {
+  /** Filled in by the bridge when the turn ends. */
+  provider?: ProviderId;
+  accountId?: string;
+  /** When the window that refused it resets (ms), when known. */
+  resetsAt?: number;
+  /** Which window, as the limit rows name it ("5-hour limit"). */
+  window?: string;
+  /** Another signed-in account of the same agent with room, to continue with. */
+  next?: string;
+  /** The session carried on with this account. */
+  continuedWith?: string;
 }
 
 /** Reasoning effort, lowest first. `ultra` is Codex's level above `max` (the model may delegate to sub-agents). */
@@ -409,6 +433,8 @@ export interface NoticeItem extends BaseItem {
   variant: 'info' | 'error' | 'interrupted' | 'compact' | 'retry' | 'mode' | 'model' | 'command' | 'rewind';
   text: string;
   detail?: string;
+  /** The turn was refused at a plan limit (shown by `features/accounts`' LimitNotice). */
+  limit?: LimitHit;
 }
 
 /** Closes a turn: duration, cost, token counts. */
@@ -714,6 +740,8 @@ export interface AppSettings {
    * blocks. Absent means on; applies to the tool when an agent process starts.
    */
   generativeUi?: boolean;
+  /** At a plan limit, a session carries on with the next signed-in account of its agent that has room. Absent means off. */
+  continueAtLimit?: boolean;
 }
 
 /** One permission rule set from an agent's settings file (read-only view). */
@@ -771,7 +799,7 @@ export interface AppState {
 
 export type BridgeEvent =
   | { type: 'provider.updated'; provider: ProviderInfo }
-  | { type: 'auth.progress'; provider: ProviderId; accountId?: string; state: 'started' | 'url' | 'done' | 'error' | 'cancelled'; url?: string; message?: string }
+  | { type: 'auth.progress'; provider: ProviderId; accountId?: string; state: 'started' | 'url' | 'done' | 'error' | 'cancelled' | 'timeout'; url?: string; message?: string }
   | { type: 'projects.updated'; projects: Project[] }
   | { type: 'settings.updated'; settings: AppSettings }
   | { type: 'session.added'; session: SessionMeta }
@@ -840,6 +868,19 @@ export interface RpcMethods {
   'account.rename': { params: { provider: ProviderId; accountId: string; label: string }; result: ProviderInfo };
   /** Never the default. Refuses while one of its sessions is busy; deletes the account's folder. */
   'account.remove': { params: { provider: ProviderId; accountId: string }; result: ProviderInfo };
+  /** Registers a config folder the user already has as an account (nothing is copied; removing it only forgets it). */
+  'account.addExisting': { params: { provider: ProviderId; dir: string; label?: string }; result: ProviderInfo & { account: AccountInfo } };
+  /** Folders under the home folder that look like this agent's config and are not an account yet. */
+  'account.folders': { params: { provider: ProviderId }; result: AccountFolder[] };
+  /**
+   * Moves an idle session to another account of its agent. The same conversation continues when the
+   * agent's transcript can be carried over (`carried: 'conversation'`); otherwise a new one starts with a
+   * short handover of this one (`'summary'`). `retry` sends the message a limit refused again.
+   */
+  'session.switchAccount': {
+    params: { sessionId: string; accountId: string; retry?: boolean };
+    result: { ok: boolean; carried: 'conversation' | 'summary' | 'none'; message?: string };
+  };
 
   /** Models, modes, commands… for a provider before any session exists. */
   'provider.caps': { params: { provider: ProviderId; cwd?: string; accountId?: string }; result: Capabilities };
@@ -983,4 +1024,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
  * while `AppSettings.conciseReplies` is on. Never replaces what the user configured.
  */
 export const CONCISE_REPLIES_PROMPT =
-  'When you finish, answer briefly: the outcome in one or two sentences first, then only what the user needs to know or decide next. No long reports and no file-by-file recaps unless asked. If you built or changed something that can be viewed in a browser, start or reuse a local dev server in the background and put its http://localhost URL on its own line.';
+  'Finish with a short reply: the outcome in one or two sentences, then only what the user must know or do next. '
+  + 'The app shows every change and step, so do not list the files you changed or recap what you did. '
+  + 'No headings in short replies and no closing offers. Keep notes between steps to a sentence. '
+  + 'If you built something that can be viewed in a browser, start or reuse a local dev server in the background and put its http://localhost URL on its own line.';

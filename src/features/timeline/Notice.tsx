@@ -3,6 +3,7 @@ import type { NoticeItem } from '@shared/protocol';
 import { Collapse } from '@/components/Collapse';
 import { Markdown } from '@/components/Markdown';
 import { Icon, type IconName } from '@/icons';
+import { LimitNotice } from '@/features/accounts';
 
 const ICON: Record<NoticeItem['variant'], IconName> = {
   info: 'info',
@@ -19,6 +20,9 @@ const ICON: Record<NoticeItem['variant'], IconName> = {
 /** Things that happened to the conversation rather than in it: dividers, errors, command output. */
 export const Notice = memo(function Notice({ item }: { item: NoticeItem }) {
   const [open, setOpen] = useState(true);
+
+  // A turn refused at a plan limit: the accounts feature says when it resets and offers another account.
+  if (item.limit) return <LimitNotice item={item} />;
 
   if (item.variant === 'error') {
     return (

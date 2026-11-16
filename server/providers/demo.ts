@@ -182,9 +182,19 @@ export class DemoProvider implements Provider {
     rt.update(patch);
     if (resumeId && opts.loadTranscript) rt.reset(transcript(rt, resumeId));
     this.ctx.log(`demo session ${rt.id} opened (${resumeId ? 'resumed' : 'new'})`);
-    const session = new DemoSession(rt, this.speed, this.ctx);
+    const session = new DemoSession(rt, this.speed, this.ctx, () => this.limitProfile());
     if (rt.meta.options) void session.setOptions(rt.meta.options);
     return session;
+  }
+
+  /** An extra account's own folder (the default account has none: it keeps nothing on disk). */
+  configHome(): string {
+    return this.ctx.account?.dir ?? '';
+  }
+
+  /** The demo keeps no transcripts: any account can carry on with any conversation. */
+  async adoptConversation(): Promise<boolean> {
+    return true;
   }
 
   async dispose() {
@@ -243,6 +253,7 @@ class DemoSession implements ProviderSession {
     private rt: SessionRuntime,
     private speed: number,
     private ctx: ProviderContext,
+    private limitProfile: () => DemoLimitProfile | undefined = () => undefined,
   ) {
     this.model = rt.meta.model;
     this.effort = rt.meta.effort;
@@ -285,6 +296,15 @@ class DemoSession implements ProviderSession {
     const { id, rotated } = pickScenario(item.text, this.rt.meta.mode || this.mode, this.rotation);
     if (rotated) this.rotation++;
     let error: string | undefined;
+    // An account at its cap refuses the turn the way a real agent does: the limit is reported, nothing runs.
+    if (this.limitProfile() === 'cap') {
+      await s.sleep(300).catch(() => {});
+      const limits = rateLimits(Date.now(), 'cap');
+      this.ctx.emit({ type: 'limits.updated', provider: 'demo', limits, meta: { planLimits: true } });
+      const full = limits.find((l) => l.percent >= 100);
+      this.rt.add<NoticeItem>({ type: 'notice', variant: 'error', text: 'You have reached your usage limit.', limit: { resetsAt: full?.resetsAt, window: full?.label } });
+      return this.complete(ctrl, 'You have reached your usage limit.');
+    }
     try {
       await s.sleep(250 + Math.random() * 350);
       if (id !== 'command') s.step();

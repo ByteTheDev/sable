@@ -10,7 +10,8 @@ import { Icon } from '@/icons';
 import { windowShell } from '@/lib/desktop';
 import { baseName, formatTokens } from '@/lib/format';
 import { goHome, openSettings } from '@/state/actions';
-import { useActiveProvider, useHotkey, useSessionAccountName } from '@/state/hooks';
+import { useActiveProvider, useHotkey } from '@/state/hooks';
+import { SessionAccount } from '@/features/accounts';
 import { useShallow } from 'zustand/react/shallow';
 import { useStore, type RailTab } from '@/state/store';
 import { IconButton, Tip, TipProvider, Toasts } from '@/ui';
@@ -258,8 +259,6 @@ function Topbar() {
       return m ? { id: m.id, provider: m.provider, accountId: m.accountId, title: m.title, cwd: m.cwd, branch: m.branch } : undefined;
     }),
   );
-  const accountName = useSessionAccountName(session);
-
   return (
     <header className="topbar">
       <IconButton icon="sidebar" label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} keys="mod+b" onClick={() => setUi({ sidebarOpen: !sidebarOpen })} />
@@ -282,12 +281,8 @@ function Topbar() {
                 {session.branch}
               </>
             )}
-            {accountName && (
-              <>
-                <Icon name="user" size={13} />
-                {accountName}
-              </>
-            )}
+            {/* The account, when its agent has several: opens "Continue with another account". */}
+            <SessionAccount sessionId={session.id} />
           </span>
         </div>
       ) : (

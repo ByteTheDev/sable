@@ -1,7 +1,7 @@
 import { DEFAULT_ACCOUNT, type AccountInfo, type Attachment, type BackdropConfig, type BackdropImage, type Effort, type ProviderId, type QueuedMessage, type SessionMeta, type SessionOptions } from '@shared/protocol';
 import { normalizeBackdrop } from '@shared/backdrop';
 import { bridge } from '@/lib/bridge';
-import { applySnapshot, capsKey, loadSession, useStore, type SettingsSection, type Store } from './store';
+import { applySnapshot, capsKey, loadSession, useStore, type RailTab, type SettingsSection, type Store } from './store';
 
 /** Everything the UI can ask the bridge to do. Components call these, never bridge.call directly. */
 
@@ -23,6 +23,11 @@ useStore.subscribe((s) => {
 /** Opens Settings at a section, or where it was last left. */
 export function openSettings(section?: SettingsSection) {
   useStore.getState().setUi({ settings: section ?? lastSettings });
+}
+
+/** Opens the side panel on a tab (the turn's "2 files changed" opens Changes). */
+export function showRailTab(tab: RailTab) {
+  useStore.getState().setUi({ railOpen: true, railTab: tab });
 }
 
 export function goHome(cwd?: string | null) {
@@ -375,6 +380,34 @@ export async function removeAccount(provider: ProviderId, accountId: string): Pr
   } catch (err) {
     fail(err);
     return false;
+  }
+}
+
+/** Registers a config folder the user already keeps as an account (used in place; removing it only forgets it). */
+export async function addExistingAccount(provider: ProviderId, dir: string, label?: string): Promise<AccountInfo | null> {
+  try {
+    const { account, ...info } = await bridge.call('account.addExisting', { provider, dir, label });
+    useStore.setState((s) => ({ providers: { ...s.providers, [provider]: info } }));
+    return account;
+  } catch (err) {
+    fail(err);
+    return null;
+  }
+}
+
+/** Config folders under the home folder that look like the agent's own and are not accounts yet. */
+export const accountFolders = (provider: ProviderId) => bridge.call('account.folders', { provider }).catch(() => []);
+
+/**
+ * Moves an idle session to another account of its agent (the conversation carries over where it
+ * can). `retry` sends the message a plan limit refused again. Resolves null when the bridge refused.
+ */
+export async function switchSessionAccount(sessionId: string, accountId: string, retry = false) {
+  try {
+    return await bridge.call('session.switchAccount', { sessionId, accountId, retry });
+  } catch (err) {
+    fail(err);
+    return null;
   }
 }
 

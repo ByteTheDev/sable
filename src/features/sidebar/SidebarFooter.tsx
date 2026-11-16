@@ -1,14 +1,15 @@
 import { memo, useEffect, type CSSProperties } from 'react';
 import { DEFAULT_ACCOUNT, type RateLimit } from '@shared/protocol';
 import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
-import { connectableAgents, isSignedIn, planLabel } from '@/features/connect/plan';
+import { AccountSwitcher, AddAccountDialog } from '@/features/accounts';
+import { connectableAgents, isSignedIn } from '@/features/connect/plan';
 import { Icon } from '@/icons';
 import { resetIn } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
-import { homeAccountId, openSettings, refreshLimits, setHomeAccount } from '@/state/actions';
-import { accountName, useAccountLimits, useFocusAccount } from '@/state/hooks';
+import { openSettings, refreshLimits } from '@/state/actions';
+import { useAccountLimits, useFocusAccount } from '@/state/hooks';
 import { useStore } from '@/state/store';
-import { IconButton, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger } from '@/ui';
+import { IconButton } from '@/ui';
 import './footer.css';
 
 const REFRESH_MS = 4 * 60_000;
@@ -19,6 +20,7 @@ export const SidebarFooter = memo(function SidebarFooter() {
     <div className="side-foot">
       <Usage />
       <Account />
+      <AddAccountDialog />
     </div>
   );
 });
@@ -85,11 +87,10 @@ function LimitRow({ limit }: { limit: RateLimit }) {
   );
 }
 
-/** Who is signed in: the plan first ("Max plan"), the email quietly after it. */
+/** Who is signed in: the plan first ("Max plan"), the account's name after it when there are several. */
 function Account() {
   const providers = useStore((s) => s.providers);
-  const { provider: active, accountId } = useFocusAccount();
-  const homeId = useStore((s) => homeAccountId(active, s));
+  const { provider: active } = useFocusAccount();
   const ready = useStore((s) => s.ready);
 
   const connected = connectableAgents(providers).filter((id) => isSignedIn(providers[id]));
@@ -117,60 +118,9 @@ function Account() {
     );
   }
 
-  const focus = connected.includes(active) ? active : connected[0];
-  const accounts = providers[focus]?.accounts ?? [];
-  const account = focus === active ? accounts.find((a) => a.id === accountId) : accounts.find((a) => a.isDefault);
-  const auth = account?.auth ?? providers[focus]?.auth;
-  const plan = planLabel(auth);
-  const email = auth?.loggedIn ? auth.email : undefined;
-  const name = account ? accountName(account) : email;
-  const multi = focus === active && accounts.length > 1;
-  const described = [PROVIDER_NAME[focus], plan ?? (auth?.loggedIn ? 'signed in' : 'not signed in'), email].filter(Boolean).join(', ');
-
-  const main = (
-    <>
-      <span className="account-marks" aria-hidden>
-        {connected.map((id) => (
-          <span key={id} className="account-mark" data-focus={id === focus || undefined}>
-            <ProviderMark provider={id} size={12} />
-          </span>
-        ))}
-      </span>
-      <span className="account-who">
-        <span className="account-plan">{plan ?? (auth?.loggedIn ? PROVIDER_NAME[focus] : 'Not signed in')}</span>
-        {email && !plan && <span className="account-email-dim truncate">{email}</span>}
-      </span>
-      {multi && <Icon name="caret-updown" size={13} className="account-caret" />}
-    </>
-  );
-
   return (
     <div className="account">
-      {multi ? (
-        <Menu>
-          <MenuTrigger asChild>
-            <button type="button" className="account-main" title={name} aria-label={`${described}. Switch account`}>
-              {main}
-            </button>
-          </MenuTrigger>
-          <MenuContent side="top" align="start" width={252}>
-            <MenuLabel>New {PROVIDER_NAME[focus]} sessions use</MenuLabel>
-            {accounts.map((a) => (
-              <MenuItem key={a.id} icon="user" checked={a.id === homeId} hint={a.auth.loggedIn ? (planLabel(a.auth) ?? undefined) : 'Not signed in'} onSelect={() => setHomeAccount(focus, a.id)}>
-                {accountName(a)}
-              </MenuItem>
-            ))}
-            <MenuSep />
-            <MenuItem icon="settings" onSelect={openAccounts}>
-              Manage accounts
-            </MenuItem>
-          </MenuContent>
-        </Menu>
-      ) : (
-        <button type="button" className="account-main" onClick={openAccounts} title={name} aria-label={`${described}. Accounts`}>
-          {main}
-        </button>
-      )}
+      <AccountSwitcher />
       <IconButton icon="settings" label="Settings" keys="mod+," tipSide="top" onClick={() => openSettings()} />
     </div>
   );
