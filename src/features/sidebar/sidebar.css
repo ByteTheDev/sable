@@ -125,7 +125,8 @@
   position: relative;
   flex: 1;
   min-height: 0;
-  padding: 0 4px 18px 2px;
+  /* No bottom padding: the bottom fade below is the list's own last 22px (see there). */
+  padding: 0 4px 0 2px;
   outline: none;
   /* Opaque, so the scroller gets its own layer even at 1x (where a transparent one keeps LCD text by
      repainting on every scroll step instead). */
@@ -171,10 +172,12 @@
   background: linear-gradient(to bottom, var(--side-bg), transparent);
 }
 
+/* The bottom fade takes its own 22px after the last row instead of lying over it: at the end of the
+   list (or in a list too short to scroll) it covers only empty ground, so the last row keeps its
+   tone; while more rows are below, it sticks to the bottom edge and they pass under it. */
 .side-list::after {
-  bottom: -18px;
+  bottom: 0;
   height: 22px;
-  margin-top: -22px;
   background: linear-gradient(to top, var(--side-bg), transparent);
 }
 
