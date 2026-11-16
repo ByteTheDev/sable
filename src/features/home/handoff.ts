@@ -123,7 +123,7 @@ export function beginHandoff(card: HTMLElement | null) {
   const arrow = key?.querySelector('.sk-glyph');
   if (key && arrow) {
     key.style.overflow = 'hidden';
-    arrow.animate([{ transform: 'translateY(0px)', opacity: 1 }, { transform: 'translateY(-20px)', opacity: 0.2 }], { duration: 200, delay: 30, easing: 'cubic-bezier(0.55, 0, 0.8, 0.3)', fill: 'forwards' });
+    arrow.animate([{ transform: 'translateY(0px)', opacity: 1 }, { transform: 'translateY(-20px)', opacity: 0.2 }], { duration: 180, delay: 56, easing: 'cubic-bezier(0.55, 0, 0.8, 0.3)', fill: 'forwards' });
     key.animate([{ transform: 'scale(1)' }, { transform: 'scale(0.9)', offset: 0.3 }, { transform: 'scale(1)', opacity: 1, offset: 0.6 }, { transform: 'scale(1)', opacity: 0 }], { duration: 420, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'forwards' });
   }
   // The field settles to one line on the way down (the docked composer's resting height).

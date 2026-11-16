@@ -245,6 +245,11 @@
   color: transparent;
 }
 
+/* The suggestion waits too: nothing shows beside the words while they are still leaving. */
+.cmp-card[data-rolling] .cmp-ghost {
+  opacity: 0;
+}
+
 /* ── toolbar: every control 28 px, one centre line ── */
 
 .cmp-bar {

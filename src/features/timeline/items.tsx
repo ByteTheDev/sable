@@ -122,6 +122,9 @@ export function estimate(item: TimelineItem | undefined): number {
   }
 }
 
+/** No new words for this long while the text is live: the write head rests (ms). */
+const REST_AFTER_MS = 700;
+
 /**
  * Assistant prose. While it streams, the text is paced (see `useSmoothLength`), a marker or a
  * table row is shown only once it is whole (`steadyTail`), and the newest words ease in at the
@@ -142,7 +145,27 @@ export const LiveText = memo(function LiveText({ text, streaming, id }: { text: 
     const t = window.setTimeout(() => setLeaving(false), 260);
     return () => window.clearTimeout(t);
   }, [live]);
-  return <Markdown text={live ? steadyTail(text.slice(0, len)) : text} streaming={live} head={live ? 'live' : leaving ? 'out' : undefined} />;
+  // A pause in the stream (a tool is running, the model is thinking): the head rests instead of
+  // staying lit. Words only stamp the time; one slow timer looks at the stamp (nothing is armed per
+  // word), and the state changes only at the pause's edges.
+  const [resting, setResting] = useState(false);
+  const lastWord = useRef(0);
+  useEffect(() => {
+    lastWord.current = performance.now();
+    if (resting) setResting(false);
+  }, [len]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!live || resting) return;
+    let t = 0;
+    const check = () => {
+      const idle = performance.now() - lastWord.current;
+      if (idle >= REST_AFTER_MS) setResting(true);
+      else t = window.setTimeout(check, REST_AFTER_MS - idle + 20);
+    };
+    t = window.setTimeout(check, REST_AFTER_MS);
+    return () => window.clearTimeout(t);
+  }, [live, resting]);
+  return <Markdown text={live ? steadyTail(text.slice(0, len)) : text} streaming={live} head={live ? (resting ? 'rest' : 'live') : leaving ? 'out' : undefined} />;
 });
 
 /** One item, subscribed to itself only. `answer`: the reply a turn segment ends with. */

@@ -9,7 +9,7 @@ import { baseName, dirName } from '@/lib/format';
 import { fuzzy } from '@/lib/fuzzy';
 import { isUltraEffort } from '@/lib/models';
 import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
-import { launchFlight } from './flight';
+import { launchFlight, RELEASE } from './flight';
 import { launchKey } from './launch';
 import { fieldBeat } from '@/art/events';
 import { searchFiles, type FileHit } from '@/lib/workspace';
@@ -481,8 +481,11 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
    * live): the sent text rolls up about 12px behind the field's top edge and fades (80 ms), and
    * the next placeholder rises from 8px below (100 ms, two frames later). The backdrop gets a pulse.
    */
-  const rollOut = (sent: string, next: string | null, flew: boolean) => {
-    fieldBeat('send', card.current?.querySelector('.cmp-send') ?? card.current, 1);
+  const rollOut = (sent: string, next: string | null, flew: boolean, queued = false) => {
+    // One beat: the wave leaves the key as the words and the arrow do (RELEASE after the press).
+    const key = card.current?.querySelector('.cmp-send') ?? card.current;
+    if (flew) window.setTimeout(() => fieldBeat('send', key?.isConnected ? key : document.querySelector('.cmp-send'), 1), RELEASE);
+    else fieldBeat('send', key, 1);
     const field = ref.current?.parentElement;
     if (!field || !sent) return;
     const layer = document.createElement('div');
@@ -504,7 +507,7 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
       ph.textContent = next;
       layer.appendChild(ph);
       card.current?.setAttribute('data-rolling', '');
-      last = play(ph, [{ transform: 'translateY(8px)', opacity: 0 }, { transform: 'translateY(0px)', opacity: 1 }], { duration: flew ? 160 : 100, delay: flew ? 150 : 33, easing: EASE_OUT, fill: 'both' }) ?? out;
+      last = play(ph, [{ transform: 'translateY(8px)', opacity: 0 }, { transform: 'translateY(0px)', opacity: 1 }], { duration: flew ? 160 : 100, delay: flew ? (queued ? 300 : 150) : 33, easing: EASE_OUT, fill: 'both' }) ?? out;
     }
     const done = () => {
       layer.remove();
@@ -560,7 +563,8 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
     if (flew) launchFlight({ el: ta, text: trimmed }, { dest: sessionId && busy && !steering ? 'tray' : 'timeline', steer: steering, first: !sessionId });
     if (variant === 'session') launchKey(card.current);
     // In a session the next placeholder is always the queueing one: the turn is running (or about to).
-    rollOut(text, variant === 'session' ? 'Queue a follow-up' : null, flew);
+    // A queued message's words rise through the field into the tray: the placeholder waits for them.
+    rollOut(text, variant === 'session' ? 'Queue a follow-up' : null, flew, !!sessionId && busy && !steering);
     clear();
     if (sessionId) {
       await sendMessage(sessionId, out.text, out.attachments, steer && busy ? { steer: true } : {});

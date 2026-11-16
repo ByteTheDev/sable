@@ -8,7 +8,7 @@ import { useStore } from '@/state/store';
 import { IconButton, Popover, PopoverClose, PopoverContent, PopoverTrigger, Switch } from '@/ui';
 import { fieldBeat } from '@/art/events';
 import { landInTimeline } from '@/features/composer/flight';
-import { EASE_OUT, play } from '@/lib/motion';
+import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
 import { useTimeline } from './ctx';
 import { Stamp } from './Stamp';
 
@@ -46,6 +46,16 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
     if (wasQueued.current && !queued && item.steered) {
       const card = root.current?.querySelector('.user-card');
       play(card, [{ opacity: 0.6, transform: 'scale(0.985)', offset: 0 }, { opacity: 1, transform: 'scale(1.012)', offset: 0.45 }, { opacity: 1, transform: 'scale(1)' }], { duration: 420, easing: EASE_OUT });
+      // The wire goes solid and a light runs along it, from the message into the turn.
+      const wire = root.current?.querySelector<HTMLElement>('.user-wire');
+      if (wire && !reducedMotion()) {
+        const light = document.createElement('b');
+        wire.appendChild(light);
+        const run = play(light, [{ transform: 'translateX(0px)', opacity: 0 }, { opacity: 0.9, offset: 0.2 }, { opacity: 0.9, offset: 0.7 }, { transform: `translateX(${-wire.offsetWidth}px)`, opacity: 0 }], { duration: 460, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'both' });
+        const gone = () => light.remove();
+        if (run) run.finished.then(gone, gone);
+        else gone();
+      }
       fieldBeat('pulse', card, 0.6);
     }
     wasQueued.current = queued;
@@ -60,6 +70,12 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
 
   return (
     <div className="user" ref={root} data-queued={queued || undefined} data-open={open || undefined} data-steered={item.steered || undefined}>
+      {item.steered && (
+        // Steered into a running turn: a hairline ties the message to the turn it went into.
+        <span className="user-wire" aria-hidden>
+          <i />
+        </span>
+      )}
       <div className="user-actions">
         {!queued && <Stamp ts={item.ts} prefix={item.steered ? 'Steered' : undefined} className="user-stamp" />}
         {item.text && <CopyButton text={item.text} label="Copy message" />}

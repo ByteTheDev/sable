@@ -1,19 +1,24 @@
-import { EASE_OUT, play, reducedMotion, uiZoom } from '@/lib/motion';
+import { veil } from '@/art/veil';
+import { play, reducedMotion, spring, uiZoom } from '@/lib/motion';
 
 /**
- * The sent words travel. On send the text lifts out of the field as a clone (a fixed layer over
- * everything) and the field is empty and live at once; the clone heads for where the message
- * will sit (guessed from the geometry while the bridge answers), then an eased arc of about half
- * a second carries it onto the element the message becomes (the bubble in the conversation, or
- * the row in the queue tray), the bubble forms under it in the last part, and the two swap.
+ * The sent words are thrown. On send the text lifts out of the field as a clone (a fixed layer
+ * over everything) and the field is empty and live at once. The throw is one beat with the send
+ * key and the backdrop (`RELEASE` ms after the press: the words sink a touch while the key gives,
+ * then the arrow leaves the disc, the wave leaves the key and the words leave the field at full
+ * speed). They fly on a spring toward where the message will sit (guessed from the geometry while
+ * the bridge answers; the real place takes over without a break, the spring keeps its speed), and
+ * the arrival draws the bubble: as the words come within reach, the card resolves out of the
+ * ground in dither around them and the two settle as one body, then swap.
  *
  * - One clone per message, transform and opacity only. Its target is read once per frame from
  *   the landing element (the conversation is gliding to its end meanwhile), on a clean layout.
  * - Wrapped words take the bubble's measure as they lift and the landing's type when it is
  *   known, so they arrive pixel for pixel and hand over in one frame. Words that still differ
- *   (more than four lines, a one-line row) crossfade into the real text over the last stretch.
- * - A send glides with the vertical leading (it rises, then settles right); a steer leans into
- *   the turn first (sideways leading) and cools to the waiting tone it lands in.
+ *   (more than four lines, a one-line row) crossfade into the real text as the bubble forms.
+ * - A send is thrown upward and sweeps right; a steer leans into the turn first (sideways
+ *   leading) and cools to the waiting tone it lands in. The first message from home slides out
+ *   from under the headline before it rises, so the two never cross.
  * - Nothing waits for the motion: the message is already sent when the clone appears. A clone
  *   that finds no landing within a moment fades where it is.
  * Under reduced motion there are no clones: the items fade in as before.
@@ -21,34 +26,48 @@ import { EASE_OUT, play, reducedMotion, uiZoom } from '@/lib/motion';
 
 export type FlightDest = 'timeline' | 'tray';
 
+/** The beat the key, the words and the backdrop share: ms from the press to the release. */
+export const RELEASE = 56;
+
+/** A point on the words' path: ms since the launch, offset from the start (px), speed (px/s). */
+interface Sample {
+  t: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+}
+
 interface Flight {
   el: HTMLDivElement;
   key: string;
   dest: FlightDest;
   steer: boolean;
-  born: number;
-  last: number;
-  raf: number;
+  /** Ms after the launch at which the words leave the field (they sink a touch until then). */
+  release: number;
+  /** The path the words are on (compositor animation) and its samples; the give-up timer. */
+  anim: Animation | null;
+  path: Sample[];
+  timer: number;
+  /** The first message of a new session (the view it lands in is still fading in). */
+  first: boolean;
   start: { left: number; top: number };
   size: number;
-  x: number;
-  y: number;
-  /** Where the words were when their landing became known, and how long the trip takes (ms). */
-  x0: number;
-  y0: number;
-  dur: number;
+  /** The sideways axis leads (a steer, the first message from home); otherwise the rise does. */
+  sideways: boolean;
+  /** The first message from home: how long the rise waits (ms after release) for the headline to go. */
+  hold: number;
   target: HTMLElement | null;
-  /** Scale at the landing (the target's type size over the field's). */
-  scale: number;
-  dist0: number;
-  claimedAt: number;
+  /** What rides home with the words over the last stretch (the message row), if anything. */
+  rider: HTMLElement | null;
   /** The first message of a new session: where it will sit, guessed from the stage, so the words
    *  are on their way before the session exists (offset from the start). */
   guess: { x: number; y: number } | null;
   cut: boolean;
   fading: boolean;
   ending: boolean;
-  onLand?: () => void;
+  /** Forms what the words land in (the bubble), as they come within reach. */
+  onCatch?: () => void;
 }
 
 const pending: Flight[] = [];
@@ -64,7 +83,6 @@ const matches = (flightKey: string, text: string) => {
 /** Lines a long message flies with; the rest is already in the bubble when it lands. */
 const MAX_LINES = 4;
 const NO_CLAIM_MS = 1400;
-const GUESS_MS = 640;
 
 let measure: CanvasRenderingContext2D | null = null;
 
@@ -97,7 +115,7 @@ function guessLanding(clone: HTMLElement, left: number, top: number, from: HTMLE
     const w0 = r.width / z;
     const width = Math.min(col, w0 - 48);
     colRight = r.left / z + (w0 + width) / 2;
-    y = r.top / z + 70;
+    y = r.top / z + 46;
   }
   measure ??= document.createElement('canvas').getContext('2d');
   const cs = clone.style;
@@ -188,27 +206,28 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
     key: norm(source.text),
     dest: opts.dest,
     steer,
-    born: now,
-    last: now,
-    raf: 0,
+    // A row leaving the tray has no key press to share a beat with: it goes at once.
+    release: source.oneLine ? 0 : RELEASE,
+    anim: null,
+    path: [],
+    timer: 0,
+    first: !!opts.first,
     start: { left, top },
     size,
-    x: 0,
-    y: 0,
-    x0: 0,
-    y0: 0,
-    dur: 0,
+    sideways: steer || !!opts.first,
+    hold: opts.first ? FIRST_HOLD : 0,
     target: null,
-    scale: 1,
-    dist0: 1,
-    claimedAt: 0,
-    guess: opts.dest === 'timeline' && !source.oneLine ? guessLanding(clone, left, top, source.el, !!opts.first) : null,
+    rider: null,
+    // A queued message leaves the field for the tray just above the card, before its row exists.
+    guess: opts.dest === 'tray' ? { x: 4, y: -46 } : !source.oneLine ? guessLanding(clone, left, top, source.el, !!opts.first) : null,
     cut: false,
     fading: false,
     ending: false,
   };
   pending.push(f);
-  f.raf = requestAnimationFrame((t) => step(f, t));
+  // On its way at once: toward the guess, or a short lift until the landing is known.
+  run(f, fly(f, { t: 0, x: 0, y: 0, vx: 0, vy: 0 }, f.guess?.x ?? 0, f.guess?.y ?? -14, 0));
+  f.timer = window.setTimeout(() => !f.target && abort(f), NO_CLAIM_MS);
   // A conversation row that mounted first (the bridge answered before this row left the tray).
   if (opts.dest === 'timeline') {
     const i = unclaimed.findIndex((u) => now - u.at < 400 && u.root.isConnected && matches(f.key, u.key));
@@ -219,68 +238,140 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
   }
 }
 
-/** A cubic-bezier easing (x1, y1, x2, y2), solved by a few Newton steps. */
-function bezier(x1: number, y1: number, x2: number, y2: number) {
-  const cx = 3 * x1;
-  const bx = 3 * (x2 - x1) - cx;
-  const ax = 1 - cx - bx;
-  const cy = 3 * y1;
-  const by = 3 * (y2 - y1) - cy;
-  const ay = 1 - cy - by;
-  return (p: number) => {
-    if (p <= 0) return 0;
-    if (p >= 1) return 1;
-    let t = p;
-    for (let i = 0; i < 6; i++) {
-      const x = ((ax * t + bx) * t + cx) * t - p;
-      const d = (3 * ax * t + 2 * bx) * t + cx;
-      if (Math.abs(x) < 1e-4 || !d) break;
-      t -= x / d;
+/** Stiffness of the axis that leads and of the one that follows (both critically damped): the path is an arc. */
+const K_LEAD = 300;
+const K_FOLLOW = 240;
+/** The rise of the first message from home, once the headline has gone. */
+const K_RISE = 250;
+/** The throw: the leading axis leaves at this share of its trip per second, so the first frames cover ground. */
+const THROW = 7;
+/** The following axis gets a little of it too, so the sweep is under way from the first frame. */
+const THROW_FOLLOW = 2;
+/** How far the words sink while the key gives (px). */
+const DIP = 2.5;
+/** The first message from home waits this long before it rises (the headline is dissolving above it). */
+const FIRST_HOLD = 220;
+/** The bubble forms when the words are this close: a share of the trip, never less than a few px. */
+const REACH = 0.14;
+const REACH_MIN = 26;
+/** How long the bubble takes to form around the words (ms); a tray row has nothing to form. */
+const FORM = 250;
+const FORM_TRAY = 130;
+
+/**
+ * The path from `from` toward a landing at (gx, gy), stepped ahead of time: the gather (the words
+ * sink while the key gives), the throw at the release, then two critically damped springs, one
+ * per axis, the leading one stiffer. With a `reach` the path ends where the words come that close
+ * (the bubble takes over there); without one it runs until they rest. The whole path is handed to
+ * the compositor as one animation, so a busy main thread (a session mounting, a turn starting)
+ * cannot make the words stutter: the main thread only acts at the launch, when the landing
+ * becomes known, and at the reach.
+ */
+function fly(f: Flight, from: Sample, gx: number, gy: number, reach: number): Sample[] {
+  const out = [from];
+  let { t, x, y, vx, vy } = from;
+  let thrown = t > f.release;
+  const kx = f.sideways ? K_LEAD : K_FOLLOW;
+  const ky = f.sideways ? (f.hold ? K_RISE : K_FOLLOW) : K_LEAD;
+  const cx = 2 * Math.sqrt(kx);
+  const cy = 2 * Math.sqrt(ky);
+  const h = 0.004;
+  for (let i = 1; i < 320; i++) {
+    t += 4;
+    const since = t - f.release;
+    let done = false;
+    if (since <= 0) y = DIP * Math.sin((t / f.release) * Math.PI * 0.5);
+    else {
+      if (!thrown) {
+        thrown = true;
+        vx = (f.sideways ? THROW : THROW_FOLLOW) * (gx - x);
+        vy = (f.sideways ? THROW_FOLLOW : THROW) * (gy - y);
+      }
+      // Under the headline until it has gone: the rise waits, the slide does not.
+      const holding = since < f.hold;
+      const ty = holding ? Math.max(gy, -10) : gy;
+      vx += (kx * (gx - x) - cx * vx) * h;
+      vy += (ky * (ty - y) - cy * vy) * h;
+      x += vx * h;
+      y += vy * h;
+      const rem = Math.hypot(gx - x, gy - y);
+      done = !holding && (rem < reach || (rem < 0.3 && Math.hypot(vx, vy) < 4));
     }
-    return ((ay * t + by) * t + cy) * t;
-  };
+    if (done || i % 4 === 0) out.push({ t, x, y, vx, vy });
+    if (done) break;
+  }
+  return out;
 }
 
-/** The axis that leads gets there early and softly; the other follows: the path is an arc. */
-const LEAD = bezier(0.22, 0.6, 0.12, 1);
-const FOLLOW = bezier(0.5, 0, 0.12, 1);
+/** Plays a path on the clone (replacing the one it was on); `then` runs when it has been flown. */
+function run(f: Flight, path: Sample[], then?: () => void) {
+  const t0 = path[0].t;
+  const dur = Math.max(1, path[path.length - 1].t - t0);
+  const frames: Keyframe[] = path.map((p) => ({ offset: Math.min(1, (p.t - t0) / dur), transform: `translate3d(${p.x.toFixed(2)}px, ${p.y.toFixed(2)}px, 0)` }));
+  if (frames.length < 2) frames.push({ ...frames[0], offset: 1 });
+  frames[frames.length - 1].offset = 1;
+  const old = f.anim;
+  f.path = path;
+  const a = (f.anim = f.el.animate(frames, { duration: dur, easing: 'linear', fill: 'forwards' }));
+  old?.cancel();
+  if (then) a.finished.then(() => f.anim === a && !f.ending && then(), () => {});
+}
 
-function step(f: Flight, now: number) {
-  f.raf = 0;
-  if (f.ending) return;
-  if (!f.target) {
-    if (now - f.born > NO_CLAIM_MS) return abort(f);
-    if (f.guess) {
-      // Toward where the message will sit; the real place corrects the aim when it exists.
-      const p = Math.min(1, (now - f.born) / GUESS_MS);
-      f.x = f.guess.x * FOLLOW(p);
-      f.y = f.guess.y * LEAD(p);
-    } else {
-      // Before a landing is known the words drift up, out of the field.
-      f.y = -12 * (1 - Math.exp(-(now - f.born) / 70));
-    }
-    f.el.style.transform = `translate3d(${f.x.toFixed(2)}px, ${f.y.toFixed(2)}px, 0)`;
-    f.raf = requestAnimationFrame((t) => step(f, t));
-    return;
+/** Where the words are right now on their path (read from the animation's own clock). */
+function whereNow(f: Flight): Sample {
+  const p = f.path;
+  const t = p[0].t + (Number(f.anim?.currentTime) || 0);
+  for (let i = 1; i < p.length; i++) {
+    if (p[i].t < t) continue;
+    const a = p[i - 1];
+    const b = p[i];
+    const u = (t - a.t) / Math.max(1, b.t - a.t);
+    return { t, x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, vx: a.vx + (b.vx - a.vx) * u, vy: a.vy + (b.vy - a.vy) * u };
   }
-  if (!f.target.isConnected) return abort(f);
+  // The path is flown: the words rest at its end.
+  const e = p[p.length - 1];
+  return { t: Math.max(t, e.t), x: e.x, y: e.y, vx: 0, vy: 0 };
+}
+
+/**
+ * The last stretch. The words are within reach of their landing. Whatever they land in (the
+ * message row with its forming bubble) takes the words' offset and the two ride home together on
+ * one compositor animation that starts at the speed the spring had, so the bubble is pulled out
+ * of the ground by the arriving words. Words that are the same lines as the real ones swap at
+ * once and the real text rides (the conversation may still be gliding under them); others
+ * dissolve into it on the way.
+ */
+function arrive(f: Flight) {
+  const target = f.target;
+  if (!target?.isConnected) return abort(f);
+  const end = f.path[f.path.length - 1];
   const z = uiZoom();
-  const r = f.target.getBoundingClientRect();
-  const tx = r.left / z - f.start.left;
-  const ty = r.top / z - f.start.top;
-  const p = Math.min(1, (now - f.claimedAt) / f.dur);
-  const ex = f.steer ? LEAD(p) : FOLLOW(p);
-  const ey = f.steer ? FOLLOW(p) : LEAD(p);
-  const x = f.x0 + (tx - f.x0) * ex;
-  const y = f.y0 + (ty - f.y0) * ey;
-  const s = 1 + (f.scale - 1) * ey;
-  f.x = x;
-  f.y = y;
-  // Wrapped text: the real lines take over in the last stretch, so the rewrap is a dissolve.
-  if (!f.cut && !f.fading && p > 0.7) crossfade(f);
-  f.el.style.transform = `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0)${s !== 1 ? ` scale(${s.toFixed(4)})` : ''}`;
-  if (p >= 1) return land(f);
-  f.raf = requestAnimationFrame((t) => step(f, t));
+  const r = target.getBoundingClientRect();
+  const gx = r.left / z - f.start.left;
+  const gy = r.top / z - f.start.top;
+  const ox = end.x - gx;
+  const oy = end.y - gy;
+  const rem = Math.max(1, Math.hypot(ox, oy));
+  const dur = f.rider ? FORM : FORM_TRAY;
+  // A curve that leaves at the spring's speed (its first slope), then brakes onto the landing.
+  const slope = Math.min(3, Math.max(1, (Math.hypot(end.vx, end.vy) * (dur / 1000)) / rem));
+  const ride: KeyframeAnimationOptions = { duration: dur, easing: `cubic-bezier(0.25, ${(0.25 * slope).toFixed(3)}, 0.3, 1)`, fill: 'backwards' };
+  const frames: Keyframe[] = [{ translate: `${ox.toFixed(2)}px ${oy.toFixed(2)}px` }, { translate: '0px 0px' }];
+  f.el.style.transform = `translate3d(${gx.toFixed(2)}px, ${gy.toFixed(2)}px, 0)`;
+  const own = f.el.animate(frames, ride);
+  f.anim?.cancel();
+  f.anim = null;
+  if (f.rider) {
+    f.rider.animate(frames, ride);
+    f.onCatch?.();
+    f.onCatch = undefined;
+    // Inside a view that is still fading in (the first message of a session) the clone stays on
+    // top until the ride ends; nothing scrolls under it there.
+    if (f.cut && !f.first) return land(f);
+    if (!f.cut) crossfade(f);
+  }
+  const done = () => land(f);
+  own.finished.then(done, done);
 }
 
 function crossfade(f: Flight) {
@@ -296,24 +387,19 @@ function crossfade(f: Flight) {
 function land(f: Flight) {
   if (f.ending) return;
   f.ending = true;
-  cancelAnimationFrame(f.raf);
+  window.clearTimeout(f.timer);
   if (f.target) f.target.style.opacity = '';
-  // Same line, same type: the real words are exactly under the clone, so the swap is one frame.
-  if (f.fading) {
-    const done = () => f.el.remove();
-    const a = f.el.getAnimations().at(-1);
-    if (a) a.finished.then(done, done);
-    else done();
-  } else f.el.remove();
-  f.onLand?.();
+  f.el.remove();
   drop(f);
 }
 
 function abort(f: Flight) {
   if (f.ending) return;
   f.ending = true;
-  cancelAnimationFrame(f.raf);
+  window.clearTimeout(f.timer);
   if (f.target) f.target.style.opacity = '';
+  // A bubble that was waiting for these words shows itself.
+  f.onCatch?.();
   const done = () => f.el.remove();
   const a = play(f.el, [{ opacity: 0 }], { duration: 140, easing: 'linear', fill: 'forwards' });
   if (a) a.finished.then(done, done);
@@ -336,7 +422,6 @@ function aim(f: Flight, target: HTMLElement, oneLineTarget: boolean) {
   const r = target.getBoundingClientRect();
   const cs = getComputedStyle(target);
   f.target = target;
-  f.claimedAt = performance.now();
   // The words take the landing's type now, early in the trip (a queue row is 13 px, a message 14):
   // set, not scaled, so they arrive pixel for pixel on the real ones and the swap can be a cut.
   if (cs.fontSize !== f.el.style.fontSize || cs.lineHeight !== f.el.style.lineHeight) {
@@ -345,31 +430,41 @@ function aim(f: Flight, target: HTMLElement, oneLineTarget: boolean) {
     f.el.style.letterSpacing = cs.letterSpacing;
     f.size = parseFloat(cs.fontSize) || f.size;
   }
-  f.scale = 1;
-  f.dist0 = Math.max(1, Math.hypot(r.left / z - f.start.left - f.x, r.top / z - f.start.top - f.y));
-  f.x0 = f.x;
-  f.y0 = f.y;
-  // Send: the rise leads and the slide follows (up and over). Steer: it leans into the turn first.
-  // Longer trips take a little longer, never past about 0.6 s.
-  f.dur = f.guess ? Math.max(200, GUESS_MS - (f.claimedAt - f.born) + Math.min(160, f.dist0)) : Math.min(620, Math.max(440, 380 + f.dist0 * 0.35));
+  // Wrapped words take the landing's own measure and wrapping too, so their lines are the real
+  // lines (one more reflow of the clone, early in the trip) and the swap can still be a cut.
+  if (!oneLineTarget && f.el.offsetHeight > (parseFloat(cs.lineHeight) || 22) * 1.5) {
+    f.el.style.setProperty('text-wrap', cs.getPropertyValue('text-wrap'));
+    f.el.style.width = `${(r.width / z).toFixed(2)}px`;
+  }
+  const tx = r.left / z - f.start.left;
+  const ty = r.top / z - f.start.top;
+  const dist0 = Math.max(1, Math.hypot(tx, ty));
+  const from = whereNow(f);
+  // Words that were only lifting (no guess to fly toward) are thrown now that the landing is known.
+  if (from.t > f.release && !f.guess) {
+    from.vx += (f.sideways ? THROW : THROW_FOLLOW) * (tx - from.x);
+    from.vy += (f.sideways ? THROW_FOLLOW : THROW) * (ty - from.y);
+  }
   const lh = parseFloat(cs.lineHeight) || 22;
   const lines = Math.round(r.height / z / lh);
   const cloneLines = Math.round(f.el.offsetHeight / (parseFloat(getComputedStyle(f.el).lineHeight) || 22));
   // The same lines at the same measure (a one-line message, or wrapped words that took the
   // bubble's measure and fit whole): the swap is a cut. Anything else dissolves on arrival.
-  const sameScale = Math.abs(f.scale - 1) < 0.02;
   const whole = f.el.scrollHeight <= f.el.offsetHeight + 1;
   const oneLine = cloneLines <= 1 && (lines <= 1 || oneLineTarget);
   const sameWrap = !oneLineTarget && whole && cloneLines === lines && Math.abs(r.width / z - f.el.offsetWidth) < 1.5;
-  f.cut = sameScale && (oneLine || sameWrap);
+  f.cut = oneLine || sameWrap;
   target.style.opacity = '0';
-  if (!f.raf) f.raf = requestAnimationFrame((t) => step(f, t));
+  // The real landing takes over from the guess: the path goes on from where the words are, at their speed.
+  run(f, fly(f, from, tx, ty, Math.max(REACH_MIN, dist0 * REACH)), () => arrive(f));
 }
 
 /**
  * A message mounted in the conversation (`root` is its `.user` element). When its words are in
- * the air, they land here: the row skips its own entrance, the bubble forms under the arriving
- * text, and the clone swaps in. Returns true when a clone took it.
+ * the air, they land here: the row skips its own entrance and stays clear until the words are
+ * within reach, then it rides home with them while the bubble resolves out of the ground in
+ * dither around them (its right edge where it will stay, a spring settling its size). Returns
+ * true when a clone took it.
  */
 export function landInTimeline(root: HTMLElement, text: string, opts: { steer?: boolean; late?: boolean } = {}): boolean {
   if (reducedMotion()) return false;
@@ -386,17 +481,34 @@ export function landInTimeline(root: HTMLElement, text: string, opts: { steer?: 
   if (!textEl || !card) return false;
   root.setAttribute('data-flight', '');
   for (const a of root.getAnimations()) a.cancel();
+  f.rider = root;
+  const steer = f.steer || !!opts.steer;
+  const side = [...root.querySelectorAll<HTMLElement>('.user-mark, .user-wire')];
+  // The row paints outside its own box while it rides in (rows are paint-contained at rest).
+  const row = root.closest<HTMLElement>('.tl-item');
+  card.style.visibility = 'hidden';
+  for (const el of side) el.style.visibility = 'hidden';
+  f.onCatch = () => {
+    card.style.visibility = '';
+    card.style.transformOrigin = '100% 50%';
+    if (row) {
+      row.style.contentVisibility = 'visible';
+      window.setTimeout(() => (row.style.contentVisibility = ''), FORM + 80);
+    }
+    void veil(card, 'reveal', { duration: 210, cell: 3 });
+    const settle = spring(520, 27);
+    // A small, even swell: the words inside are the real ones by now and must stay crisp.
+    play(card, [{ transform: 'scale(0.95)' }, { transform: 'scale(1)' }], { duration: settle.duration, easing: settle.easing });
+    for (const el of side) {
+      el.style.visibility = '';
+      // The mark follows the bubble; the wire of a steer draws itself (timeline.css).
+      if (el.classList.contains('user-mark')) play(el, [{ opacity: 0 }, { opacity: 1 }], { duration: 220, delay: 110, easing: 'linear', fill: 'backwards' });
+      else el.setAttribute('data-draw', '');
+    }
+    // Into the running turn: the words cool to the waiting tone as they are caught.
+    if (steer) play(card, [{ opacity: 1 }, { opacity: 0.6 }], { duration: 220, easing: 'linear' });
+  };
   aim(f, textEl, false);
-  // The bubble forms around the words as they arrive: from a smaller, clear card on its right edge.
-  const lead = opts.late ? 0 : Math.round(f.dur * 0.38);
-  card.style.transformOrigin = '100% 50%';
-  play(card, [{ opacity: 0, transform: 'scale(0.9, 0.82)', offset: 0 }], { duration: Math.round(f.dur * 0.62) + 40, delay: lead, easing: EASE_OUT, fill: 'backwards' });
-  const mark = root.querySelector('.user-mark');
-  if (mark) play(mark, [{ opacity: 0, transform: 'translateX(8px)', offset: 0 }], { duration: 300, delay: lead + 120, easing: EASE_OUT, fill: 'backwards' });
-  if (f.steer || opts.steer) {
-    // Into the running turn: the words cool to the waiting tone on the way in.
-    play(f.el, [{ opacity: 1 }, { opacity: 0.6 }], { duration: 420, easing: 'linear', fill: 'forwards' });
-  }
   return true;
 }
 

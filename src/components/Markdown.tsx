@@ -12,8 +12,8 @@ export interface MarkdownProps {
   text: string;
   /** The text is still arriving: the newest words ease in at the write head and unfinished syntax is tolerated. */
   streaming?: boolean;
-  /** The write head: a small light after the newest word ('live'), fading away ('out'). */
-  head?: 'live' | 'out';
+  /** The write head after the newest word: writing ('live'), resting in a pause ('rest'), leaving ('out'). */
+  head?: 'live' | 'rest' | 'out';
   className?: string;
 }
 

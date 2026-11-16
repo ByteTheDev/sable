@@ -1,6 +1,6 @@
 /* ── Animated icons ──
    The parts of an icon from `parts.tsx` move when the control holding it is hovered or focused
-   (`:focus-visible`, or a menu row Radix highlights from the keyboard). Each motion plays once per
+   (`:focus-visible`); rows of dense lists do not count as controls (see triggers). Each motion plays once per
    hover, 200 to 450 ms, and its last frame is the rest pose, so nothing jumps when it ends; leaving
    early simply drops the animation. Only transform, opacity and stroke dashes animate (the globe's
    meridians animate `rx`), on the parts of the one icon under the pointer: no layout, no filter.
@@ -27,7 +27,11 @@ svg[data-anim] {
 }
 
 /* ── triggers ── */
-:is(button, a, [role='button'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='tab'], [role='option']):is(:hover, :focus-visible, [data-highlighted]),
+/* Controls answer: buttons, links, tabs, toolbar items, a row's own actions. Dense lists stay still, or
+   moving the pointer down one would set every icon it passes in motion: the conversation's step rows
+   and work line, menu and picker rows, and any row of a list (a class ending in `-row`, or
+   `data-still` on the control). */
+:is(button, a, [role='button'], [role='tab']):not(.row-btn, .work-line, .menu-item, .srow-main, [class$='-row'], [class*='-row '], [data-still]):is(:hover, :focus-visible),
 [data-ai-play] {
   /* pin: it lifts off the board and drops back in */
   & svg[data-icon='pin'][data-anim] .pin { animation: ai-pin 440ms var(--ai-out); }

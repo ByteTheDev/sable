@@ -475,10 +475,13 @@
 
 /* ── streaming ── */
 
-/* The write head: zero width, so a line never wraps for it. Over the newest words lies a short
-   feather in the stage colour: they are still wet and dry as the head moves on, so text eases in
-   with one element per answer rather than an animation per word. A small still light marks the
-   head; when the stream ends both fade. Opacity only, nothing reflows. */
+/* The write head: zero width, so a line never wraps for it. The newest words resolve out of the
+   ground in dither: a short feather of the app's ordered dither in the stage colour lies over
+   them (a little over half at the head, thinning to nothing three words back) and moves on with the head, so text arrives
+   through the same material as everything else, with one element per answer rather than an
+   animation per word. The head itself is one lit cell. It is still: it enters once with the first
+   words, rests (dims, and the feather lifts) when the stream pauses, and leaves when it ends.
+   Opacity and transform only, nothing reflows. */
 .md-caret {
   position: relative;
   display: inline-block;
@@ -490,11 +493,13 @@
 .md-caret::before {
   content: '';
   position: absolute;
-  right: 0;
+  right: -1px;
   bottom: -0.3em;
-  width: 3.6em;
+  width: 48px;
   height: 1.6em;
-  background: linear-gradient(to right, rgb(12 12 14 / 0), rgb(12 12 14 / 0.88));
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'48'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Cpath%20fill%3D'%230c0c0e'%20d%3D'M0%200h2v2h-2zM4%200h2v2h-2zM4%204h2v2h-2zM8%200h2v2h-2zM12%200h2v2h-2zM12%204h2v2h-2zM16%200h2v2h-2zM20%200h2v2h-2zM18%202h2v2h-2zM16%204h2v2h-2zM20%204h2v2h-2zM22%206h2v2h-2zM24%200h2v2h-2zM28%200h2v2h-2zM26%202h2v2h-2zM24%204h2v2h-2zM28%204h2v2h-2zM30%206h2v2h-2zM32%200h2v2h-2zM34%200h2v2h-2zM36%200h2v2h-2zM34%202h2v2h-2zM38%202h2v2h-2zM32%204h2v2h-2zM36%204h2v2h-2zM38%204h2v2h-2zM34%206h2v2h-2zM38%206h2v2h-2zM40%200h2v2h-2zM42%200h2v2h-2zM44%200h2v2h-2zM42%202h2v2h-2zM46%202h2v2h-2zM40%204h2v2h-2zM44%204h2v2h-2zM46%204h2v2h-2zM42%206h2v2h-2zM46%206h2v2h-2z'%2F%3E%3C%2Fsvg%3E");
+  background-size: 48px 8px;
+  image-rendering: pixelated;
   pointer-events: none;
   transition: opacity 260ms var(--ease);
 }
@@ -503,15 +508,37 @@
   content: '';
   position: absolute;
   left: 5px;
-  bottom: 0.32em;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
+  bottom: 0.24em;
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
   background: var(--text);
-  opacity: 0.85;
+  opacity: 0.9;
   transition:
-    opacity 220ms var(--ease),
-    transform 220ms var(--ease);
+    opacity 240ms var(--ease),
+    transform 240ms var(--ease-out);
+}
+
+/* The first words of an answer: the cell drops in. */
+.md[data-head] > :first-child .md-caret::after {
+  animation: md-head-in 260ms var(--ease-out) backwards;
+}
+
+@keyframes md-head-in {
+  from {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+
+/* A pause (a tool is running, the model is thinking): the head rests. No blink. */
+.md[data-head='rest'] .md-caret::before {
+  opacity: 0;
+}
+
+.md[data-head='rest'] .md-caret::after {
+  opacity: 0.38;
+  transform: scale(0.84);
 }
 
 .md[data-head='out'] .md-caret::before,
@@ -520,11 +547,15 @@
 }
 
 .md[data-head='out'] .md-caret::after {
-  transform: scale(0.3);
+  transform: translateX(7px) scale(0.2);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .md-caret::before {
     display: none;
+  }
+
+  .md[data-head] > :first-child .md-caret::after {
+    animation: none;
   }
 }
