@@ -180,3 +180,77 @@ html[data-gallery] body {
 .gal-wc {
   padding-top: 0;
 }
+
+/* The animated icon sheet (IconSheet.tsx). */
+.isheet {
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+}
+
+.isheet-row {
+  display: grid;
+  grid-template-columns: 150px repeat(3, max-content);
+  gap: 18px;
+  align-items: center;
+  min-height: 34px;
+  border-bottom: 1px solid var(--line);
+}
+
+.isheet-head {
+  color: var(--text-3);
+  font-size: var(--t-small);
+}
+
+.isheet-name {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--t-small);
+}
+
+.isheet-diff {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.isheet-size {
+  display: flex;
+  gap: 2px;
+}
+
+.isheet-head .isheet-size {
+  width: calc(9 * 30px + 16px);
+}
+
+.isheet-cell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+}
+
+.isheet-size > .isheet-cell:nth-child(3) {
+  margin-right: 6px;
+  isolation: isolate;
+  background: #000;
+  color: #fff;
+}
+
+.isheet-orig {
+  color: var(--text);
+}
+
+.isheet-over {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  mix-blend-mode: difference;
+  color: #fff;
+}

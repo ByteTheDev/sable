@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { UserItem } from '@shared/protocol';
 import { CopyButton } from '@/components/CopyButton';
 import { Icon } from '@/icons';
@@ -6,6 +6,9 @@ import { formatBytes } from '@/lib/format';
 import { rewindTo } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { IconButton, Popover, PopoverClose, PopoverContent, PopoverTrigger, Switch } from '@/ui';
+import { fieldBeat } from '@/art/events';
+import { landInTimeline } from '@/features/composer/flight';
+import { EASE_OUT, play } from '@/lib/motion';
 import { useTimeline } from './ctx';
 import { Stamp } from './Stamp';
 
@@ -30,6 +33,24 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
   const files = item.attachments?.filter((a) => !(a.kind === 'image' && a.dataUrl)) ?? [];
   const long = item.text.length > LONG_CHARS || item.text.split('\n').length > LONG_LINES;
 
+  // The words sent from the composer (or a queue row) land here: the bubble forms under them.
+  const root = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (root.current && item.text) landInTimeline(root.current, item.text, { steer: item.steered });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A steer the agent has just taken: the card comes out of its waiting tone into the turn, and
+  // the light answers once from it.
+  const wasQueued = useRef(queued);
+  useEffect(() => {
+    if (wasQueued.current && !queued && item.steered) {
+      const card = root.current?.querySelector('.user-card');
+      play(card, [{ opacity: 0.6, transform: 'scale(0.985)', offset: 0 }, { opacity: 1, transform: 'scale(1.012)', offset: 0.45 }, { opacity: 1, transform: 'scale(1)' }], { duration: 420, easing: EASE_OUT });
+      fieldBeat('pulse', card, 0.6);
+    }
+    wasQueued.current = queued;
+  }, [queued, item.steered]);
+
   const rewind = async () => {
     setBusy(true);
     const ok = await rewindTo(sessionId, item.id, restore);
@@ -38,7 +59,7 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
   };
 
   return (
-    <div className="user" data-queued={queued || undefined} data-open={open || undefined} data-steered={item.steered || undefined}>
+    <div className="user" ref={root} data-queued={queued || undefined} data-open={open || undefined} data-steered={item.steered || undefined}>
       <div className="user-actions">
         {!queued && <Stamp ts={item.ts} prefix={item.steered ? 'Steered' : undefined} className="user-stamp" />}
         {item.text && <CopyButton text={item.text} label="Copy message" />}

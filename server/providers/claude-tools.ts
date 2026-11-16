@@ -1,6 +1,7 @@
 import type { FileDiff, Question, Todo, ToolDetail, ToolKind, ToolResult } from '../../shared/protocol';
 import { countChanges, makeFileDiff } from '../../shared/diff';
-import { WIDGET_TOOL_ID, describeWidget } from './widget-tool';
+import { WIDGET_SERVER, WIDGET_TOOL_ID, describeWidget } from './widget-tool';
+import { browserOp, describeBrowser } from './browser-tool';
 
 /** Normalizes Claude Code tool calls and results into Sable's display model. */
 
@@ -123,6 +124,7 @@ export function describeTool(name: string, input: Obj = {}): ToolView {
     case WIDGET_TOOL_ID:
       return describeWidget(input);
     default: {
+      if (name.startsWith(`mcp__${WIDGET_SERVER}__browser_`) && browserOp(name)) return describeBrowser(name, input);
       if (name.startsWith('mcp__')) {
         const [, server, ...rest] = name.split('__');
         const tool = rest.join('__');

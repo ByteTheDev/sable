@@ -10,6 +10,7 @@ import * as C from './demo-codebase';
 import { COMMANDS, SKILLS, contextBreakdown } from './demo-catalog';
 import { BASE_CONTEXT, Denied, type OutLine, type Script, between } from './demo-script';
 import * as W from './demo-widgets';
+import { browserLineUrl, stripBrowserLine } from './browser-tool';
 
 // ───────────────────────────────── content file ─────────────────────────────────
 
@@ -1046,6 +1047,43 @@ const arrive: Scenario = async ({ s }) => {
   s.finish({});
 };
 
+/**
+ * The Browser tab tools: open a local page (an address in the prompt, else the one the Browser tab
+ * already shows, else localhost:3000), read it and take a screenshot, through the real tools' path.
+ */
+const browser: Scenario = async ({ s, item }) => {
+  const own = stripBrowserLine(item.text);
+  const asked = /\bhttps?:\/\/[^\s"'<>]+/i.exec(own)?.[0];
+  const shown = browserLineUrl(item.text);
+  const url = asked ?? (shown ? undefined : 'http://localhost:3000/');
+  await s.think(url ? `Open ${url} in the Browser tab, then read it and look at it.` : `The Browser tab already shows ${shown}. Read it, then look at it.`);
+  if (url) {
+    const opened = await s.browser('open', { url });
+    if (!opened.ok) {
+      await s.say(`The page did not open: ${opened.text}`);
+      return s.finish({});
+    }
+  }
+  const read = await s.browser('read', {});
+  if (!read.ok) {
+    await s.say(`I could not read the page: ${read.text}`);
+    return s.finish({});
+  }
+  const shot = await s.browser('screenshot', {});
+  const errors = /\((\d+) errors?,/.exec(read.text)?.[1] ?? '0';
+  const failed = (read.text.split('Failed requests:')[1] ?? '').split('\n').filter((l) => l.startsWith('- ') && !l.includes('earlier entries')).length;
+  const title = /^Title: (.*)$/m.exec(read.text)?.[1]?.trim();
+  await s.say(
+    [
+      `The page${title ? ` **${title}**` : ''} loaded.`,
+      errors !== '0' ? `The console shows ${errors} error${errors === '1' ? '' : 's'}.` : 'The console is clean.',
+      failed ? `${failed} request${failed === 1 ? '' : 's'} failed.` : 'No requests failed.',
+      shot.ok ? 'The screenshot is in the step above.' : `The screenshot did not work: ${shot.text}`,
+    ].join(' '),
+  );
+  s.finish({});
+};
+
 // ─────────────────────────────────── selection ──────────────────────────────────
 
 export const SCENARIOS = {
@@ -1073,6 +1111,7 @@ export const SCENARIOS = {
   gallery: W.gallery,
   arrive,
   previews,
+  browser,
 } satisfies Record<string, Scenario>;
 export type ScenarioId = keyof typeof SCENARIOS;
 
@@ -1080,6 +1119,8 @@ export type ScenarioId = keyof typeof SCENARIOS;
 export const ROTATION: ScenarioId[] = ['flagship', 'agents', 'search', 'questions', 'mcp', 'markdown'];
 
 const KEYWORDS: [RegExp, ScenarioId][] = [
+  // The Browser tab tools.
+  [/\bbrowser\b/i, 'browser'],
   // Generative UI (demo-widgets.ts).
   [/\b(sandbox|hostile)\b/i, 'sandbox'],
   [/\b(whole|arrives?)\b/i, 'arrive'],

@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon, type IconName } from '@/icons';
+import { IconSheet } from './IconSheet';
 import {
   IconButton,
   Kbd,
@@ -192,13 +193,17 @@ export default function Gallery() {
         <header className="gal-top">
           <h1 className="h2">Controls</h1>
           <nav className="gal-nav">
-            {['buttons', 'toolbar', 'fields', 'toggles', 'menus', 'details', 'family', 'live'].map((id) => (
+            {['icons', 'buttons', 'toolbar', 'fields', 'toggles', 'menus', 'details', 'family', 'live'].map((id) => (
               <a key={id} href={`#${id}`} className="btn btn-ghost btn-sm">
                 {id[0].toUpperCase() + id.slice(1)}
               </a>
             ))}
           </nav>
         </header>
+
+        <Section title="Animated icons" id="icons">
+          <IconSheet />
+        </Section>
 
         <Section title="Buttons" id="buttons">
           <Head />

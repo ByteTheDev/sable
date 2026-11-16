@@ -117,9 +117,20 @@ export function beginHandoff(card: HTMLElement | null) {
   }
   copy.querySelector('.cmp-roll')?.remove();
   document.body.appendChild(ghost);
+  // The send key answers on the way: its arrow launches up out of the disc, and the disc goes
+  // quiet (the docked card brings its own key).
+  const key = copy.querySelector<HTMLElement>('.cmp-send');
+  const arrow = key?.querySelector('.sk-glyph');
+  if (key && arrow) {
+    key.style.overflow = 'hidden';
+    arrow.animate([{ transform: 'translateY(0px)', opacity: 1 }, { transform: 'translateY(-20px)', opacity: 0.2 }], { duration: 200, delay: 30, easing: 'cubic-bezier(0.55, 0, 0.8, 0.3)', fill: 'forwards' });
+    key.animate([{ transform: 'scale(1)' }, { transform: 'scale(0.9)', offset: 0.3 }, { transform: 'scale(1)', opacity: 1, offset: 0.6 }, { transform: 'scale(1)', opacity: 0 }], { duration: 420, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'forwards' });
+  }
   // The field settles to one line on the way down (the docked composer's resting height).
   requestAnimationFrame(() => field && (field.style.height = `${LINE}px`));
-  card.style.visibility = 'hidden';
+  // Opacity, not visibility: the field keeps the keyboard, so words typed during the glide are kept
+  // (the docked composer takes them over when it claims the flight).
+  card.style.opacity = '0';
 
   flight = { ghost, source: card, x: 0, y: 0, w: start.width, vx: 0, vy: 0, vw: 0, start, target, dock: null, raf: 0, last: performance.now(), born: performance.now(), ending: false };
   set('flying');
@@ -208,7 +219,7 @@ export function cancelHandoff() {
   const f = flight;
   if (!f) return;
   cancelAnimationFrame(f.raf);
-  f.source.style.visibility = '';
+  f.source.style.opacity = '';
   if (f.dock) f.dock.style.opacity = '';
   const g = f.ghost;
   const fade = g.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'linear', fill: 'forwards' });

@@ -511,6 +511,12 @@ export function startBridge() {
       for (const l of termListeners) l(e);
       return;
     }
+    // The agent's browser tool asks for this window's Browser tab (the handler loads on first use).
+    if (e.type === 'browser.request') {
+      const request = e.request;
+      void import('@/features/rail/browser-agent').then((m) => m.handleBrowserRequest(request)).catch(() => {});
+      return;
+    }
     applyEvent(e);
   });
   bridge.onStatus((conn) => {

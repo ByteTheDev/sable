@@ -28,9 +28,12 @@ describe('Claude: the show_widget tool', () => {
   });
 
   it('is absent when generative UI is off', () => {
-    const opts = new ClaudeProvider(ctx({ generativeUi: false })).agentOptions(meta, {});
+    // The same server carries the Browser tab tools: with those off too, there is no server at all.
+    const opts = new ClaudeProvider(ctx({ generativeUi: false })).agentOptions({ ...meta, options: { browserTab: false } }, {});
     expect(opts.mcpServers?.[WIDGET_SERVER]).toBeUndefined();
     expect(opts.allowedTools ?? []).not.toContain(WIDGET_TOOL_ID);
+    const browserOnly = new ClaudeProvider(ctx({ generativeUi: false })).agentOptions(meta, {});
+    expect(browserOnly.allowedTools ?? []).not.toContain(WIDGET_TOOL_ID);
   });
 
   it('gives every agent process its own server instance (an instance serves one process)', () => {

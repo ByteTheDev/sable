@@ -9,7 +9,7 @@ import { useNow } from '@/lib/view-hooks';
 import { showRailTab } from '@/state/actions';
 import { useStore, type Store } from '@/state/store';
 import { Kbd } from '@/ui';
-import { useItem, useTimeline } from './ctx';
+import { useFresh, useItem, useTimeline } from './ctx';
 import { foldKey, setFold, useFold } from './fold';
 import { ItemList, ItemRow, LiveText, estimate } from './items';
 import { REVEAL_EVENT, rootOf, type RevealDetail } from './reveal';
@@ -243,6 +243,8 @@ const SegmentView = memo(function SegmentView({ seg, turn, index, live }: { seg:
   const hasWork = seg.work.length > 0 && !soloThought;
   // The trail is open while the agent works and folds away when it is done, unless the reader chose.
   const [open, setOpen] = useFold(foldKey(sessionId, seg.key), live);
+  // A segment that starts live in front of the reader (a message just sent): its line enters.
+  const fresh = useFresh() && live;
 
   // The end of the turn: the trail gathers into its summary line, once.
   const [gather, setGather] = useState(false);
@@ -267,7 +269,7 @@ const SegmentView = memo(function SegmentView({ seg, turn, index, live }: { seg:
       {seg.lead && <ItemRow key={seg.lead} id={seg.lead} />}
       {seg.reply && <ItemRow key={seg.reply} id={seg.reply} answer />}
       {(hasWork || live) && (
-        <div key="work" ref={workEl} className="tl-item tl-work" data-live={live || undefined} data-open={(open && hasWork) || undefined} data-gather={gather || undefined}>
+        <div key="work" ref={workEl} className="tl-item tl-work" data-live={live || undefined} data-enter={fresh || undefined} data-open={(open && hasWork) || undefined} data-gather={gather || undefined}>
           {live ? (
             <LiveLine seg={seg} open={open && hasWork} onToggle={hasWork ? () => setOpen(!open) : undefined} quiet={soloThought} />
           ) : (

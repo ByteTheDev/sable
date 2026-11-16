@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type {
   BridgeEvent,
+  BrowserAnswer,
+  BrowserRequest,
   Capabilities,
   NoticeItem,
   PermissionRequest,
@@ -17,6 +19,9 @@ import type {
 import type { ProviderSession } from '../providers/types';
 
 export type Emit = (event: BridgeEvent) => void;
+
+/** How long a weak browser answer ("not here") waits for a window that can serve the request. */
+export const BROWSER_GRACE_MS = 800;
 
 export interface PermissionAnswer {
   optionId: string;
@@ -359,6 +364,56 @@ export class SessionRuntime {
   cancelPrompts() {
     for (const p of [...this.permissions.values()]) p.resolve(null);
     for (const q of [...this.questions.values()]) q.resolve(null);
+  }
+
+  // ── the session's Browser tab (in the window, not here) ──
+
+  /** What the session's Browser tab shows, as the window last reported it (null: nothing, or closed). */
+  browserPage: { url: string; title: string } | null = null;
+  /** The page the agent was last told about with a message (its URL and title), so the line goes once per page. */
+  browserTold?: string;
+  private browserCalls = new Map<string, { resolve: (a: BrowserAnswer) => void; weak?: BrowserAnswer; graceTimer?: NodeJS.Timeout }>();
+
+  /**
+   * Asks the window that shows this session's Browser tab to do something with its page. Every
+   * connected window hears it; one that cannot serve it (the web build, a window on another session)
+   * answers weakly, and its answer stands only when no better one comes within `BROWSER_GRACE_MS`.
+   * Nobody answering within `timeoutMs` is an answer too.
+   */
+  browserRequest(req: Omit<BrowserRequest, 'id' | 'sessionId'>, timeoutMs = 15_000, signal?: AbortSignal): Promise<BrowserAnswer> {
+    const request: BrowserRequest = { ...req, id: randomUUID(), sessionId: this.id };
+    return new Promise((resolve) => {
+      let timer: NodeJS.Timeout | undefined;
+      const done = (a: BrowserAnswer) => {
+        const c = this.browserCalls.get(request.id);
+        if (!c) return;
+        this.browserCalls.delete(request.id);
+        clearTimeout(timer);
+        clearTimeout(c.graceTimer);
+        resolve(a);
+      };
+      this.browserCalls.set(request.id, { resolve: done });
+      timer = setTimeout(() => {
+        const c = this.browserCalls.get(request.id);
+        done(c?.weak ?? { ok: false, error: 'Sable did not answer in time. Is the app window open?' });
+      }, timeoutMs);
+      signal?.addEventListener('abort', () => done({ ok: false, error: 'Stopped.' }), { once: true });
+      this.emit({ type: 'browser.request', request });
+    });
+  }
+
+  answerBrowser(requestId: string, answer: BrowserAnswer): boolean {
+    const c = this.browserCalls.get(requestId);
+    if (!c) return false;
+    if (!answer.weak) {
+      c.resolve(answer);
+      return true;
+    }
+    if (!c.weak) {
+      c.weak = answer;
+      c.graceTimer = setTimeout(() => c.resolve(answer), BROWSER_GRACE_MS);
+    }
+    return true;
   }
 
   /** Settles anything left "in flight" (after an interrupt, crash or restart). */

@@ -384,6 +384,21 @@ export function ToolDetails({ item }: { item: ToolItem }) {
         </div>
       );
 
+    case 'browser':
+      return (
+        <div className="detail-stack">
+          {d.url && (
+            <a href={d.url} target="_blank" rel="noopener noreferrer" className="link-row link-solo" onClick={onLinkClick}>
+              <Icon name="globe" size={14} />
+              <span className="link-title truncate">{d.url}</span>
+              <Icon name="external" size={12} className="link-out" />
+            </a>
+          )}
+          <Images images={r?.images} />
+          {r?.text && !r.images?.length && <CodeBlock code={r.text} title={failed ? 'Error' : 'Result'} maxHeight={300} wrap />}
+        </div>
+      );
+
     case 'mcp':
     default: {
       const input = item.input !== undefined ? prettyJson(item.input) : item.inputText;

@@ -40,6 +40,7 @@ import {
   type DemoLimitProfile,
 } from './demo-catalog';
 import { pickScenario, SCENARIOS, deniedReply } from './demo-scenarios';
+import { stripBrowserLine } from './browser-tool';
 import { Aborted, BASE_CONTEXT, CONTEXT_WINDOW, Denied, Halt, Script } from './demo-script';
 
 export interface DemoOptions {
@@ -293,7 +294,8 @@ class DemoSession implements ProviderSession {
       thinking: effort !== 'minimal',
     });
     this.script = s;
-    const { id, rotated } = pickScenario(item.text, this.rt.meta.mode || this.mode, this.rotation);
+    // The line Sable adds about the Browser tab is not the user's words: it never picks a scenario.
+    const { id, rotated } = pickScenario(stripBrowserLine(item.text), this.rt.meta.mode || this.mode, this.rotation);
     if (rotated) this.rotation++;
     let error: string | undefined;
     // An account at its cap refuses the turn the way a real agent does: the limit is reported, nothing runs.

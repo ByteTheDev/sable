@@ -177,6 +177,11 @@
   }
 }
 
+/* Its words flew in from the composer (composer/flight.ts): the flight is its entrance. */
+.tl-item .user[data-flight] {
+  animation: none !important;
+}
+
 /* ───────────── a one-line row (tools, thinking, groups) ───────────── */
 
 /* A step is one small line: a plain icon, the verb, its target, and the result at the right edge.
@@ -1806,7 +1811,57 @@ button:hover > .row-caret {
   padding: 0 var(--gutter);
   flex-shrink: 0;
   font-size: 12.5px;
-  animation: fade-in var(--d-3) var(--ease);
+  /* A short rise, the working mark building tile by tile in its diagonal order, then the label. */
+  animation: rise-in 300ms var(--ease-out) 120ms backwards;
+}
+
+.tail .tiles-active i {
+  animation:
+    tile-wave 1.5s var(--ease) infinite,
+    tile-build 260ms var(--ease-out) backwards;
+  animation-delay: calc(var(--d) * 105ms), calc(var(--d) * 42ms + 140ms);
+}
+
+.tail .tail-label {
+  animation: fade-in 220ms var(--ease) 260ms backwards;
+}
+
+/* A turn just sent (TurnView marks it fresh): its live line arrives under the message as the sent
+   words land there (composer/flight.ts, about half a second), the same way: rise, the tiles build
+   in their diagonal order, then the words. Only while live: the summary line that replaces it has
+   its own landing. */
+.tl-work[data-enter][data-live] > .work-head {
+  animation: rise-in 300ms var(--ease-out) 220ms backwards;
+}
+
+.tl-work[data-enter][data-live] > .work-head .tiles-active i {
+  animation:
+    tile-wave 1.5s var(--ease) infinite,
+    tile-build 260ms var(--ease-out) backwards;
+  animation-delay: calc(var(--d) * 105ms), calc(var(--d) * 42ms + 240ms);
+}
+
+.tl-work[data-enter][data-live] > .work-head .work-label {
+  animation: fade-in 220ms var(--ease) 380ms backwards;
+}
+
+@keyframes tile-build {
+  from {
+    scale: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tail {
+    animation: fade-in var(--d-3) var(--ease);
+  }
+  .tail .tail-label,
+  .tl-work[data-enter][data-live] > .work-head .work-label {
+    animation: none;
+  }
+  .tl-work[data-enter][data-live] > .work-head {
+    animation: fade-in var(--d-3) var(--ease);
+  }
 }
 
 .tail[data-quiet] {

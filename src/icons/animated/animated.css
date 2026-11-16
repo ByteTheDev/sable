@@ -1,0 +1,750 @@
+/* ── Animated icons ──
+   The parts of an icon from `parts.tsx` move when the control holding it is hovered or focused
+   (`:focus-visible`, or a menu row Radix highlights from the keyboard). Each motion plays once per
+   hover, 200 to 450 ms, and its last frame is the rest pose, so nothing jumps when it ends; leaving
+   early simply drops the animation. Only transform, opacity and stroke dashes animate (the globe's
+   meridians animate `rx`), on the parts of the one icon under the pointer: no layout, no filter.
+   Travel is on the 256 grid: 16 units are one pixel at 16 px. */
+
+svg[data-icon] {
+  --ai-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ai-io: cubic-bezier(0.65, 0, 0.35, 1);
+  --ai-back: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+svg[data-anim] {
+  overflow: visible;
+}
+
+/* Rest state lives in the drawing's attributes (helpers that only appear while an icon moves have
+   opacity 0, the sliders' segments are dashes), so an icon reads the same with or without this file. */
+
+/* A line drawing itself in from its start (paths with pathLength 1). It starts as a short stub,
+   never blank, so the icon does not blink out when the pointer arrives. */
+@keyframes ai-draw {
+  from { stroke-dasharray: 1 2; stroke-dashoffset: 0.86; }
+  to { stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+}
+
+/* ── triggers ── */
+:is(button, a, [role='button'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='tab'], [role='option']):is(:hover, :focus-visible, [data-highlighted]),
+[data-ai-play] {
+  /* pin: it lifts off the board and drops back in */
+  & svg[data-icon='pin'][data-anim] .pin { animation: ai-pin 440ms var(--ai-out); }
+
+  /* new session: the strokes draw outward from the centre, across then down */
+  & svg[data-icon='plus'][data-anim] {
+    & :is(.ph1, .ph2) { animation: ai-draw 230ms var(--ai-out) both; }
+    & :is(.v1, .v2) { animation: ai-draw 230ms 110ms var(--ai-out) both; }
+  }
+
+  /* search: the lens makes a small searching loop, a glint slides over the glass */
+  & svg[data-icon='search'][data-anim] {
+    & .lens { animation: ai-search-lens 440ms var(--ai-io); }
+    & .glint { animation: ai-search-glint 440ms var(--ai-out); }
+  }
+
+  /* history: the minute hand runs back a full turn, the hour hand resists, the arrowhead nudges */
+  & svg[data-icon='history'][data-anim] {
+    & .min { transform-origin: 128px 128px; animation: ai-history-min 460ms var(--ai-io); }
+    & .hour { transform-origin: 128px 128px; animation: ai-history-hour 460ms var(--ai-out); }
+    & .head { animation: ai-history-head 460ms var(--ai-out); }
+  }
+
+  /* more: the dots pass a small wave */
+  & svg[data-icon='dots'][data-anim] :is(.d1, .d2, .d3) { animation: ai-dot-y 340ms var(--ai-out); }
+  & svg[data-icon='dots-vertical'][data-anim] :is(.d1, .d2, .d3) { animation: ai-dot-x 340ms var(--ai-out); }
+  & svg[data-anim] .d2 { animation-delay: 55ms !important; }
+  & svg[data-anim] .d3 { animation-delay: 110ms !important; }
+
+  /* archive: the lid lifts off its hinge, the slot drops, the box takes the lid back */
+  & svg[data-icon='archive'][data-anim] {
+    & .lid { transform-origin: 24px 96px; animation: ai-archive-lid 440ms var(--ai-out); }
+    & .slot { animation: ai-archive-slot 440ms var(--ai-out); }
+    & .box { animation: ai-archive-box 440ms var(--ai-out); }
+  }
+
+  /* trash: the lid lifts and tilts on its right end, then drops back */
+  & svg[data-icon='trash'][data-anim] {
+    & .lid { transform-origin: 216px 56px; animation: ai-trash-lid 420ms var(--ai-out); }
+    & .can { animation: ai-trash-can 420ms var(--ai-out); }
+  }
+
+  /* compose and edit: the pen writes a short stroke */
+  & svg:is([data-icon='compose'], [data-icon='pencil'])[data-anim] .pen { animation: ai-pen 440ms var(--ai-io); }
+
+  /* copy: the back sheet slides out and returns, the front one gives a little */
+  & svg[data-icon='copy'][data-anim] {
+    & .back { animation: ai-copy-back 400ms var(--ai-out); }
+    & .front { animation: ai-copy-front 400ms var(--ai-out); }
+  }
+
+  /* close: the two strokes cross in, one after the other */
+  & svg[data-icon='x'][data-anim] {
+    & .s1 { animation: ai-draw 200ms var(--ai-out) both; }
+    & .s2 { animation: ai-draw 200ms 90ms var(--ai-out) both; }
+  }
+
+  /* folder: the tab lifts and a sheet peeks out */
+  & svg[data-icon='folder'][data-anim] {
+    & .flap { animation: ai-folder-tab 440ms var(--ai-out); }
+    & .sheet { animation: ai-folder-sheet 440ms var(--ai-out); }
+  }
+
+  /* folder-plus: the plus rises out and drops into the folder, which gives */
+  & svg[data-icon='folder-plus'][data-anim] {
+    & .plus { animation: ai-fplus-plus 450ms var(--ai-out); }
+    & .body { animation: ai-fplus-body 450ms var(--ai-out); }
+  }
+
+  /* settings: a ratchet click of one tooth, the hub closes and opens like an iris */
+  & svg[data-icon='settings'][data-anim] {
+    & .teeth { transform-origin: 128px 128px; animation: ai-gear-teeth 440ms var(--ai-out); }
+    & .hub { transform-origin: 128px 128px; animation: ai-gear-hub 440ms var(--ai-out); }
+  }
+
+  /* arrows: the head leads, the shaft follows */
+  & svg[data-icon='arrow-right'][data-anim] { & .head { animation: ai-lead-x 380ms var(--ai-out); } & .shaft { animation: ai-follow-x 380ms var(--ai-out); } }
+  & svg[data-icon='arrow-left'][data-anim] { --ai-dir: -1; & .head { animation: ai-lead-x 380ms var(--ai-out); } & .shaft { animation: ai-follow-x 380ms var(--ai-out); } }
+  & svg[data-icon='arrow-down'][data-anim] { & .head { animation: ai-lead-y 380ms var(--ai-out); } & .shaft { animation: ai-follow-y 380ms var(--ai-out); } }
+  & svg[data-icon='arrow-up'][data-anim] { --ai-dir: -1; & .head { animation: ai-lead-y 380ms var(--ai-out); } & .shaft { animation: ai-follow-y 380ms var(--ai-out); } }
+
+  /* carets: a nudge in their direction */
+  & svg[data-icon='caret-right'][data-anim] .c { animation: ai-lead-x 320ms var(--ai-out); }
+  & svg[data-icon='caret-left'][data-anim] .c { --ai-dir: -1; animation: ai-lead-x 320ms var(--ai-out); }
+  & svg[data-icon='caret-down'][data-anim] .c { animation: ai-lead-y 320ms var(--ai-out); }
+  & svg[data-icon='caret-up'][data-anim] .c { --ai-dir: -1; animation: ai-lead-y 320ms var(--ai-out); }
+
+  /* check: the tick draws itself */
+  & svg[data-icon='check'][data-anim] .tick { animation: ai-draw 280ms var(--ai-out) both; }
+
+  /* sidebar and panel: the divider slides, the pane it stands for fills as it narrows */
+  & svg[data-icon='sidebar'][data-anim] {
+    & .div { animation: ai-side-div 420ms var(--ai-out); }
+    & .pane { transform-origin: 32px 128px; animation: ai-side-pane 420ms var(--ai-out); }
+  }
+
+  /* capabilities and sliders: the knobs slide along their lines, the lines follow */
+  & svg:is([data-icon='capabilities'], [data-icon='sliders'])[data-anim] {
+    & .k1 { animation: ai-knob1 420ms var(--ai-back); }
+    & .l1 { animation: ai-knob1-l 420ms var(--ai-back); }
+    & .r1 { animation: ai-knob1-r 420ms var(--ai-back); }
+    & .k2 { animation: ai-knob2 420ms 60ms var(--ai-back); }
+    & .l2 { animation: ai-knob2-l 420ms 60ms var(--ai-back); }
+    & .r2 { animation: ai-knob2-r 420ms 60ms var(--ai-back); }
+  }
+
+  /* plan: the needle swings and settles */
+  & svg[data-icon='compass'][data-anim] .needle { transform-origin: 128px 128px; animation: ai-needle 450ms var(--ai-out); }
+
+  /* ask: the hand rises and gives a small wave */
+  & svg[data-icon='hand'][data-anim] .palm { transform-origin: 128px 240px; animation: ai-hand 440ms var(--ai-out); }
+
+  /* bypass: the flame flickers, the inner tongue licks up */
+  & svg[data-icon='fire'][data-anim] {
+    & .outer { transform-origin: 128px 232px; animation: ai-fire-outer 420ms var(--ai-io); }
+    & .inner { animation: ai-fire-inner 420ms var(--ai-io); }
+  }
+
+  /* changes: the two halves trade places a little */
+  & svg[data-icon='diff'][data-anim] {
+    & .left { animation: ai-diff-left 420ms var(--ai-out); }
+    & .right { animation: ai-diff-right 420ms var(--ai-out); }
+  }
+
+  /* browser: the meridians sweep out as a sphere turning in depth */
+  & svg[data-icon='globe'][data-anim] {
+    & .ma { animation: ai-globe-a 480ms var(--ai-io); }
+    & .mb { animation: ai-globe-b 480ms var(--ai-io); }
+    & .mc { animation: ai-globe-c 480ms var(--ai-io); }
+  }
+
+  /* terminal: the prompt steps right and the caret blinks once */
+  & svg[data-icon='terminal'][data-anim] {
+    & .chev { animation: ai-term-chev 440ms var(--ai-out); }
+    & .cursor { animation: ai-term-caret 440ms var(--ai-out); }
+  }
+
+  /* tasks: the ticks draw one after another */
+  & svg[data-icon='tasks'][data-anim] {
+    & .k1 { animation: ai-draw 200ms var(--ai-out) both; }
+    & .k2 { animation: ai-draw 200ms 90ms var(--ai-out) both; }
+    & .k3 { animation: ai-draw 200ms 180ms var(--ai-out) both; }
+  }
+
+  /* context: the slice opens out of the pie */
+  & svg[data-icon='context'][data-anim] .slice { animation: ai-slice 420ms var(--ai-out); }
+
+  /* branch: the branch grows out of the trunk toward its node, which answers */
+  & svg[data-icon='branch'][data-anim] {
+    & .twig { animation: ai-draw-rev 320ms var(--ai-out) both; }
+    & .n3 { transform-origin: 200px 64px; animation: ai-node 440ms var(--ai-out); }
+  }
+
+  /* refresh: each arc draws itself around and its arrowhead arrives */
+  & svg[data-icon='refresh'][data-anim] {
+    & .a1 { animation: ai-draw-arc 320ms var(--ai-io) both; }
+    & .hd1 { animation: ai-arrive-dr 440ms var(--ai-out) both; }
+    & .a2 { animation: ai-draw-arc 320ms 60ms var(--ai-io) both; }
+    & .hd2 { animation: ai-arrive-ul 440ms 60ms var(--ai-out) both; }
+  }
+  & svg[data-icon='reload'][data-anim] {
+    & .arc { animation: ai-draw-arc 340ms var(--ai-io) both; }
+    & .head { animation: ai-arrive-dr 440ms var(--ai-out) both; }
+  }
+  & svg[data-icon='rewind'][data-anim] {
+    & .arc { animation: ai-draw-arc 340ms var(--ai-io) both; }
+    & .head { animation: ai-arrive-dl 440ms var(--ai-out) both; }
+  }
+
+  /* stop: the square compresses */
+  & svg[data-icon='stop'][data-anim] .sq { transform-origin: 128px 128px; animation: ai-stop 320ms var(--ai-out); }
+
+  /* account: the head nods up, the shoulders follow */
+  & svg[data-icon='user'][data-anim] {
+    & .head { animation: ai-user-head 420ms var(--ai-out); }
+    & .body { animation: ai-user-body 420ms var(--ai-out); }
+  }
+
+  /* usage: the needle sweeps back and settles */
+  & svg[data-icon='gauge'][data-anim] .needle { transform-origin: 104.2px 184px; animation: ai-gauge 450ms var(--ai-out); }
+
+  /* permissions: the shield lifts, the tick draws */
+  & svg[data-icon='shield'][data-anim] {
+    & .shell { animation: ai-lift 420ms var(--ai-out); }
+    & .tick { animation: ai-draw 240ms 120ms var(--ai-out) both; }
+  }
+
+  /* MCP: the plug seats, the sparks jump */
+  & svg[data-icon='mcp'][data-anim] {
+    & .plug { transform-origin: 128px 128px; animation: ai-plug 440ms var(--ai-out); }
+    & .sp1 { animation: ai-spark-ul 440ms var(--ai-out); }
+    & .sp2 { animation: ai-spark-dr 440ms var(--ai-out); }
+  }
+
+  /* agents: the middle one stands up, the others follow */
+  & svg[data-icon='agents'][data-anim] {
+    & .pm { animation: ai-person 440ms var(--ai-out); }
+    & :is(.pl, .pr) { animation: ai-person-side 440ms 70ms var(--ai-out); }
+  }
+
+  /* memory: the right page turns over the spine */
+  & svg[data-icon='memory'][data-anim] .rp { transform-origin: 128px 128px; animation: ai-page 460ms var(--ai-io); }
+
+  /* shortcuts: the keys go down in turn */
+  & svg[data-icon='keyboard'][data-anim] {
+    & .r1 { animation: ai-key 200ms var(--ai-out); }
+    & .r2 { animation: ai-key 200ms 60ms var(--ai-out); }
+    & .sp { animation: ai-key 220ms 130ms var(--ai-out); }
+    & .r3 { animation: ai-key 200ms 170ms var(--ai-out); }
+    & .r3b { animation-delay: 200ms; }
+  }
+
+  /* about: the dot hops, the stem takes it */
+  & svg[data-icon='info'][data-anim] {
+    & .dot { animation: ai-info-dot 440ms var(--ai-out); }
+    & .stem { animation: ai-info-stem 440ms var(--ai-out); }
+  }
+
+  /* download and save: the arrow drops into the tray, the tray gives */
+  & svg[data-icon='download'][data-anim] {
+    & .arrow { animation: ai-dl-arrow 420ms var(--ai-out); }
+    & .tray { animation: ai-dl-tray 420ms var(--ai-out); }
+  }
+
+  /* expand and collapse: the two arrows push apart or draw in */
+  & svg[data-icon='expand'][data-anim] {
+    & .a1 { animation: ai-out-a1 380ms var(--ai-out); }
+    & .a2 { animation: ai-out-a2 380ms var(--ai-out); }
+  }
+  & svg[data-icon='collapse'][data-anim] {
+    & .a1 { animation: ai-out-a2 380ms var(--ai-out); }
+    & .a2 { animation: ai-out-a1 380ms var(--ai-out); }
+  }
+
+  /* open outside: the arrow leaves the box and comes back */
+  & svg[data-icon='external'][data-anim] .arrow { animation: ai-ext 400ms var(--ai-out); }
+
+  /* hooks: the three nodes fire in turn around the loop */
+  & svg[data-icon='hook'][data-anim] {
+    & .hl { animation: ai-hook-l 380ms var(--ai-out); }
+    & .hb { animation: ai-hook-b 380ms 70ms var(--ai-out); }
+    & .hr { animation: ai-hook-r 380ms 140ms var(--ai-out); }
+  }
+
+  /* skills: the piece lifts out and snaps back in */
+  & svg[data-icon='skill'][data-anim] .piece { animation: ai-piece 420ms var(--ai-out); }
+
+  /* models: the folds twitch, one after the other */
+  & svg[data-icon='brain'][data-anim] {
+    & .fl { animation: ai-fold-l 360ms var(--ai-out); }
+    & .fr { animation: ai-fold-r 360ms 90ms var(--ai-out); }
+  }
+
+  /* appearance: the fan lifts, the swatch hole pops */
+  & svg[data-icon='swatches'][data-anim] {
+    & .fan { animation: ai-lift 420ms var(--ai-out); }
+    & .dot { transform-origin: 76px 180px; animation: ai-swatch-dot 420ms var(--ai-out); }
+  }
+
+  /* read: the lines of text write in */
+  & svg[data-icon='file-text'][data-anim] {
+    & .ln1 { animation: ai-line-in 300ms var(--ai-out) both; }
+    & .ln2 { animation: ai-line-in 300ms 90ms var(--ai-out) both; }
+  }
+
+  /* agent: the eyes blink */
+  & svg[data-icon='robot'][data-anim] {
+    & .eye { transform-origin: 128px 108px; animation: ai-robot-eye 380ms var(--ai-out); }
+    & .bot { animation: ai-lift 380ms var(--ai-out); }
+  }
+
+  /* queue: the play mark steps forward, the lines shuffle */
+  & svg[data-icon='queue'][data-anim] {
+    & .play { animation: ai-lead-x 380ms var(--ai-out); }
+    & .q1 { animation: ai-shuffle 360ms var(--ai-out); }
+    & .q2 { animation: ai-shuffle 360ms 50ms var(--ai-out); }
+    & .q3 { animation: ai-shuffle 360ms 100ms var(--ai-out); }
+  }
+
+  /* image: the sun rises over the hills */
+  & svg[data-icon='image'][data-anim] .sun { animation: ai-sun 420ms var(--ai-out); }
+
+  /* link: the two links pull apart and snap together */
+  & svg[data-icon='link'][data-anim] {
+    & .lr { animation: ai-out-a1 380ms var(--ai-out); }
+    & .ll { animation: ai-out-a2 380ms var(--ai-out); }
+  }
+
+  /* preview: a blink, then a look aside */
+  & svg[data-icon='eye'][data-anim] {
+    & .lid { transform-origin: 128px 128px; animation: ai-blink 460ms var(--ai-out); }
+    & .pupil { transform-origin: 128px 128px; animation: ai-pupil 460ms var(--ai-out); }
+  }
+
+  /* bell: it swings, the clapper lags behind */
+  & svg[data-icon='bell'][data-anim] {
+    & .shell { transform-origin: 128px 24px; animation: ai-bell 450ms var(--ai-out); }
+    & .clap { transform-origin: 128px 24px; animation: ai-clap 450ms var(--ai-out); }
+  }
+
+  /* window controls (drawn in WindowControls.tsx on a 16 px grid) */
+  & svg[data-icon='wc-min'] path { animation: ai-wc-min 320ms var(--ai-out); }
+  & svg[data-icon='wc-max'] rect { animation: ai-wc-max 300ms var(--ai-out) both; }
+  & svg[data-icon='wc-restore'] path { animation: ai-wc-restore 340ms var(--ai-out); }
+  & svg[data-icon='wc-close'] path { animation: ai-wc-close 260ms var(--ai-out) both; }
+}
+
+/* ── keyframes ── */
+@keyframes ai-pin {
+  0% { transform: translate(0, 0); }
+  32% { transform: translate(14px, -16px); }
+  62% { transform: translate(-3px, 3px); }
+  80% { transform: translate(1px, -1px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes ai-hook-l {
+  40% { transform: translate(-12px, -6px); }
+  75% { transform: translate(2px, 1px); }
+}
+@keyframes ai-hook-b {
+  40% { transform: translateY(12px); }
+  75% { transform: translateY(-2px); }
+}
+@keyframes ai-hook-r {
+  40% { transform: translate(12px, -6px); }
+  75% { transform: translate(-2px, 1px); }
+}
+@keyframes ai-piece {
+  35% { transform: translate(10px, -18px); }
+  68% { transform: translate(-2px, 3px); }
+  85% { transform: translate(0, -1px); }
+}
+@keyframes ai-fold-l {
+  40% { transform: translate(-6px, -10px); }
+  75% { transform: translate(1px, 2px); }
+}
+@keyframes ai-fold-r {
+  40% { transform: translate(6px, -10px); }
+  75% { transform: translate(-1px, 2px); }
+}
+@keyframes ai-swatch-dot {
+  30% { transform: scale(0.4); }
+  65% { transform: scale(1.25); }
+}
+@keyframes ai-line-in {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes ai-robot-eye {
+  25% { transform: scaleY(0.15); }
+  50% { transform: scaleY(1); }
+}
+@keyframes ai-shuffle {
+  40% { transform: translateX(-10px); }
+  75% { transform: translateX(2px); }
+}
+@keyframes ai-sun {
+  0% { opacity: 1; transform: translateY(0); }
+  25% { opacity: 0; transform: translateY(36px); }
+  70% { opacity: 1; transform: translateY(-5px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes ai-dl-arrow {
+  0% { opacity: 1; transform: translateY(0); }
+  18% { transform: translateY(-8px); }
+  50% { opacity: 1; transform: translateY(22px); }
+  51% { opacity: 0; transform: translateY(22px); }
+  52% { opacity: 0; transform: translateY(-40px); }
+  80% { opacity: 1; transform: translateY(3px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes ai-dl-tray {
+  46% { transform: translateY(0); }
+  58% { transform: translateY(8px); }
+  80% { transform: translateY(-1px); }
+}
+@keyframes ai-out-a1 {
+  42% { transform: translate(14px, -14px); }
+  74% { transform: translate(-2px, 2px); }
+}
+@keyframes ai-out-a2 {
+  42% { transform: translate(-14px, 14px); }
+  74% { transform: translate(2px, -2px); }
+}
+@keyframes ai-ext {
+  0% { opacity: 1; transform: translate(0, 0); }
+  40% { opacity: 0; transform: translate(26px, -26px); }
+  41% { opacity: 0; transform: translate(-22px, 22px); }
+  78% { opacity: 1; transform: translate(2px, -2px); }
+  100% { opacity: 1; transform: translate(0, 0); }
+}
+/* The composer's add button (a plus drawn on its own 14 px grid): it gathers and breathes out. */
+@keyframes ai-plus-breathe {
+  30% { scale: 0.72; }
+  65% { scale: 1.14; }
+}
+/* Arcs (refresh, reload, rewind) start half drawn: the icon never thins out to nothing. */
+@keyframes ai-draw-arc {
+  from { stroke-dasharray: 1 2; stroke-dashoffset: 0.55; }
+  to { stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+}
+@keyframes ai-draw-rev {
+  from { stroke-dasharray: 1 2; stroke-dashoffset: -0.86; }
+  to { stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+}
+@keyframes ai-search-lens {
+  25% { transform: translate(-14px, 4px); }
+  50% { transform: translate(-6px, -14px); }
+  75% { transform: translate(8px, -6px); }
+}
+@keyframes ai-search-glint {
+  0% { opacity: 0; transform: translate(0, 0); }
+  30% { opacity: 0.9; }
+  70% { opacity: 0.9; transform: translate(34px, 34px); }
+  100% { opacity: 0; transform: translate(44px, 44px); }
+}
+@keyframes ai-history-min {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+@keyframes ai-history-hour {
+  30% { transform: rotate(-24deg); }
+  70% { transform: rotate(4deg); }
+}
+@keyframes ai-history-head {
+  35% { transform: translate(-10px, 10px); }
+  70% { transform: translate(2px, -2px); }
+}
+@keyframes ai-dot-y {
+  35% { transform: translateY(-26px); }
+  70% { transform: translateY(5px); }
+}
+@keyframes ai-dot-x {
+  35% { transform: translateX(26px); }
+  70% { transform: translateX(-5px); }
+}
+@keyframes ai-archive-lid {
+  40% { transform: translate(0, -26px) rotate(-8deg); }
+  72% { transform: translate(0, 3px) rotate(0.5deg); }
+}
+@keyframes ai-archive-slot {
+  45% { transform: translateY(10px); }
+  80% { transform: translateY(-2px); }
+}
+@keyframes ai-archive-box {
+  70% { transform: translateY(0); }
+  80% { transform: translateY(4px); }
+}
+@keyframes ai-trash-lid {
+  42% { transform: translate(0, -18px) rotate(12deg); }
+  74% { transform: translate(0, 3px) rotate(-1deg); }
+}
+@keyframes ai-trash-can {
+  72% { transform: translateY(0); }
+  82% { transform: translateY(3px); }
+}
+@keyframes ai-pen {
+  22% { transform: translate(-10px, 10px); }
+  52% { transform: translate(14px, 4px); }
+  78% { transform: translate(-3px, -2px); }
+}
+@keyframes ai-copy-back {
+  45% { transform: translate(20px, -20px); }
+  75% { transform: translate(-3px, 3px); }
+}
+@keyframes ai-copy-front {
+  45% { transform: translate(-5px, 5px); }
+}
+@keyframes ai-folder-tab {
+  35% { transform: translateY(-12px); }
+  70% { transform: translateY(2px); }
+}
+@keyframes ai-folder-sheet {
+  0% { opacity: 0; transform: translateY(18px); }
+  35% { opacity: 1; transform: translateY(-6px); }
+  65% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(18px); }
+}
+@keyframes ai-fplus-plus {
+  0% { opacity: 1; transform: translateY(0); }
+  30% { opacity: 0; transform: translateY(-60px); }
+  34% { opacity: 0; transform: translateY(-72px); }
+  72% { opacity: 1; transform: translateY(8px); }
+  88% { transform: translateY(-2px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes ai-fplus-body {
+  70% { transform: translateY(0); }
+  80% { transform: translateY(5px); }
+}
+@keyframes ai-gear-teeth {
+  0% { transform: rotate(0deg); }
+  22% { transform: rotate(-8deg); }
+  58% { transform: rotate(65deg); }
+  78% { transform: rotate(58.5deg); }
+  100% { transform: rotate(60deg); }
+}
+@keyframes ai-gear-hub {
+  28% { transform: scale(0.66); }
+  66% { transform: scale(1.1); }
+}
+@keyframes ai-lead-x {
+  40% { transform: translateX(calc(var(--ai-dir, 1) * 22px)); }
+  72% { transform: translateX(calc(var(--ai-dir, 1) * -4px)); }
+}
+@keyframes ai-follow-x {
+  50% { transform: translateX(calc(var(--ai-dir, 1) * 12px)); }
+  82% { transform: translateX(calc(var(--ai-dir, 1) * -2px)); }
+}
+@keyframes ai-lead-y {
+  40% { transform: translateY(calc(var(--ai-dir, 1) * 22px)); }
+  72% { transform: translateY(calc(var(--ai-dir, 1) * -4px)); }
+}
+@keyframes ai-follow-y {
+  50% { transform: translateY(calc(var(--ai-dir, 1) * 12px)); }
+  82% { transform: translateY(calc(var(--ai-dir, 1) * -2px)); }
+}
+@keyframes ai-side-div {
+  42% { transform: translateX(-28px); }
+  74% { transform: translateX(5px); }
+}
+@keyframes ai-side-pane {
+  0% { opacity: 0; transform: scaleX(1); }
+  42% { opacity: 0.3; transform: scaleX(0.5); }
+  74% { opacity: 0.12; transform: scaleX(1.09); }
+  100% { opacity: 0; transform: scaleX(1); }
+}
+@keyframes ai-knob1 { 45% { transform: translateX(30px); } }
+@keyframes ai-knob1-l { 45% { stroke-dasharray: 0.3977 2; } }
+@keyframes ai-knob1-r { 45% { stroke-dasharray: 0.3295 2; } }
+@keyframes ai-knob2 { 45% { transform: translateX(-30px); } }
+@keyframes ai-knob2-l { 45% { stroke-dasharray: 0.4205 2; } }
+@keyframes ai-knob2-r { 45% { stroke-dasharray: 0.3068 2; } }
+@keyframes ai-needle {
+  25% { transform: rotate(-32deg); }
+  55% { transform: rotate(16deg); }
+  80% { transform: rotate(-5deg); }
+}
+@keyframes ai-hand {
+  30% { transform: translateY(-22px) rotate(-7deg); }
+  60% { transform: translateY(-8px) rotate(6deg); }
+  82% { transform: translateY(1px) rotate(-1.5deg); }
+}
+@keyframes ai-fire-outer {
+  30% { transform: scale(0.95, 1.08); }
+  62% { transform: scale(1.03, 0.96); }
+}
+@keyframes ai-fire-inner {
+  30% { transform: translateY(-14px); opacity: 0.55; }
+  62% { transform: translateY(4px); opacity: 1; }
+}
+@keyframes ai-diff-left {
+  40% { transform: translateY(20px); }
+  74% { transform: translateY(-4px); }
+}
+@keyframes ai-diff-right {
+  40% { transform: translateY(-20px); }
+  74% { transform: translateY(4px); }
+}
+/* The globe turns by one meridian: a rolls out to the rim and fades, b crosses the centre into a's
+   place, c comes in from the far rim into b's. Its last frame shows what rest shows, so the swap back
+   to rest is invisible. (Only the path's control points change; same commands, so `d` interpolates.) */
+@keyframes ai-globe-a {
+  0% { d: path('M128,34.61C150.09,34.61,168,76.42,168,128S150.09,221.39,128,221.39'); opacity: 1; }
+  99.9% { d: path('M128,34.61C179.92,34.61,222,76.42,222,128S179.92,221.39,128,221.39'); opacity: 0; }
+  100% { d: path('M128,34.61C150.09,34.61,168,76.42,168,128S150.09,221.39,128,221.39'); opacity: 1; }
+}
+@keyframes ai-globe-b {
+  0% { d: path('M128,34.61C105.91,34.61,88,76.42,88,128S105.91,221.39,128,221.39'); }
+  99.9% { d: path('M128,34.61C150.09,34.61,168,76.42,168,128S150.09,221.39,128,221.39'); }
+  100% { d: path('M128,34.61C105.91,34.61,88,76.42,88,128S105.91,221.39,128,221.39'); }
+}
+@keyframes ai-globe-c {
+  0% { d: path('M128,34.61C76.08,34.61,34,76.42,34,128S76.08,221.39,128,221.39'); opacity: 0; }
+  40% { opacity: 1; }
+  99.9% { d: path('M128,34.61C105.91,34.61,88,76.42,88,128S105.91,221.39,128,221.39'); opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes ai-term-chev {
+  38% { transform: translateX(20px); }
+  70% { transform: translateX(-3px); }
+}
+@keyframes ai-term-caret {
+  0% { opacity: 1; transform: translateX(0); }
+  38% { opacity: 1; transform: translateX(14px); }
+  39% { opacity: 0; }
+  70% { opacity: 0; transform: translateX(0); }
+  71% { opacity: 1; }
+  100% { opacity: 1; transform: translateX(0); }
+}
+@keyframes ai-slice {
+  40% { transform: translate(-18px, -10px); }
+  74% { transform: translate(3px, 2px); }
+}
+@keyframes ai-node {
+  0% { transform: scale(1); }
+  45% { transform: scale(0.72); }
+  75% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+@keyframes ai-arrive-dr {
+  0%, 30% { opacity: 0; transform: translate(-16px, -16px); }
+  72% { opacity: 1; transform: translate(3px, 3px); }
+  100% { opacity: 1; transform: translate(0, 0); }
+}
+@keyframes ai-arrive-ul {
+  0%, 30% { opacity: 0; transform: translate(16px, 16px); }
+  72% { opacity: 1; transform: translate(-3px, -3px); }
+  100% { opacity: 1; transform: translate(0, 0); }
+}
+@keyframes ai-arrive-dl {
+  0%, 30% { opacity: 0; transform: translate(16px, -16px); }
+  72% { opacity: 1; transform: translate(-3px, 3px); }
+  100% { opacity: 1; transform: translate(0, 0); }
+}
+@keyframes ai-stop {
+  35% { transform: scale(1.08, 0.82); }
+  70% { transform: scale(0.97, 1.04); }
+}
+@keyframes ai-user-head {
+  38% { transform: translateY(-22px); }
+  72% { transform: translateY(4px); }
+}
+@keyframes ai-user-body {
+  50% { transform: translateY(-6px); }
+  82% { transform: translateY(1px); }
+}
+@keyframes ai-gauge {
+  28% { transform: rotate(-52deg); }
+  64% { transform: rotate(10deg); }
+  84% { transform: rotate(-3deg); }
+}
+@keyframes ai-lift {
+  35% { transform: translateY(-10px); }
+  70% { transform: translateY(2px); }
+}
+@keyframes ai-plug {
+  20% { transform: scale(0.95); }
+  55% { transform: scale(1.02); }
+}
+@keyframes ai-spark-ul {
+  0% { opacity: 1; transform: translate(0, 0); }
+  20% { opacity: 0; transform: translate(6px, 6px); }
+  55% { opacity: 1; transform: translate(-12px, -12px); }
+  100% { opacity: 1; transform: translate(0, 0); }
+}
+@keyframes ai-spark-dr {
+  0% { opacity: 1; transform: translate(0, 0); }
+  20% { opacity: 0; transform: translate(-6px, -6px); }
+  55% { opacity: 1; transform: translate(12px, 12px); }
+  100% { opacity: 1; transform: translate(0, 0); }
+}
+@keyframes ai-person {
+  35% { transform: translateY(-18px); }
+  70% { transform: translateY(3px); }
+}
+@keyframes ai-person-side {
+  35% { transform: translateY(-10px); }
+  70% { transform: translateY(2px); }
+}
+@keyframes ai-page {
+  45% { transform: scaleX(0.42); }
+  76% { transform: scaleX(1.05); }
+}
+@keyframes ai-key {
+  45% { transform: translateY(14px); }
+}
+@keyframes ai-info-dot {
+  30% { transform: translateY(-32px); }
+  58% { transform: translateY(6px); }
+  78% { transform: translateY(-2px); }
+}
+@keyframes ai-info-stem {
+  52% { transform: translateY(0); }
+  62% { transform: translateY(5px); }
+}
+@keyframes ai-blink {
+  18% { transform: scaleY(0.12); }
+  36% { transform: scaleY(1); }
+}
+@keyframes ai-pupil {
+  18% { transform: scaleY(0.12); }
+  36% { transform: scaleY(1); }
+  62% { transform: translateX(-16px); }
+  84% { transform: translateX(3px); }
+}
+@keyframes ai-bell {
+  20% { transform: rotate(14deg); }
+  45% { transform: rotate(-10deg); }
+  70% { transform: rotate(5deg); }
+  88% { transform: rotate(-1.5deg); }
+}
+@keyframes ai-clap {
+  28% { transform: rotate(-12deg); }
+  54% { transform: rotate(14deg); }
+  78% { transform: rotate(-5deg); }
+}
+@keyframes ai-wc-min {
+  40% { transform: translateY(1.5px); }
+  72% { transform: translateY(-0.4px); }
+}
+@keyframes ai-wc-max {
+  from { stroke-dasharray: 34 34; stroke-dashoffset: 26; }
+  to { stroke-dasharray: 34 34; stroke-dashoffset: 0; }
+}
+@keyframes ai-wc-restore {
+  45% { transform: translate(-1px, 1px); }
+  78% { transform: translate(0.25px, -0.25px); }
+}
+@keyframes ai-wc-close {
+  from { stroke-dasharray: 11.4 12; stroke-dashoffset: 11.4; }
+  to { stroke-dasharray: 11.4 12; stroke-dashoffset: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  svg[data-anim] *,
+  svg[data-icon^='wc-'] * {
+    animation: none !important;
+  }
+}

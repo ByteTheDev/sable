@@ -20,6 +20,7 @@ import type {
 } from '../../shared/protocol';
 import { makeFileDiff, parseUnifiedDiff } from '../../shared/diff';
 import { WIDGET_TOOL, describeWidget, isWidgetTool } from './widget-tool';
+import { browserOp, describeBrowser } from './browser-tool';
 import type {
   AskForApproval,
   CommandAction,
@@ -523,6 +524,18 @@ export function draftItem(item: ThreadItem, opts: { streaming?: boolean } = {}):
           status,
           input: item.arguments,
           ...(status !== 'running' ? { result: { text, isError: status === 'error' || undefined }, endedAt: done(status) } : {}),
+        });
+      }
+      // The Browser tab tools: one line with the host, the picture in the details.
+      if (browserOp(item.tool)) {
+        const images = (item.contentItems as { type: string; imageUrl?: string }[] | null | undefined)?.flatMap((c) => (c.type === 'inputImage' && c.imageUrl?.startsWith('data:image/') ? [c.imageUrl] : [])) ?? [];
+        const plain = item.contentItems?.filter((c) => c.type === 'inputText').map((c) => c.text ?? '').join('\n');
+        return tool({
+          name: item.tool,
+          ...describeBrowser(item.tool, item.arguments, plain),
+          status,
+          input: item.arguments,
+          ...(status !== 'running' ? { result: { text: plain, isError: status === 'error' || undefined, ...(images.length ? { images } : {}) }, endedAt: done(status) } : {}),
         });
       }
       return tool({

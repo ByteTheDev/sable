@@ -25,7 +25,8 @@ import type {
   UserItem,
 } from '../../shared/protocol';
 import { makeFileDiff } from '../../shared/diff';
-import { WIDGET_SHOWN, WIDGET_TOOL_ID } from './widget-tool';
+import { WIDGET_SERVER, WIDGET_SHOWN, WIDGET_TOOL_ID } from './widget-tool';
+import { BROWSER_TOOLS, describeBrowser, runBrowserTool, type BrowserOp, type BrowserToolResult } from './browser-tool';
 
 // ───────────────────────────── control-flow signals ─────────────────────────────
 
@@ -425,6 +426,26 @@ export class Script {
     await this.pause(60, 140);
     this.complete(item.id, { text: WIDGET_SHOWN });
     return item.id;
+  }
+
+  /**
+   * A Browser tab tool call through the same code path the real agents' tools take
+   * (browser-tool.ts: the window's answer, the permission prompt for pages that are not local).
+   */
+  async browser(op: BrowserOp, input: Record<string, unknown>, opts: Common = {}): Promise<BrowserToolResult> {
+    const name = `mcp__${WIDGET_SERVER}__${BROWSER_TOOLS[op]}`;
+    const view = describeBrowser(name, input);
+    if (!opts.parentId) this.activity(opts.activity ?? (op === 'open' ? 'Opening the page' : op === 'read' ? 'Reading the page' : 'Looking at the page'));
+    const id = await this.tool({ name, ...view, input, parentId: opts.parentId });
+    this.start(id);
+    const r = await runBrowserTool(this.rt, op, input, this.env.signal);
+    this.check();
+    const result: ToolResult = { text: r.text, ...(r.ok ? {} : { isError: true }), ...(r.image ? { images: [r.image.dataUrl] } : {}) };
+    if (this.rt.get<ToolItem>(id)?.status === 'denied') {
+      this.rt.patch<ToolItem>(id, { result, endedAt: Date.now() });
+      this.step();
+    } else this.complete(id, result, r.ok ? 'done' : 'error');
+    return r;
   }
 
   start(id: string) {

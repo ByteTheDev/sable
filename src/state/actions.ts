@@ -1,4 +1,4 @@
-import { DEFAULT_ACCOUNT, type AccountInfo, type Attachment, type BackdropConfig, type BackdropImage, type Effort, type ProviderId, type QueuedMessage, type SessionMeta, type SessionOptions } from '@shared/protocol';
+import { DEFAULT_ACCOUNT, type AccountInfo, type Attachment, type BackdropConfig, type BackdropImage, type BrowserAnswer, type Effort, type ProviderId, type QueuedMessage, type SessionMeta, type SessionOptions } from '@shared/protocol';
 import { normalizeBackdrop } from '@shared/backdrop';
 import { bridge } from '@/lib/bridge';
 import { applySnapshot, capsKey, loadSession, useStore, type RailTab, type SettingsSection, type Store } from './store';
@@ -167,6 +167,12 @@ export const renameSession = (sessionId: string, title: string) => bridge.call('
 
 /** Switches browser control, computer use or remote control for a session. */
 export const setSessionOptions = (sessionId: string, options: SessionOptions) => bridge.call('session.setOptions', { sessionId, options }).catch(fail);
+
+/** The window's answer to the agent's browser tool (a `browser.request` event). Silent: the bridge times out without it. */
+export const respondBrowser = (sessionId: string, requestId: string, answer: BrowserAnswer) => bridge.call('browser.respond', { sessionId, requestId, answer }).catch(() => {});
+
+/** What the session's Browser tab shows now, for the line the agent gets with the next message. */
+export const reportBrowserPage = (sessionId: string, page: { url: string; title: string } | null) => bridge.call('browser.page', { sessionId, page }).catch(() => {});
 
 /** Changes what new sessions with `provider` start with (Settings › General). */
 export function setDefaultSessionOptions(provider: ProviderId, patch: SessionOptions) {

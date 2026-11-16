@@ -50,6 +50,7 @@ import { claudePlan } from './plans';
 import { carryClaudeConversation } from '../accounts/handover';
 import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
 import { widgetServer } from './claude-widget';
+import { BROWSER_HINT, BROWSER_TOOL_IDS, browserTabEnabled } from './browser-tool';
 import { WIDGET_FENCE_HINT, WIDGET_SERVER, WIDGET_TOOL_ID, widgetsEnabled } from './widget-tool';
 
 type Obj = Record<string, any>;
@@ -289,8 +290,8 @@ export class ClaudeProvider implements Provider {
    * generative UI on, one line that reminds the model the widget tool exists (a tool description
    * alone is rarely enough for a model to reach for an optional tool unprompted).
    */
-  appendix(): string {
-    return [this.concise() ? CONCISE_REPLIES_PROMPT : '', this.widgets() ? WIDGET_FENCE_HINT : ''].filter(Boolean).join('\n\n');
+  appendix(meta?: Pick<SessionMeta, 'options'>): string {
+    return [this.concise() ? CONCISE_REPLIES_PROMPT : '', this.widgets() ? WIDGET_FENCE_HINT : '', meta && browserTabEnabled(meta) ? BROWSER_HINT : ''].filter(Boolean).join('\n\n');
   }
 
   agentOptions(meta: Pick<SessionMeta, 'cwd' | 'model' | 'effort' | 'mode' | 'options' | 'providerSessionId' | 'ultracode'>, owner: WarmOwner, resumeAt?: string): Options {
@@ -299,10 +300,16 @@ export class ClaudeProvider implements Provider {
     if (meta.options?.browser) extraArgs.chrome = null;
     else if (meta.options?.browser === false) extraArgs['no-chrome'] = null;
     const base = this.baseOptions(meta.cwd);
+    const appendix = this.appendix(meta);
+    // Sable's own tools: show_widget (generative UI) and the Browser tab tools (the session's capability),
+    // allowed without the CLI's prompt (the browser tools ask for pages that are not local themselves).
+    const browser = browserTabEnabled(meta);
+    const own = this.widgets() || browser;
+    const allowed = [...(this.widgets() ? [WIDGET_TOOL_ID] : []), ...(browser ? BROWSER_TOOL_IDS : [])];
     return {
       ...base,
       // Appended to Claude Code's own prompt: CLAUDE.md, output styles and settings still apply.
-      systemPrompt: this.appendix() ? { type: 'preset', preset: 'claude_code', append: this.appendix() } : base.systemPrompt,
+      systemPrompt: appendix ? { type: 'preset', preset: 'claude_code', append: appendix } : base.systemPrompt,
       // Flag-tier settings for this process (what applyFlagSettings changes later on).
       settings: meta.ultracode ? ({ ultracode: true } as Options['settings']) : undefined,
       model: meta.model && meta.model !== 'default' ? meta.model : undefined,
@@ -319,7 +326,9 @@ export class ClaudeProvider implements Provider {
       extraArgs,
       // Generative UI: an in-process server with the show_widget tool, allowed without asking.
       // The user's own MCP servers still load from their settings.
-      ...(this.widgets() ? { mcpServers: { [WIDGET_SERVER]: widgetServer() }, allowedTools: [WIDGET_TOOL_ID] } : {}),
+      ...(own
+        ? { mcpServers: { [WIDGET_SERVER]: widgetServer({ widgets: this.widgets(), session: browser ? () => owner.session?.runtime() : undefined }) }, allowedTools: allowed }
+        : {}),
       canUseTool: (name, toolInput, o) =>
         owner.session ? owner.session.canUseTool(name, toolInput, o) : Promise.resolve({ behavior: 'deny', message: 'No session is attached yet.' } as PermissionResult),
       stderr: (d) => {
@@ -684,7 +693,7 @@ interface WarmOwner {
 /** Everything a process is started with: a warm process is only reused for the same choice. */
 function warmKey(c: { cwd: string; model?: string; mode?: string; effort?: Effort; options?: SessionOptions; ultracode?: boolean }, concise: boolean, widgets = true) {
   const o = c.options ?? {};
-  return JSON.stringify([path.resolve(c.cwd).toLowerCase(), c.model && c.model !== 'default' ? c.model : '', c.mode || 'default', sdkEffort(c.effort) ?? '', o.browser ?? null, !!c.ultracode, concise, widgets]);
+  return JSON.stringify([path.resolve(c.cwd).toLowerCase(), c.model && c.model !== 'default' ? c.model : '', c.mode || 'default', sdkEffort(c.effort) ?? '', o.browser ?? null, !!c.ultracode, concise, widgets, o.browserTab !== false]);
 }
 
 /** Control requests the SDK does not wrap (remote_control, mcp_call): the CLI answers them on stdio. */
@@ -752,6 +761,11 @@ class ClaudeSession implements ProviderSession {
 
   liveQuery() {
     return this.q;
+  }
+
+  /** The session this process works for (the browser tools ask its window). */
+  runtime() {
+    return this.rt;
   }
 
   private get log() {
@@ -884,6 +898,14 @@ class ClaudeSession implements ProviderSession {
       if (this.rt.turnActive) {
         this.restartPending = true;
         this.rt.notice('info', options.browser ? 'Browser control starts after this turn' : 'Browser control stops after this turn');
+      } else this.restart();
+      return;
+    }
+    if ((options.browserTab !== false) !== (before.browserTab !== false)) {
+      // The Browser tab tools live in the process's own MCP server: only a new process changes them.
+      if (this.rt.turnActive) {
+        this.restartPending = true;
+        this.rt.notice('info', options.browserTab !== false ? 'The Browser tab tools start after this turn' : 'The Browser tab tools stop after this turn');
       } else this.restart();
       return;
     }
@@ -1100,6 +1122,8 @@ class ClaudeSession implements ProviderSession {
 
     // Showing a widget changes nothing outside Sable's sandboxed frame: never ask.
     if (name === WIDGET_TOOL_ID) return { behavior: 'allow', updatedInput: input };
+    // The Browser tab tools ask for themselves, with the page's host (local pages need no answer).
+    if (BROWSER_TOOL_IDS.includes(name)) return { behavior: 'allow', updatedInput: input };
 
     if (name === 'AskUserQuestion') {
       const questions = describeTool(name, input).detail.questions ?? [];

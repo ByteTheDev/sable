@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger, Switch, Tip } from '@/ui';
 type Key = keyof SessionOptions;
 
 const ROWS: { key: Key; icon: IconName; label: string }[] = [
+  { key: 'browserTab', icon: 'globe', label: 'Browser tab' },
   { key: 'browser', icon: 'browser', label: 'Browser control' },
   { key: 'computerUse', icon: 'cursor-click', label: 'Computer use' },
   { key: 'remoteControl', icon: 'devices', label: 'Remote control' },
@@ -16,6 +17,8 @@ const ROWS: { key: Key; icon: IconName; label: string }[] = [
 /** Whether a capability is on: Codex's plugin follows the user's own config until switched. */
 export function optionOn(key: Key, options: SessionOptions | undefined, linked?: boolean) {
   const v = options?.[key];
+  // The agent sees Sable's own Browser tab unless switched off.
+  if (key === 'browserTab') return v !== false;
   return v ?? (key !== 'remoteControl' && !!linked);
 }
 
@@ -28,14 +31,16 @@ export function CapabilitiesButton({ sessionId }: { sessionId: string }) {
       return m ? { id: m.id, status: m.status, options: m.options, remote: m.remote, capState: m.capState } : undefined;
     }),
   );
-  const rows = ROWS.filter((r) => features?.[r.key]);
+  // Every agent gets the Browser tab tools once its capabilities are known.
+  const rows = ROWS.filter((r) => (r.key === 'browserTab' ? !!features : features?.[r.key]));
   if (!session || !rows.length) return null;
   const linked = !!features?.linkedBrowserComputer;
-  const anyOn = rows.some((r) => optionOn(r.key, session.options, linked));
+  // The dot marks capabilities switched on beyond the defaults: the Browser tab is on unless switched off.
+  const anyOn = rows.some((r) => r.key !== 'browserTab' && optionOn(r.key, session.options, linked));
 
   const toggle = (key: Key, on: boolean) => {
     // Codex: one plugin gives both, so they switch together.
-    const patch: SessionOptions = linked && key !== 'remoteControl' ? { browser: on, computerUse: on } : { [key]: on };
+    const patch: SessionOptions = linked && key !== 'remoteControl' && key !== 'browserTab' ? { browser: on, computerUse: on } : { [key]: on };
     void setSessionOptions(session.id, patch);
   };
 
@@ -54,7 +59,7 @@ export function CapabilitiesButton({ sessionId }: { sessionId: string }) {
         {rows.map((r) => {
           const on = optionOn(r.key, session.options, linked);
           const state: CapabilityState | undefined =
-            r.key === 'remoteControl' ? (session.remote ? { ...session.remote } : undefined) : session.capState?.[r.key as 'browser' | 'computerUse'];
+            r.key === 'remoteControl' ? (session.remote ? { ...session.remote } : undefined) : r.key === 'browserTab' ? undefined : session.capState?.[r.key as 'browser' | 'computerUse'];
           return (
             <div key={r.key} className="menu-item caps-row" data-on={on || undefined}>
               <Icon name={r.icon} size={16} />

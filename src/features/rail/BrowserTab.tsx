@@ -8,7 +8,8 @@ import * as actions from '@/state/actions';
 import { focusComposer } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { IconButton, Menu, MenuContent, MenuItem, MenuSep, MenuTrigger, Spinner, Tip } from '@/ui';
-import { DEVICES, forgetVisit, getPage, noteVisit, pushHistory, setPage, stepHistory, touchVisit, usePage, usePreviews, useRecent, type Device } from './browser-store';
+import { readScript, registerPage } from './browser-agent';
+import { DEVICES, forgetVisit, getPage, logConsole, logFailed, noteVisit, pushHistory, resetLog, setPage, stepHistory, touchVisit, usePage, usePreviews, useRecent, type Device } from './browser-store';
 import './browser.css';
 
 /**
@@ -22,9 +23,9 @@ interface DesktopApi {
   platform: string;
   debug?: boolean;
   browser?: {
-    capture(webContentsId: number): Promise<string>;
+    capture(webContentsId: number, opts?: { forAgent?: boolean }): Promise<string>;
     clearData(): Promise<void>;
-    onEvent(cb: (e: { type: string; name?: string; id?: number }) => void): () => void;
+    onEvent(cb: (e: { type: string; name?: string; id?: number; url?: string; method?: string; status?: number; error?: string }) => void): () => void;
   };
 }
 
@@ -46,6 +47,8 @@ interface WebviewEl extends HTMLElement {
   openDevTools(): void;
   closeDevTools(): void;
   isDevToolsOpened(): boolean;
+  getURL(): string;
+  executeJavaScript(code: string): Promise<unknown>;
 }
 
 type WebviewEvent = Event & {
@@ -57,6 +60,11 @@ type WebviewEvent = Event & {
   errorDescription?: string;
   validatedURL?: string;
   result?: { activeMatchOrdinal: number; matches: number };
+  /** console-message: a number (0 verbose … 3 error) in older shells, a word in newer ones. */
+  level?: number | string;
+  message?: string;
+  line?: number;
+  sourceId?: string;
 };
 
 /** Chromium's zoom steps. */
@@ -110,6 +118,7 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<WebviewEl | null>(null);
   const ready = useRef(false);
+  const unregister = useRef<(() => void) | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const toast = useStore((s) => s.toast);
   const [finding, setFinding] = useState(false);
@@ -165,8 +174,17 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
       });
       on('did-navigate', (e) => {
         if (!e.url) return;
+        // A new document: the agent's view of its console and failed requests starts empty.
+        resetLog(sessionId);
         setPage(sessionId, { url: e.url, title: '', favicon: undefined, phase: 2, ...nav() });
         setFound(null);
+      });
+      // Errors and warnings the page logs, for the agent's browser_read (bounded in the store).
+      on('console-message', (e) => {
+        const lv = e.level;
+        const level = lv === 3 || lv === 'error' ? 'error' : lv === 2 || lv === 'warning' ? 'warning' : null;
+        if (!level || !e.message) return;
+        logConsole(sessionId, { level, text: e.message, source: e.sourceId ? `${e.sourceId.replace(/[?#].*$/, '')}${e.line ? `:${e.line}` : ''}` : undefined });
       });
       on('did-navigate-in-page', (e) => e.isMainFrame && e.url && setPage(sessionId, { url: e.url, ...nav() }));
       on('page-title-updated', (e) => {
@@ -189,6 +207,34 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
       on('found-in-page', (e) => e.result && setFound({ active: e.result.activeMatchOrdinal, total: e.result.matches }));
       host.current.appendChild(el);
       view.current = el;
+      resetLog(sessionId);
+      // The agent's browser tools reach the page through this (browser-agent.ts).
+      unregister.current?.();
+      unregister.current = registerPage({
+        sessionId,
+        url: () => {
+          try {
+            return ready.current ? el.getURL() : getPage(sessionId).url;
+          } catch {
+            return getPage(sessionId).url;
+          }
+        },
+        read: async (selector, max) => {
+          if (!ready.current) throw new Error('The page is still starting.');
+          const r = (await el.executeJavaScript(readScript(selector, max))) as { title?: unknown; text?: unknown; length?: unknown; missing?: boolean; badSelector?: boolean } | null;
+          return {
+            title: typeof r?.title === 'string' ? r.title : '',
+            text: typeof r?.text === 'string' ? r.text : '',
+            length: typeof r?.length === 'number' ? r.length : 0,
+            missing: r?.missing === true,
+            badSelector: r?.badSelector === true,
+          };
+        },
+        capture: async () => {
+          if (!ready.current || !desktop?.browser) throw new Error('The page is still starting.');
+          return desktop.browser.capture(el.getWebContentsId(), { forAgent: true });
+        },
+      });
       return true;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -206,9 +252,13 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
       if (e.type === 'download-blocked') useStore.getState().toast(`Downloads are off in the panel browser${e.name ? ` (${e.name})` : ''}. Open the page in your browser to download.`);
       // Ctrl+F typed inside this page (the shell forwards it; keys in the page never reach the app).
       if (e.type === 'find' && view.current && ready.current && e.id === view.current.getWebContentsId()) openFind();
+      // A request of this page failed (the shell sends the address without its query, and the status or error).
+      if (e.type === 'net' && e.url && view.current && ready.current && e.id === view.current.getWebContentsId()) logFailed(sessionId, { url: e.url, method: e.method, status: e.status, error: e.error });
     });
     return () => {
       off?.();
+      unregister.current?.();
+      unregister.current = null;
       view.current?.remove();
       view.current = null;
       ready.current = false;
@@ -438,7 +488,7 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
             <Icon name="x" size={14} className="bw-reload-b" />
           </button>
         </Tip>
-        <AddressField url={page.url} title={page.title} favicon={page.favicon} zoom={page.zoom} onResetZoom={() => zoomTo(1)} inputRef={input} onGo={go} />
+        <AddressField url={page.url} title={page.title} favicon={page.favicon} zoom={page.zoom} agent={page.agent} onResetZoom={() => zoomTo(1)} inputRef={input} onGo={go} />
         <Menu>
           <Tip label="More">
             <MenuTrigger className="icon-btn" aria-label="More" disabled={!page.url}>
@@ -451,6 +501,9 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
             </MenuItem>
             <MenuItem icon="link" onSelect={() => void copyLink()}>
               Copy link
+            </MenuItem>
+            <MenuItem icon="at" onSelect={() => focusComposer(`${page.url} `, { append: true })}>
+              Mention this page in chat
             </MenuItem>
             {native && (
               <MenuItem icon="file-search" onSelect={openFind}>
@@ -719,6 +772,10 @@ function siteFallback(url: string): IconName {
   return url.startsWith('http:') ? 'unlock' : 'globe';
 }
 
+/** While the agent works on the page: one quiet word in the address field, for that moment only. */
+const AGENT_WORD = { read: 'Reading', screenshot: 'Capturing', open: 'Opening' } as const;
+const AGENT_SAYS = { read: 'The agent is reading this page', screenshot: 'The agent is taking a screenshot of this page', open: 'The agent is opening this page' } as const;
+
 /**
  * At rest: the site's icon, the host, the rest of the path dim (or the title on a site's front
  * page, or the words of a search). On focus: the whole address, selected. Enter opens it or
@@ -729,6 +786,7 @@ function AddressField({
   title,
   favicon,
   zoom,
+  agent,
   onResetZoom,
   inputRef,
   onGo,
@@ -737,6 +795,7 @@ function AddressField({
   title: string;
   favicon?: string;
   zoom: number;
+  agent?: 'read' | 'screenshot' | 'open';
   onResetZoom: () => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
   onGo: (raw: string) => boolean;
@@ -759,6 +818,7 @@ function AddressField({
       className="bw-addr"
       data-focused={focused || undefined}
       data-zoomed={(!focused && zoom !== 1) || undefined}
+      data-agent={(!focused && !!agent) || undefined}
       onSubmit={(e) => {
         e.preventDefault();
         if (onGo(value)) inputRef.current?.blur();
@@ -812,6 +872,11 @@ function AddressField({
               {parts.path ? <span className="bw-addr-path">{parts.path}</span> : showTitle && <span className="bw-addr-title">{title}</span>}
             </>
           )}
+        </span>
+      )}
+      {!focused && agent && (
+        <span className="bw-agent shimmer" role="status" aria-label={AGENT_SAYS[agent]}>
+          {AGENT_WORD[agent]}
         </span>
       )}
       {!focused && zoom !== 1 && (

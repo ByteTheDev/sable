@@ -51,12 +51,23 @@ contextBridge.exposeInMainWorld('sableDesktop', {
     },
   },
   browser: {
-    capture: (webContentsId: number): Promise<string> => ipcRenderer.invoke('sable:browser-capture', Number(webContentsId)),
+    /** `forAgent`: smaller, as JPEG, for the agent's browser_screenshot. */
+    capture: (webContentsId: number, opts?: { forAgent?: boolean }): Promise<string> => ipcRenderer.invoke('sable:browser-capture', Number(webContentsId), !!opts?.forAgent),
     clearData: (): Promise<void> => ipcRenderer.invoke('sable:browser-clear'),
-    onEvent: (cb: (e: { type: string; name?: string; id?: number }) => void) => {
+    /** Blocked downloads, Ctrl+F in a page, and failed requests of a page ('net': url without query, method, status or error). */
+    onEvent: (cb: (e: { type: string; name?: string; id?: number; url?: string; method?: string; status?: number; error?: string }) => void) => {
       if (typeof cb !== 'function') return () => {};
-      const listener = (_e: unknown, msg: { type: string; name?: string; id?: number }) =>
-        cb({ type: String(msg?.type), name: msg?.name ? String(msg.name) : undefined, id: typeof msg?.id === 'number' ? msg.id : undefined });
+      const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+      const listener = (_e: unknown, msg: { type: string; name?: string; id?: number; url?: string; method?: string; status?: number; error?: string }) =>
+        cb({
+          type: String(msg?.type),
+          name: msg?.name ? String(msg.name) : undefined,
+          id: typeof msg?.id === 'number' ? msg.id : undefined,
+          url: str(msg?.url),
+          method: str(msg?.method),
+          status: typeof msg?.status === 'number' ? msg.status : undefined,
+          error: str(msg?.error),
+        });
       ipcRenderer.on('sable:browser-event', listener);
       return () => {
         ipcRenderer.removeListener('sable:browser-event', listener);

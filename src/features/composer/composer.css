@@ -190,6 +190,57 @@
   white-space: nowrap;
 }
 
+/* The sent words in the air (flight.ts): plain text over everything, transform and opacity only. */
+.send-flight {
+  position: fixed;
+  z-index: 60;
+  margin: 0;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  transform-origin: 0 0;
+  will-change: transform;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--lines, 4);
+  overflow: hidden;
+}
+
+.send-flight[data-one-line] {
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The send key's launch (Composer.launchKey): a copy of the disc over the real one for a moment. */
+.sk-launch {
+  position: fixed;
+  z-index: 61;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-inverse);
+  background-color: var(--text);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sk-launch .sk-glyph {
+  display: block;
+}
+
+.sk-launch-sq {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 2px;
+  background-color: currentColor;
+}
+
 .cmp-card[data-rolling] .cmp-input::placeholder {
   color: transparent;
 }
@@ -263,9 +314,15 @@
   transition: rotate var(--d-2) var(--ease-out);
 }
 
-.cmp-attach:hover .cmp-plus,
-.cmp-attach:focus-visible .cmp-plus {
-  rotate: 90deg;
+/* Hover: the plus gathers and breathes out once (keyframes in icons/animated/animated.css). */
+.cmp-attach:is(:hover, :focus-visible):not([aria-expanded='true']) .cmp-plus {
+  animation: ai-plus-breathe 360ms var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cmp-attach .cmp-plus {
+    animation: none;
+  }
 }
 
 .cmp-attach[aria-expanded='true'] .cmp-plus {
@@ -1988,4 +2045,10 @@ button.hc:active {
 
 .handoff-ghost .cmp-card::after {
   opacity: 0;
+}
+
+/* A session still loading its conversation: the agent controls wait for its own state (Composer `opening`). */
+.cmp-card[data-opening] .cmp-agent {
+  opacity: 0;
+  transition: none;
 }

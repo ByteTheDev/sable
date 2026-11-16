@@ -219,6 +219,44 @@
   padding-left: 8px;
 }
 
+/* The agent reading, capturing or opening the page: one quiet word at the end of the field, for that moment. */
+.bw-addr[data-agent] .bw-addr-view {
+  right: 78px;
+}
+
+.bw-addr[data-zoomed][data-agent] .bw-addr-view {
+  right: 118px;
+}
+
+/* The host stays readable for that moment: the title steps aside. */
+.bw-addr[data-agent] .bw-addr-title {
+  display: none;
+}
+
+.bw-agent {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0 4px;
+  font-size: var(--t-small, 12px);
+  color: var(--text-2);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: bw-agent-in var(--d-2) var(--ease-out);
+}
+
+@keyframes bw-agent-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bw-agent {
+    animation: none;
+  }
+}
+
 /* A page that is not at 100 %: its zoom as a quiet figure at the end of the field; a click resets it. */
 .bw-zoom {
   flex-shrink: 0;

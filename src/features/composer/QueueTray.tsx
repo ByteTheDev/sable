@@ -1,12 +1,15 @@
-import { memo, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { AnimatePresence, motion, Reorder, useDragControls, useReducedMotion } from 'motion/react';
 import type { QueuedMessage } from '@shared/protocol';
 import { Icon } from '@/icons';
 import { shatter } from './shatter';
+import { landInTray, launchFromTray } from './flight';
 import { removeQueued, reorderQueue, sendQueuedNow } from '@/state/actions';
 import { Roll } from './Roll';
 
 const NONE: QueuedMessage[] = [];
+/** Rows the person removed or took back to edit: they leave without flying. */
+const gone = new Set<string>();
 export const NO_QUEUE = NONE;
 
 const firstLine = (t: string) => t.split('\n').find((l) => l.trim())?.trim() ?? '';
@@ -33,8 +36,32 @@ export interface QueueTrayProps {
  */
 export const QueueTray = memo(function QueueTray({ sessionId, queue, running, steerable, onEdit, onFocusComposer }: QueueTrayProps) {
   const reduced = useReducedMotion();
+  // Words from the composer land on a new row; a row the agent takes (or that is sent now) flies
+  // up to the conversation. Rows removed or taken back to edit just go. Read here, not in the
+  // tray's body: a tray that empties keeps its last rows on screen while it folds away.
+  const clip = useRef<HTMLDivElement>(null);
+  const before = useRef<QueuedMessage[]>(NONE);
+  useLayoutEffect(() => {
+    const host = clip.current;
+    const prev = before.current;
+    before.current = queue;
+    if (!host || prev === queue) return;
+    const now = new Set(queue.map((q) => q.id));
+    const was = new Set(prev.map((q) => q.id));
+    const textOf = (id: string) => host.querySelector<HTMLElement>(`[data-qid="${CSS.escape(id)}"] .cq-text`);
+    for (const q of queue) {
+      if (was.has(q.id)) continue;
+      const el = textOf(q.id);
+      if (el) landInTray(el, q.text);
+    }
+    for (const q of prev) {
+      if (now.has(q.id) || gone.delete(q.id)) continue;
+      const el = textOf(q.id);
+      if (el) launchFromTray(el, q.text);
+    }
+  }, [queue]);
   return (
-    <div className="cq-clip">
+    <div className="cq-clip" ref={clip}>
       <AnimatePresence initial={false}>
         {queue.length > 0 && (
           <motion.section
@@ -86,6 +113,7 @@ function TrayBody({ sessionId, queue, running, steerable, onEdit, onFocusCompose
   };
 
   const remove = (q: QueuedMessage, i: number, el: Element | null) => {
+    gone.add(q.id);
     shatter(el);
     void removeQueued(sessionId, q.id);
     if (el?.contains(document.activeElement)) focusRow(i);
@@ -125,7 +153,10 @@ function TrayBody({ sessionId, queue, running, steerable, onEdit, onFocusCompose
                 commit(shown.current);
               }}
               onSend={() => void sendQueuedNow(sessionId, q.id)}
-              onEdit={() => onEdit(q)}
+              onEdit={() => {
+                gone.add(q.id);
+                onEdit(q);
+              }}
               onRemove={(el) => remove(q, i, el)}
               onKey={(e) => {
                 if (e.target !== e.currentTarget) return;
@@ -138,6 +169,7 @@ function TrayBody({ sessionId, queue, running, steerable, onEdit, onFocusCompose
                   els[(i + (e.key === 'ArrowDown' ? 1 : els.length - 1)) % els.length]?.focus();
                 } else if (e.key === 'Enter' || e.key === 'F2') {
                   e.preventDefault();
+                  gone.add(q.id);
                   onEdit(q);
                 } else if (e.key === 'Delete' || e.key === 'Backspace') {
                   e.preventDefault();
@@ -193,6 +225,7 @@ function Row({ q, i, count, running, steerable, reduced, onDragStart, onDragEnd,
       layout="position"
       className="cq-row"
       data-qrow
+      data-qid={q.id}
       data-lifted={lifted || undefined}
       tabIndex={0}
       aria-label={`Queued message ${i + 1} of ${count}: ${text}${atts ? `, ${atts} attached` : ''}. Alt+Arrow keys move it.`}

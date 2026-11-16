@@ -8,7 +8,9 @@ import { pathForFile } from '@/lib/desktop';
 import { baseName, dirName } from '@/lib/format';
 import { fuzzy } from '@/lib/fuzzy';
 import { isUltraEffort } from '@/lib/models';
-import { EASE_OUT, play } from '@/lib/motion';
+import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
+import { launchFlight } from './flight';
+import { launchKey } from './launch';
 import { fieldBeat } from '@/art/events';
 import { searchFiles, type FileHit } from '@/lib/workspace';
 import { homeChoice, interrupt, sendMessage, setHomeUltracode, setUltracode, startFromHome, takeQueued, updateQueued } from '@/state/actions';
@@ -200,6 +202,7 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
   const [ultraLocal, setUltraLocal] = useState<boolean | null>(null);
   const searchSeq = useRef(0);
 
+  const opening = useStore((s) => variant === 'session' && !!sessionId && !s.data[sessionId]?.loaded);
   const busy = status === 'running' || status === 'awaiting' || status === 'starting';
   const shell = variant === 'session' && text.startsWith('!');
   const trimmed = text.trim();
@@ -293,8 +296,18 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
   // ── the home-to-session hand-off lands on this card ──
 
   useLayoutEffect(() => {
-    if (variant === 'session') claimHandoff(card.current);
-  }, [variant]);
+    if (variant !== 'session' || !claimHandoff(card.current)) return;
+    // Words typed on home during the glide (the home field kept the keyboard) come along, and the
+    // keyboard moves here now, so nothing typed right after the first send is lost.
+    const st = useStore.getState();
+    const carried = st.drafts.home?.text ?? '';
+    if (carried) {
+      const cur = st.drafts[key]?.text ?? '';
+      setText(cur + carried);
+      setDraft('home', { text: '' });
+    }
+    focus();
+  }, [variant]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── focus ──
 
@@ -468,7 +481,7 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
    * live): the sent text rolls up about 12px behind the field's top edge and fades (80 ms), and
    * the next placeholder rises from 8px below (100 ms, two frames later). The backdrop gets a pulse.
    */
-  const rollOut = (sent: string, next: string | null) => {
+  const rollOut = (sent: string, next: string | null, flew: boolean) => {
     fieldBeat('send', card.current?.querySelector('.cmp-send') ?? card.current, 1);
     const field = ref.current?.parentElement;
     if (!field || !sent) return;
@@ -476,8 +489,11 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
     layer.className = 'cmp-roll';
     layer.setAttribute('aria-hidden', 'true');
     const old = document.createElement('div');
-    old.textContent = sent;
-    layer.appendChild(old);
+    // The words are in the air (flight.ts): only the next placeholder rises here.
+    if (!flew) {
+      old.textContent = sent;
+      layer.appendChild(old);
+    }
     const out = play(old, [{ transform: 'translateY(0px)', opacity: 1 }, { transform: 'translateY(-12px)', opacity: 0 }], { duration: 80, easing: 'cubic-bezier(0.3, 0, 0.6, 1)', fill: 'forwards' });
     if (!out) return;
     field.appendChild(layer);
@@ -488,7 +504,7 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
       ph.textContent = next;
       layer.appendChild(ph);
       card.current?.setAttribute('data-rolling', '');
-      last = play(ph, [{ transform: 'translateY(8px)', opacity: 0 }, { transform: 'translateY(0px)', opacity: 1 }], { duration: 100, delay: 33, easing: EASE_OUT, fill: 'both' }) ?? out;
+      last = play(ph, [{ transform: 'translateY(8px)', opacity: 0 }, { transform: 'translateY(0px)', opacity: 1 }], { duration: flew ? 160 : 100, delay: flew ? 150 : 33, easing: EASE_OUT, fill: 'both' }) ?? out;
     }
     const done = () => {
       layer.remove();
@@ -536,8 +552,15 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
     const draft = { text, attachments };
     const out = parcel(trimmed, attachments);
     if (sessionId && busy) hinted.add(sessionId);
+    // The words leave the field for where they land: the conversation, or the queue tray while a
+    // turn runs (a steer goes into the turn). Measured once here, before the field empties.
+    const steering = steer && busy && steerable;
+    const ta = ref.current;
+    const flew = !!ta && !!trimmed && !reducedMotion();
+    if (flew) launchFlight({ el: ta, text: trimmed }, { dest: sessionId && busy && !steering ? 'tray' : 'timeline', steer: steering, first: !sessionId });
+    if (variant === 'session') launchKey(card.current);
     // In a session the next placeholder is always the queueing one: the turn is running (or about to).
-    rollOut(text, variant === 'session' ? 'Queue a follow-up' : null);
+    rollOut(text, variant === 'session' ? 'Queue a follow-up' : null, flew);
     clear();
     if (sessionId) {
       await sendMessage(sessionId, out.text, out.attachments, steer && busy ? { steer: true } : {});
@@ -700,7 +723,10 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
   };
 
   const queueing = variant === 'session' && busy && !shell;
-  const placeholder = ghost || (shell && text === '!') ? '' : variant === 'home' ? (signedOut ? `Sign in to ${PROVIDER_NAME[homeAgent]} to start` : 'Describe a task or ask a question') : queueing ? 'Queue a follow-up' : 'Reply';
+  // A session switched to whose conversation is still loading: no placeholder and no agent
+  // controls yet, so the dock never shows a default ("Reply", skeleton chips) for a frame before
+  // the session's own state arrives.
+  const placeholder = opening ? '' : ghost || (shell && text === '!') ? '' : variant === 'home' ? (signedOut ? `Sign in to ${PROVIDER_NAME[homeAgent]} to start` : 'Describe a task or ask a question') : queueing ? 'Queue a follow-up' : 'Reply';
   const steerHint = queueing && steerable && !text && !attachments.length && !!sessionId && !hinted.has(sessionId);
 
   return (
@@ -732,6 +758,7 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
         data-ultra={ultraLook || undefined}
         data-shell={shell || undefined}
         data-empty={!text && !attachments.length ? '' : undefined}
+        data-opening={opening || undefined}
         onMouseDown={(e) => {
           const t = e.target as HTMLElement;
           if (t === e.currentTarget || t.classList.contains('cmp-bar') || t.classList.contains('cmp-side')) {

@@ -7,114 +7,32 @@
 }
 
 /* ── icons answer the control they sit in ──
-   One small move per icon when its button or link is hovered or focused: 120 ms, the icon's own
-   box only (individual transform properties, so rules that already set `transform` still hold),
-   no layout change, nothing loops. */
-svg[data-icon] {
-  transition:
-    translate 120ms var(--ease-out),
-    rotate 120ms var(--ease-out),
-    scale 120ms var(--ease-out);
-
+   Icons with a drawn version move their parts (animated/animated.css). Every other icon gets one
+   quiet nudge per hover or focus: a small step in its direction and back, or a soft settle, on
+   its own box (individual `translate`, so rules that set `transform` still hold). Nothing turns,
+   nothing grows, nothing loops. */
+@keyframes icon-nudge {
+  45% { translate: var(--nx, 0) var(--ny, -1px); }
+  78% { translate: calc(var(--nx, 0) * -0.2) calc(var(--ny, -1px) * -0.2); }
 }
 
-:is(button, a, [role='button']):is(:hover, :focus-visible) {
+:is(button, a, [role='button'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='tab'], [role='option']):is(:hover, :focus-visible, [data-highlighted])
+  svg[data-icon]:not([data-anim], [data-icon^='wc-']) {
+  animation: icon-nudge 300ms var(--ease-out);
+
   /* direction */
-  & svg[data-icon='arrow-up'],
-  & svg[data-icon='caret-up'] {
-    translate: 0 -1.5px;
-  }
-  & svg[data-icon='arrow-down'],
-  & svg[data-icon='caret-down'],
-  & svg[data-icon='to-bottom'],
-  & svg[data-icon='download'],
-  & svg[data-icon='archive'] {
-    translate: 0 1.5px;
-  }
-  & svg[data-icon='arrow-right'],
-  & svg[data-icon='caret-right'],
-  & svg[data-icon='fast-forward'],
-  & svg[data-icon='sign-in'],
-  & svg[data-icon='play'] {
-    translate: 1.5px 0;
-  }
-  & svg[data-icon='arrow-left'],
-  & svg[data-icon='caret-left'],
-  & svg[data-icon='rewind'],
-  & svg[data-icon='reply'],
-  & svg[data-icon='sidebar'] {
-    translate: -1.5px 0;
-  }
-  & svg[data-icon='external'],
-  & svg[data-icon='export'],
-  & svg[data-icon='copy'] {
-    translate: 1px -1px;
-  }
-  /* turn */
-  & svg[data-icon='plus'],
-  & svg[data-icon='x'],
-  & svg[data-icon='refresh'] {
-    rotate: 90deg;
-  }
-  & svg[data-icon='settings'] {
-    rotate: 30deg;
-  }
-  & svg[data-icon='search'],
-  & svg[data-icon='pencil'],
-  & svg[data-icon='compose'],
-  & svg[data-icon='attach'],
-  & svg[data-icon='history'],
-  & svg[data-icon='wrench'] {
-    rotate: -12deg;
-  }
-  & svg[data-icon='pin'],
-  & svg[data-icon='at'],
-  & svg[data-icon='plug'],
-  & svg[data-icon='key'] {
-    rotate: 14deg;
-  }
-  & svg[data-icon='trash'] {
-    rotate: -9deg;
-    translate: 0 -1px;
-  }
-  /* open, lift, grow */
-  & svg[data-icon='folder'],
-  & svg[data-icon='folder-open'],
-  & svg[data-icon='folder-plus'],
-  & svg[data-icon='image'],
-  & svg[data-icon='user'],
-  & svg[data-icon='dots'],
-  & svg[data-icon='dots-vertical'],
-  & svg[data-icon='check'],
-  & svg[data-icon='sliders'],
-  & svg[data-icon='queue'],
-  & svg[data-icon='context'] {
-    scale: 1.12;
-  }
-  & svg[data-icon='caret-updown'] {
-    scale: 1 1.18;
-  }
-  /* window controls */
-  & svg[data-icon='wc-min'] {
-    translate: 0 1px;
-  }
-  & svg[data-icon='wc-max'],
-  & svg[data-icon='wc-restore'],
-  & svg[data-icon='capabilities'] {
-    scale: 1.1;
-  }
-  & svg[data-icon='wc-close'] {
-    rotate: 90deg;
-  }
-}
-
-/* The panel toggle is the sidebar icon mirrored: it leans toward its own side. */
-.flip-x:is(:hover, :focus-visible) svg[data-icon='sidebar'] {
-  translate: 1.5px 0;
+  &:is([data-icon='to-bottom'], [data-icon='download'], [data-icon='arrow-line-down']) { --ny: 1.5px; }
+  &:is([data-icon='fast-forward'], [data-icon='sign-in'], [data-icon='play']) { --nx: 1.5px; --ny: 0px; }
+  &:is([data-icon='reply'], [data-icon='sign-out'], [data-icon='enter']) { --nx: -1.5px; --ny: 0px; }
+  &:is([data-icon='external'], [data-icon='export'], [data-icon='at'], [data-icon='key'], [data-icon='plug'], [data-icon='attach'], [data-icon='link']) { --nx: 1px; --ny: -1px; }
+  &:is([data-icon='expand']) { --nx: 1px; --ny: -1px; }
+  &:is([data-icon='collapse']) { --nx: -1px; --ny: 1px; }
+  &:is([data-icon='broom'], [data-icon='wrench']) { --nx: -1.5px; --ny: 0.5px; }
+  &:is([data-icon='caret-updown']) { --ny: 1px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   svg[data-icon] {
-    transition: none;
+    animation: none !important;
   }
 }

@@ -32,6 +32,7 @@ import type { Provider, ProviderContext, ProviderSession } from './types';
 import { codexPlan } from './plans';
 import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
 import { WIDGET_DESCRIPTION, WIDGET_FENCE_HINT, WIDGET_INPUT_SCHEMA, WIDGET_TOOL, dynamicToolAnswer, widgetsEnabled } from './widget-tool';
+import { BROWSER_DESCRIPTIONS, BROWSER_HINT, BROWSER_INPUT_SCHEMAS, BROWSER_TOOLS, browserDynamicAnswer, browserOp, browserTabEnabled, type BrowserOp } from './browser-tool';
 import { CodexRpc, RpcError, resolveCodexCommand, type ExitInfo } from './codex-rpc';
 import {
   PRESETS,
@@ -485,9 +486,9 @@ export class CodexProvider implements Provider {
    * generative UI hint when those settings are on. Undefined means "send nothing" (Codex then uses
    * the config as it is).
    */
-  async developerInstructions(cwd: string): Promise<string | undefined> {
+  async developerInstructions(cwd: string, meta?: Pick<SessionMeta, 'options'>): Promise<string | undefined> {
     const settings = this.ctx.settings?.();
-    const ours = [settings?.conciseReplies === false ? '' : CONCISE_REPLIES_PROMPT, widgetsEnabled(settings) ? WIDGET_FENCE_HINT : ''].filter(Boolean).join('\n\n');
+    const ours = [settings?.conciseReplies === false ? '' : CONCISE_REPLIES_PROMPT, widgetsEnabled(settings) ? WIDGET_FENCE_HINT : '', meta && browserTabEnabled(meta) ? BROWSER_HINT : ''].filter(Boolean).join('\n\n');
     if (!ours) return undefined;
     let own: string | undefined;
     try {
@@ -501,9 +502,14 @@ export class CodexProvider implements Provider {
   }
 
   /** Client-defined tools for a new thread: show_widget while generative UI is on. */
-  dynamicTools(): { type: 'function'; name: string; description: string; inputSchema: unknown }[] | undefined {
-    if (!widgetsEnabled(this.ctx.settings?.())) return undefined;
-    return [{ type: 'function', name: WIDGET_TOOL, description: WIDGET_DESCRIPTION, inputSchema: WIDGET_INPUT_SCHEMA }];
+  dynamicTools(meta?: Pick<SessionMeta, 'options'>): { type: 'function'; name: string; description: string; inputSchema: unknown }[] | undefined {
+    const tools: { type: 'function'; name: string; description: string; inputSchema: unknown }[] = [];
+    if (widgetsEnabled(this.ctx.settings?.())) tools.push({ type: 'function', name: WIDGET_TOOL, description: WIDGET_DESCRIPTION, inputSchema: WIDGET_INPUT_SCHEMA });
+    // The Browser tab tools, while the session's capability is on (a thread keeps what it was started with).
+    if (meta && browserTabEnabled(meta)) {
+      for (const op of ['read', 'screenshot', 'open'] as BrowserOp[]) tools.push({ type: 'function', name: BROWSER_TOOLS[op], description: BROWSER_DESCRIPTIONS[op], inputSchema: BROWSER_INPUT_SCHEMAS[op] });
+    }
+    return tools.length ? tools : undefined;
   }
 
   // ── capabilities ──
@@ -791,7 +797,7 @@ class CodexSession implements ProviderSession {
     const rpc = await this.provider.client();
     const p = preset(rt.meta.mode);
     const config = this.threadConfig();
-    const developerInstructions = await this.provider.developerInstructions(rt.meta.cwd);
+    const developerInstructions = await this.provider.developerInstructions(rt.meta.cwd, rt.meta);
     const params = {
       cwd: rt.meta.cwd,
       approvalPolicy: p.approval,
@@ -815,7 +821,7 @@ class CodexSession implements ProviderSession {
       }
     }
     // Dynamic tools exist only on thread/start (a resumed thread keeps what it was started with).
-    const dynamicTools = this.provider.dynamicTools();
+    const dynamicTools = this.provider.dynamicTools(rt.meta);
     resp ??= await rpc.request<ThreadStartResponse>('thread/start', dynamicTools ? { ...params, dynamicTools } : params, THREAD_TIMEOUT);
     if (this.threadId && this.threadId !== resp.thread.id && this.provider.sessions.get(this.threadId) === this) this.provider.sessions.delete(this.threadId);
     this.threadId = resp.thread.id;
@@ -1295,9 +1301,13 @@ class CodexSession implements ProviderSession {
           return await this.approvePermissions(p as PermissionsRequestApprovalParams, ac.signal);
         case 'item/tool/requestUserInput':
           return await this.askUser(p as ToolRequestUserInputParams, ac.signal);
-        case 'item/tool/call':
+        case 'item/tool/call': {
+          // The Browser tab tools ask the session's window (and the user, for pages that are not local).
+          const op = browserOp(typeof p?.tool === 'string' ? p.tool : undefined);
+          if (op) return await browserDynamicAnswer(this.rt, op, p?.arguments, ac.signal);
           // Client-defined tools (show_widget): the timeline already shows the call as the widget.
           return dynamicToolAnswer(p);
+        }
         case 'execCommandApproval':
           return await this.legacyExec(p as ExecCommandApprovalParams, ac.signal);
         case 'applyPatchApproval':

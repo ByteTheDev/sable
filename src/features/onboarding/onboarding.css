@@ -303,7 +303,6 @@ html[data-handover] .home .logo-mark {
 .onb-place:hover .onb-place-icon,
 .onb-place:focus-visible .onb-place-icon {
   color: var(--text);
-  transform: translateY(-1px) rotate(-6deg);
 }
 
 .onb-place-text {

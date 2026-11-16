@@ -1,5 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react';
-import type { TimelineItem } from '@shared/protocol';
+import type { BrowserFailedRequest, BrowserLogEntry, TimelineItem } from '@shared/protocol';
 import { findDevUrls, previewTargets } from '@/lib/links';
 import { useStore } from '@/state/store';
 import { getRuns, useTermVersion, type TermRun } from './term-store';
@@ -34,6 +34,48 @@ export interface PageState {
   /** Desktop: the page's zoom factor. */
   zoom: number;
   device: Device;
+  /** The agent is reading, capturing or opening the page right now (shown in the bar for that moment). */
+  agent?: 'read' | 'screenshot' | 'open';
+}
+
+/* ── what a developer looks at next: the page's console problems and failed requests, since it loaded ── */
+
+export interface PageLog {
+  console: BrowserLogEntry[];
+  failed: BrowserFailedRequest[];
+  /** Entries dropped beyond the bound. */
+  more: { console: number; failed: number };
+}
+
+const LOG_MAX = 50;
+const logs = new Map<string, PageLog>();
+const emptyLog = (): PageLog => ({ console: [], failed: [], more: { console: 0, failed: 0 } });
+
+export const getLog = (sessionId: string): PageLog => logs.get(sessionId) ?? emptyLog();
+
+/** A new document: its log starts empty. */
+export function resetLog(sessionId: string) {
+  logs.set(sessionId, emptyLog());
+}
+
+export function logConsole(sessionId: string, entry: BrowserLogEntry) {
+  const l = logs.get(sessionId) ?? emptyLog();
+  l.console.push({ level: entry.level, text: entry.text.slice(0, 1000), source: entry.source?.slice(0, 300) });
+  if (l.console.length > LOG_MAX) {
+    l.console.shift();
+    l.more.console++;
+  }
+  logs.set(sessionId, l);
+}
+
+export function logFailed(sessionId: string, entry: BrowserFailedRequest) {
+  const l = logs.get(sessionId) ?? emptyLog();
+  l.failed.push({ url: entry.url.slice(0, 300), method: entry.method, status: entry.status, error: entry.error });
+  if (l.failed.length > LOG_MAX) {
+    l.failed.shift();
+    l.more.failed++;
+  }
+  logs.set(sessionId, l);
 }
 
 export type Device = 'desktop' | 'tablet' | 'phone';
@@ -57,6 +99,9 @@ const subscribe = (l: () => void) => {
 };
 
 export const getPage = (sessionId: string): PageState => pages.get(sessionId) ?? EMPTY;
+
+/** Hears every change to any session's page. */
+export const onPages = subscribe;
 
 export function setPage(sessionId: string, patch: Partial<PageState>) {
   const cur = getPage(sessionId);

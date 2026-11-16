@@ -249,14 +249,41 @@ function hardenBrowser() {
     if (win && !win.isDestroyed()) win.webContents.send('sable:browser-event', { type: 'download-blocked', name: item.getFilename() });
   });
 
-  ipcMain.handle('sable:browser-capture', async (e, id: unknown) => {
+  ipcMain.handle('sable:browser-capture', async (e, id: unknown, forAgent: unknown) => {
     if (!fromApp(e)) throw new Error('Not allowed');
     const guest = webContents.fromId(Number(id));
     if (!guest || guest.getType() !== 'webview' || guest.hostWebContents !== e.sender) throw new Error('That page is gone');
     const image = await guest.capturePage();
     const { width, height } = image.getSize();
     const side = Math.max(width, height);
-    return (side > 2000 ? image.resize(width >= height ? { width: 2000 } : { height: 2000 }) : image).toDataURL();
+    // For the agent: at most 1568 px on the long side (what models look at in full) and JPEG, so it stays small.
+    const max = forAgent === true ? 1568 : 2000;
+    const fit = side > max ? image.resize(width >= height ? { width: max } : { height: max }) : image;
+    if (forAgent === true) return `data:image/jpeg;base64,${fit.toJPEG(80).toString('base64')}`;
+    return fit.toDataURL();
+  });
+
+  // Failed requests of panel pages, for the agent's browser_read: the address without its query, the
+  // method, and the status or the network error. Never headers or bodies.
+  const reportNet = (d: { webContentsId?: number; url: string; method: string; statusCode?: number; error?: string }) => {
+    if (!win || win.isDestroyed() || typeof d.webContentsId !== 'number') return;
+    let url = d.url;
+    try {
+      const u = new URL(d.url);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return;
+      url = u.origin + u.pathname;
+    } catch {
+      return;
+    }
+    win.webContents.send('sable:browser-event', { type: 'net', id: d.webContentsId, url: url.slice(0, 300), method: d.method, status: d.statusCode, error: d.error?.slice(0, 80) });
+  };
+  ses.webRequest.onCompleted((d) => {
+    if (d.statusCode >= 400) reportNet({ webContentsId: d.webContentsId, url: d.url, method: d.method, statusCode: d.statusCode });
+  });
+  ses.webRequest.onErrorOccurred((d) => {
+    // An aborted request (a navigation away, a cancelled fetch) is not a failure worth reporting.
+    if (d.error === 'net::ERR_ABORTED') return;
+    reportNet({ webContentsId: d.webContentsId, url: d.url, method: d.method, error: d.error });
   });
   ipcMain.handle('sable:browser-clear', async (e) => {
     if (!fromApp(e)) throw new Error('Not allowed');

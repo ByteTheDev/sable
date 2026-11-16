@@ -268,16 +268,16 @@ describe('short answers', () => {
   });
 
   it('Claude Code: appended to the preset system prompt, nothing replaced', () => {
-    // Generative UI adds its own line; this test is about short answers, so it is off here.
-    const on = new ClaudeProvider(ctx({ generativeUi: false })).agentOptions({ cwd: tmpdir(), model: '', mode: 'default' }, {});
+    // Generative UI and the Browser tab add their own lines; this test is about short answers, so they are off here.
+    const on = new ClaudeProvider(ctx({ generativeUi: false })).agentOptions({ cwd: tmpdir(), model: '', mode: 'default', options: { browserTab: false } }, {});
     expect(on.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code', append: CONCISE_REPLIES_PROMPT });
     expect(on.settingSources).toEqual(['user', 'project', 'local']);
-    const off = new ClaudeProvider(ctx({ conciseReplies: false, generativeUi: false })).agentOptions({ cwd: tmpdir(), model: '', mode: 'default' }, {});
+    const off = new ClaudeProvider(ctx({ conciseReplies: false, generativeUi: false })).agentOptions({ cwd: tmpdir(), model: '', mode: 'default', options: { browserTab: false } }, {});
     expect(off.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
     // Both on (the default): the two instructions, short answers first.
-    const both = new ClaudeProvider(ctx({})).agentOptions({ cwd: tmpdir(), model: '', mode: 'default' }, {});
+    const both = new ClaudeProvider(ctx({})).agentOptions({ cwd: tmpdir(), model: '', mode: 'default', options: { browserTab: false } }, {});
     expect(both.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code', append: `${CONCISE_REPLIES_PROMPT}\n\n${WIDGET_FENCE_HINT}` });
-    const widgetsOnly = new ClaudeProvider(ctx({ conciseReplies: false })).agentOptions({ cwd: tmpdir(), model: '', mode: 'default' }, {});
+    const widgetsOnly = new ClaudeProvider(ctx({ conciseReplies: false })).agentOptions({ cwd: tmpdir(), model: '', mode: 'default', options: { browserTab: false } }, {});
     expect(widgetsOnly.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code', append: WIDGET_FENCE_HINT });
   });
 

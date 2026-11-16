@@ -25,6 +25,7 @@ import { DiskCache } from './core/cache';
 import type { Provider, ProviderContext, ProviderSession } from './providers/types';
 import { findAccountFolders, folderLabel, labelFromAuth, pickNextAccount } from './accounts/folders';
 import { handoverText } from './accounts/handover';
+import { withBrowserLine } from './providers/browser-tool';
 import { VERSION } from './version';
 
 type Handler<M extends RpcName> = (params: RpcMethods[M]['params']) => Promise<RpcMethods[M]['result']> | RpcMethods[M]['result'];
@@ -446,7 +447,7 @@ export class App {
     if (early && this.stoppedEarly.delete(early.id)) return;
     const item = early ?? addUser();
     try {
-      await handle.send(this.withHandover(rt, item));
+      await handle.send(this.withBrowserPage(rt, this.withHandover(rt, item)));
     } catch (err) {
       rt.notice('error', 'Could not send the message', (err as Error).message);
       rt.endTurn((err as Error).message);
@@ -459,6 +460,12 @@ export class App {
     if (!summary) return item;
     this.handovers.delete(rt.id);
     return { ...item, text: `${summary}\n\n---\n\n${item.text}` };
+  }
+
+  /** The message as the agent gets it: one line on the page in the Browser tab when it changed since the last message (never its content). */
+  private withBrowserPage(rt: SessionRuntime, item: UserItem): UserItem {
+    const text = withBrowserLine(rt, item.text);
+    return text === item.text ? item : { ...item, text };
   }
 
   // ── accounts at a limit ──
@@ -1073,6 +1080,15 @@ export class App {
     this.register('question.respond', ({ sessionId, requestId, answers }) => ({
       ok: this.runtime(sessionId).answerQuestion(requestId, answers),
     }));
+    this.register('browser.respond', ({ sessionId, requestId, answer }) => ({
+      ok: this.sessions.get(sessionId)?.answerBrowser(requestId, answer && typeof answer === 'object' ? answer : { ok: false, error: 'No answer' }) ?? false,
+    }));
+    this.register('browser.page', ({ sessionId, page }) => {
+      const rt = this.sessions.get(sessionId);
+      if (!rt) return { ok: false };
+      rt.browserPage = page && typeof page.url === 'string' ? { url: page.url.slice(0, 2000), title: String(page.title ?? '').slice(0, 300) } : null;
+      return { ok: true };
+    });
 
     this.register('history.list', ({ provider, cwd, limit, accountId }) => this.provider(provider, accountId).history(cwd, limit));
   }

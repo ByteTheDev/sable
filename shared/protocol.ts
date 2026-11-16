@@ -183,6 +183,53 @@ export interface SessionOptions {
   browser?: boolean;
   computerUse?: boolean;
   remoteControl?: boolean;
+  /** The agent sees Sable's own Browser tab (browser_read, browser_screenshot, browser_open and a line on what it shows). Absent means on. */
+  browserTab?: boolean;
+}
+
+/** A request from the bridge to the window that shows a session's Browser tab (the agent's browser tools). */
+export interface BrowserRequest {
+  id: string;
+  sessionId: string;
+  /** state: address and title only; read: the page's text and logs; screenshot: a picture; open: load `url` and wait. */
+  op: 'state' | 'read' | 'screenshot' | 'open';
+  url?: string;
+  selector?: string;
+  /** read and screenshot: refuse when the page moved to another origin since it was checked. */
+  expectOrigin?: string;
+}
+
+export interface BrowserLogEntry {
+  level: 'error' | 'warning';
+  text: string;
+  source?: string;
+}
+
+export interface BrowserFailedRequest {
+  url: string;
+  method?: string;
+  status?: number;
+  error?: string;
+}
+
+/** The window's answer. `weak`: this window cannot serve it (web build, another session shown); a better answer may follow. */
+export interface BrowserAnswer {
+  ok: boolean;
+  weak?: boolean;
+  error?: string;
+  url?: string;
+  title?: string;
+  text?: string;
+  /** The text was longer than the bound and was cut. */
+  truncated?: boolean;
+  console?: BrowserLogEntry[];
+  failed?: BrowserFailedRequest[];
+  /** Entries left out beyond the bounds. */
+  more?: { console?: number; failed?: number };
+  /** screenshot: a data URL. */
+  image?: string;
+  width?: number;
+  height?: number;
 }
 
 /** State of an optional capability the user may need to act on. */
@@ -327,6 +374,8 @@ export type ToolKind =
   | 'skill'
   /** Generative UI: the agent's `show_widget` call, shown as the widget itself (input: { title, code }). */
   | 'widget'
+  /** Sable's own Browser tab: browser_read, browser_screenshot, browser_open (detail.url is the page). */
+  | 'browser'
   | 'other';
 
 export type ToolStatus = 'pending' | 'running' | 'awaiting' | 'done' | 'error' | 'denied' | 'cancelled';
@@ -832,7 +881,9 @@ export type BridgeEvent =
   | { type: 'caps.updated'; provider: ProviderId; accountId?: string; cwd?: string; caps: Capabilities }
   | { type: 'term.data'; termId: string; data: string; stream: 'out' | 'err' }
   | { type: 'term.exit'; termId: string; code: number | null }
-  | { type: 'toast'; level: 'info' | 'success' | 'error'; text: string };
+  | { type: 'toast'; level: 'info' | 'success' | 'error'; text: string }
+  /** The agent's browser tool needs the session's Browser tab: answer with `browser.respond`. */
+  | { type: 'browser.request'; request: BrowserRequest };
 
 // ──────────────────────────────────── RPC ───────────────────────────────────
 
@@ -953,6 +1004,11 @@ export interface RpcMethods {
     params: { sessionId: string; requestId: string; answers: Record<string, string[]> | null };
     result: { ok: boolean };
   };
+
+  /** A window's answer to a `browser.request` event. */
+  'browser.respond': { params: { sessionId: string; requestId: string; answer: BrowserAnswer }; result: { ok: boolean } };
+  /** What the session's Browser tab shows now (null: nothing, or the tab is closed), for the line the agent gets with the next message. */
+  'browser.page': { params: { sessionId: string; page: { url: string; title: string } | null }; result: { ok: boolean } };
 
   'history.list': { params: { provider: ProviderId; cwd?: string; limit?: number; accountId?: string }; result: HistoryEntry[] };
 

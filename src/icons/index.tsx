@@ -150,6 +150,8 @@ import { DeviceTabletIcon } from '@phosphor-icons/react/dist/csr/DeviceTablet';
 import { DeviceMobileIcon } from '@phosphor-icons/react/dist/csr/DeviceMobile';
 import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import './icons.css';
+import { ANIMATED } from './animated/parts';
+import './animated/animated.css';
 
 /** One icon vocabulary for the whole app. Names describe meaning, not the glyph. */
 const ICONS = {
@@ -341,9 +343,43 @@ const THIN: Partial<Record<IconName, IconWeight>> = {
 };
 
 export function Icon({ name, size = 16, weight, className, style }: IconProps) {
+  // Icons with a drawn, animated version (animated/parts.tsx) render that one in their own weight;
+  // any other weight asked for falls back to the Phosphor original.
+  const anim = ANIMATED[name];
+  if (anim && (!weight || weight === (THIN[name] ?? 'regular'))) {
+    return (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width={size}
+        height={size}
+        viewBox="0 0 256 256"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={anim.w ?? 16}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+        style={style}
+        data-icon={name}
+        data-anim=""
+        aria-hidden
+      >
+        {anim.parts}
+      </svg>
+    );
+  }
   const Cmp = ICONS[name];
   return <Cmp size={size} weight={weight ?? THIN[name] ?? 'regular'} className={className} style={style} data-icon={name} aria-hidden />;
 }
+
+/** The Phosphor original of an icon, never the animated drawing (for the dev gallery's comparison sheet). */
+export function IconOriginal({ name, size = 16 }: { name: IconName; size?: number }) {
+  const Cmp = ICONS[name];
+  return <Cmp size={size} weight={THIN[name] ?? 'regular'} data-icon-original={name} aria-hidden />;
+}
+
+/** The names that have an animated drawing. */
+export const ANIMATED_NAMES = Object.keys(ANIMATED).filter((n): n is IconName => n in ICONS);
 
 /**
  * Maps a tool kind to its icon. The interface is monochrome: every tone is the same neutral
@@ -366,6 +402,7 @@ export const TOOL_ICON: Record<string, { icon: IconName; tone: string }> = {
   plan: { icon: 'compass', tone: NEUTRAL },
   skill: { icon: 'skill', tone: NEUTRAL },
   widget: { icon: 'grid', tone: NEUTRAL },
+  browser: { icon: 'globe', tone: NEUTRAL },
   other: { icon: 'wrench', tone: NEUTRAL },
 };
 
