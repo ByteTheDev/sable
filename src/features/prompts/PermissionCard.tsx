@@ -4,7 +4,7 @@ import { CodeBlock } from '@/components/CodeBlock';
 import { DiffView } from '@/components/DiffView';
 import { Markdown } from '@/components/Markdown';
 import { Glyph, Icon, TOOL_ICON } from '@/icons';
-import { langFromPath } from '@/lib/format';
+import { langFromPath, relPath } from '@/lib/format';
 import { respondPermission } from '@/state/actions';
 import { focusComposer } from '@/state/hooks';
 import { useStore } from '@/state/store';
@@ -26,6 +26,10 @@ function Field({ label, value, mono, path }: { label: string; value?: string; mo
 
 function Subject({ req, input }: { req: PermissionRequest; input: unknown }) {
   const d = req.detail;
+  // Paths inside the session's folder read from there ("table.js"), as the step rows do.
+  const cwd = useStore((s) => s.sessions[req.sessionId]?.cwd);
+  const home = useStore((s) => s.home);
+  const rel = (p?: string) => (p ? relPath(p, cwd, home) : p);
   switch (req.kind) {
     case 'bash':
       return d.command ? (
@@ -40,12 +44,12 @@ function Subject({ req, input }: { req: PermissionRequest; input: unknown }) {
         return (
           <div className="pc-scroll pc-diffs scroll">
             {req.diff.map((f) => (
-              <DiffView key={f.path} diff={f} />
+              <DiffView key={f.path} diff={{ ...f, path: rel(f.path)! }} />
             ))}
           </div>
         );
-      if (d.content ?? d.newText) return <CodeBlock code={(d.content ?? d.newText)!} lang={langFromPath(d.path)} title={d.path} maxHeight={260} />;
-      return <Field label="File" value={d.path} path />;
+      if (d.content ?? d.newText) return <CodeBlock code={(d.content ?? d.newText)!} lang={langFromPath(d.path)} title={rel(d.path)} maxHeight={260} />;
+      return <Field label="File" value={rel(d.path)} path />;
     case 'plan':
       return d.plan ? (
         <div className="pc-plan scroll">
@@ -92,6 +96,12 @@ function Subject({ req, input }: { req: PermissionRequest; input: unknown }) {
         </div>
       );
   }
+}
+
+/** The description only repeats the title ("Write table.js" / "table.js") or the command shown below it. */
+function restates(req: PermissionRequest): boolean {
+  const d = (req.description ?? '').trim().toLowerCase();
+  return req.title.toLowerCase().includes(d) || d === (req.detail.command ?? '').trim().toLowerCase();
 }
 
 /** A tool waiting for approval: what it wants to do, and one key per answer. */
@@ -141,7 +151,7 @@ export function PermissionCard({ sessionId, req, more }: { sessionId: string; re
         <Glyph name={tool.icon} tone="var(--amber)" size={30} />
         <div className="pc-titles">
           <h3 className="pc-title">{req.title}</h3>
-          {req.description && req.description.trim() !== req.title.trim() && <p className="pc-desc">{req.description}</p>}
+          {req.description && !restates(req) && <p className="pc-desc">{req.description}</p>}
         </div>
         {more > 0 && <span className="pc-more">{more} more waiting</span>}
       </header>

@@ -61,6 +61,14 @@
             send({ type: 'prompt', text: String(text == null ? '' : text).slice(0, 4000), gesture: gesture });
           };
 
+          /* While runScripts inserts a script: a redeclared global is retried there, not reported. */
+          var redeclared = null;
+          addEventListener('error', function (e) {
+            if (redeclared === null || !/already been declared/.test(String(e && e.message))) return;
+            redeclared = true;
+            e.stopImmediatePropagation();
+            e.preventDefault();
+          }, true);
           addEventListener('error', function (e) {
             if (errors++ < 5) send({ type: 'error', message: String((e && e.message) || 'Script error').slice(0, 300) });
           });
@@ -181,12 +189,27 @@
               return winAdd.call(window, t, fn, o);
             };
             var list = Array.prototype.slice.call(document.body.querySelectorAll('script'));
+            var copy = function (from, text) {
+              var s = document.createElement('script');
+              for (var j = 0; j < from.attributes.length; j++) s.setAttribute(from.attributes[j].name, from.attributes[j].value);
+              s.text = text;
+              return s;
+            };
             for (var i = 0; i < list.length; i++) {
               var old = list[i];
-              var s = document.createElement('script');
-              for (var j = 0; j < old.attributes.length; j++) s.setAttribute(old.attributes[j].name, old.attributes[j].value);
-              s.text = old.textContent;
-              old.replaceWith(s);
+              var classic = !old.src && (!old.type || /^(text|application)\/(java|ecma)script$/i.test(old.type));
+              var s = copy(old, old.textContent);
+              redeclared = classic ? false : null;
+              try {
+                old.replaceWith(s);
+              } catch (err) {
+                if (classic && /already been declared/.test(String(err && err.message))) redeclared = true;
+                else throw err;
+              }
+              /* A top-level const or let named like a window property (top, name, status...) stops the
+                 whole script before any of it runs: run it again inside a block of its own. */
+              if (redeclared === true) s.replaceWith(copy(old, '{\n' + old.textContent + '\n}'));
+              redeclared = null;
             }
             var flush = function () {
               var fns = deferred.splice(0);

@@ -109,6 +109,11 @@
   contain-intrinsic-size: auto 34px;
 }
 
+/* A widget's bar straddles its top hairline, above the row: paint containment would cut it in half. */
+.tl-item[data-k='widget'] {
+  content-visibility: visible;
+}
+
 .tl-item[data-t='user'] {
   padding-top: 26px;
   padding-bottom: 14px;

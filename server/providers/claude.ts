@@ -718,6 +718,8 @@ class ClaudeSession implements ProviderSession {
   private pendingUsers = new Map<string, string>(); // sdk uuid → UserItem id
   private outstanding = 0;
   private interrupted = false;
+  /** A new agent process has not said hello yet (system/init): the live line says "Starting", not "Thinking". */
+  private booting = false;
   private idleTimer?: NodeJS.Timeout;
   private costBase = 0;
   private lastTotalCost = 0;
@@ -774,6 +776,7 @@ class ClaudeSession implements ProviderSession {
       const owner: WarmOwner = { session: this };
       q = query({ prompt: input, options: this.provider.agentOptions(meta, owner, this.resumeAt) });
     }
+    this.booting = !warm;
     this.resumeAt = undefined;
     this.q = q;
     this.input = input;
@@ -993,7 +996,7 @@ class ClaudeSession implements ProviderSession {
     this.interrupted = false;
     // Local commands (/cost, /context) can take a while and never "think".
     const command = /^\/[\w:-]+/.exec(item.text.trim())?.[0];
-    if (!this.rt.turnActive) this.rt.beginTurn(command ? `Running ${command}` : 'Thinking');
+    if (!this.rt.turnActive) this.rt.beginTurn(command ? `Running ${command}` : this.booting ? 'Starting' : 'Thinking');
     this.input!.push({
       type: 'user',
       uuid,
@@ -1193,6 +1196,11 @@ class ClaudeSession implements ProviderSession {
   private onMessage(m: SDKMessage) {
     const any = m as Obj;
     if (any.session_id && any.session_id !== this.rt.meta.providerSessionId) this.rt.update({ providerSessionId: any.session_id });
+    if (this.booting) {
+      // The process is up and the turn has reached the model.
+      this.booting = false;
+      if (this.rt.turnActive && this.rt.meta.activity === 'Starting') this.rt.update({ activity: 'Thinking' });
+    }
     switch (m.type) {
       case 'stream_event':
         return this.onStreamEvent(any.event, any.parent_tool_use_id ?? null);

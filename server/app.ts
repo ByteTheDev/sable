@@ -22,7 +22,7 @@ import { normalizeBackdrop } from '../shared/backdrop';
 import { SessionRuntime, autoTitle } from './core/runtime';
 import { Store, type StoredAccount } from './core/store';
 import { DiskCache } from './core/cache';
-import type { Provider, ProviderContext } from './providers/types';
+import type { Provider, ProviderContext, ProviderSession } from './providers/types';
 import { findAccountFolders, folderLabel, labelFromAuth, pickNextAccount } from './accounts/folders';
 import { handoverText } from './accounts/handover';
 import { VERSION } from './version';
@@ -83,6 +83,10 @@ export class App {
    * an account that could not take the conversation itself (by session id).
    */
   private handovers = new Map<string, string>();
+  /** Sessions whose agent is still starting after session.create answered (Codex's thread start can take most of a minute). */
+  private opening = new Map<string, Promise<void>>();
+  /** Sessions with a first message waiting for that start: they stay "starting" rather than flash idle. */
+  private delivering = new Set<string>();
   /** Automatic continues already made per session, as `${messageId}:${accountId}` (never the same twice). */
   private autoContinued = new Map<string, Set<string>>();
 
@@ -401,17 +405,36 @@ export class App {
    * takes it at its next step and it stays where it was sent.
    */
   private async deliver(rt: SessionRuntime, text: string, attachments?: UserItem['attachments']) {
-    const handle = await this.ensureHandle(rt);
-    if (rt.meta.titleSource === 'auto' && !rt.items.some((i) => i.type === 'user')) {
-      rt.update({ title: autoTitle(text) });
+    const addUser = () => {
+      if (rt.meta.titleSource === 'auto' && !rt.items.some((i) => i.type === 'user')) {
+        rt.update({ title: autoTitle(text) });
+      }
+      return rt.add<UserItem>({
+        type: 'user',
+        text,
+        attachments: attachments?.length ? attachments : undefined,
+        state: rt.turnActive ? 'queued' : 'sent',
+        ...(rt.turnActive ? { steered: true } : {}),
+      });
+    };
+    // The agent is still starting: show the message now, send it once the agent is there.
+    let early: UserItem | undefined;
+    if (this.opening.has(rt.id)) {
+      early = addUser();
+      this.delivering.add(rt.id);
     }
-    const item = rt.add<UserItem>({
-      type: 'user',
-      text,
-      attachments: attachments?.length ? attachments : undefined,
-      state: rt.turnActive ? 'queued' : 'sent',
-      ...(rt.turnActive ? { steered: true } : {}),
-    });
+    let handle: ProviderSession;
+    try {
+      handle = await this.ensureHandle(rt);
+    } catch (err) {
+      if (!early) throw err;
+      rt.update({ status: 'error', lastError: (err as Error).message });
+      rt.notice('error', 'Could not send the message', (err as Error).message);
+      return;
+    } finally {
+      this.delivering.delete(rt.id);
+    }
+    const item = early ?? addUser();
     try {
       await handle.send(this.withHandover(rt, item));
     } catch (err) {
@@ -574,6 +597,11 @@ export class App {
   }
 
   private async ensureHandle(rt: SessionRuntime) {
+    const opening = this.opening.get(rt.id);
+    if (opening) {
+      await opening;
+      if (this.sessions.get(rt.id) !== rt) throw new Error('The session was closed while the agent was starting.');
+    }
     if (rt.handle) return rt.handle;
     this.hydrate(rt);
     rt.handle = await this.provider(rt.meta.provider, rt.meta.accountId).open(rt, { loadTranscript: false });
@@ -836,14 +864,27 @@ export class App {
       this.sessions.set(meta.id, rt);
       this.touchProject(meta.cwd);
       this.emit({ type: 'session.added', session: meta });
-      try {
-        rt.handle = await provider.open(rt, { loadTranscript: !!p.resume });
-        rt.update({ status: 'idle' });
-        this.seedCaps(rt);
-        if (p.provider === 'claude' && meta.options?.remoteControl) void rt.handle.setOptions?.(meta.options).catch((err) => rt.notice('error', 'Remote Control could not start', (err as Error).message));
-      } catch (err) {
-        rt.update({ status: 'error', lastError: (err as Error).message });
-      }
+      const opened = provider.open(rt, { loadTranscript: !!p.resume }).then(
+        (handle) => {
+          // Closed while it was starting: let the agent go.
+          if (this.sessions.get(rt.id) !== rt) return void Promise.resolve(handle.close()).catch(() => {});
+          rt.handle = handle;
+          if (!this.delivering.has(rt.id)) rt.update({ status: 'idle' });
+          this.seedCaps(rt);
+          if (p.provider === 'claude' && meta.options?.remoteControl) void handle.setOptions?.(meta.options).catch((err) => rt.notice('error', 'Remote Control could not start', (err as Error).message));
+        },
+        (err) => rt.update({ status: 'error', lastError: (err as Error).message }),
+      );
+      this.opening.set(rt.id, opened);
+      void opened.finally(() => {
+        this.opening.delete(rt.id);
+        this.persistSessions();
+      });
+      // A slow start answers early (status "starting"): the UI opens the session and the first
+      // message shows at once, waiting in deliver() for the agent.
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([opened, new Promise<void>((r) => (timer = setTimeout(r, 1500)))]);
+      clearTimeout(timer);
       this.persistSessions();
       return rt.snapshot();
     });

@@ -28,7 +28,8 @@ export function TaskStrip({ sessionId, todos, running }: { sessionId: string; to
   };
   const done = todos.filter((t) => t.status === 'completed').length;
   const current = todos.find((t) => t.status === 'in_progress') ?? todos.find((t) => t.status === 'pending');
-  const label = current ? (current.status === 'in_progress' ? (current.activeForm ?? current.content) : current.content) : 'All tasks done';
+  // "Running the tests" only while the agent is at it: a turn that stopped halfway names the task.
+  const label = current ? (current.status === 'in_progress' && running ? (current.activeForm ?? current.content) : current.content) : 'All tasks done';
   const listId = `tasks-${sessionId}`;
 
   return (

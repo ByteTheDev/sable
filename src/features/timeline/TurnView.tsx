@@ -218,8 +218,12 @@ function segmentSpan(items: Record<string, TimelineItem>, turn: TurnGroup, index
   if (nextLead && items[nextLead]) return items[nextLead].ts - start;
   const end = turn.end ? items[turn.end] : undefined;
   if (end?.type === 'turn') {
-    if (turn.segments.length === 1 && end.durationMs > 0) return end.durationMs;
-    return end.ts - start;
+    // The time the live line counted (a fresh agent's start-up included, which the agent's own
+    // figure leaves out), so the number does not drop when the turn settles. The agent's figure
+    // only where the items' times say less (a conversation loaded from history).
+    const wall = end.ts - start;
+    if (turn.segments.length === 1 && end.durationMs > wall) return end.durationMs;
+    return wall;
   }
   let last = start;
   for (const id of [...seg.work, ...(seg.answer ? [seg.answer] : [])]) {
