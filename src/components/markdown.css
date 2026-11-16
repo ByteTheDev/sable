@@ -290,6 +290,39 @@
 .md-tablewrap {
   position: relative;
   min-width: 0;
+  timeline-scope: --md-table-x;
+}
+
+/* A table wider than the column fades at its right edge until it is scrolled to the end, so the
+   cut reads as "more this way". Driven by the table's own scroll (no listener): a table that fits
+   has no scroll timeline, and the fade stays at its resting opacity of 0. */
+.md-table.hscroll {
+  scroll-timeline: --md-table-x inline;
+}
+
+.md-tablewrap::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 48px;
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  background: linear-gradient(to right, rgb(9 9 11 / 0), rgb(9 9 11 / 0.92));
+  pointer-events: none;
+  opacity: 0;
+  animation: md-table-edge linear both;
+  animation-timeline: --md-table-x;
+}
+
+@keyframes md-table-edge {
+  0%,
+  90% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 .md-table {

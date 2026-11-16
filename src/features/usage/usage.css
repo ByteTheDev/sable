@@ -196,36 +196,6 @@
   gap: 14px;
 }
 
-/* How the window filled since it began: a quiet stepped area. */
-.ul-spark {
-  flex-shrink: 0;
-  display: block;
-  margin-bottom: 2px;
-}
-
-.ul-spark-track {
-  fill: var(--line-2);
-}
-
-.ul-spark-area {
-  fill: rgb(242 241 238 / 0.08);
-}
-
-.ul-spark-line {
-  fill: none;
-  stroke: rgb(242 241 238 / 0.5);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.ul-row[data-level='amber'] .ul-spark-line {
-  stroke: var(--amber);
-}
-
-.ul-row[data-level='red'] .ul-spark-line {
-  stroke: var(--red);
-}
-
 .ul-extra-val {
   flex-shrink: 0;
   font-size: var(--t-ui);
@@ -412,9 +382,13 @@
   font-size: var(--t-small);
 }
 
-.ua-chart {
+.ua-chart,
+.ua-tip {
   --ua-tone-0: rgb(242 241 238 / 0.86);
   --ua-tone-other: rgb(255 255 255 / 0.13);
+}
+
+.ua-chart {
   margin-top: 20px;
 }
 
@@ -515,10 +489,17 @@
   display: block;
 }
 
-/* Hover / keyboard read-out above the active bar. */
-.ua-tip {
+/* Hover / keyboard read-out above the plot, centred on the active bar (a portal: Activity.tsx). */
+.ua-tip-anchor {
   position: absolute;
-  z-index: 3;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+.ua-tip {
+  z-index: var(--z-toast);
   min-width: 176px;
   max-width: 250px;
   padding: 9px 12px 10px;

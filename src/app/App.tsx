@@ -278,7 +278,7 @@ export function App() {
           )}
         </main>
 
-        <AnimatePresence initial={false} onExitComplete={releaseRail}>
+        <AnimatePresence initial={false} onExitComplete={railGone}>
           {railShown && (
             <motion.aside
               key="rail"
@@ -343,6 +343,13 @@ function releaseRail() {
   m.body.style.removeProperty('--freeze-w');
   for (const v of m.body.querySelectorAll<HTMLElement>(':scope > .stage-view')) v.style.removeProperty('translate');
   m.body = null;
+}
+
+/** The panel has gone: the top bar keeps the whole room for the window controls again (the exit
+    reports no frames, so --rail-live would otherwise stay at the open panel's value). */
+function railGone() {
+  releaseRail();
+  document.querySelector<HTMLElement>('.stage > .topbar')?.style.removeProperty('--rail-live');
 }
 
 function freezeForRail(opening: boolean) {

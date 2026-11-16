@@ -19,7 +19,8 @@ import { readFiles, withTextAttachments } from './attach';
 import { AttachmentRow } from './Attachments';
 import { useChoice } from './choice';
 import { APP_COMMANDS, appCommandsFor, commandRows, skillRows, type CommandCtx, type SuggestRow } from './commands';
-import { HomeChips, ModelPopover, ModeMenu, openComposerMenu } from './Controls';
+import { HomeChips, ModelPopover, ModeMenu, openComposerMenu, useHomeSignedOut } from './Controls';
+import { PROVIDER_NAME } from '@/art/Logo';
 import { ModelEffort } from './Thinking';
 import { Highlight } from './Highlight';
 import { NO_QUEUE, QueueTray } from './QueueTray';
@@ -212,6 +213,9 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
   // "Ultra" is one look across agents: ultracode on (a mode), or an Ultra level (an effort).
   const ultraLook = ultra || isUltraEffort(choice.effort);
   const images = !!caps?.features.images;
+  // Home, with an agent that is not signed in: the placeholder says so (the chip below opens Accounts).
+  const signedOut = useHomeSignedOut() && variant === 'home';
+  const homeAgent = useStore((s) => s.ui.homeProvider);
 
   useEffect(() => setUltraLocal(null), [storedUltra]);
 
@@ -696,7 +700,7 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
   };
 
   const queueing = variant === 'session' && busy && !shell;
-  const placeholder = ghost || (shell && text === '!') ? '' : variant === 'home' ? 'Describe a task or ask a question' : queueing ? 'Queue a follow-up' : 'Reply';
+  const placeholder = ghost || (shell && text === '!') ? '' : variant === 'home' ? (signedOut ? `Sign in to ${PROVIDER_NAME[homeAgent]} to start` : 'Describe a task or ask a question') : queueing ? 'Queue a follow-up' : 'Reply';
   const steerHint = queueing && steerable && !text && !attachments.length && !!sessionId && !hinted.has(sessionId);
 
   return (

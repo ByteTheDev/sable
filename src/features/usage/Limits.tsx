@@ -8,44 +8,6 @@ import { accountKey, useStore } from '@/state/store';
 import { cx, IconButton, Tip } from '@/ui';
 import { clock, duration, exactTime, isApiKey, NUMBER_LOCALE, planText, STALE_MS, windowLevel } from './format';
 
-const NO_SAMPLES: [number, number][] = [];
-
-/** When the window that `l` describes began, when its length and reset are known. */
-function windowStart(l: RateLimit) {
-  return l.resetsAt && l.windowMins ? l.resetsAt - l.windowMins * 60_000 : undefined;
-}
-
-/** How a window filled since it began: a quiet area over the part of the window that has passed. */
-export const Spark = memo(function Spark({ limit, samples, now, width = 76, height = 20 }: { limit: RateLimit; samples: [number, number][]; now: number; width?: number; height?: number }) {
-  const shape = useMemo(() => {
-    const start = windowStart(limit) ?? samples[0]?.[0];
-    const end = Math.max(limit.resetsAt ?? now, now);
-    if (start === undefined || end <= start) return null;
-    const pts = samples.filter((s) => s[0] >= start - 60_000 && s[0] <= now + 60_000);
-    if (pts.length < 2) return null;
-    const x = (t: number) => Math.max(0, Math.min(width, ((t - start) / (end - start)) * width));
-    const y = (p: number) => height - 1 - (Math.min(100, p) / 100) * (height - 2);
-    // A window starts empty.
-    const line: [number, number][] = [[x(start), y(0)], ...pts.map((s): [number, number] => [x(s[0]), y(s[1])])];
-    const last = line[line.length - 1];
-    const xNow = x(now);
-    if (xNow > last[0]) line.push([xNow, last[1]]);
-    // Steps, not slopes: a sample says where the window stood from then on.
-    let d = `M${line[0][0].toFixed(1)},${line[0][1].toFixed(1)}`;
-    for (let i = 1; i < line.length; i++) d += `H${line[i][0].toFixed(1)}V${line[i][1].toFixed(1)}`;
-    const area = `${d}V${height}H${line[0][0].toFixed(1)}Z`;
-    return { d, area, xNow };
-  }, [limit, samples, now, width, height]);
-  if (!shape) return <span className="ul-spark" style={{ width, height }} aria-hidden />;
-  return (
-    <svg className="ul-spark" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden>
-      <rect className="ul-spark-track" x={0} y={height - 1} width={width} height={1} />
-      <path className="ul-spark-area" d={shape.area} />
-      <path className="ul-spark-line" d={shape.d} />
-    </svg>
-  );
-});
-
 /** One sentence about where the pace leads, or nothing. */
 export function paceText(l: RateLimit, p: LimitPace | undefined, now: number, short = false): { text: string; warn: boolean } | undefined {
   if (!p || l.percent >= 100 || (l.resetsAt && l.resetsAt <= now)) return undefined;
@@ -56,7 +18,8 @@ export function paceText(l: RateLimit, p: LimitPace | undefined, now: number, sh
 }
 
 /** One plan-limit window: name, figure, meter, reset and pace. `compact` for popovers and the side panel. */
-export const WindowRow = memo(function WindowRow({ limit, samples = NO_SAMPLES, pace, now, compact }: { limit: RateLimit; samples?: [number, number][]; pace?: LimitPace; now: number; compact?: boolean }) {
+// `samples` (the window's history) is still accepted; the small curve it drew was too small to read.
+export const WindowRow = memo(function WindowRow({ limit, pace, now, compact }: { limit: RateLimit; samples?: [number, number][]; pace?: LimitPace; now: number; compact?: boolean }) {
   const pct = Math.max(0, Math.min(100, Math.round(limit.percent)));
   const past = !!limit.resetsAt && limit.resetsAt <= now;
   const level = windowLevel(limit, now);
@@ -66,7 +29,6 @@ export const WindowRow = memo(function WindowRow({ limit, samples = NO_SAMPLES, 
     <div className="ul-row" data-compact={compact || undefined} data-level={level} data-past={past || undefined}>
       <div className="ul-top">
         <span className="ul-label truncate">{limit.label}</span>
-        {!compact && <Spark limit={limit} samples={samples} now={now} />}
         <span className="ul-pct num">
           {pct}
           <span className="ul-pct-sign">%</span>

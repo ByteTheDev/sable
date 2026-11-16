@@ -52,7 +52,8 @@ export function formatDuration(ms?: number | null): string {
   if (ms == null) return '';
   if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
   const s = ms / 1000;
-  if (s < 10) return `${s.toFixed(1)}s`;
+  // "5s", not "5.0s", so it reads like the whole seconds beside it.
+  if (s < 10) return `${Number(s.toFixed(1))}s`;
   if (s < 60) return `${Math.round(s)}s`;
   const m = Math.floor(s / 60);
   const rem = Math.round(s % 60);

@@ -459,11 +459,33 @@ function BranchChip() {
   );
 }
 
+/** The agent chosen on the home screen is installed but its chosen account is not signed in. */
+export function useHomeSignedOut(): boolean {
+  return useStore((s) => {
+    const id = s.ui.homeProvider;
+    const p = s.providers[id];
+    if (!p?.installed) return false;
+    const acct = p.accounts?.find((a) => a.id === homeAccountId(id, s));
+    return !(acct ? acct.auth.loggedIn : p.auth.loggedIn);
+  });
+}
+
+/** Beside the agent chip while that agent is not signed in: one step to Settings › Accounts. */
+function SignInChip() {
+  if (!useHomeSignedOut()) return null;
+  return (
+    <button type="button" className="hc" onClick={() => openSettings('accounts')}>
+      <span className="hc-signin">Sign in</span>
+    </button>
+  );
+}
+
 /** Agent, folder and branch for the next session, under the home composer. Each chip subscribes to its own slice. */
 export const HomeChips = memo(function HomeChips({ onClosed }: { onClosed: () => void }) {
   return (
     <div className="home-chips-row">
       <AgentMenu onClosed={onClosed} />
+      <SignInChip />
       <FolderMenu onClosed={onClosed} />
       <BranchChip />
     </div>

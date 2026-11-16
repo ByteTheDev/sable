@@ -1880,10 +1880,15 @@
 }
 
 /* The "!" is one narrow mono glyph: a ring around it crowded the command. A soft fill, no ring. */
+/* Its fill is grown by padding that a negative margin cancels (the text does not move), not by a
+   spread: at fractional scales (110 %, 2x) the spread left a seam ring inside the fill. Wider by
+   1px a side only, so it stays clear of the command's first letter. */
 .cmp-pill[data-kind='shell'] {
   --pill-bg: #232328;
-  --pill: transparent;
+  padding: 3px 1px;
+  margin: 0 -1px;
   border-radius: 4px;
+  box-shadow: none;
 }
 
 .cmp-field > textarea.cmp-input:not(.cmp-mirror) {

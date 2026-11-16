@@ -14,10 +14,14 @@
 
 /* ── launch intro ── */
 
+/* One calm surface over the whole window while the bridge starts: nothing half-drawn behind it.
+   Below the window controls (.wc), above everything else; it fades to reveal the app. */
 .logo-intro {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 2;
+  z-index: 64;
+  background-color: var(--bg);
+  -webkit-app-region: drag;
   display: flex;
   flex-direction: column;
   align-items: center;

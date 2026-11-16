@@ -5,6 +5,7 @@ import { baseName, tildePath } from '@/lib/format';
 import { modelNameById } from '@/lib/models';
 import { openSession, resumeFromHistory } from '@/state/actions';
 import { useStore } from '@/state/store';
+import { Tooltip as RT } from 'radix-ui';
 import { cx, PathLabel, Segmented } from '@/ui';
 import { axisLabel, compact, niceScale, summarize, type DayBar, type Grouping, type Namers, type Ranked, type RankedSession, type Summary } from './aggregate';
 import { dayLabel, isApiKey, money } from './format';
@@ -284,7 +285,7 @@ const Chart = memo(function Chart({ summary, grouping }: { summary: Summary; gro
             ))}
           </svg>
         )}
-        {tipOpen && width > 0 && <Tip bar={bars[shown]} summary={summary} grouping={grouping} today={today} left={x(shown) + barW / 2} top={y(bars[shown].total)} width={width} tone={(gi) => toneOf(gi, summary.groups.length, hasOther)} />}
+        {tipOpen && width > 0 && <Tip bar={bars[shown]} summary={summary} grouping={grouping} today={today} left={x(shown) + barW / 2} tone={(gi) => toneOf(gi, summary.groups.length, hasOther)} />}
       </div>
       <div className="ua-xlabels" aria-hidden style={{ paddingLeft: LABEL_W }}>
         {width > 0 &&
@@ -351,46 +352,49 @@ function Legend({ summary, grouping, tone }: { summary: Summary; grouping: Group
   );
 }
 
-function Tip({ bar, summary, grouping, today, left, top, width, tone }: { bar: DayBar; summary: Summary; grouping: Grouping; today: string; left: number; top: number; width: number; tone: (gi: number) => Tone }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [w, setW] = useState(200);
-  useLayoutEffect(() => {
-    if (ref.current) setW(ref.current.offsetWidth);
-  }, [bar]);
-  // Beside the bar, never over it: to its right in the left part of the chart, to its left otherwise.
-  const right = left + 14 + w <= width;
-  const x = right ? left + 14 : Math.max(0, left - 14 - w);
+/**
+ * The day's figures above the plot, centred on the bar: never over the bars beside it. Floats in a
+ * portal (like any tooltip) so the Settings scroller cannot clip it; flips below when there is no room.
+ */
+function Tip({ bar, summary, grouping, today, left, tone }: { bar: DayBar; summary: Summary; grouping: Grouping; today: string; left: number; tone: (gi: number) => Tone }) {
   const parts = summary.groups.map((g, gi) => ({ g, gi, v: bar.parts[gi] })).filter((p) => p.v > 0);
   return (
-    <div ref={ref} className="ua-tip glass" style={{ left: x, top: 0 }} role="presentation">
-      <div className="ua-tip-head">
-        <span>{dayLabel(bar.day, 'long', today)}</span>
-        {bar.day === today && <span className="ua-tip-today">Today</span>}
-      </div>
-      <div className="ua-tip-total num">
-        {compact(bar.total)} <span className="ua-tip-unit">tokens</span>
-      </div>
-      {parts.length > 0 && (
-        <ul className="ua-tip-parts">
-          {parts.map(({ g, gi, v }) => (
-            <li key={g.key}>
-              <Swatch tone={tone(gi)} />
-              <span className="truncate">{groupText(g.label, grouping)}</span>
-              <span className="num">{compact(v)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {bar.total > 0 && (
-        <div className="ua-tip-split num">
-          <span>In {compact(bar.tokens.input)}</span>
-          <span>Out {compact(bar.tokens.output)}</span>
-          {bar.tokens.cacheWrite > 0 && <span>Cache write {compact(bar.tokens.cacheWrite)}</span>}
-          {bar.tokens.cacheRead > 0 && <span>Cache read {compact(bar.tokens.cacheRead)}</span>}
-          {bar.costUsd ? <span>{money(bar.costUsd)}</span> : null}
-        </div>
-      )}
-    </div>
+    <RT.Root open>
+      <RT.Trigger asChild>
+        <span className="ua-tip-anchor" style={{ left }} aria-hidden />
+      </RT.Trigger>
+      <RT.Portal>
+        <RT.Content className="ua-tip glass" side="top" align="center" sideOffset={10} collisionPadding={12} updatePositionStrategy="always" aria-label={`${dayLabel(bar.day, 'long', today)}: ${compact(bar.total)} tokens`}>
+          <div className="ua-tip-head">
+            <span>{dayLabel(bar.day, 'long', today)}</span>
+            {bar.day === today && <span className="ua-tip-today">Today</span>}
+          </div>
+          <div className="ua-tip-total num">
+            {compact(bar.total)} <span className="ua-tip-unit">tokens</span>
+          </div>
+          {parts.length > 0 && (
+            <ul className="ua-tip-parts">
+              {parts.map(({ g, gi, v }) => (
+                <li key={g.key}>
+                  <Swatch tone={tone(gi)} />
+                  <span className="truncate">{groupText(g.label, grouping)}</span>
+                  <span className="num">{compact(v)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {bar.total > 0 && (
+            <div className="ua-tip-split num">
+              <span>In {compact(bar.tokens.input)}</span>
+              <span>Out {compact(bar.tokens.output)}</span>
+              {bar.tokens.cacheWrite > 0 && <span>Cache write {compact(bar.tokens.cacheWrite)}</span>}
+              {bar.tokens.cacheRead > 0 && <span>Cache read {compact(bar.tokens.cacheRead)}</span>}
+              {bar.costUsd ? <span>{money(bar.costUsd)}</span> : null}
+            </div>
+          )}
+        </RT.Content>
+      </RT.Portal>
+    </RT.Root>
   );
 }
 

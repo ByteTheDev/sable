@@ -117,6 +117,8 @@ const themeCSS = `
   .cluster rect { rx: 10px; ry: 10px; stroke-width: 1px; }
   .flowchart-link, .edgePath .path, .relation, .messageLine0, .messageLine1, .transition { stroke-width: 1.25px; }
   .edgeLabel, .edgeLabel p, .edgeLabel rect { background-color: ${INK.sheet}; fill: ${INK.sheet}; color: ${INK.text2}; }
+  /* A little ground either side, so an edge stops short of its label instead of running into it. */
+  .edgeLabel p { padding: 0 5px; }
   .label, .nodeLabel, .edgeLabel { font-weight: 450; letter-spacing: -0.003em; }
   /* Labels are measured in the app's document, where the app's own .label rule (ui.css, 12px) would
      reach them, and shown in the widget frame, where it does not: pin the size so both agree. */

@@ -128,9 +128,16 @@ export function SuggestMenu({
     height.current = h;
   }, [rows]);
 
+  // The row under the pointer: hovering a row that is half out of view must not scroll the list
+  // under the pointer (only the keyboard brings the active row into view).
+  const hovered = useRef(-1);
   useEffect(() => {
-    const el = list.current?.querySelector<HTMLElement>(`[data-index="${active}"]`);
-    el?.scrollIntoView({ block: 'nearest' });
+    if (active === hovered.current) return;
+    hovered.current = -1;
+    const box = list.current;
+    // The first row brings its group's heading back into view too.
+    if (active === 0 && box) box.scrollTop = 0;
+    else box?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [active, rows]);
 
   return createPortal(
@@ -154,7 +161,11 @@ export function SuggestMenu({
                 data-rid={r.id}
                 data-active={i === active || undefined}
                 className="sg-row"
-                onMouseMove={() => i !== active && onHover(i)}
+                onMouseMove={() => {
+                  if (i === active) return;
+                  hovered.current = i;
+                  onHover(i);
+                }}
                 onClick={() => onPick(i)}
               >
                 <span className="sg-main">

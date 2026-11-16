@@ -58,7 +58,7 @@ const SidebarTop = memo(function SidebarTop() {
             <span className="truncate">New session</span>
           </button>
         </Tip>
-        <IconButton icon="search" label="Search" keys="mod+k" className="side-tool" onClick={() => setUi({ paletteOpen: true })} />
+        <IconButton icon="search" label="Search and commands" keys="mod+k" className="side-tool" onClick={() => setUi({ paletteOpen: true })} />
         <IconButton icon="history" label="History" className="side-tool" onClick={() => setUi({ historyOpen: true })} />
       </div>
     </div>

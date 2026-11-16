@@ -231,6 +231,11 @@
   margin-left: auto;
 }
 
+/* A switch beside a group's title ends on the cards' control column, not 12px past it. */
+.set-group-aside > .seg {
+  margin-right: 12px;
+}
+
 .set-card {
   overflow: hidden;
 }
