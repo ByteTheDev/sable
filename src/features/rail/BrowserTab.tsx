@@ -24,7 +24,7 @@ interface DesktopApi {
   browser?: {
     capture(webContentsId: number): Promise<string>;
     clearData(): Promise<void>;
-    onEvent(cb: (e: { type: string; name?: string }) => void): () => void;
+    onEvent(cb: (e: { type: string; name?: string; id?: number }) => void): () => void;
   };
 }
 
@@ -148,10 +148,17 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
         }
         setPage(sessionId, { ...nav(), zoom, ...(getPage(sessionId).loading ? { phase: 3 as const } : {}) });
       });
-      on('did-start-loading', () => setPage(sessionId, { loading: true, phase: 1, crashed: undefined }));
+      // Set by a failed main-frame load: the engine then commits its own error page and reports
+      // did-finish-load for it, which must not clear the failure.
+      let failed = false;
+      on('did-start-loading', () => {
+        failed = false;
+        setPage(sessionId, { loading: true, phase: 1, crashed: undefined });
+      });
       on('did-stop-loading', () => setPage(sessionId, { loading: false, ...nav() }));
       // A failed load keeps its view until a load succeeds, so Retry does not flash the engine's own error page.
       on('did-finish-load', () => {
+        if (failed) return;
         const p = getPage(sessionId);
         setPage(sessionId, { error: undefined, errorCode: undefined });
         noteVisit(p.url, p.title, p.favicon);
@@ -175,6 +182,7 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
       on('did-fail-load', (e) => {
         // -3 is an aborted load (a new navigation replaced it).
         if (!e.isMainFrame || e.errorCode === -3) return;
+        failed = true;
         setPage(sessionId, { loading: false, error: e.errorDescription || 'ERR_FAILED', errorCode: e.errorCode, url: e.validatedURL || getPage(sessionId).url, ...nav() });
       });
       on('render-process-gone', () => setPage(sessionId, { crashed: true, loading: false }));
@@ -196,6 +204,8 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
     }
     const off = desktop?.browser?.onEvent((e) => {
       if (e.type === 'download-blocked') useStore.getState().toast(`Downloads are off in the panel browser${e.name ? ` (${e.name})` : ''}. Open the page in your browser to download.`);
+      // Ctrl+F typed inside this page (the shell forwards it; keys in the page never reach the app).
+      if (e.type === 'find' && view.current && ready.current && e.id === view.current.getWebContentsId()) openFind();
     });
     return () => {
       off?.();

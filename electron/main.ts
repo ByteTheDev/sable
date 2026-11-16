@@ -223,6 +223,14 @@ function guardGuest(contents: WebContents) {
   contents.on('will-navigate', guard);
   contents.on('will-redirect', guard);
   contents.on('will-attach-webview', (e) => e.preventDefault());
+  // Keys typed in the page go to the guest, not the app: Ctrl+F there opens the panel's find bar.
+  contents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown' || !(input.control || input.meta) || input.alt || input.shift || input.key.toLowerCase() !== 'f') return;
+    const host = contents.hostWebContents;
+    if (!host || host !== win?.webContents) return;
+    e.preventDefault();
+    host.send('sable:browser-event', { type: 'find', id: contents.id });
+  });
   contents.setWindowOpenHandler(({ url }) => {
     if (isViewable(url) && url !== 'about:blank') void contents.loadURL(url).catch(() => {});
     return { action: 'deny' };
@@ -349,7 +357,8 @@ function harden() {
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
     callback(allowed.has(permission) && isAppUrl(details.requestingUrl));
   });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin) => allowed.has(permission) && requestingOrigin === appOrigin);
+  // Electron passes the origin here as a URL with a trailing slash ("http://127.0.0.1:47317/"): compare origins.
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin) => allowed.has(permission) && isAppUrl(requestingOrigin));
   hardenBrowser();
   windowCalls();
 }

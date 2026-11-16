@@ -42,25 +42,31 @@ export function WindowControls() {
 
   if (!shell || state.fullScreen) return null;
 
+  // Called without arguments: the preload's functions cross the context bridge, which tries to clone
+  // whatever is passed (a click event cannot be cloned, so passing the handler directly throws).
+  const minimize = () => shell.minimize();
+  const toggleMaximize = () => shell.toggleMaximize();
+  const close = () => shell.close();
+
   return (
     <div className="wc" role="group" aria-label="Window" data-blur={!state.focused || undefined}>
       <span className="wc-sep" aria-hidden />
       <Tip label="Minimize">
-        <button type="button" className="wc-btn" aria-label="Minimize" onClick={shell.minimize}>
+        <button type="button" className="wc-btn" aria-label="Minimize" onClick={minimize}>
           <span className="wc-pill">
             <CaptionGlyph kind="min" />
           </span>
         </button>
       </Tip>
       <Tip label={state.maximized ? 'Restore' : 'Maximize'}>
-        <button type="button" className="wc-btn" aria-label={state.maximized ? 'Restore' : 'Maximize'} onClick={shell.toggleMaximize}>
+        <button type="button" className="wc-btn" aria-label={state.maximized ? 'Restore' : 'Maximize'} onClick={toggleMaximize}>
           <span className="wc-pill">
             <CaptionGlyph kind={state.maximized ? 'restore' : 'max'} />
           </span>
         </button>
       </Tip>
       <Tip label="Close">
-        <button type="button" className="wc-btn wc-close" aria-label="Close" onClick={shell.close}>
+        <button type="button" className="wc-btn wc-close" aria-label="Close" onClick={close}>
           <span className="wc-pill">
             <CaptionGlyph kind="close" />
           </span>

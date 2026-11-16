@@ -10,3 +10,4 @@ release
 release-next
 dist-resources
 release-sable
+release-*

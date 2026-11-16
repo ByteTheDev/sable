@@ -53,9 +53,10 @@ contextBridge.exposeInMainWorld('sableDesktop', {
   browser: {
     capture: (webContentsId: number): Promise<string> => ipcRenderer.invoke('sable:browser-capture', Number(webContentsId)),
     clearData: (): Promise<void> => ipcRenderer.invoke('sable:browser-clear'),
-    onEvent: (cb: (e: { type: string; name?: string }) => void) => {
+    onEvent: (cb: (e: { type: string; name?: string; id?: number }) => void) => {
       if (typeof cb !== 'function') return () => {};
-      const listener = (_e: unknown, msg: { type: string; name?: string }) => cb({ type: String(msg?.type), name: msg?.name ? String(msg.name) : undefined });
+      const listener = (_e: unknown, msg: { type: string; name?: string; id?: number }) =>
+        cb({ type: String(msg?.type), name: msg?.name ? String(msg.name) : undefined, id: typeof msg?.id === 'number' ? msg.id : undefined });
       ipcRenderer.on('sable:browser-event', listener);
       return () => {
         ipcRenderer.removeListener('sable:browser-event', listener);

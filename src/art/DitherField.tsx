@@ -489,16 +489,21 @@ export function DitherField({
     function resize() {
       if (!host) return;
       rect = host.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+      // Under an interface size other than 100 % (CSS zoom on the root) the rect is in zoomed pixels
+      // while the canvas's own size is zoomed again: size it in layout pixels, draw at zoom × dpr.
+      const z = (host as HTMLElement & { currentCSSZoom?: number }).currentCSSZoom || 1;
+      const width = rect.width / z;
+      const height = rect.height / z;
+      const dpr = (window.devicePixelRatio || 1) * z;
       // Lower quality levels draw coarser cells.
       const c = Math.round(cellRef.current * QUALITY_CELL[quality]);
       const t = texRef.current;
       const img = imageRef.current != null;
       const key = `${t}/${img}`;
-      if (key === layoutKey && rect.width === metrics.width && rect.height === metrics.height && dpr === metrics.dpr && c === metrics.cell) return;
+      if (key === layoutKey && width === metrics.width && height === metrics.height && dpr === metrics.dpr && c === metrics.cell) return;
       layoutKey = key;
-      metrics = { width: rect.width, height: rect.height, dpr, cell: c };
-      const L = fieldLayout(t, img, rect.width, rect.height, dpr, c);
+      metrics = { width, height, dpr, cell: c };
+      const L = fieldLayout(t, img, width, height, dpr, c);
       el.style.width = `${L.cssW}px`;
       el.style.height = `${L.cssH}px`;
       host.style.setProperty('--cell', `${L.cell}px`);
