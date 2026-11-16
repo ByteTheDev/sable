@@ -282,6 +282,13 @@ const COS = (() => {
 })();
 const COS_K = COS_N / (Math.PI * 2);
 const fcos = (x: number) => COS[((x * COS_K) | 0) & (COS_N - 1)];
+/** The session's horizon, in band heights: where its crest is (from the top), how far it sinks to the
+    stage's edges, how far its glow rises, how thick the bright edge is, and the light left below it. */
+const HORIZON_APEX = 0.47;
+const HORIZON_SAG = 0.6;
+const HORIZON_GLOW = 0.36;
+const HORIZON_RIM = 0.08;
+const HORIZON_GROUND = 0.24;
 const STREAK_COS = Math.cos(-0.6);
 const STREAK_SIN = Math.sin(-0.6);
 /** Streaks run along a 35° diagonal, rising to the right on screen (y grows downward). */
@@ -1200,7 +1207,8 @@ export class Field {
       const qy = (px * STREAK_SIN + py * STREAK_COS) * 0.9;
       const n = sample(A, qx + t * 0.011, qy);
       const n2 = sample(B, qx * 0.5 - t * 0.007, qy * 2.3 + 0.31);
-      v = sstep(0.3, 0.74, n * 0.62 + n2 * 0.46);
+      // Over a floor: the horizon's edge stays one line, and the noise breaks its brightness, not its shape.
+      v = 0.62 + 0.38 * sstep(0.3, 0.74, n * 0.62 + n2 * 0.46);
     } else {
       const qx = px * 0.3 + sd;
       const qy = py * 0.3;
@@ -1211,6 +1219,31 @@ export class Field {
       v = full ? 0.24 + 0.62 * sstep(0.22, 0.76, n) : sstep(0.34, 0.72, n);
     }
     return v;
+  }
+
+  /**
+   * The session's horizon (the streak's falloff): the edge of a wide circle that crests at the
+   * middle of the band, where the composer's top edge is, and sinks to the stage's lower corners.
+   * Brightest on the edge itself, a glow that thins out above it, a dim ground below it; all of it
+   * strongest under the composer and fading towards the sides. The streak's noise is multiplied
+   * into it, so the line is drawn in broken dither, not as a stroke.
+   */
+  private horizon(px: number, py: number): number {
+    const a = this.aspect * 0.5;
+    const r = (a * a + HORIZON_SAG * HORIZON_SAG) / (2 * HORIZON_SAG);
+    const ex = px - a;
+    const ey = py - HORIZON_APEX - r;
+    // Above the edge: positive.
+    const d = Math.sqrt(ex * ex + ey * ey) - r;
+    const side = ex / a;
+    const reach = 1 - 0.74 * side * side;
+    if (reach <= 0) return 0;
+    if (d >= 0) {
+      const g = 1 - d / HORIZON_GLOW;
+      return g <= 0 ? 0 : g * g * 0.8 * reach;
+    }
+    const k = -d / HORIZON_RIM;
+    return (k >= 1 ? HORIZON_GROUND : 1 - (1 - HORIZON_GROUND) * k * k * (3 - 2 * k)) * reach;
   }
 
   /** Falloff (or, full bleed, the sweep, hollow and roll-off), the floor, the palette and the spectrum's hues. */
@@ -1279,14 +1312,14 @@ export class Field {
     } else {
       // Light falls away from the focus, leaving a dark ground for text.
       // Tubes and tiles fade out completely with distance so they never sit behind the reading area.
-      // A streak is a floor of light: it fades only upwards, evenly across the width.
+      // A streak is the session's horizon: an arc of light that crests under the composer.
       const fall =
         mode === 'tubes'
           ? 1 - sstep(0.12, TUBE_REACH, dist)
           : mode === 'tiles'
             ? 1 - sstep(0.18, TILE_REACH, dist)
             : mode === 'streak'
-              ? sstep(0, 1, py)
+              ? this.horizon(px, py)
               : 0.1 + 0.9 * (1 - sstep(0.05, 1.3, dist));
       v *= fall * this.gainNow;
       // The band under the dock lifts as a whole while a front crosses it, most where the front is,

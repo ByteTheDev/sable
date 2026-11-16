@@ -394,8 +394,13 @@ export function ToolDetails({ item }: { item: ToolItem }) {
               <Icon name="external" size={12} className="link-out" />
             </a>
           )}
+          {/* What the agent ran or typed in the page, then the page's own words without the note the agent gets around them. */}
+          {typeof (item.input as { script?: unknown } | undefined)?.script === 'string' && <CodeBlock code={(item.input as { script: string }).script} title="Script" maxHeight={200} wrap />}
+          {item.name.endsWith('browser_type') && typeof (item.input as { text?: unknown } | undefined)?.text === 'string' && <Field label="Typed">{(item.input as { text: string }).text}</Field>}
           <Images images={r?.images} />
-          {r?.text && !r.images?.length && <CodeBlock code={r.text} title={failed ? 'Error' : 'Result'} maxHeight={300} wrap />}
+          {r?.text && !r.images?.length && (
+            <CodeBlock code={/<untrusted_page_data>\n([\s\S]*)\n<\/untrusted_page_data>/.exec(r.text)?.[1] ?? r.text} title={failed ? 'Error' : 'Result'} maxHeight={300} wrap />
+          )}
         </div>
       );
 

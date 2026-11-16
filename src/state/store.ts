@@ -46,7 +46,7 @@ export interface SessionData {
   queue: QueuedMessage[];
 }
 
-export type RailTab = 'changes' | 'files' | 'browser' | 'terminal' | 'tasks' | 'context';
+export type RailTab = 'changes' | 'files' | 'browser' | 'terminal' | 'tasks' | 'context' | 'agents';
 export type SettingsSection = 'general' | 'appearance' | 'accounts' | 'usage' | 'models' | 'permissions' | 'mcp' | 'hooks' | 'skills' | 'agents' | 'memory' | 'shortcuts' | 'about';
 
 export interface AuthFlow {

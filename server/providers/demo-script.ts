@@ -31,6 +31,21 @@ import { BROWSER_TOOLS, describeBrowser, runBrowserTool, type BrowserOp, type Br
 // ───────────────────────────── control-flow signals ─────────────────────────────
 
 /** The turn was interrupted; the provider has already settled the timeline. */
+/** What the live line says while a Browser tab tool runs. */
+const BROWSER_ACTIVITY: Partial<Record<BrowserOp, string>> = {
+  open: 'Opening the page',
+  read: 'Reading the page',
+  snapshot: 'Reading the page',
+  click: 'Clicking',
+  type: 'Typing',
+  press: 'Pressing a key',
+  scroll: 'Scrolling the page',
+  eval: 'Running a script in the page',
+  logs: "Reading the page's log",
+  wait: 'Waiting for the page',
+  navigate: 'Loading the page',
+};
+
 export class Aborted extends Error {
   constructor() {
     super('Scenario aborted');
@@ -435,7 +450,7 @@ export class Script {
   async browser(op: BrowserOp, input: Record<string, unknown>, opts: Common = {}): Promise<BrowserToolResult> {
     const name = `mcp__${WIDGET_SERVER}__${BROWSER_TOOLS[op]}`;
     const view = describeBrowser(name, input);
-    if (!opts.parentId) this.activity(opts.activity ?? (op === 'open' ? 'Opening the page' : op === 'read' ? 'Reading the page' : 'Looking at the page'));
+    if (!opts.parentId) this.activity(opts.activity ?? BROWSER_ACTIVITY[op] ?? 'Looking at the page');
     const id = await this.tool({ name, ...view, input, parentId: opts.parentId });
     this.start(id);
     const r = await runBrowserTool(this.rt, op, input, this.env.signal);

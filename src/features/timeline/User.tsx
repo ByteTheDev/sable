@@ -9,6 +9,7 @@ import { IconButton, Popover, PopoverClose, PopoverContent, PopoverTrigger, Swit
 import { fieldBeat } from '@/art/events';
 import { landInTimeline } from '@/features/composer/flight';
 import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
+import { MessageAgain } from './Again';
 import { useTimeline } from './ctx';
 import { Stamp } from './Stamp';
 
@@ -79,6 +80,7 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
       <div className="user-actions">
         {!queued && <Stamp ts={item.ts} prefix={item.steered ? 'Steered' : undefined} className="user-stamp" />}
         {item.text && <CopyButton text={item.text} label="Copy message" />}
+        <MessageAgain item={item} />
         {canRewind && idle && !queued && (
           <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>

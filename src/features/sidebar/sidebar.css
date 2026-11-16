@@ -643,3 +643,72 @@
   color: var(--text);
   font-weight: var(--w-medium);
 }
+
+/* ── resize: a handle in the gap between sidebar and stage (Resize.tsx; portaled into .app) ── */
+
+.side-resize {
+  position: absolute;
+  top: calc(var(--gap) + var(--topbar-h) + 12px);
+  bottom: calc(var(--gap) + 12px);
+  left: calc(var(--gap) + var(--sidebar-w));
+  width: var(--gap);
+  z-index: 5;
+  cursor: col-resize;
+  border-radius: 4px;
+  touch-action: none;
+  -webkit-app-region: no-drag;
+}
+
+.app[data-sidebar='false'] > .side-resize {
+  display: none;
+}
+
+.side-resize::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: calc(50% - 1.5px);
+  width: 3px;
+  height: 72px;
+  translate: 0 -50%;
+  border-radius: 3px;
+  background-color: var(--line-3);
+  opacity: 0;
+  /* Grows by scale, not height: the handle never lays out while it answers. */
+  scale: 1 0.56;
+  transition:
+    opacity var(--d-1) var(--ease),
+    background-color var(--d-1) var(--ease),
+    scale var(--d-3) var(--ease-out);
+}
+
+.side-resize:hover::after,
+.side-resize:focus-visible::after,
+.side-resize[data-dragging]::after {
+  opacity: 1;
+  scale: 1;
+}
+
+.side-resize[data-dragging]::after {
+  background-color: rgb(255 255 255 / 0.5);
+}
+
+.side-resize:focus-visible {
+  outline: none;
+}
+
+[data-side-resizing],
+[data-side-resizing] * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+[data-side-resizing] .app-side,
+[data-side-resizing] .app-side > * {
+  transition: none !important;
+}
+
+/* Frames swallow pointer events: keep the drag smooth over the Browser tab. */
+[data-side-resizing] :is(iframe, webview) {
+  pointer-events: none;
+}

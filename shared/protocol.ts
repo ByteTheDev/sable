@@ -192,17 +192,55 @@ export interface BrowserRequest {
   id: string;
   sessionId: string;
   /** state: address and title only; read: the page's text and logs; screenshot: a picture; open: load `url` and wait. */
-  op: 'state' | 'read' | 'screenshot' | 'open';
+  op: 'state' | 'read' | 'screenshot' | 'open' | 'snapshot' | 'click' | 'type' | 'press' | 'scroll' | 'eval' | 'logs' | 'wait' | 'navigate';
   url?: string;
   selector?: string;
   /** read and screenshot: refuse when the page moved to another origin since it was checked. */
   expectOrigin?: string;
+  /** click, type, scroll: a reference from a snapshot ("e12"). */
+  ref?: string;
+  /** click: the visible text of the element. */
+  find?: string;
+  /** type: what to type. */
+  text?: string;
+  /** type: press Enter in the field afterwards. */
+  submit?: boolean;
+  /** press: the key ("Enter", "Escape", "Control+K"). */
+  key?: string;
+  /** scroll: "top", "bottom" (else `ref` or `selector`), or pixels down in `by`. */
+  to?: string;
+  by?: number;
+  /** eval: the body of an async function. */
+  script?: string;
+  /** logs: which log. */
+  kind?: 'console' | 'network';
+  /** wait: how long at most. */
+  timeoutMs?: number;
+  /** navigate. */
+  action?: 'back' | 'forward' | 'reload';
 }
 
 export interface BrowserLogEntry {
   level: 'error' | 'warning';
   text: string;
   source?: string;
+}
+
+/** One line of the page's console, any level. */
+export interface BrowserConsoleLine {
+  level: 'error' | 'warning' | 'info' | 'log' | 'debug';
+  text: string;
+  source?: string;
+}
+
+/** One request the page made (address without its query). */
+export interface BrowserNetRequest {
+  url: string;
+  kind?: string;
+  method?: string;
+  status?: number;
+  ms?: number;
+  error?: string;
 }
 
 export interface BrowserFailedRequest {
@@ -230,6 +268,17 @@ export interface BrowserAnswer {
   image?: string;
   width?: number;
   height?: number;
+  /** click, type, scroll: the element acted on, in the page's words ("button \"Sign in\""). */
+  target?: string;
+  /** The page went to another document while the tool ran. */
+  navigated?: boolean;
+  /** snapshot: how many elements the outline lists. wait: milliseconds waited. */
+  count?: number;
+  /** wait: the time ran out. */
+  timedOut?: boolean;
+  /** logs. */
+  lines?: BrowserConsoleLine[];
+  requests?: BrowserNetRequest[];
 }
 
 /** State of an optional capability the user may need to act on. */

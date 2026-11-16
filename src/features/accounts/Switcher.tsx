@@ -8,6 +8,7 @@ import { Icon } from '@/icons';
 import { openSettings, setDefaultAccount } from '@/state/actions';
 import { accountName, useFocusAccount } from '@/state/hooks';
 import { useStore } from '@/state/store';
+import { ManyAccounts, MANY_ACCOUNTS, RoomFigure } from './ManyAccounts';
 import { accountAgents, accountsOf, openAddAccount, planWord } from './model';
 
 /**
@@ -33,7 +34,11 @@ export function AccountSwitcher() {
       r = requestAnimationFrame(() => {
         const pop = contentRef.current;
         if (!pop || pop.dataset.state === 'closed' || document.activeElement?.matches('.acs-row[data-in-use]')) return;
-        (pop.querySelector<HTMLElement>('.acs-row[data-in-use]') ?? pop.querySelector<HTMLElement>('.acs-row'))?.focus({ preventScroll: true });
+        const row = pop.querySelector<HTMLElement>('.acs-row[data-in-use]') ?? pop.querySelector<HTMLElement>('.acs-row');
+        row?.focus({ preventScroll: true });
+        // In a long list the account in use may sit below the fold of the list's own scroller.
+        const scroller = row?.closest<HTMLElement>('.acs-list');
+        if (row && scroller) scroller.scrollTop = Math.max(0, row.offsetTop - scroller.clientHeight / 2);
       });
     });
     return () => cancelAnimationFrame(r);
@@ -46,6 +51,7 @@ export function AccountSwitcher() {
   const current = (focus === active ? list.find((a) => a.id === accountId) : undefined) ?? list.find((a) => a.isDefault) ?? list[0];
   const plan = planWord(current);
   const several = list.length > 1;
+  const many = agents.reduce((n, id) => n + accountsOf(providers[id]).length, 0) >= MANY_ACCOUNTS;
 
   const name = current ? accountName(current) : PROVIDER_NAME[focus];
   const headline = current?.auth.loggedIn ? (plan ? `${plan} plan` : PROVIDER_NAME[focus]) : 'Not signed in';
@@ -70,6 +76,7 @@ export function AccountSwitcher() {
             <span className="account-plan">{headline}</span>
             {several && current && <span className="acs-label truncate">{name}</span>}
           </span>
+          <RoomFigure agents={agents} providers={providers} />
           {current && <LimitDot provider={focus} accountId={current.id} className="acs-dot" />}
           <Icon name="caret-updown" size={13} className="account-caret" />
         </button>
@@ -86,7 +93,21 @@ export function AccountSwitcher() {
           style={{ width: 252 }}
           loop
         >
-          {agents.map((id, i) => (
+          {many && (
+            <ManyAccounts
+              agents={agents}
+              providers={providers}
+              inUse={{ provider: focus, accountId: current?.id }}
+              onPeek={setPeek}
+              onPick={(id, a) => {
+                if (!a.auth.loggedIn) return openSettings('accounts');
+                void setDefaultAccount(id, a.id);
+                useStore.getState().setUi({ homeProvider: id });
+                setOpen(false);
+              }}
+            />
+          )}
+          {!many && agents.map((id, i) => (
             <RM.Group key={id} className="acs-group">
               {i > 0 && <RM.Separator className="menu-sep" />}
               {accountsOf(providers[id]).map((a, _, all) => (

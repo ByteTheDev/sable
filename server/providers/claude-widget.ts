@@ -1,7 +1,7 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { SessionRuntime } from '../core/runtime';
-import { BROWSER_DESCRIPTIONS, BROWSER_SELECTOR_DESCRIPTION, BROWSER_TOOLS, BROWSER_URL_DESCRIPTION, runBrowserTool, type BrowserOp, type BrowserToolResult } from './browser-tool';
+import { BROWSER_DESCRIPTIONS, BROWSER_OPS, BROWSER_PARAMS, BROWSER_TOOLS, runBrowserTool, type BrowserOp, type BrowserToolResult } from './browser-tool';
 import { WIDGET_CODE_DESCRIPTION, WIDGET_DESCRIPTION, WIDGET_SERVER, WIDGET_TITLE_DESCRIPTION, WIDGET_TOOL, widgetResult } from './widget-tool';
 
 /**
@@ -37,17 +37,34 @@ export function widgetServer(opts: { widgets?: boolean; session?: () => SessionR
       if (r.image) content.push({ type: 'image', data: r.image.data, mimeType: r.image.mime });
       return { content, isError: !r.ok };
     };
-    tools.push(
-      tool(BROWSER_TOOLS.read, BROWSER_DESCRIPTIONS.read, { selector: z.string().optional().describe(BROWSER_SELECTOR_DESCRIPTION) }, (args) => run('read', args), {
-        annotations: { title: 'Read the Browser tab', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
-      }),
-      tool(BROWSER_TOOLS.screenshot, BROWSER_DESCRIPTIONS.screenshot, {}, (args) => run('screenshot', args), {
-        annotations: { title: 'Screenshot of the Browser tab', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
-      }),
-      tool(BROWSER_TOOLS.open, BROWSER_DESCRIPTIONS.open, { url: z.string().describe(BROWSER_URL_DESCRIPTION) }, (args) => run('open', args), {
-        annotations: { title: 'Open in the Browser tab', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
-      }),
-    );
+    const TITLES: Record<BrowserOp, string> = {
+      read: 'Read the Browser tab',
+      screenshot: 'Screenshot of the Browser tab',
+      open: 'Open in the Browser tab',
+      snapshot: 'Outline of the page in the Browser tab',
+      click: 'Click in the Browser tab',
+      type: 'Type in the Browser tab',
+      press: 'Press a key in the Browser tab',
+      scroll: 'Scroll the Browser tab',
+      eval: 'Run a script in the Browser tab',
+      logs: 'Console and requests of the Browser tab',
+      wait: 'Wait for the Browser tab',
+      navigate: 'Back, forward or reload in the Browser tab',
+    };
+    const LOOKS = new Set<BrowserOp>(['read', 'screenshot', 'snapshot', 'logs', 'wait', 'scroll']);
+    for (const op of BROWSER_OPS) {
+      // The same inputs the Codex schemas describe (BROWSER_PARAMS), as zod.
+      const shape: Record<string, z.ZodTypeAny> = {};
+      for (const [key, p] of Object.entries(BROWSER_PARAMS[op])) {
+        const base = p.enum ? z.enum(p.enum) : p.type === 'number' ? z.number() : p.type === 'boolean' ? z.boolean() : z.string();
+        shape[key] = (p.required ? base : base.optional()).describe(p.description);
+      }
+      tools.push(
+        tool(BROWSER_TOOLS[op], BROWSER_DESCRIPTIONS[op], shape, (args) => run(op, args), {
+          annotations: { title: TITLES[op], readOnlyHint: LOOKS.has(op), destructiveHint: false, openWorldHint: true },
+        }),
+      );
+    }
   }
   return createSdkMcpServer({
     name: WIDGET_SERVER,

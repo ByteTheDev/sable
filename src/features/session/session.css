@@ -6,16 +6,20 @@
   flex-direction: column;
 }
 
-/* A low band of light under the dock: an even floor that fades upwards only (the field fades the same way).
-   Nearly gone while idle, a restrained glow while the agent works, amber while it waits on you.
-   Kept low and dim so the working line and task strip above the dock stay readable. Its strength
-   per status and the Sessions amount from Settings are set by <Backdrop surface="session">. */
+/* The horizon the composer stands on: an arc of dithered light in the agent's colour, drawn by the
+   field (art/field.ts, `horizon`). It crests at the middle of this box and sinks to the stage's
+   lower corners, so the box is sized from the dock: its middle is just under the dock's top edge,
+   whatever the composer or a prompt card measures. The edge itself passes behind the card and
+   comes out at its sides; only its glow rises above the card, so the lines right above the dock
+   (the working line, the last steps) stay readable. Quiet while idle, brighter and quicker while the agent
+   works, amber and still while it waits on you. Its strength per status and the Sessions amount
+   from Settings are set by <Backdrop surface="session">. */
 .session-light {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  height: min(32%, 260px);
+  height: min(64%, calc((var(--dock-h, 126px) - 3px) * 1.89));
   pointer-events: none;
 }
 
@@ -29,7 +33,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(to top, rgb(13 13 15 / 0.15) 0%, rgb(13 13 15 / 0.55) 35%, var(--sheet) 100%);
+  background: linear-gradient(to top, rgb(13 13 15 / 0) 0%, rgb(13 13 15 / 0.1) 52%, rgb(13 13 15 / 0.7) 80%, var(--sheet) 100%);
 }
 
 .session-light > * {

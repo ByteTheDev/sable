@@ -21,6 +21,7 @@ import { readFiles, withTextAttachments } from './attach';
 import { AttachmentRow } from './Attachments';
 import { useChoice } from './choice';
 import { APP_COMMANDS, appCommandsFor, commandRows, skillRows, type CommandCtx, type SuggestRow } from './commands';
+import { keepDrafts } from './drafts';
 import { HomeChips, ModelPopover, ModeMenu, openComposerMenu, useHomeSignedOut } from './Controls';
 import { PROVIDER_NAME } from '@/art/Logo';
 import { ModelEffort } from './Thinking';
@@ -39,6 +40,8 @@ export interface ComposerProps {
 }
 
 const EMPTY: Attachment[] = [];
+// A draft per session survives a restart (text only): read back before the first composer renders.
+keepDrafts();
 const LINE = 22;
 const PAD_Y = 10;
 const MAX_LINES = 10;

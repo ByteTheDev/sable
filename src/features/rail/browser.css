@@ -673,3 +673,240 @@
     transition: opacity var(--d-1) var(--ease);
   }
 }
+
+/* ── tools for the person: pick an element, a part of the page, the console ── */
+
+/* The console switch carries a count only while the page has errors. */
+.bw-log-toggle {
+  position: relative;
+}
+
+.bw-log-count {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background-color: var(--red);
+  color: var(--bg);
+  font-size: 9.5px;
+  font-weight: var(--w-3, 580);
+  line-height: 13px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Drag a rectangle over the page: the page dims a step, the rectangle shows it as it is. */
+.bw-region {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: hidden;
+  cursor: crosshair;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+  animation: bw-region-in var(--d-2) var(--ease-out);
+}
+
+.bw-region::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: rgb(0 0 0 / 0.28);
+  pointer-events: none;
+}
+
+.bw-region:has(.bw-region-box)::after {
+  display: none;
+}
+
+.bw-region-box {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 1px solid var(--text);
+  border-radius: 2px;
+  /* One static shadow dims everything around the rectangle. */
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 0.42);
+  pointer-events: none;
+}
+
+.bw-region-size,
+.bw-region-hint {
+  position: absolute;
+  padding: 4px 7px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background-color: var(--panel-2);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.bw-region-size {
+  right: 6px;
+  bottom: 6px;
+}
+
+.bw-region-hint {
+  z-index: 1;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+@keyframes bw-region-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The console: a quiet drawer under the page. */
+.bw-log {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+  background-color: var(--sheet);
+}
+
+.bw-log-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 7px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.bw-log-bar .icon-btn {
+  --ib: var(--ctl-h-sm);
+  border-radius: var(--r-ctl-sm);
+}
+
+.bw-log-title {
+  font-size: var(--t-small, 12px);
+  font-weight: var(--w-2, 500);
+  color: var(--text);
+}
+
+.bw-log-sum {
+  flex: 1;
+  min-width: 0;
+  margin-left: 8px;
+  overflow: hidden;
+  font-size: var(--t-small, 12px);
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bw-log-send {
+  flex-shrink: 0;
+  margin-right: 3px;
+}
+
+.bw-log-list {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 6px;
+  overflow-y: auto;
+}
+
+.bw-log-empty,
+.bw-log-more {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: var(--t-small, 12px);
+  color: var(--text-3);
+}
+
+.bw-log-row {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-height: 24px;
+  padding: 3px 34px 3px 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  transition: background-color 90ms var(--ease);
+}
+
+.bw-log-row:hover,
+.bw-log-row:focus-within {
+  background-color: var(--fill-1);
+}
+
+.bw-log-row[data-level='error'] {
+  color: var(--text);
+}
+
+.bw-log-row[data-level='debug'] {
+  color: var(--text-3);
+}
+
+.bw-log-mark {
+  display: inline-flex;
+  align-self: flex-start;
+  flex-shrink: 0;
+  width: 13px;
+  height: 17px;
+  align-items: center;
+  color: var(--text-3);
+}
+
+.bw-log-row[data-level='error'] .bw-log-mark {
+  color: var(--red);
+}
+
+.bw-log-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+
+.bw-log-src {
+  flex-shrink: 0;
+  max-width: 38%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bw-log-row .bw-log-act {
+  --ib: 22px;
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  opacity: 0;
+  transition: opacity 90ms var(--ease);
+}
+
+.bw-log-row:hover .bw-log-act,
+.bw-log-row:focus-within .bw-log-act {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bw-region {
+    animation: none;
+  }
+}

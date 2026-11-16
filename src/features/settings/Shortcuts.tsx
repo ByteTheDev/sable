@@ -20,8 +20,7 @@ export function Shortcuts() {
         { label: 'New session', keys: k('mod+shift+o') },
         { label: 'Open a folder', keys: k('mod+o') },
         { label: 'Show or hide the sidebar', keys: k('mod+b') },
-        { label: 'Show or hide the panel', keys: k('mod+j') },
-        { label: 'Settings', keys: k('mod+,') },
+        { label: 'Show or hide the panel', keys: k('mod+j') },        { label: 'Settings', keys: k('mod+,') },
       ],
     },
     {
@@ -33,7 +32,7 @@ export function Shortcuts() {
         { label: 'Commands and skills', keys: k('/') },
         { label: 'Mention a file', keys: k('@') },
         { label: 'Run a shell command', keys: k('!') },
-        { label: 'Recall your last message', keys: k('up') },
+        { label: 'Earlier messages of yours', keys: k('up') },
         { label: 'Accept the suggestion', keys: k('tab') },
         { label: 'Focus the composer', keys: k('mod+l') },
       ],
@@ -42,13 +41,33 @@ export function Shortcuts() {
       title: 'Session',
       items: [
         { label: 'Stop the agent', keys: k('esc') },
+        { label: 'Find in conversation', keys: k('mod+f') },
+        {
+          label: 'Jump between your messages',
+          keys: (
+            <span className="kbd-range">
+              {k('alt+up')}
+              {k('down')}
+            </span>
+          ),
+        },
+        {
+          label: 'Back to the last session',
+          // Ctrl on every platform (not the platform's command key).
+          keys: (
+            <span className="kbds">
+              <kbd className="kbd">Ctrl</kbd>
+              <kbd className="kbd">Tab</kbd>
+            </span>
+          ),
+        },
         {
           label: 'Panel tabs',
           keys: (
             <span className="kbd-range">
               {k('alt+1')}
               <span className="faint">to</span>
-              {k('6')}
+              {k('7')}
             </span>
           ),
         },
@@ -89,11 +108,11 @@ export function Shortcuts() {
     </section>
   );
 
-  // Two balanced columns: the composer's long list with the session's two keys under it.
+  // Two balanced columns: the app and the session on one side, the composer and the prompts on the other.
   return (
     <div className="keys-grid">
-      <div className="set-stack">{[groups[0], groups[3]].map(render)}</div>
-      <div className="set-stack">{[groups[1], groups[2]].map(render)}</div>
+      <div className="set-stack">{[groups[0], groups[2]].map(render)}</div>
+      <div className="set-stack">{[groups[1], groups[3]].map(render)}</div>
     </div>
   );
 }

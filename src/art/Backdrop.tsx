@@ -155,7 +155,11 @@ export function Backdrop({ surface, view = 'home', config, provider, status = 'i
     const awaiting = status === 'awaiting';
     const palette: DitherPalette = awaiting ? 'amber' : cfg.colour === 'mono' ? 'mono' : custom ? 'custom' : SESSION_PALETTE[agent];
     const k = amount / SESSION_REFERENCE;
-    const base = glowing ? 0.8 : awaiting ? 0.75 : 0.55;
+    const base = glowing ? 0.9 : awaiting ? 0.82 : 0.72;
+    // The horizon is a thin arc, not a floor of light: it holds a quiet presence at any amount
+    // above zero (a line that cannot be seen is no horizon), and the amount adds to it.
+    const rest = Math.min(0.7, 0.3 + 0.2 * k);
+    const lit2 = Math.min(1, 0.52 + 0.3 * k);
     // Working: the band drifts quicker. Waiting on you: it turns amber and stills (the field eases
     // its speed to nothing and stops drawing), so the stillness itself says "your turn".
     return (
@@ -166,7 +170,7 @@ export function Backdrop({ surface, view = 'home', config, provider, status = 'i
         focus={[0.5, 1.15]}
         gain={base * (k <= 1 ? 1 : 1 + ((amount - SESSION_REFERENCE) / 70) * 0.6)}
         speed={(working ? 2.2 : awaiting ? 0 : glowing ? 1.1 : 0.35) * (cfg.speed / 30)}
-        opacity={Math.min(1, (glowing || awaiting ? 0.5 : 0.18) * k)}
+        opacity={glowing || awaiting ? lit2 : rest}
         reactGain={0.85}
         awake={working && surface === 'session'}
       />

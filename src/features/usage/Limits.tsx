@@ -7,6 +7,10 @@ import { accountName, useLimitsReport } from '@/state/hooks';
 import { accountKey, useStore } from '@/state/store';
 import { cx, IconButton, Tip } from '@/ui';
 import { clock, duration, exactTime, isApiKey, NUMBER_LOCALE, planText, STALE_MS, windowLevel } from './format';
+import { LimitsOverview } from './Overview';
+
+/** From this many accounts on, the Usage page lists them as an overview instead of one block each. */
+const OVERVIEW_FROM = 3;
 
 /** One sentence about where the pace leads, or nothing. */
 export function paceText(l: RateLimit, p: LimitPace | undefined, now: number, short = false): { text: string; warn: boolean } | undefined {
@@ -271,11 +275,16 @@ export function LimitsSection() {
           )}
         </div>
       </header>
-      <div className="ul-accounts">
-        {refs.map((r) => (
-          <AccountLimits key={`${r.provider}:${r.account.id}`} refs={r} pending={pending.has(accountKey(r.provider, r.account.id))} />
-        ))}
-      </div>
+      {refs.length >= OVERVIEW_FROM ? (
+        // Many accounts: one line each, the windows in full on demand.
+        <LimitsOverview refs={refs} pending={pending} />
+      ) : (
+        <div className="ul-accounts">
+          {refs.map((r) => (
+            <AccountLimits key={`${r.provider}:${r.account.id}`} refs={r} pending={pending.has(accountKey(r.provider, r.account.id))} />
+          ))}
+        </div>
+      )}
     </section>
   );
 }

@@ -4,6 +4,7 @@ import { Composer } from '@/features/composer/Composer';
 import { PromptDock } from '@/features/prompts/PromptDock';
 import { Timeline } from '@/features/timeline/Timeline';
 import { useStore } from '@/state/store';
+import { ConversationFind } from './FindBar';
 import './session.css';
 
 /**
@@ -18,6 +19,7 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   return (
     <div className="session" data-status={status}>
       <Timeline sessionId={sessionId} />
+      <ConversationFind sessionId={sessionId} />
     </div>
   );
 }

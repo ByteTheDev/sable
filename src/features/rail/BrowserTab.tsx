@@ -7,9 +7,10 @@ import { addressParts, isLocalUrl, normalizeAddress, willSearch } from '@/lib/li
 import * as actions from '@/state/actions';
 import { focusComposer } from '@/state/hooks';
 import { useStore } from '@/state/store';
-import { IconButton, Menu, MenuContent, MenuItem, MenuSep, MenuTrigger, Spinner, Tip } from '@/ui';
+import { IconButton, Kbd, Menu, MenuContent, MenuItem, MenuSep, MenuTrigger, Spinner, Tip } from '@/ui';
 import { readScript, registerPage } from './browser-agent';
-import { DEVICES, forgetVisit, getPage, logConsole, logFailed, noteVisit, pushHistory, resetLog, setPage, stepHistory, touchVisit, usePage, usePreviews, useRecent, type Device } from './browser-store';
+import { parseKey, pickCancelScript, pickScript, type Picked } from './browser-scripts';
+import { DEVICES, forgetVisit, getLog, getPage, logFailed, logLine, noteVisit, pushHistory, resetLog, setPage, stepHistory, touchVisit, useLogVersion, usePage, usePreviews, useRecent, type AgentWork, type Device, type FeedEntry } from './browser-store';
 import './browser.css';
 
 /**
@@ -49,7 +50,11 @@ interface WebviewEl extends HTMLElement {
   isDevToolsOpened(): boolean;
   getURL(): string;
   executeJavaScript(code: string): Promise<unknown>;
+  sendInputEvent?(event: { type: 'keyDown' | 'keyUp' | 'char'; keyCode: string; modifiers?: string[] }): Promise<void> | void;
 }
+
+/** Key names as the shell's input events spell them. */
+const INPUT_KEY: Record<string, string> = { ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Escape: 'Escape', ' ': 'Space' };
 
 type WebviewEvent = Event & {
   url?: string;
@@ -176,15 +181,17 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
         if (!e.url) return;
         // A new document: the agent's view of its console and failed requests starts empty.
         resetLog(sessionId);
-        setPage(sessionId, { url: e.url, title: '', favicon: undefined, phase: 2, ...nav() });
+        // A reload of the same address keeps its title and icon: the engine reports them again only when they change.
+        const same = getPage(sessionId).url === e.url;
+        setPage(sessionId, { url: e.url, ...(same ? {} : { title: '', favicon: undefined }), phase: 2, ...nav() });
         setFound(null);
       });
-      // Errors and warnings the page logs, for the agent's browser_read (bounded in the store).
+      // What the page logs, for the drawer and the agent (errors and warnings also go with browser_read); bounded in the store.
       on('console-message', (e) => {
         const lv = e.level;
-        const level = lv === 3 || lv === 'error' ? 'error' : lv === 2 || lv === 'warning' ? 'warning' : null;
-        if (!level || !e.message) return;
-        logConsole(sessionId, { level, text: e.message, source: e.sourceId ? `${e.sourceId.replace(/[?#].*$/, '')}${e.line ? `:${e.line}` : ''}` : undefined });
+        const level = lv === 3 || lv === 'error' ? 'error' : lv === 2 || lv === 'warning' ? 'warning' : lv === 0 || lv === 'debug' || lv === 'verbose' ? 'debug' : lv === 'info' ? 'info' : 'log';
+        if (!e.message) return;
+        logLine(sessionId, { level, text: e.message, source: e.sourceId ? `${e.sourceId.replace(/[?#].*$/, '')}${e.line ? `:${e.line}` : ''}` : undefined });
       });
       on('did-navigate-in-page', (e) => e.isMainFrame && e.url && setPage(sessionId, { url: e.url, ...nav() }));
       on('page-title-updated', (e) => {
@@ -233,6 +240,37 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
         capture: async () => {
           if (!ready.current || !desktop?.browser) throw new Error('The page is still starting.');
           return desktop.browser.capture(el.getWebContentsId(), { forAgent: true });
+        },
+        run: async (script) => {
+          if (!ready.current) throw new Error('The page is still starting.');
+          return el.executeJavaScript(script);
+        },
+        key: async (combo) => {
+          if (!ready.current || typeof el.sendInputEvent !== 'function') return false;
+          const { key, mods } = parseKey(combo);
+          const keyCode = INPUT_KEY[key] ?? key;
+          const ch = key === 'Space' ? ' ' : key;
+          const typed = ch.length === 1 && !mods.some((m) => m !== 'shift');
+          await el.sendInputEvent({ type: 'keyDown', keyCode, modifiers: mods });
+          if (typed) await el.sendInputEvent({ type: 'char', keyCode: ch, modifiers: mods });
+          else if (key === 'Enter' && !mods.length) await el.sendInputEvent({ type: 'char', keyCode: '\u000d' });
+          await el.sendInputEvent({ type: 'keyUp', keyCode, modifiers: mods });
+          return true;
+        },
+        history: (action) => {
+          if (!ready.current) return false;
+          try {
+            if (action === 'back') {
+              if (!el.canGoBack()) return false;
+              el.goBack();
+            } else if (action === 'forward') {
+              if (!el.canGoForward()) return false;
+              el.goForward();
+            } else el.reload();
+            return true;
+          } catch {
+            return false;
+          }
         },
       });
       return true;
@@ -409,35 +447,112 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
 
   const openOutside = () => window.open(page.url, '_blank', 'noopener,noreferrer');
 
+  const acceptsImages = () => useStore.getState().data[sessionId]?.caps?.features.images !== false;
+  const siteName = () => {
+    try {
+      return new URL(getPage(sessionId).url).host || 'page';
+    } catch {
+      return 'page';
+    }
+  };
+
+  /** A picture into the message being written; false when it has no room for one. */
+  const attach = (dataUrl: string, name: string) => {
+    const cur = useStore.getState().drafts[sessionId]?.attachments ?? [];
+    if (cur.filter((a) => a.kind === 'image').length >= 10) {
+      toast('Up to 10 images per message');
+      return false;
+    }
+    const att: Attachment = { id: `att-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, kind: 'image', name, mime: 'image/png', dataUrl, size: dataUrlBytes(dataUrl) };
+    useStore.getState().setDraft(sessionId, { attachments: [...cur, att] });
+    return true;
+  };
+
   const attachShot = async () => {
     const el = view.current;
     if (!el || !desktop?.browser || !ready.current) return;
-    const st = useStore.getState();
-    if (st.data[sessionId]?.caps?.features.images === false) {
+    if (!acceptsImages()) {
       toast('This agent does not accept images');
       return;
     }
     try {
       const dataUrl = await desktop.browser.capture(el.getWebContentsId());
-      const cur = useStore.getState().drafts[sessionId]?.attachments ?? [];
-      if (cur.filter((a) => a.kind === 'image').length >= 10) {
-        toast('Up to 10 images per message');
-        return;
-      }
-      let name = 'Page';
-      try {
-        name = new URL(page.url).host || name;
-      } catch {
-        /* keep the fallback */
-      }
-      const att: Attachment = { id: `att-${Date.now().toString(36)}-shot`, kind: 'image', name: `Screenshot of ${name}.png`, mime: 'image/png', dataUrl, size: dataUrlBytes(dataUrl) };
-      useStore.getState().setDraft(sessionId, { attachments: [...cur, att] });
+      if (!attach(dataUrl, `Screenshot of ${siteName()}.png`)) return;
       toast('Screenshot attached to your message', 'success');
       focusComposer();
     } catch {
       toast('Could not capture the page', 'error');
     }
   };
+
+  /* ── pick an element: hover outlines it in the page, a click puts a reference to it in the message ── */
+
+  const [picking, setPicking] = useState(false);
+  const pick = async () => {
+    const el = view.current;
+    if (!el || !ready.current || !desktop?.browser || page.error || page.crashed) return;
+    if (picking) {
+      void el.executeJavaScript(pickCancelScript).catch(() => {});
+      return;
+    }
+    setRegion(false);
+    setPicking(true);
+    try {
+      // Keys go to the page while picking, so Escape ends it there.
+      el.focus();
+      const r = (await el.executeJavaScript(pickScript)) as Picked | null;
+      if (!r || typeof r.selector !== 'string' || !r.rect) return;
+      if (acceptsImages() && r.rect.w >= 1 && r.rect.h >= 1) {
+        try {
+          const full = await desktop.browser.capture(el.getWebContentsId());
+          const shot = await cropImage(full, r.rect, r.vw, 8);
+          attach(shot, `${r.tag} on ${siteName()}.png`);
+        } catch {
+          /* the reference still goes in, without its picture */
+        }
+      }
+      focusComposer(`${pickedText(r, getPage(sessionId).url)} `, { append: true });
+    } catch {
+      toast('Could not pick an element on this page', 'error');
+    } finally {
+      setPicking(false);
+    }
+  };
+
+  /* ── a region of the page as a picture ── */
+
+  const [region, setRegion] = useState(false);
+  const startRegion = () => {
+    if (!view.current || !ready.current || !desktop?.browser) return;
+    if (!acceptsImages()) {
+      toast('This agent does not accept images');
+      return;
+    }
+    if (picking) void view.current.executeJavaScript(pickCancelScript).catch(() => {});
+    setRegion(true);
+  };
+  const takeRegion = async (r: { x: number; y: number; w: number; h: number } | null) => {
+    setRegion(false);
+    const el = view.current;
+    if (!r || !el || !desktop?.browser || !ready.current) return;
+    try {
+      // The view as laid out (a device size scales it): the picture maps onto this box.
+      const box = el.getBoundingClientRect();
+      const frame = viewBox.current?.getBoundingClientRect();
+      if (!frame || box.width < 1) return;
+      const full = await desktop.browser.capture(el.getWebContentsId());
+      const shot = await cropImage(full, { x: r.x + frame.left - box.left, y: r.y + frame.top - box.top, w: r.w, h: r.h }, box.width, 0);
+      if (!attach(shot, `Part of ${siteName()}.png`)) return;
+      toast('Picture attached to your message', 'success');
+      focusComposer();
+    } catch {
+      toast('Could not capture that part of the page', 'error');
+    }
+  };
+
+  /* ── the page's console and failed requests, under the page ── */
+
+  const [drawer, setDrawer] = useState(false);
 
   const clearData = async () => {
     try {
@@ -456,8 +571,18 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
   const busy = page.loading && !page.error;
 
   const onKey = (e: React.KeyboardEvent) => {
-    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
     const k = e.key.toLowerCase();
+    if (e.shiftKey) {
+      // The tools, on the keys developer tools use for the same things.
+      if (!native || !page.url || (k !== 'c' && k !== 's' && k !== 'j')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (k === 'c') void pick();
+      else if (k === 's') startRegion();
+      else setDrawer((d) => !d);
+      return;
+    }
     if (k === 'l') {
       e.preventDefault();
       e.stopPropagation();
@@ -488,36 +613,42 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
             <Icon name="x" size={14} className="bw-reload-b" />
           </button>
         </Tip>
-        <AddressField url={page.url} title={page.title} favicon={page.favicon} zoom={page.zoom} agent={page.agent} onResetZoom={() => zoomTo(1)} inputRef={input} onGo={go} />
+        <AddressField url={page.url} title={page.title} favicon={page.favicon} zoom={page.zoom} agent={page.agent} picking={picking} onResetZoom={() => zoomTo(1)} inputRef={input} onGo={go} />
+        {native && (
+          <>
+            <IconButton icon="cursor-click" label={picking ? 'Stop picking' : 'Pick an element'} keys="mod+shift+c" size={15} active={picking} disabled={!page.url || !!page.error || !!page.crashed} onClick={() => void pick()} />
+            <LogToggle sessionId={sessionId} open={drawer} disabled={!page.url} onToggle={() => setDrawer((d) => !d)} />
+          </>
+        )}
         <Menu>
           <Tip label="More">
             <MenuTrigger className="icon-btn" aria-label="More" disabled={!page.url}>
               <Icon name="dots" size={15} />
             </MenuTrigger>
           </Tip>
-          <MenuContent align="end" width={232}>
+          <MenuContent align="end" width={292}>
             <MenuItem icon="external" onSelect={openOutside}>
               Open in your browser
             </MenuItem>
             <MenuItem icon="link" onSelect={() => void copyLink()}>
               Copy link
             </MenuItem>
+            <MenuSep />
             <MenuItem icon="at" onSelect={() => focusComposer(`${page.url} `, { append: true })}>
               Mention this page in chat
             </MenuItem>
             {native && (
-              <MenuItem icon="file-search" onSelect={openFind}>
-                Find in page
-              </MenuItem>
-            )}
-            {native && (
-              <MenuItem icon="image" onSelect={() => void attachShot()}>
-                Add screenshot to message
-              </MenuItem>
-            )}
-            {native && (
               <>
+                <MenuItem icon="image" onSelect={() => void attachShot()}>
+                  Add screenshot to message
+                </MenuItem>
+                <MenuItem icon="expand" hint={<Kbd combo="mod+shift+s" />} onSelect={startRegion}>
+                  Add region to message
+                </MenuItem>
                 <MenuSep />
+                <MenuItem icon="file-search" hint={<Kbd combo="mod+f" />} onSelect={openFind}>
+                  Find in page
+                </MenuItem>
                 <MenuItem icon="zoom-in" disabled={page.zoom >= ZOOMS[ZOOMS.length - 1]} onSelect={() => zoomStep(1)}>
                   Zoom in
                 </MenuItem>
@@ -616,8 +747,196 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
           </PageState>
         ) : null}
         {!page.url && <StartView sessionId={sessionId} onGo={go} />}
+        {region && native && page.url && <RegionPick onDone={(r) => void takeRegion(r)} />}
       </div>
+
+      <AnimatePresence initial={false}>{drawer && native && page.url && <LogDrawer key="log" sessionId={sessionId} url={page.url} onClose={() => setDrawer(false)} />}</AnimatePresence>
     </div>
+  );
+}
+
+/** A part of a picture of the page: `r` in the page's own pixels, `viewW` the page's width in them. */
+async function cropImage(src: string, r: { x: number; y: number; w: number; h: number }, viewW: number, pad: number): Promise<string> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => reject(new Error('no picture'));
+    i.src = src;
+  });
+  const k = img.naturalWidth / Math.max(1, viewW);
+  const x0 = Math.max(0, Math.floor((r.x - pad) * k));
+  const y0 = Math.max(0, Math.floor((r.y - pad) * k));
+  const x1 = Math.min(img.naturalWidth, Math.ceil((r.x + r.w + pad) * k));
+  const y1 = Math.min(img.naturalHeight, Math.ceil((r.y + r.h + pad) * k));
+  if (x1 - x0 < 2 || y1 - y0 < 2) throw new Error('nothing to crop');
+  const canvas = document.createElement('canvas');
+  canvas.width = x1 - x0;
+  canvas.height = y1 - y0;
+  canvas.getContext('2d')!.drawImage(img, x0, y0, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/png');
+}
+
+/** The picked element in one line for the message: what it is, where, its selector, its text when that says more. */
+function pickedText(r: Picked, url: string): string {
+  const where = prettyUrl(url.split(/[?#]/)[0]);
+  const what = String(r.what || r.tag).slice(0, 120);
+  const text = String(r.text || '').replace(/\s+/g, ' ').trim();
+  const said = text && !what.includes(text.slice(0, 60)) ? `, text "${text.length > 140 ? `${text.slice(0, 139)}…` : text}"` : '';
+  return `The ${what} on ${where} (\`${String(r.selector).slice(0, 200).replace(/`/g, '')}\`${said})`;
+}
+
+/** Drag a rectangle over the page; Escape or a plain click gives it up. */
+function RegionPick({ onDone }: { onDone: (r: { x: number; y: number; w: number; h: number } | null) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const [box, setBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  useEffect(() => ref.current?.focus({ preventScroll: true }), []);
+  const at = (e: React.PointerEvent) => {
+    const b = e.currentTarget.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(b.width, e.clientX - b.left)), y: Math.max(0, Math.min(b.height, e.clientY - b.top)) };
+  };
+  return (
+    <div
+      ref={ref}
+      className="bw-region"
+      tabIndex={-1}
+      role="application"
+      aria-label="Drag over the part of the page to attach. Escape cancels."
+      data-escape-scope=""
+      onKeyDown={(e) => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopPropagation();
+        onDone(null);
+      }}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        start.current = at(e);
+        setBox({ ...start.current, w: 0, h: 0 });
+      }}
+      onPointerMove={(e) => {
+        const a = start.current;
+        if (!a) return;
+        const b = at(e);
+        setBox({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) });
+      }}
+      onPointerUp={() => {
+        const b = box;
+        start.current = null;
+        onDone(b && b.w >= 6 && b.h >= 6 ? b : null);
+      }}
+      onPointerCancel={() => onDone(null)}
+    >
+      {box ? (
+        <div className="bw-region-box" style={{ transform: `translate(${box.x}px, ${box.y}px)`, width: box.w, height: box.h }}>
+          {box.w > 56 && box.h > 26 && (
+            <span className="bw-region-size num">
+              {Math.round(box.w)} × {Math.round(box.h)}
+            </span>
+          )}
+        </div>
+      ) : (
+        <span className="bw-region-hint">Drag over the part to attach</span>
+      )}
+    </div>
+  );
+}
+
+/** The drawer's switch in the toolbar; a count shows only while the page has errors. */
+function LogToggle({ sessionId, open, disabled, onToggle }: { sessionId: string; open: boolean; disabled: boolean; onToggle: () => void }) {
+  useLogVersion(sessionId);
+  const errors = disabled ? 0 : getLog(sessionId).feed.reduce((n, f) => n + (f.level === 'error' ? 1 : 0), 0);
+  const label = open ? 'Hide console' : 'Show console';
+  return (
+    <Tip label={errors ? `${label} (${errors} error${errors === 1 ? '' : 's'})` : label} keys="mod+shift+j">
+      <button type="button" className="icon-btn bw-log-toggle" aria-label={label} aria-pressed={open} data-active={open || undefined} disabled={disabled} onClick={onToggle}>
+        <Icon name="terminal" size={15} />
+        {errors > 0 && (
+          <span className="bw-log-count num" aria-hidden>
+            {errors > 99 ? '99+' : errors}
+          </span>
+        )}
+      </button>
+    </Tip>
+  );
+}
+
+/** "app.js:12" from a script's address; the document itself is the page. */
+const fileOf = (source?: string) => {
+  if (!source) return '';
+  const name = source.replace(/^.*\//, '');
+  return (name.startsWith(':') || !name ? `page${name}` : name).slice(-48);
+};
+const feedLine = (f: FeedEntry) => `${f.request ? 'request' : f.level}: ${f.text.length > 300 ? `${f.text.slice(0, 299)}…` : f.text}${f.source ? ` (${fileOf(f.source)})` : ''}`;
+
+/** The page's console lines and failed requests since it loaded, newest last; any line, or all of them, goes to the message. */
+function LogDrawer({ sessionId, url, onClose }: { sessionId: string; url: string; onClose: () => void }) {
+  const v = useLogVersion(sessionId);
+  const log = getLog(sessionId);
+  const feed = log.feed;
+  const list = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+  useLayoutEffect(() => {
+    const el = list.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [v]);
+
+  const errors = feed.filter((f) => f.level === 'error').length;
+  const warnings = feed.filter((f) => f.level === 'warning').length;
+  const where = prettyUrl(url.split(/[?#]/)[0]);
+  const send = (lines: FeedEntry[]) => {
+    if (!lines.length) return;
+    const text = lines.length === 1 ? `From the console of ${where}:\n\`${feedLine(lines[0]).replace(/`/g, "'")}\`` : `From the console of ${where}:\n${lines.map((f) => `- ${feedLine(f)}`).join('\n')}`;
+    focusComposer(`${text}\n`, { append: true });
+  };
+  // All of it means the problems when there are some: that is what a message about a page needs.
+  const sendAll = () => {
+    const problems = feed.filter((f) => f.level === 'error' || f.level === 'warning');
+    send((problems.length ? problems : feed).slice(-30));
+  };
+
+  return (
+    <motion.div className="bw-log" initial={{ height: 0, opacity: 0 }} animate={{ height: 208, opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: 'spring', stiffness: 520, damping: 40 }}>
+      <div className="bw-log-bar">
+        <span className="bw-log-title">Console</span>
+        <span className="bw-log-sum num">{errors || warnings ? [errors ? `${errors} error${errors === 1 ? '' : 's'}` : '', warnings ? `${warnings} warning${warnings === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ') : feed.length ? `${feed.length} line${feed.length === 1 ? '' : 's'}` : ''}</span>
+        <button type="button" className="btn btn-sm btn-ghost bw-log-send" disabled={!feed.length} onClick={sendAll}>
+          <Icon name="chat" size={14} />
+          Send to chat
+        </button>
+        <IconButton icon="broom" label="Clear" size={14} disabled={!feed.length} onClick={() => resetLog(sessionId)} />
+        <IconButton icon="x" label="Hide console" size={13} onClick={onClose} />
+      </div>
+      <div
+        className="bw-log-list scroll"
+        ref={list}
+        role="log"
+        aria-label="Console"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+        }}
+      >
+        {feed.length === 0 ? (
+          <p className="bw-log-empty">Nothing logged since the page loaded.</p>
+        ) : (
+          <>
+            {log.moreFeed > 0 && <p className="bw-log-more">{log.moreFeed} earlier lines left out</p>}
+            {feed.map((f) => (
+              <div key={f.n} className="bw-log-row" data-level={f.level}>
+                <span className="bw-log-mark" aria-hidden>
+                  {f.level === 'error' ? <Icon name="x-circle" size={13} /> : f.level === 'warning' ? <Icon name="warning" size={13} /> : null}
+                </span>
+                <span className="bw-log-text">{f.text}</span>
+                {f.source && <span className="bw-log-src">{fileOf(f.source)}</span>}
+                <IconButton icon="chat" label="Send to chat" size={13} className="bw-log-act" onClick={() => send([f])} />
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </motion.div>
   );
 }
 
@@ -773,8 +1092,34 @@ function siteFallback(url: string): IconName {
 }
 
 /** While the agent works on the page: one quiet word in the address field, for that moment only. */
-const AGENT_WORD = { read: 'Reading', screenshot: 'Capturing', open: 'Opening' } as const;
-const AGENT_SAYS = { read: 'The agent is reading this page', screenshot: 'The agent is taking a screenshot of this page', open: 'The agent is opening this page' } as const;
+const AGENT_WORD: Record<AgentWork, string> = {
+  read: 'Reading',
+  screenshot: 'Capturing',
+  open: 'Opening',
+  snapshot: 'Reading',
+  click: 'Clicking',
+  type: 'Typing',
+  press: 'Pressing',
+  scroll: 'Scrolling',
+  eval: 'Running',
+  logs: 'Reading',
+  wait: 'Waiting',
+  navigate: 'Loading',
+};
+const AGENT_SAYS: Record<AgentWork, string> = {
+  read: 'The agent is reading this page',
+  screenshot: 'The agent is taking a screenshot of this page',
+  open: 'The agent is opening this page',
+  snapshot: 'The agent is reading the outline of this page',
+  click: 'The agent is clicking on this page',
+  type: 'The agent is typing on this page',
+  press: 'The agent is pressing a key on this page',
+  scroll: 'The agent is scrolling this page',
+  eval: 'The agent is running a script on this page',
+  logs: "The agent is reading this page's log",
+  wait: 'The agent is waiting for this page',
+  navigate: 'The agent is moving through this page\'s history',
+};
 
 /**
  * At rest: the site's icon, the host, the rest of the path dim (or the title on a site's front
@@ -787,6 +1132,7 @@ function AddressField({
   favicon,
   zoom,
   agent,
+  picking,
   onResetZoom,
   inputRef,
   onGo,
@@ -795,7 +1141,9 @@ function AddressField({
   title: string;
   favicon?: string;
   zoom: number;
-  agent?: 'read' | 'screenshot' | 'open';
+  agent?: AgentWork;
+  /** Pick mode is on: the field says so until an element is picked or Escape ends it. */
+  picking?: boolean;
   onResetZoom: () => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
   onGo: (raw: string) => boolean;
@@ -818,7 +1166,7 @@ function AddressField({
       className="bw-addr"
       data-focused={focused || undefined}
       data-zoomed={(!focused && zoom !== 1) || undefined}
-      data-agent={(!focused && !!agent) || undefined}
+      data-agent={(!focused && (!!agent || !!picking)) || undefined}
       onSubmit={(e) => {
         e.preventDefault();
         if (onGo(value)) inputRef.current?.blur();
@@ -874,10 +1222,17 @@ function AddressField({
           )}
         </span>
       )}
-      {!focused && agent && (
+      {!focused && agent ? (
         <span className="bw-agent shimmer" role="status" aria-label={AGENT_SAYS[agent]}>
           {AGENT_WORD[agent]}
         </span>
+      ) : (
+        !focused &&
+        picking && (
+          <span className="bw-agent" role="status" aria-label="Click an element on the page to put it in your message. Escape cancels.">
+            Picking
+          </span>
+        )
       )}
       {!focused && zoom !== 1 && (
         <Tip label="Reset zoom">

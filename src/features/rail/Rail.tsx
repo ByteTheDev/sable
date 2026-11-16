@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { veil } from '@/art/veil';
 import { Icon, type IconName } from '@/icons';
 import { clamp } from '@/lib/format';
+import { reducedMotion } from '@/lib/motion';
 import { useStore, type RailTab } from '@/state/store';
 import { IconButton, Tip } from '@/ui';
+import { AgentsTab, useLiveAgentCount } from './AgentsTab';
 import { BrowserTab } from './BrowserTab';
 import { ChangesTab, useChangeCount } from './ChangesTab';
 import { ContextTab } from './ContextTab';
@@ -21,6 +24,7 @@ const TABS: { id: RailTab; label: string; icon: IconName }[] = [
   { id: 'terminal', label: 'Terminal', icon: 'terminal' },
   { id: 'tasks', label: 'Tasks', icon: 'tasks' },
   { id: 'context', label: 'Context', icon: 'context' },
+  { id: 'agents', label: 'Agents', icon: 'robot' },
 ];
 
 const WIDTH_KEY = 'sable.rail.w';
@@ -44,13 +48,28 @@ function applyWidth(w: number | null) {
   else app.style.setProperty('--rail-w', `${Math.round(w)}px`);
 }
 
-/** The side panel: working-tree changes, files, a browser, a command runner, tasks and context for one session. */
+/** The side panel: working-tree changes, files, a browser, a command runner, tasks, context and sub-agents for one session. */
 export function Rail({ sessionId }: { sessionId: string }) {
   return <RailInner key={sessionId} sessionId={sessionId} />;
 }
 
+/** The session whose panel was last on screen, and when it left: tells a change of session from the panel opening. */
+const lastPanel = { sessionId: '', leftAt: -1e9 };
+
 function RailInner({ sessionId }: { sessionId: string }) {
   const tab = useStore((s) => s.ui.railTab);
+  const body = useRef<HTMLDivElement>(null);
+  // Another session's panel took this one's place in the same frame: its contents resolve out of
+  // the ground, in step with the conversation beside it (the panel's frame and tabs stay put).
+  useLayoutEffect(() => {
+    if (lastPanel.sessionId && lastPanel.sessionId !== sessionId && performance.now() - lastPanel.leftAt < 80 && !reducedMotion()) {
+      void veil(body.current, 'reveal', { duration: 300 });
+    }
+    return () => {
+      lastPanel.sessionId = sessionId;
+      lastPanel.leftAt = performance.now();
+    };
+  }, [sessionId]);
   const cwd = useStore((s) => s.sessions[sessionId]?.cwd ?? '');
   const setUi = useStore((s) => s.setUi);
   const [visited, setVisited] = useState<ReadonlySet<RailTab>>(() => new Set([tab]));
@@ -77,7 +96,12 @@ function RailInner({ sessionId }: { sessionId: string }) {
     terminal: <TerminalTab sessionId={sessionId} cwd={cwd} active={tab === 'terminal'} />,
     tasks: <TasksTab sessionId={sessionId} />,
     context: <ContextTab sessionId={sessionId} active={tab === 'context'} />,
+    agents: <AgentsTab sessionId={sessionId} />,
   };
+  const at = TABS.findIndex((t) => t.id === tab);
+  // Which way the selection last travelled along the tab row: the arriving pane comes from that side.
+  const [nav, setNav] = useState({ at, dir: 'fwd' });
+  if (nav.at !== at) setNav({ at, dir: at < nav.at ? 'back' : 'fwd' });
 
   return (
     <div className="rail" data-spot="">
@@ -86,10 +110,10 @@ function RailInner({ sessionId }: { sessionId: string }) {
         <RailTabs sessionId={sessionId} cwd={cwd} tab={tab} onPick={(t) => setUi({ railTab: t })} />
         <IconButton icon="x" label="Close panel" keys="mod+j" className="rail-close" onClick={() => setUi({ railOpen: false })} />
       </header>
-      <div className="rail-body">
-        {TABS.map((t) =>
+      <div className="rail-body" ref={body} data-dir={nav.dir}>
+        {TABS.map((t, i) =>
           visited.has(t.id) ? (
-            <section key={t.id} className="rail-pane" data-active={t.id === tab || undefined} inert={t.id !== tab} aria-label={t.label} role="tabpanel" id={`rail-pane-${t.id}`}>
+            <section key={t.id} className="rail-pane" data-active={t.id === tab || undefined} data-side={i < at ? 'before' : undefined} inert={t.id !== tab} aria-label={t.label} role="tabpanel" id={`rail-pane-${t.id}`}>
               {panes[t.id]}
             </section>
           ) : null,
@@ -124,7 +148,7 @@ function textWidth(text: string, el: HTMLElement | null): number {
   return measureCtx.measureText(text).width;
 }
 
-/** Fixed parts of the row: six 28 px tabs 2 px apart; a name adds its text and 9 px; a count (two figures) about 20 px. */
+/** Fixed parts of the row: the tabs at 28 px, 2 px apart; a name adds its text and 9 px; a count (two figures) about 20 px. */
 const TAB = 28;
 const TAB_GAP = 2;
 const COUNT_ROOM = 20;
@@ -135,14 +159,16 @@ const LABEL_SPRING = { type: 'spring', stiffness: 520, damping: 40, mass: 0.7 } 
 function RailTabs({ sessionId, cwd, tab, onPick }: { sessionId: string; cwd: string; tab: RailTab; onPick: (t: RailTab) => void }) {
   const changes = useChangeCount(sessionId, cwd);
   const tasks = useOpenTaskCount(sessionId);
-  const counts: Partial<Record<RailTab, number>> = { changes, tasks };
+  // Agents: how many are working now.
+  const agents = useLiveAgentCount(sessionId);
+  const counts: Partial<Record<RailTab, number>> = { changes, tasks, agents };
   const list = useRef<HTMLDivElement>(null);
   const width = useRowWidth(list);
   // The selected tab shows its name only when the row fits the longest name and two-figure counts, so
   // the decision never flips while counts load or from one tab to the next; otherwise the row is icons only.
   const font = list.current?.querySelector<HTMLElement>('.rail-tab') ?? null;
   const longest = width > 0 ? Math.max(...TABS.map((t) => textWidth(t.label, font))) : 0;
-  const need = TABS.length * TAB + (TABS.length - 1) * TAB_GAP + 2 * COUNT_ROOM + Math.ceil(longest) + 9;
+  const need = TABS.length * TAB + (TABS.length - 1) * TAB_GAP + 3 * COUNT_ROOM + Math.ceil(longest) + 9;
   const labels = width > 0 && width >= need;
 
   const onKey = (e: React.KeyboardEvent) => {

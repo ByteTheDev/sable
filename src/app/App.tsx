@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { AnimatePresence, motion, type Variants } from 'motion/react';
+import { AnimatePresence, cancelFrame, frame, motion, type Variants } from 'motion/react';
 import { Launch, launchPlays } from '@/art/LaunchLayer';
 import { LogoMark, ProviderMark } from '@/art/Logo';
 import { veil, VEIL_SWAP, VEIL_SWAP_AT } from '@/art/veil';
@@ -22,8 +22,8 @@ import { loadSessionView } from './views';
 import { WindowControls } from './WindowControls';
 import './app.css';
 
-/** The side panel's tabs in the order of their shortcuts (Alt+1 to Alt+6), as the panel lists them. */
-const RAIL_TAB_ORDER: RailTab[] = ['changes', 'files', 'browser', 'terminal', 'tasks', 'context'];
+/** The side panel's tabs in the order of their shortcuts (Alt+1 to Alt+7), as the panel lists them. */
+const RAIL_TAB_ORDER: RailTab[] = ['changes', 'files', 'browser', 'terminal', 'tasks', 'context', 'agents'];
 
 // Surfaces that are not part of the first paint load on demand (and are prefetched once idle).
 const loadPalette = () => import('@/features/palette/Palette');
@@ -195,13 +195,13 @@ export function App() {
   useHotkey('mod+,', useCallback((e) => (e.preventDefault(), openSettings()), []));
   useHotkey('mod+shift+o', useCallback((e) => (e.preventDefault(), goHome()), []));
   useHotkey('mod+o', useCallback((e) => (e.preventDefault(), setUi({ projectPicker: true })), [setUi]));
-  // Alt+1 to Alt+6: the side panel's tabs, in order (opens the panel when it is closed).
+  // Alt+1 to Alt+7: the side panel's tabs, in order (opens the panel when it is closed).
   useEffect(() => {
     if (!sessionId) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
       const tab = RAIL_TAB_ORDER[Number(e.code.replace('Digit', '')) - 1];
-      if (!/^Digit[1-6]$/.test(e.code) || !tab) return;
+      if (!/^Digit[1-7]$/.test(e.code) || !tab) return;
       e.preventDefault();
       setUi({ railOpen: true, railTab: tab });
     };
@@ -275,8 +275,9 @@ export function App() {
               initial={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
               animate={{ width: 'var(--rail-fit)', opacity: 1 }}
               exit={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
-              transition={{ type: 'spring', stiffness: 380, damping: 38 }}
-              onUpdate={onRailFrame}
+              // Just past critical damping: the edge arrives without passing its place, so nothing
+              // beside it ever moves back.
+              transition={{ type: 'spring', stiffness: 400, damping: 42 }}
               onAnimationComplete={releaseRail}
             >
               <div className="app-rail-inner">
@@ -313,14 +314,18 @@ export function App() {
 }
 
 /**
- * Opening and closing the side panel. The panel's width springs; the stage beside it narrows or
- * widens with it, but the view inside the stage keeps one width meanwhile (the narrower of the
- * two, through the sidebar's freeze rule in app.css) and is slid each frame so its centre column
- * glides exactly where the resizing stage puts it: the conversation is laid out once, not once
- * per frame. The panel's contents resolve through the
- * dither veil on open and dissolve into it on close.
+ * Opening and closing the side panel. The panel's width springs and the stage beside it narrows
+ * or widens with it. What the conversation does depends on whether its column keeps its width:
+ * - Room for the whole column at both ends: the view keeps one width meanwhile (the narrower of
+ *   the two, through the freeze rule in app.css) and is slid each frame so its column glides
+ *   exactly where the resizing stage puts it. Nothing wraps, nothing is laid out again.
+ * - The column has to narrow (or widen): the view follows the stage's edge live, so the column's
+ *   left edge and width change as one continuous movement and lines wrap once, in one direction.
+ *   Holding one width here would wrap the text in a single frame at the start or the end, with the
+ *   column jumping by half the difference: the twitch.
+ * The panel's contents resolve through the dither veil on open and dissolve into it on close.
  */
-const railMotion = { body: null as HTMLElement | null, total: 0, wide: 0, timer: 0 };
+const railMotion = { body: null as HTMLElement | null, total: 0, wide: 0, timer: 0, until: 0 };
 
 function releaseRail() {
   const m = railMotion;
@@ -335,6 +340,7 @@ function releaseRail() {
 /** The panel has gone: the top bar keeps the whole room for the window controls again (the exit
     reports no frames, so --rail-live would otherwise stay at the open panel's value). */
 function railGone() {
+  cancelFrame(railTick);
   releaseRail();
   document.querySelector<HTMLElement>('.stage > .topbar')?.style.removeProperty('--rail-live');
 }
@@ -353,7 +359,14 @@ function freezeForRail(opening: boolean) {
   const target = opening ? (document.querySelector<HTMLElement>('.app-rail-inner')?.offsetWidth ?? 396) : 0;
   const b0 = body.clientWidth;
   const b1 = b0 + now - target;
+  // Contents: resolve on open (after the panel has mounted), dissolve on close.
+  const inner = document.querySelector<HTMLElement>('.app-rail-inner');
+  if (inner) void veil(inner, opening ? 'reveal' : 'cover', { duration: opening ? 320 : 150 });
   if (!(b1 > 0)) return;
+  // The column as drawn now (the dock's is the conversation's). Holding one width is only right
+  // when the narrower stage still has room for it, gutters and scrollbar included.
+  const column = body.querySelector<HTMLElement>('.dock-inner')?.offsetWidth ?? 0;
+  if (!(column > 0) || Math.min(b0, b1) < column + COLUMN_ROOM) return;
   railMotion.body = body;
   railMotion.total = b0 + now;
   // The narrower of the two: the conversation takes its narrow layout once (at the start when the
@@ -364,24 +377,37 @@ function freezeForRail(opening: boolean) {
   // Placed for the first frame already (the spring reports its first value a frame later).
   for (const v of body.querySelectorAll<HTMLElement>(':scope > .stage-view')) v.style.translate = `${((railMotion.wide - b0) / 2).toFixed(2)}px 0`;
   railMotion.timer = window.setTimeout(releaseRail, 1200);
-  // Contents: resolve on open (after the panel has mounted), dissolve on close.
-  const inner = document.querySelector<HTMLElement>('.app-rail-inner');
-  if (inner) void veil(inner, opening ? 'reveal' : 'cover', { duration: opening ? 320 : 150 });
 }
 
-/** Per frame of the panel's spring: the frozen view slides to where the stage's centre is now. */
-function followRail(latest: { width?: unknown }) {
+/** What the column needs beside itself to keep its width: 24 px gutters and the scroller's two gutters. */
+const COLUMN_ROOM = 2 * 24 + 36;
+
+/** The frozen view slides to where the stage's centre is now, for a panel `w` wide. */
+function followRail(w: number) {
   const m = railMotion;
   if (!m.body) return;
-  const w = typeof latest.width === 'number' ? latest.width : typeof latest.width === 'string' && latest.width.endsWith('px') ? parseFloat(latest.width) : NaN;
-  if (!Number.isFinite(w)) return;
   const tx = (m.wide - (m.total - w)) / 2;
   for (const v of m.body.querySelectorAll<HTMLElement>(':scope > .stage-view')) v.style.translate = `${tx.toFixed(2)}px 0`;
 }
 
-function onRailFrame(latest: { width?: unknown }) {
-  trackRailWidth?.(latest);
-  followRail(latest);
+/**
+ * Every frame while the panel's width is in motion, right after motion has written it and before
+ * the frame is painted: the panel's width is read as drawn, and what follows it is placed for that
+ * same frame. (The spring's own reports cannot be used: its target is a CSS variable, whose frames
+ * are not numbers, and an exit reports none at all. A view that waited for them stood still at the
+ * stage's moving edge and jumped into place at the end.)
+ */
+function railTick() {
+  const rail = document.querySelector<HTMLElement>('.app-rail');
+  const w = rail ? rail.getBoundingClientRect().width / uiZoom() : 0;
+  trackRailWidth?.(w);
+  followRail(w);
+  if (performance.now() > railMotion.until) cancelFrame(railTick);
+}
+
+function watchRail() {
+  railMotion.until = performance.now() + 1400;
+  frame.postRender(railTick, true);
 }
 
 function useRailMotion(shown: boolean) {
@@ -392,8 +418,15 @@ function useRailMotion(shown: boolean) {
       return;
     }
     freezeForRail(shown);
+    watchRail();
   }, [shown]);
-  useEffect(() => releaseRail, []);
+  useEffect(
+    () => () => {
+      cancelFrame(railTick);
+      releaseRail();
+    },
+    [],
+  );
 }
 
 /**
@@ -402,11 +435,9 @@ function useRailMotion(shown: boolean) {
  * Set on the top bar alone: a custom property on .app would restyle the whole tree every frame.
  */
 const trackRailWidth = windowShell
-  ? (latest: { width?: unknown }) => {
+  ? (w: number) => {
       const bar = document.querySelector<HTMLElement>('.stage > .topbar');
-      if (!bar) return;
-      const w = latest.width;
-      bar.style.setProperty('--rail-live', typeof w === 'number' ? `${w}px` : typeof w === 'string' && w.endsWith('px') ? w : '999px');
+      if (bar) bar.style.setProperty('--rail-live', `${w.toFixed(1)}px`);
     }
   : undefined;
 
@@ -489,7 +520,8 @@ function Topbar() {
       <div className="topbar-actions">
         {session && <ContextMeter sessionId={session.id} />}
         {session && <CapabilitiesButton sessionId={session.id} />}
-        <IconButton icon="search" label="Search and commands" keys="mod+k" onClick={() => setUi({ paletteOpen: true })} />
+        {/* The sidebar's top row has the search; the bar shows it only while the sidebar is away. */}
+        {!sidebarOpen && <IconButton icon="search" label="Search and commands" keys="mod+k" onClick={() => setUi({ paletteOpen: true })} />}
         {session && (
           <IconButton
             icon="sidebar"

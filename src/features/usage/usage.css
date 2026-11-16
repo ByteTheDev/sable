@@ -763,3 +763,220 @@
     grid-template-columns: 14px minmax(0, 1fr) 56px 40px;
   }
 }
+
+/* ── the overview: many accounts, one line each (Overview.tsx) ── */
+
+.ulo {
+  padding: 6px;
+  overflow: hidden;
+}
+
+.ulo-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 6px 8px 10px;
+}
+
+.ulo-count {
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.ulo-sort {
+  margin-left: auto;
+}
+
+.ulo-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.ulo-row {
+  display: grid;
+  grid-template-columns: 16px minmax(120px, 1fr) auto 64px 12px;
+  align-items: center;
+  column-gap: 12px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  text-align: left;
+  color: var(--text-2);
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.ulo-row:hover,
+.ulo-item[data-open] > .ulo-row {
+  background-color: var(--fill-1);
+}
+
+.ulo-row:focus-visible {
+  outline-offset: -1.5px;
+}
+
+.ulo-mark {
+  justify-self: center;
+}
+
+.ulo-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ulo-name {
+  min-width: 0;
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.ulo-plan {
+  flex-shrink: 1;
+  min-width: 0;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* The one account to reach for: a small ivory mark beside its name, nothing more. */
+.ulo-best {
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--accent);
+}
+
+.ulo-windows {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+}
+
+.ulo-cell {
+  display: grid;
+  grid-template-columns: 20px 76px 34px;
+  align-items: center;
+  column-gap: 7px;
+}
+
+.ulo-win {
+  font-size: var(--t-micro);
+  color: var(--text-3);
+  text-align: right;
+}
+
+.ulo-meter {
+  height: 3px;
+}
+
+.ulo-pct {
+  font-size: var(--t-small);
+  text-align: right;
+  color: var(--text-2);
+}
+
+.ulo-pct[data-level='amber'] {
+  color: var(--amber);
+}
+
+.ulo-pct[data-level='red'] {
+  color: var(--red);
+}
+
+.ulo-none {
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.ulo-reset {
+  font-size: var(--t-small);
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.ulo-caret {
+  color: var(--text-3);
+  opacity: 0;
+  transition:
+    opacity var(--d-1) var(--ease),
+    rotate var(--d-2) var(--ease-out);
+}
+
+.ulo-row:hover .ulo-caret,
+.ulo-row:focus-visible .ulo-caret,
+.ulo-item[data-open] .ulo-caret {
+  opacity: 1;
+}
+
+.ulo-item[data-open] .ulo-caret {
+  rotate: 180deg;
+}
+
+.ulo-item[data-state='cap'] .ulo-name,
+.ulo-item[data-state='off'] .ulo-name {
+  color: var(--text-2);
+}
+
+/* The group that is at or near a cap sits apart: a hairline and one quiet line of text. */
+.ulo-sep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 12px 10px 6px;
+  border-top: 1px solid var(--line);
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.ulo-detail {
+  overflow: hidden;
+}
+
+.ulo-detail > .ul-account {
+  margin: 0;
+  padding: 12px 10px 16px 38px;
+  border: 0;
+  background: none;
+}
+
+.ulo-detail > .ul-account::before {
+  display: none;
+}
+
+.ulo-detail .ul-account-head:not(:has(.ul-asof)) {
+  display: none;
+}
+
+.ulo-detail .ul-account-head > :not(.ul-asof) {
+  display: none;
+}
+
+.ulo-cols {
+  display: grid;
+  grid-template-columns: minmax(148px, 1fr) auto 64px 12px;
+  column-gap: 12px;
+  padding: 2px 10px 6px;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+}
+
+.ulo-cols > :nth-child(2) {
+  padding-right: 0;
+  text-align: right;
+}
+
+.ulo-cols > :nth-child(3) {
+  text-align: right;
+}
+
+.ulo-best {
+  border-radius: 1px;
+  width: 6px;
+  height: 6px;
+}

@@ -1048,6 +1048,82 @@ const arrive: Scenario = async ({ s }) => {
 };
 
 /**
+ * Works the page the Browser tab shows through the real tools: outline, type into the first field,
+ * click the first button, wait, read what changed, then the console and a small script.
+ */
+async function browserWork(s: Parameters<Scenario>[0]['s']) {
+  const snap = await s.browser('snapshot', {});
+  if (!snap.ok) {
+    await s.say(`I could not get the page's outline: ${snap.text}`);
+    return s.finish({});
+  }
+  const field = /^\[(e\d+)\] (?:textbox|searchbox)(?: "([^"]*)")?/m.exec(snap.text);
+  const button = /^\[(e\d+)\] button(?: "([^"]*)")?/m.exec(snap.text);
+  const did: string[] = [];
+  if (field) {
+    const typed = await s.browser('type', { ref: field[1], text: /mail/i.test(field[2] ?? '') ? 'sable@example.com' : 'Sable' });
+    did.push(typed.ok ? `typed into ${field[2] ? `**${field[2]}**` : 'the first field'}` : `could not type (${typed.text})`);
+  }
+  if (button) {
+    const clicked = await s.browser('click', { ref: button[1] });
+    did.push(clicked.ok ? `clicked ${button[2] ? `**${button[2]}**` : 'the first button'}` : `could not click (${clicked.text})`);
+  }
+  await s.browser('wait', { timeout: 3000 });
+  const read = await s.browser('read', {});
+  const logs = await s.browser('logs', { kind: 'console' });
+  await s.browser('logs', { kind: 'network' });
+  const count = await s.browser('eval', { script: 'return document.querySelectorAll("*").length' });
+  const lines = logs.ok ? logs.text.split('\n').filter((l) => l.startsWith('- ')).length : 0;
+  const elements = count.ok ? /<untrusted_page_data>\n(\d+)/.exec(count.text)?.[1] : undefined;
+  await s.say(
+    [
+      did.length ? `I ${did.join(' and ')}.` : 'The page has no field or button to try.',
+      read.ok ? 'The page text after that is in the read step.' : `Reading it afterwards failed: ${read.text}`,
+      logs.ok ? (lines ? `The console has ${lines} line${lines === 1 ? '' : 's'}.` : 'The console is empty.') : '',
+      elements ? `The document has ${elements} elements.` : '',
+    ]
+      .filter(Boolean)
+      .join(' '),
+  );
+  s.finish({});
+}
+
+/** The tools the short run leaves out: a refused password field, a key press, scrolling, a link by its text, back and reload. */
+async function browserTour(s: Parameters<Scenario>[0]['s']) {
+  const snap = await s.browser('snapshot', {});
+  if (!snap.ok) {
+    await s.say(`I could not get the page's outline: ${snap.text}`);
+    return s.finish({});
+  }
+  const notes: string[] = [];
+  const secret = /^\[(e\d+)\] password field/m.exec(snap.text);
+  if (secret) {
+    const r = await s.browser('type', { ref: secret[1], text: 'not-a-real-password' });
+    notes.push(r.ok ? 'The password field was typed into, which must not happen.' : 'The password field was refused, as it should be.');
+  }
+  const field = /^\[(e\d+)\] (?:textbox|searchbox)(?: "([^"]*)")?/m.exec(snap.text);
+  if (field) {
+    await s.browser('type', { ref: field[1], text: /mail/i.test(field[2] ?? '') ? 'keys@example.com' : 'Keys' });
+    const pressed = await s.browser('press', { key: 'Enter' });
+    notes.push(pressed.ok ? 'Pressed Enter in the field.' : `The key press failed: ${pressed.text}`);
+    await s.browser('wait', { timeout: 2000 });
+    await s.browser('read', {});
+  }
+  await s.browser('scroll', { to: 'bottom' });
+  const link = /^\[e\d+\] link "([^"]*)"/m.exec(snap.text);
+  if (link) {
+    const went = await s.browser('click', { text: link[1] });
+    notes.push(went.ok ? `Followed **${link[1]}**.` : `The link did not work: ${went.text}`);
+    const back = await s.browser('navigate', { action: 'back' });
+    notes.push(back.ok ? 'Went back.' : `Going back failed: ${back.text}`);
+  }
+  const reload = await s.browser('navigate', { action: 'reload' });
+  notes.push(reload.ok ? 'Reloaded the page.' : `The reload failed: ${reload.text}`);
+  await s.say(notes.join(' '));
+  s.finish({});
+}
+
+/**
  * The Browser tab tools: open a local page (an address in the prompt, else the one the Browser tab
  * already shows, else localhost:3000), read it and take a screenshot, through the real tools' path.
  */
@@ -1064,6 +1140,11 @@ const browser: Scenario = async ({ s, item }) => {
       return s.finish({});
     }
   }
+  // "click", "type", "try", "use", "form": work the page instead of only looking at it.
+  const words = own.replace(/https?:\/\/\S+/g, '');
+  // "tour": the rest of the tools (keys, scrolling, history, a field Sable will not type into).
+  if (/\btour\b/i.test(words)) return browserTour(s);
+  if (/\b(click|type|fill|try|use|form|press|work)\b/i.test(words)) return browserWork(s);
   const read = await s.browser('read', {});
   if (!read.ok) {
     await s.say(`I could not read the page: ${read.text}`);

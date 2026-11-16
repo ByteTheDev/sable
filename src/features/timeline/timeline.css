@@ -60,6 +60,13 @@
   align-items: center;
 }
 
+/* A conversation shorter than the stage rests on the composer and grows upwards from it, the way
+   a longer one already reads (its end is pinned there): one exchange sits with the composer and
+   the horizon as one group, with the room above it, instead of hanging under the top bar. */
+.tl-content:not([data-empty]) > :first-child {
+  margin-top: auto;
+}
+
 .tl-empty {
   color: var(--text-3);
   font-size: var(--t-body);
@@ -1806,6 +1813,12 @@ button:hover > .row-caret {
 .turn-hover:focus-within {
   opacity: 1;
   transition: none;
+}
+
+/* The newest turn keeps its facts and the copy of its answer in view: the end of the conversation
+   closes with a quiet line, and earlier turns show theirs on hover as before. */
+.tl-content > .tg:last-child .turn-hover {
+  opacity: 1;
 }
 
 .turn-meta {

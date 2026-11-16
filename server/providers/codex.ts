@@ -32,7 +32,7 @@ import type { Provider, ProviderContext, ProviderSession } from './types';
 import { codexPlan } from './plans';
 import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
 import { WIDGET_DESCRIPTION, WIDGET_FENCE_HINT, WIDGET_INPUT_SCHEMA, WIDGET_TOOL, dynamicToolAnswer, widgetsEnabled } from './widget-tool';
-import { BROWSER_DESCRIPTIONS, BROWSER_HINT, BROWSER_INPUT_SCHEMAS, BROWSER_TOOLS, browserDynamicAnswer, browserOp, browserTabEnabled, type BrowserOp } from './browser-tool';
+import { BROWSER_DESCRIPTIONS, BROWSER_HINT, BROWSER_INPUT_SCHEMAS, BROWSER_OPS, BROWSER_TOOLS, browserDynamicAnswer, browserOp, browserTabEnabled } from './browser-tool';
 import { CodexRpc, RpcError, resolveCodexCommand, type ExitInfo } from './codex-rpc';
 import {
   PRESETS,
@@ -507,7 +507,7 @@ export class CodexProvider implements Provider {
     if (widgetsEnabled(this.ctx.settings?.())) tools.push({ type: 'function', name: WIDGET_TOOL, description: WIDGET_DESCRIPTION, inputSchema: WIDGET_INPUT_SCHEMA });
     // The Browser tab tools, while the session's capability is on (a thread keeps what it was started with).
     if (meta && browserTabEnabled(meta)) {
-      for (const op of ['read', 'screenshot', 'open'] as BrowserOp[]) tools.push({ type: 'function', name: BROWSER_TOOLS[op], description: BROWSER_DESCRIPTIONS[op], inputSchema: BROWSER_INPUT_SCHEMAS[op] });
+      for (const op of BROWSER_OPS) tools.push({ type: 'function', name: BROWSER_TOOLS[op], description: BROWSER_DESCRIPTIONS[op], inputSchema: BROWSER_INPUT_SCHEMAS[op] });
     }
     return tools.length ? tools : undefined;
   }

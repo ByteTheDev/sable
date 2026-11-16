@@ -1,5 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react';
-import type { BrowserFailedRequest, BrowserLogEntry, TimelineItem } from '@shared/protocol';
+import type { BrowserConsoleLine, BrowserFailedRequest, BrowserLogEntry, TimelineItem } from '@shared/protocol';
 import { findDevUrls, previewTargets } from '@/lib/links';
 import { useStore } from '@/state/store';
 import { getRuns, useTermVersion, type TermRun } from './term-store';
@@ -34,9 +34,12 @@ export interface PageState {
   /** Desktop: the page's zoom factor. */
   zoom: number;
   device: Device;
-  /** The agent is reading, capturing or opening the page right now (shown in the bar for that moment). */
-  agent?: 'read' | 'screenshot' | 'open';
+  /** What the agent is doing with the page right now (shown in the bar for that moment). */
+  agent?: AgentWork;
 }
+
+/** The agent's tools, as the bar names them. */
+export type AgentWork = 'read' | 'screenshot' | 'open' | 'snapshot' | 'click' | 'type' | 'press' | 'scroll' | 'eval' | 'logs' | 'wait' | 'navigate';
 
 /* ── what a developer looks at next: the page's console problems and failed requests, since it loaded ── */
 
@@ -45,17 +48,101 @@ export interface PageLog {
   failed: BrowserFailedRequest[];
   /** Entries dropped beyond the bound. */
   more: { console: number; failed: number };
+  /** Every console line, any level (browser_logs). */
+  lines: BrowserConsoleLine[];
+  moreLines: number;
+  /** Console lines and failed requests in the order they happened (the drawer). */
+  feed: FeedEntry[];
+  moreFeed: number;
+}
+
+export interface FeedEntry {
+  n: number;
+  level: BrowserConsoleLine['level'];
+  text: string;
+  source?: string;
+  /** A failed request rather than a console line. */
+  request?: boolean;
+}
+
+let feedN = 0;
+function pushFeed(l: PageLog, entry: Omit<FeedEntry, 'n'>) {
+  l.feed.push({ ...entry, n: ++feedN });
+  if (l.feed.length > LINES_MAX) {
+    l.feed.shift();
+    l.moreFeed++;
+  }
+}
+
+/** "GET /api/user 404": a failed request as one line. */
+function requestLine(f: BrowserFailedRequest, pageUrl: string): string {
+  let where = f.url;
+  try {
+    const u = new URL(f.url);
+    // The page's own requests by their path; others with their host.
+    const own = !!pageUrl && new URL(pageUrl).origin === u.origin;
+    where = own ? u.pathname : u.pathname.length > 1 ? `${u.host}${u.pathname}` : u.host;
+  } catch {
+    /* keep the address */
+  }
+  return `${f.method ?? 'GET'} ${where} ${f.status ? f.status : f.error || 'failed'}`;
 }
 
 const LOG_MAX = 50;
+const LINES_MAX = 200;
 const logs = new Map<string, PageLog>();
-const emptyLog = (): PageLog => ({ console: [], failed: [], more: { console: 0, failed: 0 } });
+const emptyLog = (): PageLog => ({ console: [], failed: [], more: { console: 0, failed: 0 }, lines: [], moreLines: 0, feed: [], moreFeed: 0 });
 
 export const getLog = (sessionId: string): PageLog => logs.get(sessionId) ?? emptyLog();
+
+/* The drawer follows the log; a chatty page tells it at most ten times a second. */
+const logListeners = new Set<() => void>();
+const logVersions = new Map<string, number>();
+let logTimer: ReturnType<typeof setTimeout> | undefined;
+const logDirty = new Set<string>();
+
+function touchLog(sessionId: string) {
+  logDirty.add(sessionId);
+  if (logTimer) return;
+  logTimer = setTimeout(() => {
+    logTimer = undefined;
+    for (const id of logDirty) logVersions.set(id, (logVersions.get(id) ?? 0) + 1);
+    logDirty.clear();
+    for (const l of logListeners) l();
+  }, 100);
+}
+
+/** Changes whenever the session's page log did. */
+export function useLogVersion(sessionId: string): number {
+  return useSyncExternalStore(
+    (l) => {
+      logListeners.add(l);
+      return () => {
+        logListeners.delete(l);
+      };
+    },
+    () => logVersions.get(sessionId) ?? 0,
+  );
+}
 
 /** A new document: its log starts empty. */
 export function resetLog(sessionId: string) {
   logs.set(sessionId, emptyLog());
+  touchLog(sessionId);
+}
+
+/** One console line of any level; errors and warnings also feed the agent's read. */
+export function logLine(sessionId: string, entry: BrowserConsoleLine) {
+  const l = logs.get(sessionId) ?? emptyLog();
+  l.lines.push({ level: entry.level, text: entry.text.slice(0, 1000), source: entry.source?.slice(0, 300) });
+  if (l.lines.length > LINES_MAX) {
+    l.lines.shift();
+    l.moreLines++;
+  }
+  pushFeed(l, { level: entry.level, text: entry.text.slice(0, 1000), source: entry.source?.slice(0, 300) });
+  logs.set(sessionId, l);
+  if (entry.level === 'error' || entry.level === 'warning') logConsole(sessionId, { level: entry.level, text: entry.text, source: entry.source });
+  touchLog(sessionId);
 }
 
 export function logConsole(sessionId: string, entry: BrowserLogEntry) {
@@ -75,7 +162,9 @@ export function logFailed(sessionId: string, entry: BrowserFailedRequest) {
     l.failed.shift();
     l.more.failed++;
   }
+  pushFeed(l, { level: 'error', text: requestLine(entry, pages.get(sessionId)?.url ?? ''), request: true });
   logs.set(sessionId, l);
+  touchLog(sessionId);
 }
 
 export type Device = 'desktop' | 'tablet' | 'phone';

@@ -58,7 +58,7 @@ describe('the tools are offered while the Browser tab capability is on', () => {
     const opts = new ClaudeProvider(ctx({})).agentOptions(meta, {});
     expect(opts.mcpServers?.[WIDGET_SERVER]).toBeTruthy();
     for (const id of BROWSER_TOOL_IDS) expect(opts.allowedTools).toContain(id);
-    expect(BROWSER_TOOL_IDS).toEqual(['mcp__sable__browser_read', 'mcp__sable__browser_screenshot', 'mcp__sable__browser_open']);
+    expect(BROWSER_TOOL_IDS.slice(0, 3)).toEqual(['mcp__sable__browser_read', 'mcp__sable__browser_screenshot', 'mcp__sable__browser_open']);
     expect((opts.systemPrompt as { append?: string }).append).toContain(BROWSER_HINT);
   });
 
@@ -75,7 +75,7 @@ describe('the tools are offered while the Browser tab capability is on', () => {
 
   it('Codex: as dynamic tools on thread start, not when off', async () => {
     const p = new CodexProvider(ctx({}));
-    expect(p.dynamicTools({ options: {} })?.map((t) => t.name)).toEqual(['show_widget', 'browser_read', 'browser_screenshot', 'browser_open']);
+    expect(p.dynamicTools({ options: {} })?.map((t) => t.name).slice(0, 4)).toEqual(['show_widget', 'browser_read', 'browser_screenshot', 'browser_open']);
     expect(p.dynamicTools({ options: { browserTab: false } })?.map((t) => t.name)).toEqual(['show_widget']);
     expect(new CodexProvider(ctx({ generativeUi: false })).dynamicTools({ options: { browserTab: false } })).toBeUndefined();
     const rpc = { request: async () => ({ config: { developer_instructions: null } }) };

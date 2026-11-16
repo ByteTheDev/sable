@@ -1,0 +1,58 @@
+/* The quick switcher (Ctrl+Tab held): a small list of recent sessions over the middle of the window. */
+
+.qs {
+  position: fixed;
+  top: 22%;
+  left: 50%;
+  z-index: calc(var(--z-modal) + 4);
+  width: min(420px, calc(100vw - 48px));
+  margin-left: calc(min(420px, 100vw - 48px) / -2);
+  padding: 5px;
+  border-radius: 16px;
+  box-shadow: var(--shadow-pop);
+}
+
+.qs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-md);
+  font-size: var(--t-ui);
+  color: var(--text-2);
+}
+
+.qs-row[data-on] {
+  background-color: var(--hl);
+  color: var(--text);
+}
+
+.qs-mark {
+  flex-shrink: 0;
+}
+
+.qs-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: var(--w-medium);
+}
+
+.qs-where {
+  flex-shrink: 0;
+  max-width: 38%;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.qs-when {
+  flex-shrink: 0;
+  min-width: 28px;
+  font-size: var(--t-small);
+  text-align: right;
+  color: var(--text-3);
+}
+
+.qs-row .status-glyph {
+  flex-shrink: 0;
+}

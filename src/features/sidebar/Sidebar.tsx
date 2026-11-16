@@ -4,12 +4,14 @@ import { ContextMenu as RC, DropdownMenu as RM } from 'radix-ui';
 import type { ProviderId, SessionMeta } from '@shared/protocol';
 import { LogoMark, StatusGlyph, Wordmark } from '@/art/Logo';
 import { Icon } from '@/icons';
+import { QuickSwitch } from '@/features/session/QuickSwitch';
 import { dissolve } from '@/lib/dissolve';
 import { reducedMotion } from '@/lib/motion';
 import { closeSession, goHome, pinProject, removeProject } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { IconButton, Modal, Tip } from '@/ui';
 import { Flip } from './flip';
+import { SideResize } from './Resize';
 import { createGroupsSelector, idsOf, loadCollapsed, pathKey, saveCollapsed, type Mix, type ProjectGroup } from './groups';
 import { RowContextMenu, SessionRow, SidebarRowContext, setRenaming, type RowCtx } from './SessionRow';
 import { SidebarFooter } from './SidebarFooter';
@@ -34,6 +36,9 @@ export const Sidebar = memo(function Sidebar() {
       </SidebarRowContext.Provider>
       <SidebarFooter />
       <DeleteDialog id={deleting} onClose={() => setDeleting(null)} />
+      <SideResize />
+      {/* Ctrl+Tab between recent sessions: mounted here because the sidebar is always there. */}
+      <QuickSwitch />
     </nav>
   );
 });

@@ -1,0 +1,76 @@
+/* Find in conversation: a slim floating bar at the conversation's top right (Find.tsx). */
+
+.cfind {
+  position: absolute;
+  top: 10px;
+  right: 18px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  width: min(380px, calc(100% - 36px));
+  height: 40px;
+  padding: 0 5px 0 6px;
+  border-radius: var(--r-lg);
+}
+
+.cfind .icon-btn {
+  --ib: var(--ctl-h-sm, 26px);
+  flex-shrink: 0;
+  border-radius: var(--r-ctl-sm, 7px);
+}
+
+.cfind-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  margin-right: 4px;
+  padding: 0 9px 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background-color: var(--well-strong);
+  color: var(--text-3);
+  cursor: text;
+}
+
+.cfind-field:focus-within {
+  border-color: var(--focus-field);
+}
+
+.cfind-field input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  font-size: var(--t-ui);
+  color: var(--text);
+}
+
+.cfind-field input::placeholder {
+  color: var(--text-4);
+}
+
+.cfind-count {
+  flex-shrink: 0;
+  font-size: var(--t-small);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* The marks: every match in soft ivory, the current one solid. Painted by the browser over the
+   text (CSS highlights): nothing in the conversation is re-rendered or wrapped. */
+::highlight(sable-find) {
+  background-color: rgb(242 241 238 / 0.2);
+  color: inherit;
+}
+
+::highlight(sable-find-at) {
+  background-color: rgb(242 241 238 / 0.92);
+  color: #0d0d0f;
+}

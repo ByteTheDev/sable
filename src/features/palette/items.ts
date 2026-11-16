@@ -31,6 +31,7 @@ const RAIL_TABS: { id: RailTab; label: string; icon: IconName }[] = [
   { id: 'terminal', label: 'Terminal', icon: 'terminal' },
   { id: 'tasks', label: 'Tasks', icon: 'tasks' },
   { id: 'context', label: 'Context', icon: 'context' },
+  { id: 'agents', label: 'Agents', icon: 'robot' },
 ];
 
 const SKILL_TONE = 'var(--ember)';
