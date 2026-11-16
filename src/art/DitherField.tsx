@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useStore } from '@/state/store';
-import { FieldEngine, fieldLayout, QUALITY_CELL, RAMP, type DitherTexture, type Look, type Metrics } from './field';
+import { FIELD_EVENT, type FieldEventDetail } from './events';
+import { FieldEngine, fieldLayout, QUALITY_CELL, RAMP, type DitherTexture, type FieldBeat, type Look, type Metrics } from './field';
 import type { FieldMessage, FieldReply } from './field.worker';
 import './art.css';
 
@@ -192,6 +193,70 @@ function publishQuality(id: number, level: number | null) {
   else delete document.documentElement.dataset.quality;
 }
 
+// ── rest: no input and no running turn for a while, and every field eases to a still frame ──
+
+/** How long the app must be left alone before the fields rest. */
+const REST_AFTER = 20_000;
+interface Rester {
+  /** True while a turn runs: the fields stay awake. */
+  awake(): boolean;
+  set(rest: boolean): void;
+}
+const resters = new Set<Rester>();
+const REST_INPUTS = ['pointermove', 'pointerdown', 'keydown', 'wheel'] as const;
+let lastPoke = 0;
+let restTimer = 0;
+let resting = false;
+
+/**
+ * Input or an event: wake whatever rests and restart the countdown. Cheap enough for every
+ * pointer move: one clock read, and a timer only when none is pending.
+ */
+function poke() {
+  lastPoke = performance.now();
+  if (resting) {
+    resting = false;
+    for (const r of resters) r.set(false);
+  }
+  armRest();
+}
+
+function armRest() {
+  if (restTimer || !resters.size || resting) return;
+  restTimer = window.setTimeout(checkRest, Math.max(250, lastPoke + REST_AFTER - performance.now()));
+}
+
+function checkRest() {
+  restTimer = 0;
+  if (!resters.size) return;
+  if (performance.now() - lastPoke < REST_AFTER - 50) return armRest();
+  // A turn is running: no timer; the field whose turn ends restarts the countdown (its `awake` effect).
+  for (const r of resters) if (r.awake()) return;
+  resting = true;
+  for (const r of resters) r.set(true);
+}
+
+function joinRest(r: Rester) {
+  if (!resters.size) {
+    for (const t of REST_INPUTS) window.addEventListener(t, poke, { passive: true, capture: true });
+    lastPoke = performance.now();
+  }
+  resters.add(r);
+  if (resting) r.set(true);
+  armRest();
+  return () => {
+    resters.delete(r);
+    if (resters.size) return;
+    for (const t of REST_INPUTS) window.removeEventListener(t, poke, { capture: true });
+    clearTimeout(restTimer);
+    restTimer = 0;
+    resting = false;
+  };
+}
+
+/** Development: whether the fields rest right now. */
+if (import.meta.env.DEV) (window as unknown as { __sableResting?: () => boolean }).__sableResting = () => resting;
+
 // ── glyph atlas (needs the page's fonts, so it is drawn here and handed to the engine) ──
 
 const atlases = new Map<string, Promise<ImageBitmap | HTMLCanvasElement>>();
@@ -229,7 +294,9 @@ interface Port {
   resize(m: Metrics, atlas?: ImageBitmap | HTMLCanvasElement): void;
   look(look: Look): void;
   pointer(p: [number, number] | null): void;
-  pulse(x: number, y: number, strength: number): void;
+  beat(kind: FieldBeat, x: number, y: number, strength: number): void;
+  rest(rest: boolean): void;
+  clock(advance: number | null): void;
   state(animate: boolean, running: boolean): void;
   pressure(ms: number): void;
   texture(t: DitherTexture): void;
@@ -237,7 +304,7 @@ interface Port {
   dispose(): void;
 }
 
-interface Props extends Partial<Omit<Look, 'pointer'>> {
+interface Props extends Partial<Omit<Look, 'pointer' | 'react'>> {
   /** Cell size in CSS pixels (dither texture); large stages may use coarser cells. */
   cell?: number;
   /** Draw hairline gaps between cells (dither texture). */
@@ -248,8 +315,12 @@ interface Props extends Partial<Omit<Look, 'pointer'>> {
   pointer?: boolean;
   /** One frame, then nothing until the size or look changes. */
   still?: boolean;
-  /** Swell with `sable:pulse` (animated fields only; default on). */
+  /** Play beats (`sable:field`, `sable:pulse`; animated fields only; default on). */
   react?: boolean;
+  /** How strongly beats show (1 full); a dim field may ask for more so its beats still read. */
+  reactGain?: number;
+  /** A turn is running: the field never rests meanwhile. */
+  awake?: boolean;
   /** An image drawn in place of the pattern. */
   image?: ImageBitmap | null;
   opacity?: number;
@@ -277,6 +348,8 @@ export function DitherField({
   pointer = false,
   still = false,
   react = true,
+  reactGain = 1,
+  awake = false,
   image = null,
   opacity = 1,
   className,
@@ -297,7 +370,7 @@ export function DitherField({
   const [ready, setReady] = useState(false);
   // Bumped when the worker fails, so every field rebuilds on the main thread.
   const [gen, setGen] = useState(0);
-  const look: Look = { variant, palette, focus, gain, speed, seed, full, spot, angle, hue, sat, imageColour };
+  const look: Look = { variant, palette, focus, gain, speed, seed, full, spot, angle, hue, sat, imageColour, react: react ? reactGain : 0 };
   const live = useRef(look);
   live.current = look;
   // What the running effect reads when it (re)lays out or decides whether to move.
@@ -314,7 +387,10 @@ export function DitherField({
   pointerRef.current = pointer;
   const reactRef = useRef(react);
   reactRef.current = react;
+  const awakeRef = useRef(awake);
+  awakeRef.current = awake;
   const relayout = useRef<() => void>(() => {});
+  const restartRef = useRef<() => void>(() => {});
   /** What the engine was last given, so a message goes out only when it changes. */
   const sent = useRef<{ tex: DitherTexture; image: ImageBitmap | null }>({ tex, image });
 
@@ -364,7 +440,9 @@ export function DitherField({
         resize: (metrics, atlas) => post({ type: 'resize', id, metrics, atlas: atlas as ImageBitmap | undefined }),
         look: (l) => post({ type: 'look', id, look: l }),
         pointer: (pt) => post({ type: 'pointer', id, pointer: pt }),
-        pulse: (x, y, strength) => post({ type: 'pulse', id, x, y, strength }),
+        beat: (kind, x, y, strength) => post({ type: 'beat', id, kind, x, y, strength }),
+        rest: (r) => post({ type: 'rest', id, rest: r }),
+        clock: (a) => post({ type: 'clock', id, advance: a }),
         state: (animate, running) => post({ type: 'state', id, animate, running }),
         pressure: (ms) => post({ type: 'pressure', id, ms }),
         texture: (t) => post({ type: 'texture', id, texture: t }),
@@ -387,7 +465,9 @@ export function DitherField({
         resize: (m, a) => engine.resize(m, a),
         look: (l) => engine.setLook(l),
         pointer: (pt) => engine.setPointer(pt),
-        pulse: (x, y, strength) => engine.pulse(x, y, strength),
+        beat: (kind, x, y, strength) => engine.beat(kind, x, y, strength),
+        rest: (r) => engine.setRest(r),
+        clock: (a) => engine.clock(a),
         state: (a, r) => engine.setState(a, r),
         pressure: (ms) => engine.setPressure(ms),
         texture: (t) => engine.setTexture(t),
@@ -509,17 +589,37 @@ export function DitherField({
     };
     // Listening costs nothing until the pointer moves; the handler checks whether the field follows.
     window.addEventListener('pointermove', onPointer, { passive: true });
+    // The pointer left the window: its light fades out.
+    const onOut = (e: PointerEvent) => {
+      if (e.relatedTarget || !aim) return;
+      aim = null;
+      clearTimeout(pending);
+      pending = 0;
+      p.pointer(null);
+    };
+    window.addEventListener('pointerout', onOut, { passive: true });
 
-    // A pulse (sable:pulse, viewport coordinates): a swell of light travelling outward from that
-    // point. Only a moving field that reacts answers, so still fields and reduced motion stay still.
-    const onPulse = (e: Event) => {
-      const d = (e as CustomEvent<{ x: number; y: number; strength?: number }>).detail;
-      if (!d || !running || !moving || !reactRef.current) return;
+    // Beats (sable:field, and sable:pulse from older senders; viewport coordinates). Only a moving
+    // field that reacts answers, so still fields and reduced motion stay still.
+    const onBeat = (e: Event) => {
+      const d = (e as CustomEvent<Partial<FieldEventDetail>>).detail;
+      if (!d || typeof d.x !== 'number' || typeof d.y !== 'number') return;
+      poke();
+      if (!running || !moving || !reactRef.current) return;
       rect = host.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
-      p.pulse((d.x - rect.left) / rect.width, (d.y - rect.top) / rect.height, d.strength ?? 1);
+      p.beat(e.type === FIELD_EVENT && d.kind ? d.kind : 'pulse', (d.x - rect.left) / rect.width, (d.y - rect.top) / rect.height, d.strength ?? 1);
     };
-    window.addEventListener('sable:pulse', onPulse);
+    window.addEventListener(FIELD_EVENT, onBeat);
+    window.addEventListener('sable:pulse', onBeat);
+
+    // Rest: left alone with no turn running, the field eases to a still frame and stops drawing.
+    const leaveRest = joinRest({ awake: () => awakeRef.current, set: (r) => p.rest(r) });
+    restartRef.current = poke;
+
+    // Development: frame sheets drive the field's clock (scratch scripts call window.__sableFields).
+    const dev = import.meta.env.DEV ? ((window as unknown as { __sableFields?: Set<Port> }).__sableFields ??= new Set()) : null;
+    dev?.add(p);
 
     return () => {
       disposed = true;
@@ -536,7 +636,12 @@ export function DitherField({
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', sync);
       window.removeEventListener('pointermove', onPointer);
-      window.removeEventListener('sable:pulse', onPulse);
+      window.removeEventListener('pointerout', onOut);
+      window.removeEventListener(FIELD_EVENT, onBeat);
+      window.removeEventListener('sable:pulse', onBeat);
+      leaveRest();
+      restartRef.current = () => {};
+      dev?.delete(p);
       relayout.current = () => {};
       el.remove();
     };
@@ -569,11 +674,16 @@ export function DitherField({
 
   useEffect(() => {
     port.current?.look(live.current);
-  }, [variant, palette, focus[0], focus[1], gain, speed, seed, full, spot?.[0], spot?.[1], spot?.[2], angle, hue, sat, imageColour]);
+  }, [variant, palette, focus[0], focus[1], gain, speed, seed, full, spot?.[0], spot?.[1], spot?.[2], angle, hue, sat, imageColour, react, reactGain]);
 
   useEffect(() => {
     syncRef.current();
   }, [covered]);
+
+  // A turn starting wakes the field; one ending restarts the rest countdown from now.
+  useEffect(() => {
+    restartRef.current();
+  }, [awake]);
 
   const style = { '--cell': `${cell}px`, '--dither-opacity': opacity } as CSSProperties;
   return <div ref={wrap} className={`dither ${grid && tex === 'dither' ? 'dither-grid' : ''} ${className ?? ''}`} data-texture={tex} data-ready={ready} style={style} aria-hidden />;

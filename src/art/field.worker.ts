@@ -4,14 +4,17 @@
  * The page posts sizes, looks, the pointer and whether each field may run; this worker
  * only answers with "drew a frame" (and, in dev, the frame cost).
  */
-import { FieldEngine, type DitherTexture, type Look, type Metrics } from './field';
+import { FieldEngine, type DitherTexture, type FieldBeat, type Look, type Metrics } from './field';
 
 export type FieldMessage =
   | { type: 'init'; id: number; canvas: OffscreenCanvas; texture: DitherTexture; look: Look }
   | { type: 'resize'; id: number; metrics: Metrics; atlas?: ImageBitmap }
   | { type: 'look'; id: number; look: Look }
   | { type: 'pointer'; id: number; pointer: [number, number] | null }
-  | { type: 'pulse'; id: number; x: number; y: number; strength: number }
+  | { type: 'beat'; id: number; kind: FieldBeat; x: number; y: number; strength: number }
+  | { type: 'rest'; id: number; rest: boolean }
+  /** Development only: freeze the clock and step it (frame sheets); null lets it run. */
+  | { type: 'clock'; id: number; advance: number | null }
   | { type: 'state'; id: number; animate: boolean; running: boolean }
   | { type: 'pressure'; id: number; ms: number }
   | { type: 'texture'; id: number; texture: DitherTexture }
@@ -52,8 +55,14 @@ scope.onmessage = (e) => {
     case 'pointer':
       engine.setPointer(m.pointer);
       break;
-    case 'pulse':
-      engine.pulse(m.x, m.y, m.strength);
+    case 'beat':
+      engine.beat(m.kind, m.x, m.y, m.strength);
+      break;
+    case 'rest':
+      engine.setRest(m.rest);
+      break;
+    case 'clock':
+      engine.clock(m.advance);
       break;
     case 'state':
       engine.setState(m.animate, m.running);

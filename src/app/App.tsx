@@ -1,6 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { AnimatePresence, motion, type Variants } from 'motion/react';
 import { INTRO_DELAY, INTRO_MIN, LogoIntro, LogoMark, ProviderMark } from '@/art/Logo';
+import { veil, VEIL_SWAP, VEIL_SWAP_AT } from '@/art/veil';
+import { reducedMotion, uiZoom } from '@/lib/motion';
 import { Home } from '@/features/home/Home';
 import { handoffActive } from '@/features/home/handoff';
 import { useOnboarding } from '@/features/onboarding/useOnboarding';
@@ -43,6 +45,57 @@ function Deferred({ when, children }: { when: boolean; children: ReactNode }) {
 }
 
 /**
+ * How the stage changes views:
+ * - `swap` (session to session, session to home, home to a session from the list): the old view
+ *   dissolves into the ground through the dither veil, the new one resolves out of it and rises a
+ *   few pixels. The views only change opacity and transform: nothing is laid out again meanwhile.
+ * - `handoff` (the first message sent from home): the composer flies to the dock (handoff.ts), the
+ *   conversation fades in around it, and the home field lingers just long enough for the send's
+ *   wave to cross it.
+ * - `enter` (the first view after the launch intro): no fade here; Home composes its own arrival.
+ * - `fade` (reduced motion, in place of a swap): a short crossfade, nothing moves.
+ */
+type ViewMode = 'swap' | 'handoff' | 'enter' | 'fade';
+const EASE = [0.16, 1, 0.3, 1] as const;
+/** When the veil is solid: the old view goes and the new one appears under it, in one frame. */
+const SWAP_AT = (VEIL_SWAP / 1000) * VEIL_SWAP_AT;
+const VIEW: Variants = {
+  initial: (m: ViewMode) => (m === 'swap' ? { opacity: 0, y: 8 } : m === 'handoff' || m === 'fade' ? { opacity: 0 } : { opacity: 1 }),
+  animate: (m: ViewMode) =>
+    m === 'fade'
+      ? { opacity: 1, y: 0, transition: { duration: 0.14 } }
+      : m === 'swap'
+      ? { opacity: 1, y: 0, transition: { opacity: { duration: 0.001, delay: SWAP_AT }, y: { duration: 0.36, delay: SWAP_AT, ease: EASE } } }
+      : m === 'handoff'
+        ? { opacity: 1, y: 0, transition: { duration: 0.32, delay: 0.08, ease: EASE } }
+        : { opacity: 1, y: 0, transition: { duration: 0 } },
+  exit: (m: ViewMode) =>
+    m === 'fade'
+      ? { opacity: 0, transition: { duration: 0.14 } }
+      : m === 'swap'
+      ? { opacity: 0, transition: { duration: 0.001, delay: SWAP_AT } }
+      : m === 'handoff'
+        ? // Holds while the wave from the send key crosses the field, then lets go.
+          { opacity: 0, transition: { duration: 0.64, ease: [0.45, 0, 0.7, 0.45] } }
+        : { opacity: 0, transition: { duration: 0.16 } },
+};
+
+/** Which kind of change the stage is making (read while rendering the change, see ViewMode). */
+function useViewMode(key: string | null, body: RefObject<HTMLElement | null>): ViewMode {
+  const last = useRef(key);
+  const mode = useRef<ViewMode>('enter');
+  if (last.current !== key) mode.current = last.current == null ? 'enter' : handoffActive() ? 'handoff' : reducedMotion() ? 'fade' : 'swap';
+  // Before paint: the veil's first frame lands in the same frame as the new view.
+  useLayoutEffect(() => {
+    if (last.current === key) return;
+    const was = last.current;
+    last.current = key;
+    if (was != null && key != null && mode.current === 'swap') void veil(body.current, 'swap');
+  }, [key, body]);
+  return mode.current;
+}
+
+/**
  * True while the launch intro shows. A bridge that is ready before the intro would appear
  * skips it; otherwise it stays until its one fade-in has finished, so it never flickers.
  * Latched: once the app has shown, the intro never comes back.
@@ -75,6 +128,11 @@ export function App() {
   const booting = useIntro(ready);
   // First run: the welcome takes over the window; the app behind it waits, inert.
   const onboarding = useOnboarding(!booting);
+  const stageBody = useRef<HTMLDivElement>(null);
+  const viewKey = booting || onboarding ? null : (sessionId ?? 'home');
+  const viewMode = useViewMode(viewKey, stageBody);
+  const railShown = railOpen && !!sessionId;
+  useRailMotion(railShown);
 
   useEffect(() => {
     document.title = title ? `${title} · Sable` : 'Sable';
@@ -131,31 +189,13 @@ export function App() {
 
         <main className="stage" inert={onboarding}>
           <Topbar />
-          <div className="stage-body">
+          <div className="stage-body" ref={stageBody}>
             <AnimatePresence>{booting && <LogoIntro key="intro" ready={ready} />}</AnimatePresence>
-            <AnimatePresence mode="popLayout" initial={false}>
-              {booting || onboarding ? null : sessionId ? (
-                <motion.div
-                  key={sessionId}
-                  className="stage-view"
-                  // After a send from home the conversation fades in around the docked composer, which must not move.
-                  initial={handoffActive() ? { opacity: 0 } : { opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: handoffActive() ? 0.32 : 0.24, delay: handoffActive() ? 0.08 : 0, ease: [0.16, 1, 0.3, 1] }}
-                >
-                  <SessionView sessionId={sessionId} />
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="home"
-                  className="stage-view"
-                  initial={{ opacity: 0, scale: 0.985 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={handoffActive() ? { opacity: 0, transition: { duration: 0.42, ease: [0.4, 0, 0.2, 1] } } : { opacity: 0, scale: 1.01 }}
-                  transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-                >
-                  <Home />
+            {/* After a send from home the conversation fades in around the docked composer, which must not move. */}
+            <AnimatePresence mode="popLayout" initial={false} custom={viewMode}>
+              {viewKey == null ? null : (
+                <motion.div key={viewKey} className="stage-view" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
+                  {sessionId ? <SessionView sessionId={sessionId} /> : <Home />}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -168,16 +208,19 @@ export function App() {
           )}
         </main>
 
-        <AnimatePresence initial={false}>
-          {railOpen && sessionId && (
+        <AnimatePresence initial={false} onExitComplete={releaseRail}>
+          {railShown && (
             <motion.aside
               key="rail"
               className="app-rail"
-              initial={{ width: 0, opacity: 0 }}
+              // The panel's contents resolve through the dither veil (and dissolve into it on close),
+              // so only reduced motion fades them.
+              initial={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
               animate={{ width: 'var(--rail-w)', opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
+              exit={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
               transition={{ type: 'spring', stiffness: 380, damping: 38 }}
-              onUpdate={trackRailWidth}
+              onUpdate={onRailFrame}
+              onAnimationComplete={releaseRail}
             >
               <div className="app-rail-inner">
                 <Suspense fallback={null}>
@@ -210,6 +253,80 @@ export function App() {
       <WindowControls />
     </TipProvider>
   );
+}
+
+/**
+ * Opening and closing the side panel. The panel's width springs; the stage beside it narrows or
+ * widens with it, but the view inside the stage keeps one width meanwhile (the narrower of the
+ * two, through the sidebar's freeze rule in app.css) and is slid each frame so its centre column
+ * glides exactly where the resizing stage puts it: the conversation is laid out once, not once
+ * per frame. The panel's contents resolve through the
+ * dither veil on open and dissolve into it on close.
+ */
+const railMotion = { body: null as HTMLElement | null, total: 0, wide: 0, timer: 0 };
+
+function releaseRail() {
+  const m = railMotion;
+  window.clearTimeout(m.timer);
+  if (!m.body) return;
+  delete m.body.dataset.freeze;
+  m.body.style.removeProperty('--freeze-w');
+  for (const v of m.body.querySelectorAll<HTMLElement>(':scope > .stage-view')) v.style.removeProperty('translate');
+  m.body = null;
+}
+
+function freezeForRail(opening: boolean) {
+  releaseRail();
+  if (reducedMotion()) return;
+  const body = document.querySelector<HTMLElement>('.stage > .stage-body');
+  const app = document.querySelector<HTMLElement>('.app');
+  if (!body || !app || body.dataset.freeze != null) return;
+  const z = uiZoom();
+  const now = (document.querySelector('.app-rail')?.getBoundingClientRect().width ?? 0) / z;
+  const target = opening ? parseFloat(getComputedStyle(app).getPropertyValue('--rail-w')) || 396 : 0;
+  const b0 = body.clientWidth;
+  const b1 = b0 + now - target;
+  if (!(b1 > 0)) return;
+  railMotion.body = body;
+  railMotion.total = b0 + now;
+  // The narrower of the two: the conversation takes its narrow layout once (at the start when the
+  // panel opens, at the end when it closes) and is never clipped by the moving edge.
+  railMotion.wide = Math.min(b0, b1);
+  body.style.setProperty('--freeze-w', `${railMotion.wide}px`);
+  body.dataset.freeze = 'rail';
+  // Placed for the first frame already (the spring reports its first value a frame later).
+  for (const v of body.querySelectorAll<HTMLElement>(':scope > .stage-view')) v.style.translate = `${((railMotion.wide - b0) / 2).toFixed(2)}px 0`;
+  railMotion.timer = window.setTimeout(releaseRail, 1200);
+  // Contents: resolve on open (after the panel has mounted), dissolve on close.
+  const inner = document.querySelector<HTMLElement>('.app-rail-inner');
+  if (inner) void veil(inner, opening ? 'reveal' : 'cover', { duration: opening ? 320 : 150 });
+}
+
+/** Per frame of the panel's spring: the frozen view slides to where the stage's centre is now. */
+function followRail(latest: { width?: unknown }) {
+  const m = railMotion;
+  if (!m.body) return;
+  const w = typeof latest.width === 'number' ? latest.width : typeof latest.width === 'string' && latest.width.endsWith('px') ? parseFloat(latest.width) : NaN;
+  if (!Number.isFinite(w)) return;
+  const tx = (m.wide - (m.total - w)) / 2;
+  for (const v of m.body.querySelectorAll<HTMLElement>(':scope > .stage-view')) v.style.translate = `${tx.toFixed(2)}px 0`;
+}
+
+function onRailFrame(latest: { width?: unknown }) {
+  trackRailWidth?.(latest);
+  followRail(latest);
+}
+
+function useRailMotion(shown: boolean) {
+  const first = useRef(true);
+  useLayoutEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    freezeForRail(shown);
+  }, [shown]);
+  useEffect(() => releaseRail, []);
 }
 
 /**

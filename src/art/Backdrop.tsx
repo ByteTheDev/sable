@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { BackdropConfig, ProviderId, SessionStatus } from '@shared/protocol';
 import { backdropCell, DIRECTIONAL } from '@shared/backdrop';
 import { backdropImageBlob, selectBackdrop } from '@/state/actions';
@@ -72,6 +72,27 @@ export function useBackdropBitmap(id: string | null) {
   return id && state?.id === id ? state.bitmap : null;
 }
 
+/**
+ * True while `on`, and for `ms` after it turns off: the band holds its working light while the
+ * turn's end plays (the gather closes in on the composer), then exhales.
+ */
+function useLinger(on: boolean, ms: number) {
+  const [held, setHeld] = useState(on);
+  const was = useRef(on);
+  useEffect(() => {
+    if (on) {
+      was.current = true;
+      setHeld(true);
+      return;
+    }
+    if (!was.current) return;
+    was.current = false;
+    const t = window.setTimeout(() => setHeld(false), ms);
+    return () => window.clearTimeout(t);
+  }, [on, ms]);
+  return on || held;
+}
+
 // ── component ──
 
 interface Props {
@@ -88,8 +109,17 @@ interface Props {
 export function Backdrop({ surface, view = 'home', config, provider, status = 'idle' }: Props) {
   const stored = useStore(selectBackdrop);
   const homeProvider = useStore((s) => s.ui.homeProvider);
+  // Any turn running anywhere: the home field drifts a little quicker and does not rest meanwhile.
+  const anyWorking = useStore((s) => {
+    for (const id in s.sessions) {
+      const st = s.sessions[id].status;
+      if (st === 'running' || st === 'starting') return true;
+    }
+    return false;
+  });
   const cfg = config ?? stored;
   const session = surface === 'session' || (surface === 'preview' && view === 'session');
+  const lit = useLinger(status === 'running' || status === 'starting', 620);
   // A swatch is tiny: it shows its preset a little louder so a spot or a low amount still reads.
   const amount = session ? cfg.sessionAmount : surface === 'swatch' ? Math.min(100, cfg.amount * 1.5) : cfg.amount;
   const wantsImage = cfg.source === 'image' && !session;
@@ -118,10 +148,14 @@ export function Backdrop({ surface, view = 'home', config, provider, status = 'i
     // The preview shows a working session: idle, the band is nearly gone by design.
     if (surface === 'preview') status = 'running';
     const working = status === 'running' || status === 'starting';
+    // Just finished: still lit while the end of the turn plays, then it settles to rest.
+    const glowing = working || (lit && status !== 'awaiting');
     const awaiting = status === 'awaiting';
     const palette: DitherPalette = awaiting ? 'amber' : cfg.colour === 'mono' ? 'mono' : custom ? 'custom' : SESSION_PALETTE[agent];
     const k = amount / SESSION_REFERENCE;
-    const base = working ? 0.8 : awaiting ? 0.75 : 0.55;
+    const base = glowing ? 0.8 : awaiting ? 0.75 : 0.55;
+    // Working: the band drifts quicker. Waiting on you: it turns amber and stills (the field eases
+    // its speed to nothing and stops drawing), so the stillness itself says "your turn".
     return (
       <DitherField
         {...common}
@@ -129,8 +163,10 @@ export function Backdrop({ surface, view = 'home', config, provider, status = 'i
         palette={palette}
         focus={[0.5, 1.15]}
         gain={base * (k <= 1 ? 1 : 1 + ((amount - SESSION_REFERENCE) / 70) * 0.6)}
-        speed={(working ? 2.2 : awaiting ? 0.9 : 0.35) * (cfg.speed / 30)}
-        opacity={Math.min(1, (working || awaiting ? 0.5 : 0.18) * k)}
+        speed={(working ? 2.2 : awaiting ? 0 : glowing ? 1.1 : 0.35) * (cfg.speed / 30)}
+        opacity={Math.min(1, (glowing || awaiting ? 0.5 : 0.18) * k)}
+        reactGain={0.85}
+        awake={working && surface === 'session'}
       />
     );
   }
@@ -138,6 +174,7 @@ export function Backdrop({ surface, view = 'home', config, provider, status = 'i
   const palette: DitherPalette =
     cfg.colour === 'mono' ? 'mono' : custom ? 'custom' : surface === 'onboarding' && cfg.colour === 'agent' ? 'mono' : HOME_PALETTE[agent];
   const { gain, opacity } = strength(amount);
+  const live = surface === 'home' || surface === 'onboarding';
   return (
     <DitherField
       {...common}
@@ -146,7 +183,10 @@ export function Backdrop({ surface, view = 'home', config, provider, status = 'i
       full
       gain={gain}
       opacity={opacity}
-      speed={cfg.speed / 50}
+      // A dim stage lifts its beats, so a sent message still reads at a quiet strength.
+      reactGain={Math.min(1.9, Math.max(1, 0.62 / opacity))}
+      awake={live && anyWorking}
+      speed={(cfg.speed / 50) * (live && anyWorking ? 1.45 : 1)}
       spot={[cfg.focus.x, cfg.focus.y, cfg.reach / 100]}
       angle={DIRECTIONAL.includes(cfg.pattern) ? cfg.angle : undefined}
       image={wantsImage ? bitmap : null}

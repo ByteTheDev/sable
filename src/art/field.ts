@@ -48,7 +48,19 @@ export interface Look {
   full: boolean;
   /** Where the pointer is, -0.5..0.5 across the field; the vanishing point eases a few percent toward it. */
   pointer?: [number, number] | null;
+  /** How strongly beats (send, done, fail) show on this field: 0 none, 1 full; above 1 lifts a dim field's beats. */
+  react?: number;
 }
+
+/**
+ * A one-shot disturbance that travels through the cells:
+ * - `send`: a pressure wave leaves the point: a thin bright crest that bends the pattern outward,
+ *   a darker trough behind it, a weaker echo, and a short flash where it started.
+ * - `pulse`: the same wave, softer (onboarding steps, sign-in, the ultra edge).
+ * - `done`: the reverse: a soft ring closes in on the point and settles there.
+ * - `fail`: the light dips, spreading out from the point, and recovers.
+ */
+export type FieldBeat = 'send' | 'pulse' | 'done' | 'fail';
 
 /** What the host measured: CSS size, device pixel ratio, and the requested cell size (dither). */
 export interface Metrics {
@@ -225,8 +237,18 @@ const sstep = (a: number, b: number, x: number) => {
 };
 
 const TAU = 6.28318;
-/** How long a pulse travels, in ms. */
-const PULSE_MS = 1100;
+
+/** How long each beat lasts, ms. */
+const BEAT_MS: Record<FieldBeat, number> = { send: 1800, pulse: 1400, done: 860, fail: 1100 };
+const MAX_BEATS = 3;
+/** Fronts drawn per frame: a beat draws up to three (its crest, an echo, a flash or settle at its origin). */
+const MAX_FRONTS = 9;
+/** Floats per front: cx, cy, radius, lead, tail, amp, push, disk, multiply, trough. */
+const FS = 10;
+/** The pointer's light: reach (field heights), strength, and the spring it follows the pointer on. */
+const LIGHT_R = 0.4;
+const LIGHT_K = 0.34;
+const LIGHT_W = 5.2;
 
 /**
  * The spectrum palette's hues: Sable's own spectrum (the working mark's blue, violet, pink,
@@ -365,22 +387,56 @@ export class Field {
   // Per-row cache for the hollow.
   private hy = -1;
   private hq = 0;
-  // Pulses: swells of light travelling outward from a point (a sent message, a finished turn).
-  // At most two at once; `pn` is how many are live this frame, so an idle field pays one test per cell.
-  private readonly pulses: { x: number; y: number; t0: number; strength: number }[] = [];
-  private pn = 0;
-  private readonly pf = new Float32Array(12);
+  // Beats: one-shot disturbances travelling through the cells (see FieldBeat). Each frame they are
+  // turned into a few fronts (rings or soft disks); `fn` is how many are live, so a quiet field pays
+  // one test per cell. Per point, `wave` leaves the light to add, the factor to multiply by and how
+  // far the pattern is pushed.
+  private readonly beats: { kind: FieldBeat; x: number; y: number; t0: number; s: number }[] = [];
+  private fn = 0;
+  private readonly pf = new Float32Array(MAX_FRONTS * FS);
   private lift = 0;
+  private wadd = 0;
+  private wmul = 1;
+  private wdx = 0;
+  private wdy = 0;
+  /** Under load the governor sheds the costly parts first: no bending, no echo, no pointer light. */
+  lite = false;
+  // Eased speed: working drifts faster, waiting and rest ease to a standstill instead of snapping.
+  private speedNow: number;
+  private restK = 1;
+  /** True once nothing moves: no drift, no beat, no light easing (the engine stops drawing). */
+  still = false;
+  // The pointer's light: a critically damped follower, and how present it is (fades in and out).
+  private plx = 0;
+  private ply = 0;
+  private pvx = 0;
+  private pvy = 0;
+  private plI = 0;
+  private plOn = false;
+  /** Per-frame: the light's centre in field units and its strength (0 when off). */
+  private lx = 0;
+  private ly = 0;
+  private lI = 0;
 
-  /** Starts a pulse at (nx, ny), each 0..1 across the field. */
-  pulse(nx: number, ny: number, strength: number, now: number) {
-    if (this.pulses.length >= 2) this.pulses.shift();
-    this.pulses.push({ x: nx, y: ny, t0: now, strength: strength < 0 ? 0 : strength > 1 ? 1 : strength });
+  /** How strongly beats show (Look.react). */
+  private react = 1;
+
+  /** Starts a beat at (nx, ny), each 0..1 across the field. */
+  beat(kind: FieldBeat, nx: number, ny: number, strength: number, now: number) {
+    if (this.beats.length >= MAX_BEATS) this.beats.shift();
+    this.beats.push({ kind, x: nx, y: ny, t0: now, s: strength < 0 ? 0 : strength > 1.6 ? 1.6 : strength });
+    this.still = false;
   }
 
-  /** True while a pulse is travelling (the engine draws a little faster meanwhile). */
+  /** True while a beat is travelling (the engine draws faster meanwhile). */
   get pulsing() {
-    return this.pulses.length > 0;
+    return this.beats.length > 0;
+  }
+
+  /** Rest: the drift eases to a standstill (and back when woken). */
+  setRest(rest: boolean) {
+    this.restK = rest ? 0 : 1;
+    if (!rest) this.still = false;
   }
 
   // The spot (Look.spot), eased: centre in stage units (0..1 both ways) and reach.
@@ -434,28 +490,75 @@ export class Field {
     this.gainNow = look.gain;
     this.fullNow = look.full ? 1 : 0;
     this.clock = look.seed * 10;
+    this.speedNow = look.speed;
     if (look.spot) [this.spotNow[0], this.spotNow[1], this.spotNow[2]] = look.spot;
   }
 
   step(s: Look, now: number, aspect: number) {
     const dt = this.first ? 0 : Math.min(0.25, (now - this.last) / 1000);
     this.last = now;
-    this.clock += dt * s.speed;
+    // Speed eases (about half a second): a turn starting quickens the drift, waiting and rest still it.
+    const sp = s.speed * this.restK;
+    const was = this.speedNow;
+    this.speedNow += (sp - this.speedNow) * (this.first ? 1 : Math.min(1, dt * 2.2));
+    if (Math.abs(sp - this.speedNow) < 0.004 * Math.max(0.05, s.speed)) this.speedNow = sp;
+    this.clock += dt * (was + this.speedNow) * 0.5;
     const k = this.first ? 1 : Math.min(1, dt * 3);
     const kp = this.first ? 1 : Math.min(1, dt * 2.2);
     this.first = false;
+    // How much the eased look still moves this frame (the engine stops drawing once nothing does).
+    let moved = Math.abs(this.speedNow) + Math.abs(sp - this.speedNow);
     const target = paletteOf(s);
     const colors = this.colors;
-    for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) colors[i][j] += (target[i][j] - colors[i][j]) * k;
+    for (let i = 0; i < 4; i++)
+      for (let j = 0; j < 3; j++) {
+        const d = target[i][j] - colors[i][j];
+        colors[i][j] += d * k;
+        moved += Math.abs(d) * 0.004;
+      }
     this.spectrum += ((s.palette === 'spectrum' ? 1 : 0) - this.spectrum) * k;
     const focus = s.full ? [0.5, 0.5] : s.focus;
+    moved += Math.abs(focus[0] - this.focusNow[0]) + Math.abs(focus[1] - this.focusNow[1]) + Math.abs(s.gain - this.gainNow);
     this.focusNow[0] += (focus[0] - this.focusNow[0]) * k;
     this.focusNow[1] += (focus[1] - this.focusNow[1]) * k;
     this.gainNow += (s.gain - this.gainNow) * k;
     this.fullNow += ((s.full ? 1 : 0) - this.fullNow) * k;
     const p = s.pointer;
-    this.par[0] += ((p ? p[0] * 0.07 : 0) - this.par[0]) * kp;
-    this.par[1] += ((p ? p[1] * 0.05 : 0) - this.par[1]) * kp;
+    const parX = p ? p[0] * 0.07 : 0;
+    const parY = p ? p[1] * 0.05 : 0;
+    moved += Math.abs(parX - this.par[0]) + Math.abs(parY - this.par[1]);
+    this.par[0] += (parX - this.par[0]) * kp;
+    this.par[1] += (parY - this.par[1]) * kp;
+    // The pointer's light (full stages only): follows on a critically damped spring, so it trails
+    // the pointer by a fraction of a second and comes to rest without overshoot.
+    const lightOn = !!p && s.full && !this.lite && (s.react ?? 1) > 0;
+    if (lightOn && p) {
+      const tx = (p[0] + 0.5) * aspect;
+      const ty = p[1] + 0.5;
+      if (!this.plOn) {
+        this.plx = tx;
+        this.ply = ty;
+        this.pvx = this.pvy = 0;
+      }
+      const n = Math.max(1, Math.ceil(dt / 0.016));
+      for (let i = 0; i < n; i++) {
+        const h = dt / n;
+        this.pvx += (LIGHT_W * LIGHT_W * (tx - this.plx) - 2 * LIGHT_W * this.pvx) * h;
+        this.pvy += (LIGHT_W * LIGHT_W * (ty - this.ply) - 2 * LIGHT_W * this.pvy) * h;
+        this.plx += this.pvx * h;
+        this.ply += this.pvy * h;
+      }
+      moved += Math.abs(this.pvx) + Math.abs(this.pvy);
+    }
+    this.plOn = lightOn;
+    const li = lightOn ? 1 : 0;
+    moved += Math.abs(li - this.plI);
+    this.plI += (li - this.plI) * Math.min(1, dt * 1.6);
+    if (Math.abs(li - this.plI) < 0.01) this.plI = li;
+    this.lx = this.plx;
+    this.ly = this.ply;
+    this.lI = this.plI * LIGHT_K;
+    this.react = s.react ?? 1;
     // The spot eases like the focus, so dragging it in Settings glides.
     const spot = s.spot ?? null;
     const sn = this.spotNow;
@@ -463,6 +566,7 @@ export class Field {
     sn[0] += ((spot ? spot[0] : 0.5) - sn[0]) * ks;
     sn[1] += ((spot ? spot[1] : 0.5) - sn[1]) * ks;
     sn[2] += ((spot ? spot[2] : 1) - sn[2]) * ks;
+    moved += Math.abs((spot ? spot[0] : 0.5) - sn[0]) + Math.abs((spot ? spot[1] : 0.5) - sn[1]) + Math.abs((spot ? spot[2] : 1) - sn[2]);
     if (Math.abs(sn[2] - (spot ? spot[2] : 1)) < 0.002) sn[2] = spot ? spot[2] : 1;
     // Reach → falloff radius (in stage units, so the light spreads as an ellipse matching the
     // stage); near full reach the falloff blends into even light.
@@ -533,56 +637,149 @@ export class Field {
     this.ry = -1;
     this.hy = -1;
 
-    // Pulses: per-frame radius, band and strength; the per-cell work is a squared-distance test.
+    this.planBeats(now, aspect);
+    this.still = moved < 2e-4 && this.fn === 0;
+  }
+
+  /** Writes one front into the per-frame table (dropped when the table is full). */
+  private front(cx: number, cy: number, r: number, lead: number, tail: number, amp: number, push: number, disk: boolean, mul: boolean, trough: number) {
+    if (this.fn >= MAX_FRONTS) return;
+    const o = this.fn++ * FS;
     const pf = this.pf;
-    let n = 0;
+    pf[o] = cx;
+    pf[o + 1] = cy;
+    pf[o + 2] = r;
+    pf[o + 3] = lead;
+    pf[o + 4] = tail;
+    pf[o + 5] = amp;
+    pf[o + 6] = this.lite ? 0 : push;
+    pf[o + 7] = disk ? 1 : 0;
+    pf[o + 8] = mul ? 1 : 0;
+    pf[o + 9] = trough;
+  }
+
+  /**
+   * The beats as this frame's fronts. Shapes are tuned in field heights, so a wave looks the same
+   * on any stage; it always runs out past the farthest corner from where it started.
+   */
+  private planBeats(now: number, aspect: number) {
+    this.fn = 0;
     let lift = 0;
-    for (let i = this.pulses.length - 1; i >= 0; i--) {
-      const p = this.pulses[i];
-      const u = (now - p.t0) / PULSE_MS;
-      if (u >= 1) {
-        this.pulses.splice(i, 1);
+    for (let i = this.beats.length - 1; i >= 0; i--) {
+      const b = this.beats[i];
+      const u = (now - b.t0) / BEAT_MS[b.kind];
+      if (u >= 1 || u < -0.05) {
+        this.beats.splice(i, 1);
         continue;
       }
-      // The front eases out as it travels; the light swells quickly and settles slowly.
-      const e = 1 - (1 - u) * (1 - u);
-      const r = 0.04 + e * (aspect > 1.6 ? aspect * 0.62 : 1.05);
-      const amp = p.strength * (u < 0.1 ? u / 0.1 : 1 - (u - 0.1) / 0.9);
-      const lead = 0.05 + 0.05 * e;
-      const tail = 0.16 + 0.3 * e;
-      const o = n * 6;
-      pf[o] = p.x * aspect;
-      pf[o + 1] = p.y;
-      pf[o + 2] = r;
-      pf[o + 3] = lead;
-      pf[o + 4] = tail;
-      pf[o + 5] = amp;
-      lift += amp;
-      n++;
+      if (u < 0) continue;
+      const cx = b.x * aspect;
+      const cy = b.y;
+      const fx = Math.max(cx, aspect - cx);
+      const fy = Math.max(cy, 1 - cy);
+      const far = Math.sqrt(fx * fx + fy * fy);
+      const s = b.s;
+      if (b.kind === 'send' || b.kind === 'pulse') {
+        // The crest decelerates as it spreads (fast off the key, gliding out past the edges), thins
+        // with distance like a ring on water, and widens behind as it goes.
+        const e = 1 - (1 - u) ** 1.8;
+        const r = 0.02 + e * far * 1.08;
+        const env = (u < 0.04 ? u / 0.04 : 1) * (1 - sstep(0.35, 1, u));
+        const amp = (s * env * (b.kind === 'send' ? 1 : 0.62)) / (1 + 0.3 * r);
+        const lead = 0.014 + 0.026 * e;
+        const tail = 0.06 + 0.2 * e;
+        // Bends the pattern by up to ~7% of the field's height at the crest.
+        this.front(cx, cy, r, lead, tail, amp, 0.07, false, false, 0.34);
+        lift += amp;
+        // A weaker echo rides behind the crest.
+        if (u > 0.07 && !this.lite) this.front(cx, cy, r * 0.62, lead * 1.4, tail * 0.8, amp * 0.36, 0.012, false, false, 0.2);
+        // The key flashes as the wave leaves it.
+        if (b.kind === 'send' && u < 0.2) {
+          const f = 1 - u / 0.2;
+          this.front(cx, cy, 0.015 + 0.06 * (u / 0.2), 0.07, 0, s * 1.15 * f * f, 0, true, false, 0);
+        }
+      } else if (b.kind === 'done') {
+        // A soft ring closes in on the point (ease in and out, so it gathers rather than falls), and
+        // the light there swells once and settles as it arrives.
+        const e = u < 0.5 ? 2 * u * u : 1 - (2 - 2 * u) ** 2 / 2;
+        const r = 0.02 + (1 - e) * far * 0.9;
+        const amp = (s * 0.95 * Math.sin(Math.PI * Math.min(1, u * 1.12)) ** 1.2) / (1 + 0.4 * r);
+        this.front(cx, cy, r, 0.06, 0.09, amp, -0.03, false, false, 0);
+        lift += amp * 0.6;
+        if (u > 0.68) {
+          const q = Math.sin((Math.PI * (u - 0.68)) / 0.32);
+          this.front(cx, cy, 0.05 + 0.05 * q, 0.16, 0, s * 0.42 * q, 0, true, false, 0);
+        }
+      } else {
+        // fail: the light dips, the dimming spreading from the point within a third of the beat,
+        // then recovers slowly. Multiplied, so dark stays dark.
+        const g = Math.min(1, u / 0.3);
+        const r = 0.04 + (1 - (1 - g) ** 3) * far * 1.05;
+        const env = u < 0.07 ? u / 0.07 : (1 - (u - 0.07) / 0.93) ** 1.7;
+        this.front(cx, cy, r, 0.4, 0, -0.52 * Math.min(1, s) * env, 0, true, true, 0);
+      }
     }
-    this.pn = n;
     this.lift = lift > 1 ? 1 : lift;
   }
 
-  /** How much pulse light reaches (px, py): 0 outside every front. Only called while a pulse is live. */
-  private swell(px: number, py: number): number {
+  /**
+   * The beats at (px, py): light to add (`wadd`), a factor (`wmul`) and how far to push the
+   * pattern (`wdx`, `wdy`, in field units). Only called while a beat is live.
+   */
+  private wave(px: number, py: number) {
     const pf = this.pf;
-    let k = 0;
-    for (let o = 0, end = this.pn * 6; o < end; o += 6) {
-      const dx = px - pf[o];
-      const dy = py - pf[o + 1];
-      const d2 = dx * dx + dy * dy;
+    let add = 0;
+    let mul = 1;
+    let dx = 0;
+    let dy = 0;
+    for (let o = 0, end = this.fn * FS; o < end; o += FS) {
+      const ox = px - pf[o];
+      const oy = py - pf[o + 1];
+      const d2 = ox * ox + oy * oy;
       const r = pf[o + 2];
-      const outer = r + pf[o + 3];
+      const lead = pf[o + 3];
+      const outer = r + lead;
       if (d2 > outer * outer) continue;
-      const inner = r - pf[o + 4];
+      if (pf[o + 7] !== 0) {
+        // A soft disk: full inside, its edge falling away over `lead`.
+        let f = 1;
+        if (d2 > r * r) {
+          const q = 1 - (Math.sqrt(d2) - r) / lead;
+          f = q * q;
+        }
+        if (pf[o + 8] !== 0) mul *= 1 + pf[o + 5] * f;
+        else add += pf[o + 5] * f;
+        continue;
+      }
+      const tail = pf[o + 4];
+      const trough = pf[o + 9];
+      const inner = r - tail * (trough > 0 ? 1.75 : 1);
       if (inner > 0 && d2 < inner * inner) continue;
       const d = Math.sqrt(d2);
-      // A sharp leading edge, a long soft tail behind it.
-      const f = d > r ? 1 - (d - r) / pf[o + 3] : 1 - (r - d) / pf[o + 4];
-      k += f * f * pf[o + 5];
+      const sd = d - r;
+      let crest = 0;
+      let low = 0;
+      if (sd >= 0) {
+        const q = 1 - sd / lead;
+        crest = q * q;
+      } else {
+        const q = -sd / tail;
+        if (q < 1) crest = (1 - q) * (1 - q) * (1 - q);
+        // Behind the crest the light thins for a moment: the trough that makes the crest read.
+        if (trough > 0 && q > 0.55 && q < 1.75) low = trough * fcos(((q - 1.15) / 1.2) * Math.PI);
+      }
+      const amp = pf[o + 5];
+      add += amp * (crest - low);
+      const push = pf[o + 6] * amp * crest;
+      if (push !== 0 && d > 1e-4) {
+        dx += (ox / d) * push;
+        dy += (oy / d) * push;
+      }
     }
-    return k;
+    this.wadd = add;
+    this.wmul = mul;
+    this.wdx = dx;
+    this.wdy = dy;
   }
 
   /**
@@ -625,6 +822,13 @@ export class Field {
     // One small method per variant: each stays monomorphic and cheap for the JIT.
     const mode = this.mode;
     this.hue = 0;
+    if (this.fn !== 0) {
+      // A passing crest bends the pattern: it is read from a little closer to the beat's origin,
+      // so the streaks and tiles visibly ripple outward with the light.
+      this.wave(px, py);
+      px -= this.wdx;
+      py -= this.wdy;
+    }
     let w = 1;
     if (this.spotOn) {
       w = this.spotAt(px, py);
@@ -935,7 +1139,9 @@ export class Field {
   private finish(v: number, px: number, py: number, out: Float32Array, spot = 1) {
     const lut = this.lut;
     const img = this.px != null || this.flat;
-    if (v <= 0) {
+    // A crest or the pointer's light can light even an unlit cell of a full stage.
+    const lit = this.full && ((this.fn !== 0 && this.wadd > 0) || this.lI > 0);
+    if (v <= 0 && !lit) {
       // Unlit (the gaps between tubes and tiles): ground, with nothing more to work out.
       out[0] = lut[0];
       out[1] = lut[1];
@@ -975,10 +1181,22 @@ export class Field {
         const x = v - knee;
         v = knee + x / (1 + x / ROLL);
       }
-      // A pulse lifts what it passes, lit cells most; it stays under the cap by construction.
-      if (this.pn !== 0) {
-        const k = this.swell(px, py);
-        if (k > 0) v += k * (0.07 + 0.42 * v);
+      if (v < 0) v = 0;
+      // The pointer's light: a broad, faint lift that trails the pointer.
+      if (this.lI > 0) {
+        const ex2 = px - this.lx;
+        const ey2 = py - this.ly;
+        const q = 1 - (ex2 * ex2 + ey2 * ey2) / (LIGHT_R * LIGHT_R);
+        if (q > 0) v += this.lI * q * q * (0.45 + v);
+      }
+      // A beat lifts what it passes, lit cells most (and may push past the knee for its moment), or dims it.
+      if (this.fn !== 0) {
+        const k = this.wadd * this.react;
+        if (k !== 0) v += k * (0.18 + 0.6 * v);
+        if (v < 0) v = 0;
+        // Past the light stop the crest bends over, so it never goes white.
+        else if (v > 0.68) v = 0.68 + (v - 0.68) / (1 + (v - 0.68) / 0.14);
+        v *= this.wmul;
       }
     } else {
       // Light falls away from the focus, leaving a dark ground for text.
@@ -993,8 +1211,16 @@ export class Field {
               ? sstep(0, 1, py)
               : 0.1 + 0.9 * (1 - sstep(0.05, 1.3, dist));
       v *= fall * this.gainNow;
-      // The band under the dock lifts as a whole while the front crosses it.
-      if (this.pn !== 0) v *= 1 + 0.5 * this.lift + 0.9 * this.swell(px, py);
+      // The band under the dock lifts as a whole while a front crosses it, most where the front is,
+      // and the crest itself shows as a line of light travelling along the band.
+      if (this.fn !== 0) {
+        const k = this.react;
+        const v0 = v;
+        v = (v * (1 + k * (0.35 * this.lift + 1.1 * this.wadd)) + k * 0.6 * this.wadd * fall * this.gainNow) * this.wmul;
+        if (v < 0) v = 0;
+        // The crest bends over before the palette's pale end, so it reads as light, not as grey.
+        else if (v > v0 && v > 0.6) v = Math.max(v0, 0.6 + (v - 0.6) / (1 + (v - 0.6) / 0.12));
+      }
     }
     // The spot's falloff, before the floor and quantization, so its edge dithers away like the rest.
     v *= spot;
@@ -1620,24 +1846,29 @@ function makeRenderer(surface: Surface, texture: DitherTexture, image: boolean):
   return ditherRenderer(surface, texture === 'soft');
 }
 
-/** Frame interval while a pulse is travelling. */
-const PULSE_FRAME_MS = 33;
+/** Frame interval while a beat is travelling, per quality level (a beat at full quality draws at ~36 fps). */
+const BEAT_FRAME_MS = [28, 44, Infinity, Infinity, Infinity];
 
 /**
  * Adaptive quality. A busy machine is the normal case, so the field watches whether it keeps up
- * and steps down on its own: 0 full, 1 a lower frame rate, 2 also coarser cells (the host
- * re-sizes the stage with QUALITY_CELL), 3 a still frame. It steps back up after a quiet spell.
+ * and steps down on its own: 0 full, 1 the effects shed (beats lose their bending and echo, no
+ * pointer light, beats draw slower), 2 a lower frame rate, 3 also coarser cells (the host re-sizes
+ * the stage with QUALITY_CELL), 4 a still frame. It steps back up after a quiet spell.
  *
  * Signals, judged once a second: the field's own frame cost against its interval, how late its
  * timer fires (a late timer means the CPU is contended, wherever the engine runs), and the main
  * thread's load as reported by the host (ms of long animation frames per second, setPressure).
  * Three stressed seconds in a row step down; `quietNeed` quiet ms step up. Bouncing straight back
  * down after a step up doubles `quietNeed` (up to a minute), so a busy machine does not flicker
- * between levels. At level 3 nothing is drawn; a cheap 1 s probe timer keeps judging.
+ * between levels. At level 4 nothing is drawn; a cheap 1 s probe timer keeps judging.
+ *
+ * Rest: once nothing moves (the drift has eased to a standstill under `setRest`, or a waiting
+ * field's speed is 0, and no beat or light is easing) the loop stops entirely: no timer, no frame.
+ * Any change (a look, the pointer, a beat, waking) starts it again.
  */
-export const QUALITY_INTERVAL = [1, 1.6, 2.4, 2.4];
-export const QUALITY_CELL = [1, 1, 1.5, 1.5];
-export const MAX_QUALITY = 3;
+export const QUALITY_INTERVAL = [1, 1, 1.6, 2.4, 2.4];
+export const QUALITY_CELL = [1, 1, 1, 1.5, 1.5];
+export const MAX_QUALITY = 4;
 const STRESS_LATE_MS = 40;
 const STRESS_COST = 0.4;
 const STRESS_MAIN_MS = 200;
@@ -1665,6 +1896,10 @@ export class FieldEngine {
   private look: Look;
   private running = false;
   private animate = false;
+  /** The loop stopped because nothing moved (see `wake`). */
+  private halted = false;
+  /** A frozen clock (development frame sheets), or null. */
+  private fixed: number | null = null;
   private timer: ReturnType<typeof setTimeout> | 0 = 0;
   private settle: ReturnType<typeof setInterval> | 0 = 0;
   private drawn = false;
@@ -1763,7 +1998,7 @@ export class FieldEngine {
 
   setLook(look: Look) {
     this.look = { ...look, pointer: this.look.pointer };
-    if (this.animate && this.running && this.quality < MAX_QUALITY) return;
+    if (this.animate && this.running && this.quality < MAX_QUALITY) return this.wake();
     // Still mode: run a short burst so the change eases in.
     if (this.settle) clearInterval(this.settle);
     let n = 0;
@@ -1778,6 +2013,7 @@ export class FieldEngine {
 
   setPointer(p: [number, number] | null) {
     this.look.pointer = p;
+    this.wake();
   }
 
   /** Main-thread load reported by the host: ms spent in long frames during the last second. */
@@ -1785,12 +2021,19 @@ export class FieldEngine {
     this.mainLoad = ms;
   }
 
-  /** A swell of light from (nx, ny), each 0..1 across the field. Ignored unless the field is moving. */
-  pulse(nx: number, ny: number, strength: number) {
+  /** A beat from (nx, ny), each 0..1 across the field. Ignored unless the field is moving. */
+  beat(kind: FieldBeat, nx: number, ny: number, strength: number) {
     if (!this.animate || !this.running || this.quality >= MAX_QUALITY) return;
-    this.field.pulse(nx, ny, strength, performance.now());
+    this.field.beat(kind, nx, ny, strength, this.now());
     // Start on the next frame instead of waiting out the current interval.
+    this.halted = false;
     this.schedule(0);
+  }
+
+  /** Rest (no input and no running turn for a while): the drift eases to a still frame and the loop stops. */
+  setRest(rest: boolean) {
+    this.field.setRest(rest);
+    if (!rest) this.wake();
   }
 
   /** `animate`: the field moves at all. `running`: the host says it is visible, uncovered and in the foreground. */
@@ -1799,9 +2042,40 @@ export class FieldEngine {
     const on = animate && running;
     if (on === this.running) return;
     this.running = on;
+    this.halted = false;
     this.resetWindow();
     if (on) this.schedule(0);
     else this.stop();
+  }
+
+  /** Starts drawing again after the loop stopped because nothing moved. */
+  private wake() {
+    if (!this.halted || !this.running) return;
+    this.halted = false;
+    this.resetWindow();
+    this.schedule(0);
+  }
+
+  /**
+   * Development only (frame sheets): `advance` freezes the field's clock (at the current time the
+   * first call) and moves it on by that many ms, drawing one frame; null lets it run again.
+   */
+  clock(advance: number | null) {
+    if (advance == null) {
+      if (this.fixed == null) return;
+      this.fixed = null;
+      this.halted = false;
+      if (this.running) this.schedule(0);
+      return;
+    }
+    if (this.fixed == null) this.fixed = performance.now();
+    this.fixed += advance;
+    this.stop();
+    this.draw();
+  }
+
+  private now() {
+    return this.fixed ?? performance.now();
   }
 
   dispose() {
@@ -1818,6 +2092,7 @@ export class FieldEngine {
 
   private schedule(wait: number) {
     this.stop();
+    if (this.fixed != null) return;
     this.due = performance.now() + wait;
     this.timer = setTimeout(this.quality >= MAX_QUALITY ? this.probe : this.tick, wait);
   }
@@ -1829,13 +2104,18 @@ export class FieldEngine {
     const late = t0 - this.due;
     this.draw();
     const cost = performance.now() - t0;
-    // A slow drift needs fewer frames to look just as smooth (pulses still draw at full rate below).
+    // A slow drift needs fewer frames to look just as smooth (beats still draw at their own rate below).
     const slow = this.look.speed < 0.75 ? 1.35 : 1;
     const base = this.interval * QUALITY_INTERVAL[this.quality] * slow;
     this.judge(late, cost, base);
     if (!this.running) return;
-    // While a pulse travels the field draws faster, so the front moves smoothly.
-    const interval = this.field.pulsing ? Math.min(base, PULSE_FRAME_MS) : base;
+    // Nothing moves any more (rest, or a waiting field that has stilled): stop until something changes.
+    if (this.field.still && this.quality < MAX_QUALITY) {
+      this.halted = true;
+      return;
+    }
+    // While a beat travels the field draws faster, so the front moves smoothly.
+    const interval = this.field.pulsing ? Math.min(base, BEAT_FRAME_MS[this.quality]) : base;
     this.schedule(this.quality >= MAX_QUALITY ? PROBE_MS : Math.max(4, interval - cost));
   };
 
@@ -1889,12 +2169,13 @@ export class FieldEngine {
   private setQuality(q: number) {
     if (q === this.quality) return;
     this.quality = q;
+    this.field.lite = q >= 1;
     this.events.quality?.(q);
   }
 
   private draw() {
     const t0 = performance.now();
-    if (!this.renderer.draw(this.field, this.look, t0)) return;
+    if (!this.renderer.draw(this.field, this.look, this.now())) return;
     const d = performance.now() - t0;
     this.costs[this.count % 20] = d;
     const first = !this.drawn;

@@ -20,6 +20,34 @@ export const MARK_CELLS: readonly (readonly [number, number])[] = [
   [1, 0], [3, 0], [1, 2], [0, 1], [2, 1], [0, 3],
 ];
 
+/** The two cells the corner drops (the dissolve in the mark): empty, except for a moment when the mark answers typing. */
+const MARK_GAPS: readonly (readonly [number, number])[] = [
+  [3, 2],
+  [2, 3],
+];
+
+const reducedMotionNow = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * Builds a cell-drawn mark (`<LogoMark cells>`) the way the launch intro does: cells switch on in
+ * ordered-dither order, each with a short fade. Opacity only, about 300 ms after `delay`.
+ */
+export function buildMark(root: Element | null, delay = 0) {
+  if (!root || reducedMotionNow()) return;
+  root.querySelectorAll<SVGRectElement>('rect[data-cell]').forEach((r, i) => {
+    r.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, delay: delay + i * 16, easing: 'ease-out', fill: 'backwards' });
+  });
+}
+
+/** The mark answers a keystroke: one of its missing corner cells glints and fades (alternating). */
+let echoNext = 0;
+export function markEcho(root: Element | null) {
+  if (!root || reducedMotionNow()) return;
+  const gaps = root.querySelectorAll<SVGRectElement>('rect[data-gap]');
+  const r = gaps[echoNext++ % Math.max(1, gaps.length)];
+  r?.animate([{ opacity: 0.55 }, { opacity: 0 }], { duration: 320, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+}
+
 /** Device pixels per layout pixel, including the Interface size zoom (read without a style flush). */
 function deviceScale() {
   if (typeof window === 'undefined') return 1;
@@ -37,11 +65,29 @@ export function markCell(size: number) {
   return Math.max(2, Math.round((size * k) / 6)) / k;
 }
 
-export function LogoMark({ size = 22, className }: { size?: number; className?: string }) {
+export function LogoMark({ size = 22, className, cells = false }: { size?: number; className?: string; cells?: boolean }) {
   const { cell, at } = useMemo(() => {
     const c = markCell(size);
     return { cell: c, at: (size - c * 4) / 2 };
   }, [size]);
+  // Drawn cell by cell (the home mark): it can build in dither order (`buildMark`) and its two
+  // missing corner cells exist, empty, so it can answer typing (`markEcho`).
+  if (cells) {
+    return (
+      <span className={`logo-mark ${className ?? ''}`} style={{ width: size, height: size }}>
+        <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} shapeRendering="crispEdges" aria-hidden>
+          <g fill="var(--text)">
+            {MARK_CELLS.map(([c, r], i) => (
+              <rect key={i} data-cell={i} x={at + c * cell} y={at + r * cell} width={cell} height={cell} />
+            ))}
+            {MARK_GAPS.map(([c, r], i) => (
+              <rect key={`g${i}`} data-gap={i} x={at + c * cell} y={at + r * cell} width={cell} height={cell} opacity={0} />
+            ))}
+          </g>
+        </svg>
+      </span>
+    );
+  }
   return (
     <span className={`logo-mark ${className ?? ''}`} style={{ width: size, height: size }}>
       <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} shapeRendering="crispEdges" aria-hidden>

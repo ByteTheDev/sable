@@ -8,7 +8,8 @@ import { pathForFile } from '@/lib/desktop';
 import { baseName, dirName } from '@/lib/format';
 import { fuzzy } from '@/lib/fuzzy';
 import { isUltraEffort } from '@/lib/models';
-import { EASE_OUT, play, pulseFrom } from '@/lib/motion';
+import { EASE_OUT, play } from '@/lib/motion';
+import { fieldBeat } from '@/art/events';
 import { searchFiles, type FileHit } from '@/lib/workspace';
 import { homeChoice, interrupt, sendMessage, setHomeUltracode, setUltracode, startFromHome, takeQueued, updateQueued } from '@/state/actions';
 import { useHotkey } from '@/state/hooks';
@@ -462,7 +463,7 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
    * the next placeholder rises from 8px below (100 ms, two frames later). The backdrop gets a pulse.
    */
   const rollOut = (sent: string, next: string | null) => {
-    pulseFrom(card.current, 1);
+    fieldBeat('send', card.current?.querySelector('.cmp-send') ?? card.current, 1);
     const field = ref.current?.parentElement;
     if (!field || !sent) return;
     const layer = document.createElement('div');
@@ -490,11 +491,12 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
     last.finished.then(done, done);
   };
 
-  // A quieter pulse when the turn ends; the steer hint has had its turn once the first one ends.
+  // The backdrop answers the turn's end (a gather into the composer, or a dip on an error); the
+  // steer hint has had its turn once the first one ends.
   const wasBusy = useRef(busy);
   useEffect(() => {
     if (wasBusy.current && !busy && variant === 'session') {
-      pulseFrom(card.current, 0.45);
+      fieldBeat(status === 'error' ? 'fail' : 'done', card.current, 1);
       if (sessionId) hinted.add(sessionId);
     }
     wasBusy.current = busy;
