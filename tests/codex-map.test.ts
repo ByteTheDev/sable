@@ -82,9 +82,9 @@ describe('limits, history, plan', () => {
       ]),
     );
     expect(limits).toEqual([
-      { id: 'codex:primary', label: '5-hour limit', percent: 34, resetsAt: 1_800_000_000_000 },
-      { id: 'codex:secondary', label: 'Weekly limit', percent: 100, resetsAt: undefined },
-      { id: 'gpt-5.5:primary', label: 'GPT-5.5 · Daily limit', percent: 0, resetsAt: 1_800_000_000_000 },
+      { id: 'codex:primary', label: '5-hour limit', percent: 34, resetsAt: 1_800_000_000_000, windowMins: 300 },
+      { id: 'codex:secondary', label: 'Weekly limit', percent: 100, resetsAt: undefined, windowMins: 10080 },
+      { id: 'gpt-5.5:primary', label: 'GPT-5.5 · Daily limit', percent: 0, resetsAt: 1_800_000_000_000, windowMins: 1440 },
     ]);
     expect(mapLimits(X([{ primary: { usedPercent: 1, windowDurationMins: 45 } }]))[0].label).toBe('45-minute limit');
     expect(mapLimits(X([{ primary: { usedPercent: 1, windowDurationMins: 4320 } }]))[0].label).toBe('3-day limit');

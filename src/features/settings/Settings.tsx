@@ -16,6 +16,7 @@ import { Permissions } from './Permissions';
 import { matchSections, SECTIONS } from './sections';
 import { Shortcuts } from './Shortcuts';
 import { Skills } from './Skills';
+import { Usage } from '@/features/usage/Usage';
 import { takeComposerFocus } from './UseList';
 import './settings.css';
 
@@ -23,6 +24,7 @@ const VIEWS: Record<SettingsSection, ComponentType> = {
   general: General,
   appearance: Appearance,
   accounts: Accounts,
+  usage: Usage,
   models: Models,
   permissions: Permissions,
   mcp: Mcp,

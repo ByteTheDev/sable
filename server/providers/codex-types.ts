@@ -67,6 +67,9 @@ export interface RateLimitSnapshot {
   limitName: string | null;
   primary: RateLimitWindow | null;
   secondary: RateLimitWindow | null;
+  credits?: { hasCredits: boolean; unlimited: boolean; balance: string | null } | null;
+  planType?: string | null;
+  rateLimitReachedType?: string | null;
 }
 export interface GetAccountRateLimitsResponse {
   rateLimits: RateLimitSnapshot;

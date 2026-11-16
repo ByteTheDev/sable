@@ -5,6 +5,7 @@ import { registerFs } from './fs';
 import { registerGit } from './git';
 import { registerMemory } from './memory';
 import { registerTerm } from './term';
+import { registerUsage } from './usage';
 
 export interface ServiceOptions {
   /** User home for fs.roots and user-scope memory files (defaults to os.homedir(); tests override it). */
@@ -19,4 +20,5 @@ export function registerServices(app: App, opts: ServiceOptions = {}) {
   registerMemory(app, { home: opts.userHome });
   registerConfig(app, { home: opts.userHome });
   registerBackdrop(app);
+  registerUsage(app, { home: opts.userHome });
 }

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { DEFAULT_ACCOUNT, type AccountInfo, type Capabilities, type ProviderId, type RateLimit, type SessionMeta } from '@shared/protocol';
+import { DEFAULT_ACCOUNT, type AccountInfo, type Capabilities, type LimitsReport, type ProviderId, type RateLimit, type SessionMeta } from '@shared/protocol';
 import { homeAccountId, homeChoice, prewarmHome } from './actions';
 import { accountKey, capsKey, ensureProviderCaps, useStore } from './store';
 
@@ -89,6 +89,36 @@ export function useFocusAccount(): { provider: ProviderId; accountId: string } {
 /** Plan limits of one account, when known. */
 export function useAccountLimits(provider: ProviderId | undefined, accountId?: string): RateLimit[] | undefined {
   return useStore((s) => (provider ? s.limits[accountKey(provider, accountId)] : undefined));
+}
+
+/** One account's limits as the bridge remembers them: when they were read, history and pace. */
+export function useLimitsReport(provider: ProviderId | undefined, accountId?: string): LimitsReport | undefined {
+  return useStore((s) => (provider ? s.limitReports[accountKey(provider, accountId)] : undefined));
+}
+
+/** 'cap' when a window of the account is used up, 'near' at 80% or more, otherwise undefined. */
+export type LimitLevel = 'near' | 'cap' | undefined;
+
+export function limitLevel(limits: RateLimit[] | undefined, now = Date.now()): LimitLevel {
+  let level: LimitLevel;
+  for (const l of limits ?? []) {
+    // A window whose reset has passed is not full any more, whatever the last read said.
+    if (l.resetsAt && l.resetsAt <= now) continue;
+    if (l.percent >= 100) return 'cap';
+    if (l.percent >= 80) level = 'near';
+  }
+  return level;
+}
+
+/** Whether an account is near or at a plan limit, for a small amber or red mark. Re-renders only when that changes. */
+export function useLimitLevel(provider: ProviderId | undefined, accountId?: string): LimitLevel {
+  return useStore((s) => {
+    if (!provider) return undefined;
+    const key = accountKey(provider, accountId);
+    // An empty answer (no agent running to ask) does not erase what the bridge remembers.
+    const known = s.limitReports[key]?.limits;
+    return limitLevel(known?.length ? known : s.limits[key]);
+  });
 }
 
 /** How an account reads in one line: its email once signed in, otherwise its label. */

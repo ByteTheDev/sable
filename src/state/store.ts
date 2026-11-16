@@ -12,6 +12,7 @@ import type {
   QueuedMessage,
   ProviderInfo,
   QuestionRequest,
+  LimitsReport,
   RateLimit,
   SessionMeta,
   SessionSnapshot,
@@ -46,7 +47,7 @@ export interface SessionData {
 }
 
 export type RailTab = 'changes' | 'files' | 'browser' | 'terminal' | 'tasks' | 'context';
-export type SettingsSection = 'general' | 'appearance' | 'accounts' | 'models' | 'permissions' | 'mcp' | 'hooks' | 'skills' | 'agents' | 'memory' | 'shortcuts' | 'about';
+export type SettingsSection = 'general' | 'appearance' | 'accounts' | 'usage' | 'models' | 'permissions' | 'mcp' | 'hooks' | 'skills' | 'agents' | 'memory' | 'shortcuts' | 'about';
 
 export interface AuthFlow {
   state: 'started' | 'url' | 'done' | 'error' | 'cancelled';
@@ -110,6 +111,8 @@ export interface Store {
   capsFailed: Record<string, true>;
   /** Plan limits per account, keyed by `accountKey(provider, accountId)`. */
   limits: Partial<Record<string, RateLimit[]>>;
+  /** Limits as remembered by the bridge, with when they were read, history and pace; keyed like `limits`. */
+  limitReports: Partial<Record<string, LimitsReport>>;
   /** Sign-in flows per account, keyed by `accountKey(provider, accountId)`. */
   auth: Partial<Record<string, AuthFlow>>;
   toasts: Toast[];
@@ -167,6 +170,7 @@ export const useStore = create<Store>((set, get) => ({
   providerCaps: {},
   capsFailed: {},
   limits: {},
+  limitReports: {},
   auth: {},
   toasts: [],
   drafts: {},
@@ -432,6 +436,9 @@ export function applyEvent(e: BridgeEvent) {
     case 'settings.updated':
       useStore.setState({ settings: e.settings });
       return;
+    case 'limits.report':
+      useStore.setState((s) => applyLimitReports(s, [e.report]));
+      return;
     case 'limits.updated':
       useStore.setState((s) => ({ limits: { ...s.limits, [accountKey(e.provider, e.accountId)]: e.limits } }));
       return;
@@ -491,6 +498,11 @@ async function hello() {
   });
   const active = useStore.getState().ui.activeSessionId;
   if (active) void loadSession(active);
+  // Limits remembered from earlier runs, so nothing waits for an agent to answer.
+  void bridge
+    .call('usage.limits', {})
+    .then((reports) => useStore.setState((s) => applyLimitReports(s, reports)))
+    .catch(() => {});
 }
 
 export function startBridge() {
@@ -511,6 +523,18 @@ export function startBridge() {
 export async function loadSession(sessionId: string) {
   const snap = await bridge.call('session.snapshot', { sessionId });
   applySnapshot(snap);
+}
+
+/** Stores limit reports, and their limits where the store has none yet or older ones. */
+function applyLimitReports(s: Store, reports: LimitsReport[]): Partial<Store> {
+  const limitReports = { ...s.limitReports };
+  const limits = { ...s.limits };
+  for (const r of reports) {
+    const key = accountKey(r.provider, r.accountId);
+    limitReports[key] = r;
+    if (r.limits.length || r.planLimits === false) limits[key] = r.limits;
+  }
+  return { limitReports, limits };
 }
 
 /** Limits the bridge already knows per account (sent with provider info) fill in what the store lacks. */

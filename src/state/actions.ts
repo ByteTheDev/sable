@@ -344,6 +344,12 @@ export const cancelLogin = (provider: ProviderId, accountId?: string) => bridge.
 export const logout = (provider: ProviderId, accountId?: string) => bridge.call('auth.logout', { provider, accountId }).catch(fail);
 export const refreshProvider = (provider: ProviderId, accountId?: string) => bridge.call('auth.refresh', { provider, accountId }).catch(fail);
 export const refreshLimits = (provider: ProviderId, accountId?: string) => bridge.call('provider.limits', { provider, accountId }).catch(() => []);
+/** Plan limits read now, even when no agent process runs (it may start a short one; no tokens). For a refresh the user asked for. */
+export const readLimitsNow = (provider: ProviderId, accountId?: string) => bridge.call('provider.limits', { provider, accountId, force: true }).catch(() => []);
+/** Local token usage for the last 30 days, at once; `refresh` scans the transcripts for changes (the result comes as `usage.updated`). */
+export const fetchUsage = (refresh = false) => bridge.call('usage.report', { refresh }, 120_000);
+/** Opens the Usage page. */
+export const openUsage = () => openSettings('usage');
 
 /** Adds an account with its own empty profile. With `signIn` its sign-in starts right away. */
 export async function addAccount(provider: ProviderId, opts: { label?: string; signIn?: boolean } = {}): Promise<AccountInfo | null> {

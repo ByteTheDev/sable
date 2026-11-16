@@ -55,6 +55,8 @@ export class App {
   /** Last known sign-in per extra account (the default account asks its provider every time, as before). */
   private infoCache = new Map<string, Promise<ProviderInfo>>();
   private limitsCache = new Map<string, RateLimit[]>();
+  /** Counts `limits.updated` events from each account's provider (so `provider.limits` does not repeat one). */
+  private limitsSeq = new Map<string, number>();
   readonly sessions = new Map<string, SessionRuntime>();
   private listeners = new Set<(e: BridgeEvent) => void>();
   private handlers = new Map<string, Handler<RpcName>>();
@@ -151,9 +153,12 @@ export class App {
     switch (e.type) {
       case 'auth.progress':
         return this.emit({ ...e, accountId });
-      case 'limits.updated':
-        this.limitsCache.set(accountKey(e.provider, accountId), e.limits);
+      case 'limits.updated': {
+        const key = accountKey(e.provider, accountId);
+        this.limitsCache.set(key, e.limits);
+        this.limitsSeq.set(key, (this.limitsSeq.get(key) ?? 0) + 1);
         return this.emit({ ...e, accountId });
+      }
       case 'provider.updated':
         if (accountId !== DEFAULT_ACCOUNT) this.infoCache.set(accountKey(e.provider.id, accountId), Promise.resolve(e.provider));
         void this.emitProvider(e.provider.id).catch(() => {});
@@ -572,10 +577,13 @@ export class App {
 
     this.register('provider.caps', ({ provider, cwd, accountId }) => this.capsFast(provider, cwd, accountId));
     this.register('provider.prewarm', (p) => this.prewarm(p));
-    this.register('provider.limits', async ({ provider, accountId = DEFAULT_ACCOUNT }) => {
-      const limits = await this.provider(provider, accountId).limits();
-      this.limitsCache.set(accountKey(provider, accountId), limits);
-      this.emit({ type: 'limits.updated', provider, accountId, limits });
+    this.register('provider.limits', async ({ provider, accountId = DEFAULT_ACCOUNT, force }) => {
+      const key = accountKey(provider, accountId);
+      const seq = this.limitsSeq.get(key) ?? 0;
+      const limits = await this.provider(provider, accountId).limits(!!force);
+      this.limitsCache.set(key, limits);
+      // A provider that read them announced it already (with what it knows about the read).
+      if ((this.limitsSeq.get(key) ?? 0) === seq) this.emit({ type: 'limits.updated', provider, accountId, limits });
       return limits;
     });
 

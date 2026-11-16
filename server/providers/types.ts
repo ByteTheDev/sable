@@ -70,7 +70,11 @@ export interface Provider {
   logout(): Promise<void>;
   /** Capabilities before a session exists (used by the home composer). */
   caps(cwd?: string): Promise<Capabilities>;
-  limits(): Promise<RateLimit[]>;
+  /**
+   * Plan limits. Emits `limits.updated` with `meta` when it actually read them; returns the last
+   * known ones otherwise. `force`: the user asked (the agent may start a short process to read them).
+   */
+  limits(force?: boolean): Promise<RateLimit[]>;
   history(cwd?: string, limit?: number): Promise<HistoryEntry[]>;
   /**
    * Binds a runtime to the provider. When `rt.meta.providerSessionId` is set the

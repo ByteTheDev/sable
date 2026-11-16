@@ -7,6 +7,7 @@ import type {
   ModeInfo,
   ModelInfo,
   McpServerInfo,
+  LimitsMeta,
   RateLimit,
   SkillInfo,
   TimelineItem,
@@ -18,6 +19,7 @@ import type {
   UserItem,
 } from '../../shared/protocol';
 import { makeFileDiff, parseUnifiedDiff } from '../../shared/diff';
+import { WIDGET_TOOL, describeWidget, isWidgetTool } from './widget-tool';
 import type {
   AskForApproval,
   CommandAction,
@@ -175,10 +177,27 @@ export function mapLimits(snapshots: RateLimitSnapshot[]): RateLimit[] {
         label: prefix + windowLabel(w.windowDurationMins, slot === 'primary' ? 'Usage limit' : 'Secondary limit'),
         percent: Math.max(0, Math.min(100, Math.round(w.usedPercent ?? 0))),
         resetsAt: w.resetsAt ? (w.resetsAt < 1e12 ? w.resetsAt * 1000 : w.resetsAt) : undefined,
+        ...(w.windowDurationMins ? { windowMins: w.windowDurationMins } : {}),
       });
     }
   }
   return out;
+}
+
+/** Credits and whether plan limits apply, from the same snapshots. */
+export function limitsMeta(snapshots: RateLimitSnapshot[]): LimitsMeta {
+  const meta: LimitsMeta = {};
+  const credits = snapshots.map((s) => s.credits).find((c) => c && (c.hasCredits || c.unlimited));
+  if (credits) meta.credits = { ...(credits.balance ? { balance: credits.balance } : {}), ...(credits.unlimited ? { unlimited: true } : {}) };
+  if (snapshots.some((s) => s.primary || s.secondary)) meta.planLimits = true;
+  return meta;
+}
+
+/** A Codex window's name from its length ("5-hour limit", "Weekly limit"), as `mapLimits` names it. */
+export function codexWindowLabel(id: string, mins: number | undefined): string {
+  const [key, slot] = id.split(':');
+  const prefix = key && key !== 'codex' ? `${key} · ` : '';
+  return prefix + windowLabel(mins, slot === 'secondary' ? 'Secondary limit' : 'Usage limit');
 }
 
 export function firstLine(text: string, max = 80): string {
@@ -474,6 +493,16 @@ export function draftItem(item: ThreadItem, opts: { streaming?: boolean } = {}):
     case 'dynamicToolCall': {
       const status = item.success === false ? 'error' : toolStatus(item.status);
       const text = item.contentItems?.map((c) => c.text ?? `[${c.type}]`).join('\n');
+      // Generative UI: the call is the widget (its arguments are complete when the item starts).
+      if (isWidgetTool(item.tool)) {
+        return tool({
+          name: WIDGET_TOOL,
+          ...describeWidget(item.arguments),
+          status,
+          input: item.arguments,
+          ...(status !== 'running' ? { result: { text, isError: status === 'error' || undefined }, endedAt: done(status) } : {}),
+        });
+      }
       return tool({
         name: item.namespace ? `${item.namespace}.${item.tool}` : item.tool,
         kind: 'other',

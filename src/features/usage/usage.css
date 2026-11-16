@@ -1,0 +1,775 @@
+/* Limits and usage: Settings > Usage, the compact glance for popovers, the side panel's limits. */
+
+/* ───────────── limits ───────────── */
+
+.ul-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ul-account {
+  padding: 13px 16px 16px;
+}
+
+.ul-account-head,
+.ul-glance-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 20px;
+}
+
+.ul-account-head {
+  margin-bottom: 14px;
+}
+
+.ul-account-head:has(+ .ul-note) {
+  margin-bottom: 8px;
+}
+
+.ul-account-name {
+  min-width: 0;
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.ul-account-plan {
+  flex-shrink: 0;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.ul-asof {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: var(--t-small);
+  color: var(--text-3);
+  border-radius: 4px;
+  transition: opacity var(--d-2) var(--ease);
+}
+
+.ul-asof.is-pending {
+  opacity: 0.5;
+}
+
+.ul-asof:focus-visible,
+.ul-reset:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus);
+}
+
+.ul-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.ul-row {
+  min-width: 0;
+}
+
+.ul-top {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ul-label {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 3px;
+  font-size: var(--t-ui);
+  color: var(--text-2);
+}
+
+.ul-pct {
+  flex-shrink: 0;
+  min-width: 3ch;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.015em;
+  text-align: right;
+  color: var(--text);
+}
+
+.ul-pct-sign {
+  margin-left: 1px;
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  letter-spacing: 0;
+  color: var(--text-3);
+}
+
+.ul-row[data-past] .ul-pct {
+  color: var(--text-3);
+}
+
+.ul-meter {
+  margin-top: 9px;
+}
+
+.ul-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 8px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.ul-reset {
+  border-radius: 4px;
+  cursor: default;
+}
+
+.ul-pace {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ul-pace[data-warn] {
+  color: var(--text-2);
+}
+
+.ul-pace-mark {
+  width: 5px;
+  height: 5px;
+  border-radius: 99px;
+  background-color: var(--amber);
+}
+
+/* Compact rows: popovers and the side panel. */
+.ul-row[data-compact] .ul-top {
+  align-items: baseline;
+}
+
+.ul-row[data-compact] .ul-label {
+  padding-bottom: 0;
+  font-size: var(--t-small);
+}
+
+.ul-row[data-compact] .ul-pct {
+  font-size: var(--t-ui);
+  font-weight: var(--w-semi);
+  letter-spacing: 0;
+}
+
+.ul-row[data-compact] .ul-pct-sign {
+  font-size: var(--t-small);
+}
+
+.ul-row[data-compact] .ul-meter {
+  margin-top: 7px;
+}
+
+.ul-row[data-compact] .ul-meta {
+  flex-wrap: nowrap;
+  gap: 0;
+  margin-top: 6px;
+  font-size: var(--t-micro);
+  white-space: nowrap;
+}
+
+/* Compact: one line, "Resets in 2h 13m · 66% by then". */
+.ul-pace[data-short]:not(:first-child)::before {
+  content: '·';
+  margin: 0 6px;
+  color: var(--text-4);
+}
+
+.ul-pace[data-short] {
+  gap: 0;
+}
+
+.ul-pace[data-short] .ul-pace-mark {
+  margin-right: 6px;
+}
+
+.ul-rows:has(> .ul-row[data-compact]) {
+  gap: 14px;
+}
+
+/* How the window filled since it began: a quiet stepped area. */
+.ul-spark {
+  flex-shrink: 0;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.ul-spark-track {
+  fill: var(--line-2);
+}
+
+.ul-spark-area {
+  fill: rgb(242 241 238 / 0.08);
+}
+
+.ul-spark-line {
+  fill: none;
+  stroke: rgb(242 241 238 / 0.5);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.ul-row[data-level='amber'] .ul-spark-line {
+  stroke: var(--amber);
+}
+
+.ul-row[data-level='red'] .ul-spark-line {
+  stroke: var(--red);
+}
+
+.ul-extra-val {
+  flex-shrink: 0;
+  font-size: var(--t-ui);
+  color: var(--text-2);
+}
+
+.ul-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+  margin: 0;
+  font-size: var(--t-ui);
+  color: var(--text-3);
+}
+
+.ul-note-btn {
+  margin-left: auto;
+}
+
+.ul-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 2px 0 4px;
+}
+
+.ul-skel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ul-skel-row .skel {
+  display: block;
+}
+
+/* The refresh icon turns once per click. */
+.ul-refresh[data-turning] svg {
+  animation: ul-turn 640ms var(--ease-out);
+}
+
+@keyframes ul-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ul-refresh[data-turning] svg {
+    animation-duration: 1ms;
+  }
+}
+
+/* A tiny mark next to an account near (amber) or at (red) a plan limit. */
+.limit-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background-color: var(--amber);
+}
+
+.limit-dot[data-level='red'] {
+  background-color: var(--red);
+}
+
+/* The side panel's Plan limits header: both buttons at the end. */
+.ul-rail-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+/* ───────────── glance (popover) ───────────── */
+
+.ul-glance {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-width: 248px;
+  padding: 10px 10px 4px;
+}
+
+.ul-glance > .ul-rows,
+.ul-glance > .ul-note,
+.ul-glance > .ul-skel {
+  padding: 0 2px;
+}
+
+.ul-glance-head {
+  padding: 0 2px;
+}
+
+.ul-glance-open {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 30px;
+  margin: 0 -6px;
+  padding: 0 8px;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 var(--r-sm) var(--r-sm);
+  font-size: var(--t-ui);
+  color: var(--text-2);
+  transition: background-color var(--d-1) var(--ease), color var(--d-1) var(--ease);
+}
+
+.ul-glance-open:hover {
+  background-color: var(--fill-2);
+  color: var(--text);
+}
+
+.ul-glance-open:active {
+  background-color: var(--fill-3);
+}
+
+.ul-glance-open:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+.ul-glance-caret {
+  margin-left: auto;
+  color: var(--text-4);
+}
+
+/* ───────────── activity ───────────── */
+
+.ua-card {
+  padding: 16px 16px 14px;
+}
+
+.ua-figures {
+  display: flex;
+  align-items: flex-end;
+  gap: 32px;
+  min-width: 0;
+}
+
+.ua-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ua-figure-value {
+  white-space: nowrap;
+  font-size: var(--t-h2);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.ua-figure-aside {
+  margin-left: 10px;
+  white-space: nowrap;
+  font-size: var(--t-small);
+  font-weight: var(--w-regular);
+  letter-spacing: 0;
+  color: var(--text-3);
+}
+
+.ua-figure[data-quiet] .ua-figure-value {
+  color: var(--text-2);
+}
+
+.ua-figure-label {
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.ua-grouping {
+  margin-left: auto;
+  align-self: flex-start;
+}
+
+.ua-scanning {
+  font-size: var(--t-small);
+}
+
+.ua-chart {
+  --ua-tone-0: rgb(242 241 238 / 0.86);
+  --ua-tone-other: rgb(255 255 255 / 0.13);
+  margin-top: 20px;
+}
+
+.ua-plot {
+  position: relative;
+  border-radius: var(--r-sm);
+  outline: none;
+}
+
+.ua-plot:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 6px;
+}
+
+.ua-plot svg {
+  display: block;
+  overflow: visible;
+}
+
+.ua-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.ua-base {
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+
+.ua-axis {
+  fill: var(--text-4);
+  font-size: var(--t-micro);
+  font-family: var(--font-sans);
+}
+
+.ua-bar {
+  opacity: 0.5;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.ua-bar[data-on] {
+  opacity: 1;
+}
+
+.ua-bar-empty {
+  fill: var(--fill-2);
+}
+
+.ua-dither-ground {
+  fill: rgb(242 241 238 / 0.1);
+}
+
+.ua-dither-dot {
+  fill: rgb(242 241 238 / 0.8);
+}
+
+.ua-xlabels {
+  position: relative;
+  height: 16px;
+  margin-top: 7px;
+}
+
+.ua-xlabel {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: var(--t-micro);
+  color: var(--text-4);
+  white-space: nowrap;
+  transition: color var(--d-1) var(--ease);
+}
+
+.ua-xlabel[data-on] {
+  color: var(--text-2);
+}
+
+.ua-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.ua-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 200px;
+}
+
+.ua-swatch {
+  flex-shrink: 0;
+  display: block;
+}
+
+/* Hover / keyboard read-out above the active bar. */
+.ua-tip {
+  position: absolute;
+  z-index: 3;
+  min-width: 176px;
+  max-width: 250px;
+  padding: 9px 12px 10px;
+  border-radius: var(--r-md);
+  pointer-events: none;
+  animation: fade-in var(--d-2) var(--ease-out);
+}
+
+.ua-tip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.ua-tip-today {
+  margin-left: auto;
+  color: var(--text-2);
+}
+
+.ua-tip-total {
+  margin-top: 3px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.ua-tip-unit {
+  font-size: var(--t-small);
+  font-weight: var(--w-regular);
+  letter-spacing: 0;
+  color: var(--text-3);
+}
+
+.ua-tip-parts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ua-tip-parts li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: var(--t-small);
+  color: var(--text-2);
+}
+
+.ua-tip-parts li > .num {
+  margin-left: auto;
+  padding-left: 10px;
+  color: var(--text);
+}
+
+.ua-tip-split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+  font-size: var(--t-micro);
+  color: var(--text-3);
+}
+
+/* Ranked lists. */
+.ua-lists {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.ua-list-title {
+  margin: 0 0 8px;
+  padding: 0 4px;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+}
+
+.ua-list-card {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+
+.ua-rank {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(64px, 26%) 56px 44px;
+  align-items: center;
+  gap: 14px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  text-align: left;
+}
+
+.ua-rank-label {
+  display: flex;
+  min-width: 0;
+  font-size: var(--t-ui);
+  color: var(--text);
+}
+
+.ua-rank-label .path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ua-rank-track {
+  height: 3px;
+  border-radius: 99px;
+  background-color: var(--fill-2);
+  overflow: hidden;
+}
+
+.ua-rank-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background-color: rgb(242 241 238 / 0.62);
+  transform-origin: left center;
+  transition: transform var(--d-4) var(--ease-out);
+}
+
+.ua-rank-value {
+  font-size: var(--t-ui);
+  color: var(--text-2);
+  text-align: right;
+}
+
+.ua-rank-share {
+  font-size: var(--t-small);
+  color: var(--text-3);
+  text-align: right;
+}
+
+.ua-session {
+  grid-template-columns: 14px minmax(0, 1fr) minmax(56px, 20%) 56px 44px;
+  min-height: 44px;
+  width: 100%;
+}
+
+.ua-session.is-link {
+  cursor: pointer;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.ua-session.is-link:hover {
+  background-color: var(--fill-2);
+}
+
+.ua-session.is-link:active {
+  background-color: var(--fill-3);
+}
+
+.ua-session.is-link:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+.ua-session-mark {
+  color: var(--text-3);
+}
+
+.ua-session-text {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ua-session-path {
+  font-size: var(--t-small);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ua-more {
+  align-self: flex-start;
+  height: 28px;
+  margin: 2px 0 2px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  font-size: var(--t-small);
+  color: var(--text-3);
+  transition: background-color var(--d-1) var(--ease), color var(--d-1) var(--ease);
+}
+
+.ua-more:hover {
+  background-color: var(--fill-2);
+  color: var(--text-2);
+}
+
+.ua-more:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus);
+}
+
+.ul-empty {
+  margin: 0;
+  padding: 18px 16px;
+  font-size: var(--t-ui);
+  color: var(--text-3);
+}
+
+.ua-skel-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 120px;
+  margin-top: 22px;
+}
+
+.ua-skel-bars .skel {
+  flex: 1;
+}
+
+.ua-skel .ua-figure {
+  gap: 8px;
+}
+
+.ua-skel .skel {
+  display: block;
+}
+
+@container (max-width: 520px) {
+  .ua-figures {
+    flex-wrap: wrap;
+    gap: 18px 24px;
+  }
+  .ua-grouping {
+    margin-left: 0;
+    width: 100%;
+  }
+  .ua-rank {
+    grid-template-columns: minmax(0, 1fr) 56px 40px;
+  }
+  .ua-rank-track {
+    display: none;
+  }
+  .ua-session {
+    grid-template-columns: 14px minmax(0, 1fr) 56px 40px;
+  }
+}

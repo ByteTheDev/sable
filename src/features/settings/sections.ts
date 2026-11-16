@@ -30,6 +30,12 @@ export const SECTIONS: SectionMeta[] = [
     icon: 'user',
     keywords: 'sign in sign out login logout claude code codex add account remove profile plan limits usage email',
   },
+  {
+    id: 'usage',
+    label: 'Usage',
+    icon: 'gauge',
+    keywords: 'usage limits plan rate limit five hour 5-hour weekly reset pace tokens activity cost models projects sessions quota',
+  },
   { id: 'models', label: 'Models', icon: 'brain', keywords: 'model effort default new sessions opus sonnet haiku gpt reasoning' },
   { id: 'permissions', label: 'Permissions', icon: 'shield', keywords: 'permission mode rules allow ask deny approval sandbox bypass plan' },
   {

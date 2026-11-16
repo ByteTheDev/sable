@@ -301,6 +301,8 @@ export type ToolKind =
   | 'question'
   | 'plan'
   | 'skill'
+  /** Generative UI: the agent's `show_widget` call, shown as the widget itself (input: { title, code }). */
+  | 'widget'
   | 'other';
 
 export type ToolStatus = 'pending' | 'running' | 'awaiting' | 'done' | 'error' | 'denied' | 'cancelled';
@@ -499,6 +501,88 @@ export interface RateLimit {
   /** 0..100 */
   percent: number;
   resetsAt?: number;
+  /** Length of the window in minutes, when known (300 for five hours, 10080 for a week). */
+  windowMins?: number;
+}
+
+/** What else an agent says about an account's limits when it reads them. */
+export interface LimitsMeta {
+  /** False when plan limits do not apply to this account (API key, cloud provider). */
+  planLimits?: boolean;
+  /** Paid usage beyond the plan (Claude extra usage), when the agent reports it. Amounts in minor units of `currency`. */
+  extra?: { enabled: boolean; percent?: number; used?: number; limit?: number; currency?: string };
+  /** Credits the agent reports (Codex). */
+  credits?: { balance?: string; unlimited?: boolean };
+}
+
+/** How fast a limit window fills: from the recent samples, or the average since the window began. */
+export interface LimitPace {
+  /** Percent of the window per hour. */
+  perHour: number;
+  /** When the window is used up at this rate; absent when it lasts until the reset. */
+  fullAt?: number;
+  /** Where the window ends up at the reset at this rate (capped at 100), when the reset is known. */
+  atReset?: number;
+  basis: 'recent' | 'window';
+}
+
+/** One account's plan limits as last read, remembered across restarts, with their recent history. */
+export interface LimitsReport extends LimitsMeta {
+  provider: ProviderId;
+  accountId: string;
+  limits: RateLimit[];
+  /** When the limits were read from the agent (ms); absent when they never were. */
+  readAt?: number;
+  /** Samples per window id, oldest first, as [time ms, percent]: the current window and a little before. */
+  history: Record<string, [number, number][]>;
+  /** Per window id, when there is enough to tell. */
+  pace: Record<string, LimitPace>;
+}
+
+/** Token counts. `input` excludes cache reads and writes. */
+export interface UsageTokens {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** One local day of one session on one model: the unit every usage chart and list sums. */
+export interface UsageRow extends UsageTokens {
+  /** Local date, YYYY-MM-DD. */
+  day: string;
+  /** Key into `UsageReport.sessions`. */
+  session: string;
+  model: string;
+  /** Model replies counted. */
+  replies: number;
+  /** Money the agent reported for these turns (USD), only where it reported any. */
+  costUsd?: number;
+}
+
+export interface UsageSession {
+  provider: ProviderId;
+  accountId: string;
+  /** The working folder. */
+  project: string;
+  title?: string;
+  /** The Sable session, when it is one. */
+  sableId?: string;
+  providerSessionId?: string;
+  lastAt: number;
+}
+
+/** Local token usage: the agents' own transcripts plus Sable's sessions, read-only. */
+export interface UsageReport {
+  /** Days covered, ending today. */
+  days: number;
+  rows: UsageRow[];
+  sessions: Record<string, UsageSession>;
+  /** When the last scan finished; absent before the first. */
+  scannedAt?: number;
+  scanning: boolean;
+  /** Transcript files known. */
+  files: number;
 }
 
 export interface ContextBreakdown {
@@ -625,6 +709,11 @@ export interface AppSettings {
    * Appended to the agent's own system prompt; applies when an agent process starts.
    */
   conciseReplies: boolean;
+  /**
+   * Generative UI: agents get a `show_widget` tool and answers render ```widget and ```mermaid
+   * blocks. Absent means on; applies to the tool when an agent process starts.
+   */
+  generativeUi?: boolean;
 }
 
 /** One permission rule set from an agent's settings file (read-only view). */
@@ -701,7 +790,11 @@ export type BridgeEvent =
   | { type: 'todos.updated'; sessionId: string; todos: Todo[] }
   | { type: 'suggestion'; sessionId: string; text: string }
   | { type: 'queue.updated'; sessionId: string; queue: QueuedMessage[] }
-  | { type: 'limits.updated'; provider: ProviderId; accountId?: string; limits: RateLimit[] }
+  | { type: 'limits.updated'; provider: ProviderId; accountId?: string; limits: RateLimit[]; meta?: LimitsMeta }
+  /** An account's limits with their history and pace (after every read, and for cached ones at start-up). */
+  | { type: 'limits.report'; report: LimitsReport }
+  /** Local usage changed (a scan finished). */
+  | { type: 'usage.updated'; report: UsageReport }
   /** Fresh capabilities for the home composer (after a cached answer was served first). */
   | { type: 'caps.updated'; provider: ProviderId; accountId?: string; cwd?: string; caps: Capabilities }
   | { type: 'term.data'; termId: string; data: string; stream: 'out' | 'err' }
@@ -750,7 +843,8 @@ export interface RpcMethods {
 
   /** Models, modes, commands… for a provider before any session exists. */
   'provider.caps': { params: { provider: ProviderId; cwd?: string; accountId?: string }; result: Capabilities };
-  'provider.limits': { params: { provider: ProviderId; accountId?: string }; result: RateLimit[] };
+  /** `force`: the user asked; may start a short agent process when none is running (no tokens). */
+  'provider.limits': { params: { provider: ProviderId; accountId?: string; force?: boolean }; result: RateLimit[] };
   /**
    * Starts the agent process for the session about to be created from the home composer (no
    * prompt is sent). `session.create` with the same choice adopts it. At most one is kept.
@@ -841,6 +935,11 @@ export interface RpcMethods {
   'backdrop.get': { params: { id: string }; result: { id: string; type: string; data: string } };
   /** Deletes the image; a backdrop that showed it moves to another image, or to no image. */
   'backdrop.remove': { params: { id: string }; result: { ok: boolean } };
+
+  /** Every account's last known limits with history and pace (from disk at start-up). */
+  'usage.limits': { params: Record<string, never>; result: LimitsReport[] };
+  /** Local token usage for the last 30 days. Answers at once with what is known; `refresh` scans for changes (pushed as `usage.updated`). */
+  'usage.report': { params: { refresh?: boolean }; result: UsageReport };
 }
 
 export type RpcName = keyof RpcMethods;

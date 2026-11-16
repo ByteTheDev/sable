@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import type { ContextBreakdown, RateLimit } from '@shared/protocol';
+import type { ContextBreakdown, ProviderId, RateLimit } from '@shared/protocol';
 import { Icon } from '@/icons';
 import { bridge } from '@/lib/bridge';
-import { formatCost, formatTokens, resetIn } from '@/lib/format';
+import { formatCost, formatTokens } from '@/lib/format';
 import { modelNameById } from '@/lib/models';
-import { useNow } from '@/lib/view-hooks';
-import { refreshLimits, sendMessage } from '@/state/actions';
+import { useNow } from '@/lib/useNow';
+import { WindowRow } from '@/features/usage';
+import { useLimitsReport } from '@/state/hooks';
+import { openUsage, readLimitsNow, refreshLimits, sendMessage } from '@/state/actions';
 import { accountKey, useStore } from '@/state/store';
 import { IconButton } from '@/ui';
 
@@ -50,8 +52,8 @@ export function ContextTab({ sessionId, active }: { sessionId: string; active: b
   }, [active, busy, usedTokens, sessionId]);
 
   useEffect(() => {
-    if (active && provider) void refreshLimits(provider);
-  }, [active, provider]);
+    if (active && provider) void refreshLimits(provider, session?.accountId);
+  }, [active, provider, session?.accountId]);
 
   const usage = session?.usage;
   const view = useMemo(() => {
@@ -173,7 +175,7 @@ export function ContextTab({ sessionId, active }: { sessionId: string; active: b
           </div>
         </section>
 
-        {provider && <Limits limits={limits} onRefresh={() => void refreshLimits(provider)} />}
+        {provider && <Limits provider={provider} accountId={session.accountId} limits={limits} />}
       </div>
     </div>
     </div>
@@ -243,33 +245,27 @@ function Ring({ segments, max, buffer }: { segments: Segment[]; max: number; buf
   );
 }
 
-function Limits({ limits, onRefresh }: { limits: RateLimit[]; onRefresh: () => void }) {
-  const now = useNow(limits.length > 0, 30_000);
-  if (!limits.length) return null;
+/** The session's account plan limits, as on the Usage page (compact), with the pace when known. */
+function Limits({ provider, accountId, limits }: { provider: ProviderId; accountId?: string; limits: RateLimit[] }) {
+  const report = useLimitsReport(provider, accountId);
+  const now = useNow();
+  const shown = report?.limits.length ? report.limits : limits;
+  if (!shown.length) return null;
   return (
     <section aria-label="Plan limits">
       <div className="rail-h">
         <span>Plan limits</span>
-        <IconButton icon="refresh" label="Refresh limits" size={13} onClick={onRefresh} className="rail-h-btn" />
+        <span className="ul-rail-actions">
+          <IconButton icon="gauge" label="Usage" size={13} onClick={openUsage} className="rail-h-btn" />
+          <IconButton icon="refresh" label="Read limits now" size={13} onClick={() => void readLimitsNow(provider, accountId)} className="rail-h-btn" />
+        </span>
       </div>
       <div className="lm-list card">
-        {limits.map((l) => {
-          const p = Math.max(0, Math.min(100, l.percent));
-          const level = p > 95 ? 'red' : p > 80 ? 'amber' : undefined;
-          return (
-            <div key={l.id} className="lm-row" data-level={level}>
-              <div className="lm-top">
-                <span className="lm-label truncate">{l.label}</span>
-                <span className="lm-pct num">{Math.round(p)}%</span>
-              </div>
-              <div className="lm-track meter" data-level={level} role="progressbar" aria-label={l.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(p)}>
-                <span className="meter-fill" style={{ '--p': Math.max(p, 1.5) / 100 } as CSSProperties} />
-              </div>
-
-              {l.resetsAt && <div className="lm-reset num">Resets in {resetIn(l.resetsAt, now)}</div>}
-            </div>
-          );
-        })}
+        <div className="ul-rows">
+          {shown.map((l) => (
+            <WindowRow key={l.id} limit={l} samples={report?.history[l.id]} pace={report?.pace[l.id]} now={now} compact />
+          ))}
+        </div>
       </div>
     </section>
   );

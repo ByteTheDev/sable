@@ -7,7 +7,7 @@
  *   speed: constructor option or SABLE_DEMO_SPEED (1 = realistic, 0 = no delays).
  */
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type {
   SessionOptions,
@@ -37,6 +37,7 @@ import {
   contextBreakdown,
   pastSessions,
   rateLimits,
+  type DemoLimitProfile,
 } from './demo-catalog';
 import { pickScenario, SCENARIOS, deniedReply } from './demo-scenarios';
 import { Aborted, BASE_CONTEXT, CONTEXT_WINDOW, Denied, Halt, Script } from './demo-script';
@@ -53,20 +54,17 @@ function resolveSpeed(opt?: number): number {
   return 1;
 }
 
-/** Made-up people for extra demo accounts, picked by account id. */
-const DEMO_PEOPLE = [
-  { email: 'ada@lovelace.dev', plan: 'Max' },
-  { email: 'grace@hopper.dev', plan: 'Pro' },
-  { email: 'alan@turing.dev', plan: 'Team' },
-  { email: 'margaret@hamilton.dev', plan: 'Max' },
-  { email: 'linus@kernel.dev', plan: 'Pro' },
+/**
+ * Made-up people for extra demo accounts, in the order accounts sign in, each with plan limits
+ * in a different state (near a cap, at a cap, an API key without plan limits...).
+ */
+const DEMO_PEOPLE: { email: string; plan: string; method?: string; limits: DemoLimitProfile }[] = [
+  { email: 'margaret@hamilton.dev', plan: 'Max', limits: 'light' },
+  { email: 'ada@lovelace.dev', plan: 'Max', limits: 'near' },
+  { email: 'grace@hopper.dev', plan: 'Pro', limits: 'cap' },
+  { email: 'alan@turing.dev', plan: 'API key', method: 'apiKey', limits: 'none' },
+  { email: 'linus@kernel.dev', plan: 'Pro', limits: 'calm' },
 ];
-
-function seedOf(id: string) {
-  let h = 7;
-  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return h;
-}
 
 export class DemoProvider implements Provider {
   readonly id = 'demo' as const;
@@ -85,14 +83,24 @@ export class DemoProvider implements Provider {
   }
 
   private auth(): AuthState {
-    if (!this.authFile) return { loggedIn: true, method: 'local', email: 'demo@sable.local', plan: 'Demo' };
+    return this.person()?.auth ?? { loggedIn: false };
+  }
+
+  /** Who this account is signed in as, and how its plan limits stand; undefined when signed out. */
+  private person(): { auth: AuthState; limits: DemoLimitProfile } | undefined {
+    if (!this.authFile) return { auth: { loggedIn: true, method: 'local', email: 'demo@sable.local', plan: 'Demo' }, limits: 'calm' };
     try {
-      if (!existsSync(this.authFile)) return { loggedIn: false };
-      const a = JSON.parse(readFileSync(this.authFile, 'utf8')) as { email: string; plan: string };
-      return { loggedIn: true, method: 'local', email: a.email, plan: a.plan };
+      if (!existsSync(this.authFile)) return undefined;
+      const a = JSON.parse(readFileSync(this.authFile, 'utf8')) as { email: string; plan: string; method?: string; limits?: DemoLimitProfile };
+      return { auth: { loggedIn: true, method: a.method ?? 'local', email: a.email, plan: a.plan }, limits: a.limits ?? 'calm' };
     } catch {
-      return { loggedIn: false };
+      return undefined;
     }
+  }
+
+  /** The plan-limit state of this account (for the made-up usage too); undefined when signed out. */
+  limitProfile(): DemoLimitProfile | undefined {
+    return this.person()?.limits;
   }
 
   async info(): Promise<ProviderInfo> {
@@ -111,7 +119,15 @@ export class DemoProvider implements Provider {
         resolve();
       };
       const timer = setTimeout(() => {
-        const person = DEMO_PEOPLE[seedOf(this.ctx.account!.id) % DEMO_PEOPLE.length];
+        // The next person in line: as many as other demo accounts are signed in already.
+        let signedIn = 0;
+        try {
+          const root = path.dirname(path.dirname(file));
+          signedIn = readdirSync(root).filter((d) => existsSync(path.join(root, d, 'demo-auth.json'))).length;
+        } catch {
+          /* the first one */
+        }
+        const person = DEMO_PEOPLE[signedIn % DEMO_PEOPLE.length];
         try {
           writeFileSync(file, JSON.stringify(person));
         } catch {
@@ -139,11 +155,11 @@ export class DemoProvider implements Provider {
   }
 
   async limits(): Promise<RateLimit[]> {
-    if (!this.authFile) return rateLimits();
-    if (!this.auth().loggedIn) return [];
-    // Each extra account has its own, steady usage.
-    const seed = seedOf(this.ctx.account!.id);
-    return rateLimits().map((l, i) => ({ ...l, percent: 6 + ((seed >>> (i * 5)) % 88) }));
+    const profile = this.limitProfile();
+    if (!profile) return [];
+    const limits = rateLimits(Date.now(), profile);
+    this.ctx.emit({ type: 'limits.updated', provider: 'demo', limits, meta: { planLimits: profile !== 'none' } });
+    return limits;
   }
 
   async history(cwd?: string, limit?: number): Promise<HistoryEntry[]> {

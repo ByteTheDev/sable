@@ -9,6 +9,8 @@ import type {
   ModelInfo,
   RateLimit,
   SkillInfo,
+  UsageRow,
+  UsageSession,
 } from '../../shared/protocol';
 import { BASE_CONTEXT, CONTEXT_WINDOW, type Pricing } from './demo-script';
 
@@ -188,14 +190,138 @@ export function capabilities(): Capabilities {
   };
 }
 
-export function rateLimits(now = Date.now()): RateLimit[] {
-  const nextMonday = new Date(now);
-  nextMonday.setHours(9, 0, 0, 0);
-  nextMonday.setDate(nextMonday.getDate() + (((8 - nextMonday.getDay()) % 7) || 7));
-  return [
-    { id: 'session', label: '5-hour session', percent: 34, resetsAt: now + (2 * 60 + 13) * 60_000 },
-    { id: 'weekly', label: 'Weekly · all models', percent: 61, resetsAt: nextMonday.getTime() },
-  ];
+/**
+ * How a demo account's plan limits stand, so the Usage view can be built against every state:
+ * calm, near a cap, at a cap (with its reset), light, and an API-key account without plan limits.
+ */
+export type DemoLimitProfile = 'calm' | 'near' | 'cap' | 'light' | 'none';
+
+/** The next Monday 09:00 still ahead (today's, on a Monday morning). */
+function nextMonday(now: number) {
+  const d = new Date(now);
+  d.setHours(9, 0, 0, 0);
+  d.setDate(d.getDate() + ((8 - d.getDay()) % 7));
+  if (d.getTime() <= now) d.setDate(d.getDate() + 7);
+  return d.getTime();
+}
+
+const MIN = 60_000;
+
+export function rateLimits(now = Date.now(), profile: DemoLimitProfile = 'calm'): RateLimit[] {
+  const week = nextMonday(now);
+  const five = (percent: number, left: number): RateLimit => ({ id: 'five_hour', label: '5-hour limit', percent, resetsAt: now + left * MIN, windowMins: 300 });
+  const weekly = (percent: number, id = 'seven_day', label = 'Weekly · all models'): RateLimit => ({ id, label, percent, resetsAt: week, windowMins: 10_080 });
+  switch (profile) {
+    case 'none':
+      return [];
+    case 'near':
+      return [five(86, 82), weekly(74), weekly(58, 'seven_day_opus', 'Weekly · Opus')];
+    case 'cap':
+      return [five(100, 38), weekly(92)];
+    case 'light':
+      return [five(9, 204), weekly(22)];
+    default:
+      return [five(34, 133), weekly(61)];
+  }
+}
+
+/**
+ * A made-up history for a demo window: how it filled from its start until now, ending at its
+ * percent. Quiet stretches and bursts, never going down; a full window reached 100 a while ago.
+ */
+export function demoLimitSamples(limit: RateLimit, now = Date.now()): [number, number][] {
+  if (!limit.resetsAt || !limit.windowMins) return [];
+  const start = limit.resetsAt - limit.windowMins * MIN;
+  const step = limit.windowMins > 1440 ? 90 * MIN : 6 * MIN;
+  let seed = 0;
+  for (const c of limit.id + limit.percent) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
+  const rand = () => (seed = (seed * 1_103_515_245 + 12_345) >>> 0) / 2 ** 32;
+  // Work comes in bursts: some steps add a lot, some nothing; later steps weigh more (the pace picks up).
+  const weights: number[] = [];
+  for (let t = start; t <= now; t += step) {
+    const late = (t - start) / Math.max(1, now - start);
+    weights.push(rand() < 0.3 ? 0 : (0.4 + rand()) * (0.6 + late * 1.2));
+  }
+  // A full window got there a while before now and stopped climbing.
+  const reachAt = limit.percent >= 100 ? Math.floor(weights.length * 0.82) : weights.length;
+  const sum = weights.slice(0, reachAt).reduce((a, b) => a + b, 0) || 1;
+  const out: [number, number][] = [];
+  let acc = 0;
+  for (let i = 0; i < weights.length; i++) {
+    if (i < reachAt) acc += weights[i];
+    out.push([start + i * step, Math.min(limit.percent, Math.round((acc / sum) * limit.percent))]);
+  }
+  if (out.length) out[out.length - 1] = [out[out.length - 1][0], limit.percent];
+  return out;
+}
+
+const USAGE_PROJECTS = ['relay-api', 'atlas-web', 'ledger-core', 'infra'];
+const USAGE_TITLES = [
+  'Refactor the session module',
+  'Rate limiting for the login route',
+  'Fix flaky checkout test',
+  'Move billing to the new ledger',
+  'Plan the search rewrite',
+  'Why does /admin/sessions over-count?',
+  'Upgrade to the new router',
+  'Add audit log export',
+  'Profile the slow dashboard query',
+  'Write the migration for invoices',
+  'Review the auth middleware',
+  'Clean up feature flags',
+];
+
+/**
+ * Thirty days of made-up local usage for one demo account, deterministic per account, so the
+ * Usage view has every grouping to show: models, projects, heavy sessions, quiet days.
+ */
+export function demoUsage(accountId: string, profile: DemoLimitProfile, now = Date.now()): { rows: UsageRow[]; sessions: Record<string, UsageSession> } {
+  let seed = 17;
+  for (const c of accountId) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
+  const rand = () => (seed = (seed * 1_103_515_245 + 12_345) >>> 0) / 2 ** 32;
+  const heavy = profile === 'cap' ? 2.2 : profile === 'near' ? 1.6 : profile === 'light' ? 0.45 : 1;
+  const models = ['demo-large', 'demo-large', 'demo-fast', 'demo-deep', 'demo-mini'];
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const rows: UsageRow[] = [];
+  const sessions: Record<string, UsageSession> = {};
+  let n = 0;
+  for (let d = 29; d >= 0; d--) {
+    const t = new Date(now - d * 86_400_000);
+    const weekend = t.getDay() === 0 || t.getDay() === 6;
+    const day = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+    const count = Math.round((weekend ? rand() * 1.3 : 1 + rand() * 3.2) * Math.min(1.6, heavy));
+    for (let i = 0; i < count; i++) {
+      const id = `demo-usage-${accountId}-${n++}`;
+      const key = `demo:${id}`;
+      const project = USAGE_PROJECTS[Math.floor(rand() ** 1.6 * USAGE_PROJECTS.length)];
+      const scale = (0.3 + rand() ** 2 * 3) * heavy * (d < 3 ? 1.4 : 1);
+      const replies = Math.round(18 + rand() * 160 * scale);
+      const parts = rand() < 0.35 ? 2 : 1;
+      for (let k = 0; k < parts; k++) {
+        const input = Math.round((6_000 + rand() * 60_000) * scale);
+        rows.push({
+          day,
+          session: key,
+          model: models[Math.floor(rand() * models.length)],
+          input,
+          output: Math.round((12_000 + rand() * 140_000) * scale),
+          cacheRead: Math.round(input * (12 + rand() * 30)),
+          cacheWrite: Math.round(input * (0.6 + rand())),
+          replies: Math.round(replies / parts),
+          ...(rand() < 0.6 ? { costUsd: Math.round((0.2 + rand() * 5) * scale * 100) / 100 } : {}),
+        });
+      }
+      sessions[key] = {
+        provider: 'demo',
+        accountId,
+        project: path.join(process.cwd(), project),
+        title: USAGE_TITLES[Math.floor(rand() * USAGE_TITLES.length)],
+        providerSessionId: id,
+        lastAt: t.getTime() - Math.round(rand() * 8) * 3_600_000,
+      };
+    }
+  }
+  return { rows, sessions };
 }
 
 export interface PastSession extends HistoryEntry {
