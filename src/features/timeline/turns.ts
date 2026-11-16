@@ -9,7 +9,8 @@ import type { TimelineItem } from '@shared/protocol';
  *   U  a sent message that starts a turn       Q  a queued message, not taken yet (floats to the end)
  *   S  a message steered into the running turn  t  assistant prose (an answer candidate)
  *   c  command output (an answer candidate)     p  a plan (an answer candidate)
- *   w  a step: a tool call or thinking          n  any other notice (mode, model, compaction, retry)
+ *   w  a step: a tool call                      n  any other notice (mode, model, compaction, retry)
+ *   h  thinking: part of the work, not counted as a step
  *   k  a task list update: kept in the work, not counted as a step (the dock shows the list)
  *   i  "Interrupted"                            e  an error notice
  *   T  turn end                                 F  turn end with an error
@@ -82,7 +83,7 @@ export function shapeOf(item: TimelineItem | undefined): string {
     case 'text':
       return item.streaming || item.text.trim() ? 't' : '.';
     case 'thinking':
-      return 'w';
+      return 'h';
     case 'tool':
       return item.kind === 'plan' ? 'p' : item.kind === 'widget' ? 'g' : item.kind === 'todo' ? 'k' : 'w';
     case 'notice':

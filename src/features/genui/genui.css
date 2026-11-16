@@ -1,12 +1,14 @@
 /*
- * Generative UI: widgets in the conversation. A widget reads as part of the answer: a hairline and
- * nothing else at rest; its bar appears on hover or focus. While it builds, a dither skeleton grows
- * with the code; when it is complete, one band of light travels down over it.
+ * Generative UI: widgets in the conversation. A widget reads as part of the answer: nothing around
+ * it at rest, its content on the text's edges; on hover or focus its extent shows as a hairline and
+ * its bar appears. (A widget that draws its own card keeps it, without a second frame around it.)
+ * While it builds, a dither skeleton grows with the code; when it is complete, one band of light
+ * travels down over it.
  */
 
 .tl-item[data-k='widget'] {
-  padding-top: 14px;
-  padding-bottom: 10px;
+  padding-top: 2px;
+  padding-bottom: 0;
   contain-intrinsic-size: auto 360px;
 }
 
@@ -27,7 +29,14 @@
   contain: layout paint;
 }
 
-/* The hairline sits above the frame (the frame would cover an inset shadow on the box). */
+/* In the conversation the frame reaches out by the widget page's own padding (theme.ts: 16px 18px),
+   so what it draws starts on the same edge as the text around it. */
+.gw > .gw-frame > .gw-box {
+  margin-inline: -18px;
+}
+
+/* The hairline sits above the frame (the frame would cover an inset shadow on the box). Hidden at
+   rest; it shows the widget's extent while the pointer or focus is on it. */
 .gw-box::after {
   content: '';
   position: absolute;
@@ -35,6 +44,14 @@
   border-radius: inherit;
   box-shadow: inset 0 0 0 1px var(--line);
   pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--d-2) var(--ease);
+}
+
+.gw:hover .gw-box::after,
+.gw[data-hover] .gw-box::after,
+.gw:focus-within .gw-box::after {
+  opacity: 1;
 }
 
 .gw-box[data-anim] {
@@ -268,7 +285,7 @@
 .gw-bar {
   position: absolute;
   top: -14px;
-  right: 10px;
+  right: -8px;
   z-index: 2;
   display: flex;
   align-items: center;

@@ -72,7 +72,10 @@ export const WidgetFrame = memo(function WidgetFrame({ cacheKey, code, final, ti
   const [left, setLeft] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [reveal, setReveal] = useState(false);
-  const [anim, setAnim] = useState(false);
+  // Arrived whole, just now (the usual case with real agents: the call comes complete after the
+  // thinking): the block opens from nothing to its height in one motion, then the reveal plays.
+  const [whole] = useState(() => revealProp === true && final && cachedHeight(cacheKey) == null);
+  const [anim, setAnim] = useState(whole);
   const floor = useRef(0);
   // Streamed in front of the reader: the end gets the reveal. History appears as it is.
   const streamed = useRef(revealProp ?? !final);
@@ -225,7 +228,7 @@ export const WidgetFrame = memo(function WidgetFrame({ cacheKey, code, final, ti
   }, [done, h, final, cacheKey]);
 
   const empty = final && !code.trim();
-  const reserve = remembered ?? (final ? 160 : 200);
+  const reserve = remembered ?? (whole ? 0 : final ? 160 : 200);
   let content: number;
   if (stopped || empty) content = 52;
   else if (done && h !== null) content = h;

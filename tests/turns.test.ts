@@ -31,7 +31,7 @@ describe('shapeOf', () => {
       [{ ...base, type: 'text', text: 'Hello', streaming: false }, 't'],
       [{ ...base, type: 'text', text: '', streaming: true }, 't'],
       [{ ...base, type: 'text', text: '  ', streaming: false }, '.'],
-      [{ ...base, type: 'thinking', text: '', streaming: false }, 'w'],
+      [{ ...base, type: 'thinking', text: '', streaming: false }, 'h'],
       [{ ...base, type: 'tool', name: 'Bash', kind: 'bash', title: 'Run', status: 'done', detail: {} }, 'w'],
       [{ ...base, type: 'tool', name: 'ExitPlanMode', kind: 'plan', title: 'Plan', status: 'awaiting', detail: {} }, 'p'],
       [{ ...base, type: 'notice', variant: 'interrupted', text: 'Interrupted' }, 'i'],
@@ -112,6 +112,12 @@ describe('groupTurns', () => {
     expect(t.segments[0].errors).toEqual(['2']);
     // Among steps, a notice is part of the story.
     expect(onlyTurn('U1 w2 n3 t4 T5').segments[0].work).toEqual(['2', '3']);
+  });
+
+  it('does not count thinking as a step', () => {
+    const t = onlyTurn('U1 h2 g3 t4 T5');
+    expect(t.segments[0].steps).toBe(0);
+    expect(t.segments[0].work).toEqual(['2']);
   });
 
   it('does not count task list updates as steps', () => {

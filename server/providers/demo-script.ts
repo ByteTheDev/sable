@@ -395,11 +395,20 @@ export class Script {
    * then the code, in larger chunks than prose), then the call completes. The timeline shows it
    * as the widget itself.
    */
-  async widget(title: string, code: string, opts: { parentId?: string } = {}): Promise<string> {
+  async widget(title: string, code: string, opts: { parentId?: string; whole?: boolean } = {}): Promise<string> {
     await this.answerSteers();
     this.check();
     const input = { title, code };
     this.activity(title);
+    if (opts.whole) {
+      // As real agents usually deliver it: the call arrives complete, in one piece.
+      const json = JSON.stringify(input);
+      const item = this.rt.add<ToolItem>({ type: 'tool', name: WIDGET_TOOL_ID, kind: 'widget', title, status: 'running', detail: {}, inputText: json, input, parentId: opts.parentId });
+      this.countOut(json);
+      await this.pause(30, 60);
+      this.complete(item.id, { text: WIDGET_SHOWN });
+      return item.id;
+    }
     const item = this.rt.add<ToolItem>({ type: 'tool', name: WIDGET_TOOL_ID, kind: 'widget', title, status: 'pending', detail: {}, inputText: '', parentId: opts.parentId });
     const json = JSON.stringify(input);
     for (let i = 0; i < json.length; ) {

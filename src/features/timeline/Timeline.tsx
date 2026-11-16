@@ -159,9 +159,18 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     const el = scroller.current;
     if (!el) return;
     const mark = () => (intent.current = performance.now());
+    // While the reader scrolls, rows passing under the pointer take no hover: each hover change
+    // would repaint the turn it sits in, every frame of the scroll. Back a moment after the wheel stops.
+    let still = 0;
+    const scrolling = () => {
+      if (!el.hasAttribute('data-scrolling')) el.setAttribute('data-scrolling', '');
+      window.clearTimeout(still);
+      still = window.setTimeout(() => el.removeAttribute('data-scrolling'), 160);
+    };
     // Scrolling up with the wheel lets go at once, before the scroll event arrives.
     const onWheel = (e: WheelEvent) => {
       mark();
+      scrolling();
       if (e.deltaY < 0 && el.scrollHeight - el.clientHeight - el.scrollTop > 1) stuck.current = false;
     };
     const onKey = (e: KeyboardEvent) => {
@@ -172,6 +181,13 @@ export function Timeline({ sessionId }: { sessionId: string }) {
       mark();
     };
     const up = () => (dragging.current = false);
+    // Opening something (a turn's steps, a step's details) grows the content under the pointer:
+    // the reader is reading there, so the view stays where it is instead of following the end.
+    const onClick = (e: MouseEvent) => {
+      const t = (e.target as HTMLElement | null)?.closest('[aria-expanded="false"]');
+      if (t && el.contains(t) && el.scrollHeight - el.clientHeight - el.scrollTop <= STICK) stuck.current = false;
+    };
+    el.addEventListener('click', onClick, true);
     el.addEventListener('wheel', onWheel, { passive: true });
     el.addEventListener('touchmove', mark, { passive: true });
     el.addEventListener('keydown', onKey);
@@ -179,7 +195,9 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
     return () => {
+      window.clearTimeout(still);
       window.removeEventListener('pointercancel', up);
+      el.removeEventListener('click', onClick, true);
       el.removeEventListener('wheel', onWheel);
       el.removeEventListener('touchmove', mark);
       el.removeEventListener('keydown', onKey);

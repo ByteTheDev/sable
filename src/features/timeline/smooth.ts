@@ -29,20 +29,24 @@ const WORD_AHEAD = 24;
  * drains quickly rather than snapping in; when the reader has scrolled away (`follow.current`
  * false) it catches up at once. Returns how many characters of `text` to show.
  */
-export function useSmoothLength(text: string, streaming: boolean, follow: { current: boolean }): number {
+export function useSmoothLength(text: string, streaming: boolean, follow: { current: boolean }, id?: string): number {
   // Mounting mid-stream (opening a running session) shows what is there; only new text is paced.
-  const [len, setLen] = useState(text.length);
+  // A text that moves to another place in the turn while it is still being revealed (a step arrived
+  // and it became part of the story) carries its reveal over instead of completing at once.
+  const [carried] = useState(() => (id ? takeCarry(id, text.length) : undefined));
+  const start = carried?.shown ?? text.length;
+  const [len, setLen] = useState(start);
   const target = useRef(text);
   target.current = text;
   const live = useRef(streaming);
   live.current = streaming;
-  const pos = useRef(text.length);
-  const shown = useRef(text.length);
-  const v = useRef(0);
+  const pos = useRef(carried?.pos ?? start);
+  const shown = useRef(start);
+  const v = useRef(carried?.v ?? 0);
   const raf = useRef(0);
   const last = useRef(0);
   // Arrival statistics: the average rate (chars/ms) and interval (ms) of the chunks.
-  const arrival = useRef({ at: 0, size: text.length, rate: 0, interval: 120 });
+  const arrival = useRef(carried?.arrival ?? { at: 0, size: text.length, rate: 0, interval: 120 });
 
   useEffect(() => {
     if (reducedMotion()) {
@@ -117,11 +121,17 @@ export function useSmoothLength(text: string, streaming: boolean, follow: { curr
       }
       // Dev builds expose the pacing so the lag behind the stream can be measured (scripts, console).
       if (import.meta.env.DEV) (window as unknown as { __smooth?: object }).__smooth = { full, shown: shown.current, rate: s.rate, interval: s.interval };
-      if (pos.current < full) raf.current = requestAnimationFrame(tick);
-      else v.current = 0;
+      if (pos.current < full) {
+        raf.current = requestAnimationFrame(tick);
+        // Where the reveal is, for a remount of this text in the same moment (see takeCarry).
+        if (id) carry.set(id, { shown: shown.current, pos: pos.current, v: v.current, arrival: s, at: t });
+      } else {
+        v.current = 0;
+        if (id) carry.delete(id);
+      }
     };
     raf.current = requestAnimationFrame(tick);
-  }, [text, streaming, follow]);
+  }, [text, streaming, follow, id]);
 
   useEffect(
     () => () => {
@@ -132,6 +142,25 @@ export function useSmoothLength(text: string, streaming: boolean, follow: { curr
   );
 
   return Math.min(len, text.length);
+}
+
+interface Carry {
+  shown: number;
+  pos: number;
+  v: number;
+  arrival: { at: number; size: number; rate: number; interval: number };
+  at: number;
+}
+
+/** Reveals in progress, by item id: a text mounted again elsewhere (answer to story) picks up from here. */
+const carry = new Map<string, Carry>();
+
+function takeCarry(id: string, length: number): Carry | undefined {
+  const c = carry.get(id);
+  if (!c) return undefined;
+  // Only a move within the same moment carries over; a text opened later shows whole.
+  if (performance.now() - c.at > 250 || c.shown > length) return undefined;
+  return c;
 }
 
 const MARKER_ONLY = /^ {0,3}(#{1,6}|[-*+]|\d{1,3}[.)]|>)\s*$/;

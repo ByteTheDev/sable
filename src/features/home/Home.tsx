@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 import type { ProviderId } from '@shared/protocol';
+import { loadSessionView } from '@/app/views';
 import { Backdrop } from '@/art/Backdrop';
 import type { DitherPalette } from '@/art/DitherField';
 import { buildMark, LogoMark, markEcho } from '@/art/Logo';
@@ -84,7 +85,10 @@ export function Home() {
     const host = composer.current;
     if (!host) return;
     const onInput = (e: Event) => {
-      if ((e.target as HTMLElement).tagName === 'TEXTAREA') markEcho(mark.current);
+      if ((e.target as HTMLElement).tagName !== 'TEXTAREA') return;
+      markEcho(mark.current);
+      // A send is coming: the session view must be loaded before it asks for it.
+      void loadSessionView().catch(() => {});
     };
     host.addEventListener('input', onInput);
     return () => host.removeEventListener('input', onInput);

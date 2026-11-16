@@ -6,7 +6,6 @@ import { reducedMotion, uiZoom } from '@/lib/motion';
 import { Home } from '@/features/home/Home';
 import { handoffActive } from '@/features/home/handoff';
 import { useOnboarding } from '@/features/onboarding/useOnboarding';
-import { SessionView } from '@/features/session/SessionView';
 import { Sidebar } from '@/features/sidebar/Sidebar';
 import { Icon } from '@/icons';
 import { windowShell } from '@/lib/desktop';
@@ -18,6 +17,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useStore, type RailTab } from '@/state/store';
 import { IconButton, Tip, TipProvider, Toasts } from '@/ui';
 import { CapabilitiesButton } from './Capabilities';
+import { loadSessionView } from './views';
 import { WindowControls } from './WindowControls';
 import './app.css';
 
@@ -35,7 +35,37 @@ const History = lazy(() => loadHistory().then((m) => ({ default: m.History })));
 const Settings = lazy(() => loadSettings().then((m) => ({ default: m.Settings })));
 const ProjectPicker = lazy(() => loadPicker().then((m) => ({ default: m.ProjectPicker })));
 const Rail = lazy(() => loadRail().then((m) => ({ default: m.Rail })));
+const SessionView = lazy(() => loadSessionView().then((m) => ({ default: m.SessionView })));
+const SessionDock = lazy(() => loadSessionView().then((m) => ({ default: m.SessionDock })));
 const Onboarding = lazy(() => import('@/features/onboarding/Onboarding').then((m) => ({ default: m.Onboarding })));
+
+/**
+ * A window too narrow for three columns (about 1060 CSS px) keeps two: while the side panel is open there,
+ * the sidebar steps aside without forgetting that it was open, and comes back when the panel closes.
+ * Showing it again from the top bar closes the panel instead.
+ */
+const NARROW_PX = 1060;
+/** Narrower than three columns need, in CSS pixels (the Interface size zooms the page). */
+const isNarrow = () => window.innerWidth / (useStore.getState().settings.fontScale || 1) < NARROW_PX;
+function useNarrow(): boolean {
+  const zoom = useStore((s) => s.settings.fontScale);
+  const [narrow, setNarrow] = useState(isNarrow);
+  useEffect(() => {
+    const on = () => setNarrow(isNarrow());
+    on();
+    window.addEventListener('resize', on);
+    return () => window.removeEventListener('resize', on);
+  }, [zoom]);
+  return narrow;
+}
+
+/** Whether the sidebar is shown: open, and not stepped aside for the panel in a narrow window. */
+export function useSidebarShown(): boolean {
+  const open = useStore((s) => s.ui.sidebarOpen);
+  const squeezed = useStore((s) => s.ui.railOpen && !!s.ui.activeSessionId && !!s.sessions[s.ui.activeSessionId]);
+  const narrow = useNarrow();
+  return open && !(narrow && squeezed);
+}
 
 /** Mounts a lazy surface the first time it is asked for, then keeps it (so its exit animations run). */
 function Deferred({ when, children }: { when: boolean; children: ReactNode }) {
@@ -90,7 +120,15 @@ function useViewMode(key: string | null, body: RefObject<HTMLElement | null>): V
     if (last.current === key) return;
     const was = last.current;
     last.current = key;
-    if (was != null && key != null && mode.current === 'swap') void veil(body.current, 'swap');
+    if (was != null && key != null && mode.current === 'swap') {
+      // Session to session: the dock stays above the veil, so only the conversation dissolves.
+      const el = body.current;
+      if (el && was !== 'home' && key !== 'home') {
+        el.setAttribute('data-session-swap', '');
+        window.setTimeout(() => el.removeAttribute('data-session-swap'), VEIL_SWAP + 40);
+      }
+      void veil(el, 'swap');
+    }
   }, [key, body]);
   return mode.current;
 }
@@ -117,7 +155,7 @@ export function App() {
   const ready = useStore((s) => s.ready);
   const conn = useStore((s) => s.conn);
   const activeId = useStore((s) => s.ui.activeSessionId);
-  const sidebarOpen = useStore((s) => s.ui.sidebarOpen);
+  const sidebarOpen = useSidebarShown();
   const railOpen = useStore((s) => s.ui.railOpen);
   const fontScale = useStore((s) => s.settings.fontScale);
   const setUi = useStore((s) => s.setUi);
@@ -151,17 +189,20 @@ export function App() {
   const settingsOpen = useStore((s) => s.ui.settings !== null);
   const pickerOpen = useStore((s) => s.ui.projectPicker);
 
-  // Warm the on-demand chunks once the app is idle, so the first open is instant.
+  // Warm the on-demand chunks once the app is idle, so the first open is instant. The session view
+  // first and soon (a send from home needs it), the rest when the window has nothing else to do.
   useEffect(() => {
     if (!ready) return;
+    const t = window.setTimeout(() => void loadSessionView().catch(() => {}), 600);
     const warm = () => void Promise.all([loadPalette(), loadRail(), loadSettings(), loadHistory(), loadPicker()]).catch(() => {});
     const ric = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
     if (ric) ric(warm, { timeout: 4000 });
     else window.setTimeout(warm, 1500);
+    return () => window.clearTimeout(t);
   }, [ready]);
 
   useHotkey('mod+k', useCallback((e) => (e.preventDefault(), setUi({ paletteOpen: !useStore.getState().ui.paletteOpen })), [setUi]));
-  useHotkey('mod+b', useCallback((e) => (e.preventDefault(), setUi({ sidebarOpen: !useStore.getState().ui.sidebarOpen })), [setUi]));
+  useHotkey('mod+b', useCallback((e) => (e.preventDefault(), toggleSidebar(sidebarOpen)), [sidebarOpen]));
   useHotkey('mod+j', useCallback((e) => (e.preventDefault(), setUi({ railOpen: !useStore.getState().ui.railOpen })), [setUi]));
   useHotkey('mod+,', useCallback((e) => (e.preventDefault(), openSettings()), []));
   useHotkey('mod+shift+o', useCallback((e) => (e.preventDefault(), goHome()), []));
@@ -195,7 +236,24 @@ export function App() {
             <AnimatePresence mode="popLayout" initial={false} custom={viewMode}>
               {viewKey == null ? null : (
                 <motion.div key={viewKey} className="stage-view" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
-                  {sessionId ? <SessionView sessionId={sessionId} /> : <Home />}
+                  {sessionId ? (
+                    <Suspense fallback={null}>
+                      <SessionView sessionId={sessionId} />
+                    </Suspense>
+                  ) : (
+                    <Home />
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+            {/* The dock outlives a change of session (one key for all of them): only its contents follow.
+                Coming from or going to home it arrives and leaves with the view. */}
+            <AnimatePresence initial={false} custom={viewMode}>
+              {viewKey != null && sessionId && (
+                <motion.div key="dock" className="stage-dock" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
+                  <Suspense fallback={null}>
+                    <SessionDock sessionId={sessionId} />
+                  </Suspense>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -216,7 +274,7 @@ export function App() {
               // The panel's contents resolve through the dither veil (and dissolve into it on close),
               // so only reduced motion fades them.
               initial={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
-              animate={{ width: 'var(--rail-w)', opacity: 1 }}
+              animate={{ width: 'var(--rail-fit)', opacity: 1 }}
               exit={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
               transition={{ type: 'spring', stiffness: 380, damping: 38 }}
               onUpdate={onRailFrame}
@@ -278,12 +336,15 @@ function releaseRail() {
 function freezeForRail(opening: boolean) {
   releaseRail();
   if (reducedMotion()) return;
+  // A narrow window trades the sidebar for the panel at the same time: the stage moves at both edges.
+  if (isNarrow() && useStore.getState().ui.sidebarOpen) return;
   const body = document.querySelector<HTMLElement>('.stage > .stage-body');
   const app = document.querySelector<HTMLElement>('.app');
   if (!body || !app || body.dataset.freeze != null) return;
   const z = uiZoom();
   const now = (document.querySelector('.app-rail')?.getBoundingClientRect().width ?? 0) / z;
-  const target = opening ? parseFloat(getComputedStyle(app).getPropertyValue('--rail-w')) || 396 : 0;
+  // The panel's width as it will be drawn (--rail-fit: the chosen width, narrowed to what the window allows).
+  const target = opening ? (document.querySelector<HTMLElement>('.app-rail-inner')?.offsetWidth ?? 396) : 0;
   const b0 = body.clientWidth;
   const b1 = b0 + now - target;
   if (!(b1 > 0)) return;
@@ -345,14 +406,19 @@ const trackRailWidth = windowShell
 
 /** How full the context window is; its own subscription so usage ticks re-render only this. */
 function ContextMeter({ sessionId }: { sessionId: string }) {
-  const used = useStore((s) => s.sessions[sessionId]?.usage.contextTokens);
-  const max = useStore((s) => s.sessions[sessionId]?.usage.contextWindow);
+  // Only what the meter shows: a usage tick that changes neither the label nor the percentage renders nothing.
+  const shown = useStore((s) => {
+    const u = s.sessions[sessionId]?.usage;
+    if (!u?.contextTokens || !u.contextWindow) return '';
+    return `${Math.min(100, Math.round((u.contextTokens / u.contextWindow) * 1000) / 10)}|${formatTokens(u.contextTokens)}|${formatTokens(u.contextWindow)}`;
+  });
   const setUi = useStore((s) => s.setUi);
-  if (!used || !max) return null;
-  const pct = Math.min(100, (used / max) * 100);
+  if (!shown) return null;
+  const [p, used, max] = shown.split('|');
+  const pct = Number(p);
   // A ring drawn on the icons' 16 px grid: a hairline track and a 1.5 px arc, so it weighs what the line icons beside it weigh.
   return (
-    <Tip label={`${formatTokens(used)} of ${formatTokens(max)} context used`}>
+    <Tip label={`${used} of ${max} context used`}>
       <button type="button" className="ctx-meter" onClick={() => setUi({ railOpen: true, railTab: 'context' })} data-warn={pct > 80 || undefined} aria-label={`Context ${Math.round(pct)}% used`}>
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
           <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
@@ -364,9 +430,17 @@ function ContextMeter({ sessionId }: { sessionId: string }) {
   );
 }
 
+/** Shows or hides the sidebar as it is drawn now: one stepped aside for the panel comes back by closing the panel. */
+function toggleSidebar(shown: boolean) {
+  const { ui, setUi } = useStore.getState();
+  if (shown) setUi({ sidebarOpen: false });
+  else if (ui.sidebarOpen) setUi({ railOpen: false });
+  else setUi({ sidebarOpen: true });
+}
+
 function Topbar() {
   const activeId = useStore((s) => s.ui.activeSessionId);
-  const sidebarOpen = useStore((s) => s.ui.sidebarOpen);
+  const sidebarOpen = useSidebarShown();
   const railOpen = useStore((s) => s.ui.railOpen);
   const setUi = useStore((s) => s.setUi);
   // Shallow: usage ticks while streaming change the session, not what the bar shows (the meter subscribes itself).
@@ -378,7 +452,7 @@ function Topbar() {
   );
   return (
     <header className="topbar">
-      <IconButton icon="sidebar" label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} keys="mod+b" onClick={() => setUi({ sidebarOpen: !sidebarOpen })} />
+      <IconButton icon="sidebar" label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} keys="mod+b" onClick={() => toggleSidebar(sidebarOpen)} />
       {!sidebarOpen && (
         <button type="button" className="topbar-home" onClick={() => goHome()} aria-label="New session">
           <LogoMark size={18} />

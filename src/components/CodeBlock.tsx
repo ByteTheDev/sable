@@ -2,7 +2,10 @@ import { Fragment, memo, useMemo, useRef, useState, type ReactNode } from 'react
 import { hashCode } from '@/features/genui/partial';
 import { WidgetFrame } from '@/features/genui/WidgetFrame';
 import { Icon } from '@/icons';
-import { langLabel, useHighlight } from '@/lib/highlight';
+import { langLabel as baseLabel, useHighlight } from '@/lib/highlight';
+
+/** SVG is coloured as XML but named for what it is. */
+const langLabel = (lang?: string) => (lang?.trim().toLowerCase() === 'svg' ? 'SVG' : baseLabel(lang));
 import { useNearViewport } from '@/lib/view-hooks';
 import { hlLine } from './code-render';
 import { CopyButton } from './CopyButton';

@@ -150,7 +150,6 @@ export function QuestionCard({ sessionId, req, more }: { sessionId: string; req:
                 <span className={multi ? 'qc-mark qc-box' : 'qc-mark qc-radio'} aria-hidden />
                 <span className="qc-opt-text">
                   <span className="qc-opt-label">Other</span>
-                  <span className="qc-opt-desc">Write your own answer</span>
                 </span>
                 {q.options.length < 9 && <KeyHint k={String(q.options.length + 1)} />}
               </button>

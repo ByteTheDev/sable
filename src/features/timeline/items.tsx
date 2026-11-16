@@ -69,12 +69,41 @@ export const ItemList = memo(function ItemList({ ids }: { ids: string[]; nested?
     return out;
   }, [ids, shape]);
 
+  // Built in blocks of rows: a new step re-renders only the last block, and earlier blocks out of
+  // view skip layout and paint (content-visibility), so a 300-step turn costs what a short one does.
+  // Always blocks, short lists too: a list that grows long never moves its rows to a new parent.
+  const blocks = useMemo(() => {
+    const out: Row[][] = [];
+    for (let i = 0; i < rows.length; i += BLOCK) out.push(rows.slice(i, i + BLOCK));
+    return out;
+  }, [rows]);
+
   return (
     <>
-      {rows.map((r) => (r.run ? <ExploreRun key={r.key} ids={r.run} /> : <ItemRow key={r.key} id={r.id} nested />))}
+      {blocks.map((b, i) => (
+        <RowBlock key={b[0].key} rows={b} sealed={i < blocks.length - 1} />
+      ))}
     </>
   );
 });
+
+const BLOCK = 24;
+
+const renderRow = (r: Row) => (r.run ? <ExploreRun key={r.key} ids={r.run} /> : <ItemRow key={r.key} id={r.id} nested />);
+
+const sameRows = (a: Row[], b: Row[]) => a.length === b.length && a.every((r, i) => r.key === b[i].key && r.id === b[i].id && r.run === b[i].run);
+
+/** A block of rows that re-renders only when its own rows change. A sealed (full, earlier) block may skip layout off screen. */
+const RowBlock = memo(
+  function RowBlock({ rows, sealed }: { rows: Row[]; sealed: boolean }) {
+    return (
+      <div className="tl-block" data-sealed={sealed || undefined}>
+        {rows.map(renderRow)}
+      </div>
+    );
+  },
+  (a, b) => a.sealed === b.sealed && sameRows(a.rows, b.rows),
+);
 
 /** A rough height for a row that is not built yet, so the scrollbar and scroll position stay sensible. */
 export function estimate(item: TimelineItem | undefined): number {
@@ -98,9 +127,9 @@ export function estimate(item: TimelineItem | undefined): number {
  * table row is shown only once it is whole (`steadyTail`), and the newest words ease in at the
  * write head; when the stream ends the head fades out.
  */
-export const LiveText = memo(function LiveText({ text, streaming }: { text: string; streaming: boolean }) {
+export const LiveText = memo(function LiveText({ text, streaming, id }: { text: string; streaming: boolean; id?: string }) {
   const { stuck } = useTimeline();
-  const len = useSmoothLength(text, streaming, stuck);
+  const len = useSmoothLength(text, streaming, stuck, id);
   // While pacing catches up after the stream ended, the text keeps its live rendering.
   const live = streaming || len < text.length;
   const was = useRef(live);
@@ -131,7 +160,7 @@ export const ItemRow = memo(function ItemRow({ id, nested = false, answer = fals
       if (!item.text && !item.streaming) return null;
       body = (
         <>
-          <LiveText text={item.text} streaming={!!item.streaming} />
+          <LiveText id={item.id} text={item.text} streaming={!!item.streaming} />
           {!nested && <Stamp ts={item.ts} />}
         </>
       );

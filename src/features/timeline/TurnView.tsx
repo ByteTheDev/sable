@@ -292,10 +292,13 @@ function WorkLine({ seg, turn, index, open, onToggle, landed }: { seg: Segment; 
   }, [sessionId, turn, index, seg]);
   const texts = seg.story.reduce((n, c) => n + (c.kind === 'text' ? 1 : 0), 0);
   const count = seg.steps ? plural(seg.steps, 'step') : texts ? plural(texts, 'message') : '';
+  // Work that was only thinking says so ("Thought for 6s"): no count of one step over a single thought.
+  const thought = !seg.steps && !texts;
+  const took = span && span >= 1000 ? shortDuration(span) : '';
   return (
     <div className="work-head" data-landed={landed || undefined}>
       <button type="button" className="work-line" aria-expanded={open} onClick={onToggle}>
-        <span className="work-label num">{span && span >= 1000 ? `Worked ${shortDuration(span)}` : 'Worked'}</span>
+        <span className="work-label num">{thought ? (took ? `Thought for ${took}` : 'Thought') : took ? `Worked ${took}` : 'Worked'}</span>
         {count && <span className="work-time num">{count}</span>}
         <Icon name="caret-right" size={10} className="row-caret" />
       </button>
@@ -351,6 +354,8 @@ function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onTogg
   const waiting = info.slice(0, cut) === '1';
   const title = info.slice(cut + 1);
   const elapsed = lead ? now - lead.ts : 0;
+  // The working tiles keep their own animation: the line's ticks and title changes leave them alone.
+  const tiles = useMemo(() => <Tiles size={12} />, []);
   const body = (
     <>
       {waiting ? (
@@ -358,9 +363,7 @@ function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onTogg
           <Icon name="hourglass" size={13} />
         </span>
       ) : (
-        <span className="work-ind">
-          <Tiles size={12} />
-        </span>
+        <span className="work-ind">{tiles}</span>
       )}
       <span className={waiting ? 'work-label work-waiting' : 'work-label work-live-title shimmer truncate'}>{waiting ? 'Waiting for you' : title}</span>
       {elapsed >= 1000 && <span className="work-time num">{shortDuration(elapsed)}</span>}
@@ -382,6 +385,7 @@ function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onTogg
       <span className="work-esc">
         <Kbd combo="esc" /> to stop
       </span>
+      <span className="work-band" aria-hidden />
       <span className="work-fade" aria-hidden />
     </div>
   );
@@ -417,7 +421,7 @@ const StoryText = memo(function StoryText({ id, live }: { id: string; live: bool
   if (item.type !== 'text') return null;
   return (
     <div className="story-text" data-item-id={id} data-fresh={fresh || undefined}>
-      <LiveText text={item.text} streaming={item.streaming} />
+      <LiveText id={id} text={item.text} streaming={item.streaming} />
       <Stamp ts={item.ts} />
     </div>
   );

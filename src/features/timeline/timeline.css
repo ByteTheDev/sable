@@ -11,6 +11,9 @@
   flex: 1;
   min-height: 0;
   display: flex;
+  /* The conversation ends a little above the composer's lower edge: what scrolls behind the
+     composer is hidden by it, never seen again in the strip under it. (The dock pads by 18px.) */
+  margin-bottom: 30px;
 }
 
 .tl-scroll {
@@ -19,6 +22,13 @@
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable both-edges;
+  /* A scroll moves one composited layer: a long transcript is not re-layerized on every frame. */
+  will-change: scroll-position;
+}
+
+/* The reader is scrolling: no hover on the rows passing under the pointer (Timeline.tsx). */
+.tl-scroll[data-scrolling] > .tl-content {
+  pointer-events: none;
 }
 
 /* Content dissolves under the top bar instead of being cut by it: an overlay in the stage colour (no mask on the scroller). */
@@ -42,7 +52,7 @@
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  padding: 30px 0 calc(var(--dock-h) + 26px);
+  padding: 30px 0 calc(var(--dock-h, 150px) - 4px);
 }
 
 .tl-content[data-empty] {
@@ -1064,6 +1074,15 @@ button:hover > .row-caret {
   padding: 0;
 }
 
+/* A block of rows in a long list (items.tsx). An earlier, full block off screen skips layout and
+   paint; it reaches past the column by the rows' own overhang so hover fills are never clipped. */
+.tl-block[data-sealed] {
+  margin-inline: -10px;
+  padding-inline: 10px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 640px;
+}
+
 .tl-sub[data-t='text'] {
   padding: 6px 0;
 }
@@ -1326,15 +1345,27 @@ button:hover > .row-caret {
 .work-fade {
   position: absolute;
   inset: 100% 0 auto;
-  height: 14px;
-  background: linear-gradient(to bottom, var(--sheet), transparent);
+  height: 22px;
+  background: linear-gradient(to bottom, var(--sheet) 30%, transparent);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--d-2) var(--ease);
 }
 
+/* Stuck, the line is the top edge of the conversation: nothing shows above it (rows passing
+   there read as overlap), and what passes under it fades out below. */
+.work-band {
+  position: absolute;
+  inset: auto 0 100%;
+  height: 34px;
+  background-color: var(--sheet);
+  opacity: 0;
+  pointer-events: none;
+}
+
 @container scroll-state(stuck: top) {
-  .work-fade {
+  .work-fade,
+  .work-band {
     opacity: 1;
   }
 }
@@ -1482,6 +1513,24 @@ button:hover > .row-caret {
   padding-bottom: 10px;
 }
 
+/* An opened, finished turn: a hairline in the margin runs beside the work, so where the steps end
+   and the answer begins is plain. Drawn once the fold has opened (it clips while it moves). */
+.story {
+  position: relative;
+}
+
+.tl-work:not([data-live]) > .collapse[data-settled] > .collapse-inner > .story::before {
+  content: '';
+  position: absolute;
+  left: -15px;
+  top: 6px;
+  bottom: 12px;
+  width: 1px;
+  background-color: var(--line-2);
+  pointer-events: none;
+  animation: fade-in var(--d-2) var(--ease) both;
+}
+
 /* Prose along the way keeps the answer's size, so a text that stops being the newest never
    reflows; only its tone steps back, eased over a moment as it settles. */
 .story-text {
@@ -1508,98 +1557,45 @@ button:hover > .row-caret {
   }
 }
 
-.story > .tl-sub:first-child,
-.story > .story-text + .tl-sub {
+.story > .tl-block:first-child,
+.story > .story-text + .tl-block {
   margin-top: 1px;
 }
 
 /* ── the end of a turn: the trail gathers into its summary line ──
-   The fold closes on a soft spring while the rows lift and fade toward the line; a seam of
-   dither rides the closing edge up and dissolves the rows it passes; when it lands, a narrow
-   band of the same dither crosses the summary once. Transform and opacity, about 600 ms, once. */
+   One arc, about half a second: the fold closes on a soft curve while the rows lift toward the
+   line and fade; as they go, the summary line settles in its place. Transform and opacity, once. */
 
 .tl-work[data-gather] .work-fold {
   transition:
-    grid-template-rows 460ms cubic-bezier(0.6, 0, 0.2, 1),
-    opacity 260ms var(--ease) 200ms;
+    grid-template-rows 440ms cubic-bezier(0.6, 0, 0.2, 1),
+    opacity 240ms var(--ease) 180ms;
 }
 
 .tl-work[data-gather] .story {
   transform-origin: 50% 0;
-  animation: story-gather 460ms cubic-bezier(0.6, 0, 0.2, 1) both;
+  animation: story-gather 440ms cubic-bezier(0.6, 0, 0.2, 1) both;
 }
 
 @keyframes story-gather {
   to {
-    transform: translateY(-18px) scale(0.985);
-    opacity: 0.2;
-  }
-}
-
-.tl-work[data-gather]::after {
-  content: '';
-  position: absolute;
-  left: var(--gutter);
-  right: var(--gutter);
-  bottom: 0;
-  /* Never taller than the closing trail: it must not cover the line it lands on. */
-  height: min(46px, calc(100% - 30px));
-  background:
-    linear-gradient(to bottom, var(--sheet) 0%, rgb(12 12 14 / 0.7) 45%, rgb(12 12 14 / 0) 100%),
-    radial-gradient(circle at center, rgb(242 241 238 / 0.6) 0.75px, transparent 1px) 0 0 / 3px 3px;
-  pointer-events: none;
-  animation: gather-seam 460ms var(--ease) both;
-}
-
-@keyframes gather-seam {
-  0% {
-    opacity: 0;
-  }
-  18%,
-  72% {
-    opacity: 1;
-  }
-  100% {
+    transform: translateY(-16px) scale(0.985);
     opacity: 0;
   }
 }
 
 .work-head[data-landed] > * {
-  animation: land-in 260ms var(--ease-out) 260ms backwards;
+  animation: land-in 320ms var(--ease-out) 200ms backwards;
+}
+
+.work-head[data-landed] > :nth-child(2) {
+  animation-delay: 260ms;
 }
 
 @keyframes land-in {
   from {
     opacity: 0;
-    transform: translateY(5px);
-  }
-}
-
-.work-head[data-landed]::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  left: -8px;
-  width: 120px;
-  background: radial-gradient(circle at center, rgb(242 241 238 / 0.5) 0.75px, transparent 1px) 0 0 / 3px 3px;
-  border-radius: 50%;
-  pointer-events: none;
-  opacity: 0;
-  animation: land-sweep 300ms cubic-bezier(0.45, 0, 0.2, 1) 300ms both;
-}
-
-@keyframes land-sweep {
-  0% {
-    opacity: 0;
-    transform: translateX(0);
-  }
-  25% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(260px);
+    transform: translateY(4px);
   }
 }
 
@@ -1832,7 +1828,7 @@ button:hover > .row-caret {
 .tl-jump {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--dock-h) + 12px);
+  bottom: calc(var(--dock-h, 150px) - 18px);
   translate: -50% 0;
   z-index: 2;
   display: inline-flex;

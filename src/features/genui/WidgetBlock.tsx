@@ -4,6 +4,7 @@ import { CodeBlock } from '@/components/CodeBlock';
 import { CopyButton } from '@/components/CopyButton';
 import { LazyTip } from '@/components/LazyTip';
 import { Icon } from '@/icons';
+import { useFresh } from '@/features/timeline/ctx';
 import { useStore } from '@/state/store';
 import { Modal } from '@/ui';
 import { guessTitle, isSvg, prepareCode, slug, widgetSource } from './partial';
@@ -124,6 +125,8 @@ function Flags({ report }: { report: FrameReport | null }) {
 /** The `show_widget` tool call as it appears in the conversation: the widget itself, not a step. */
 export const WidgetBlock = memo(function WidgetBlock({ item, sessionId }: { item: ToolItem; sessionId: string }) {
   const enabled = useStore((s) => s.settings.generativeUi !== false);
+  // Just arrived (not history): it gets the reveal, also when the call came complete in one piece.
+  const fresh = useFresh(item.ts);
   const src = useMemo(() => widgetSource(item.input, item.inputText, item.title === 'Widget' ? '' : item.title), [item.input, item.inputText, item.title]);
   const stoppedEarly = !src.final && (item.status === 'cancelled' || item.status === 'error' || item.status === 'denied');
   const final = src.final || stoppedEarly;
@@ -135,5 +138,5 @@ export const WidgetBlock = memo(function WidgetBlock({ item, sessionId }: { item
   if (!enabled) {
     return code ? <CodeBlock code={code} lang="html" title={src.title || 'Widget'} streaming={!final} /> : null;
   }
-  return <WidgetView cacheKey={item.id} title={src.title} code={code} final={final} sessionId={sessionId} note={note} />;
+  return <WidgetView cacheKey={item.id} title={src.title} code={code} final={final} sessionId={sessionId} note={note} reveal={fresh || undefined} />;
 });

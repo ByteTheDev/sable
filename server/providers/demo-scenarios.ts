@@ -1010,6 +1010,42 @@ export const command: Scenario = async (ctx) => {
   s.notice('error', `Unknown command: /${head}`, 'Type / to see the available commands and skills.');
 };
 
+/** Code blocks that can be previewed: an HTML snippet and an SVG icon. */
+const previews: Scenario = async ({ s }) => {
+  await s.say(
+    [
+      'A small status badge for the admin page:',
+      '',
+      '```html',
+      '<div style="display:flex;gap:10px;align-items:center;font:13px system-ui">',
+      '  <span style="width:8px;height:8px;border-radius:50%;background:#4ade80"></span>',
+      '  <strong>relay-api</strong>',
+      '  <span style="color:#999">all checks passing · 25 tests</span>',
+      '</div>',
+      '```',
+      '',
+      'And the icon for the sessions tab:',
+      '',
+      '```svg',
+      '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="#e8e6e1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">',
+      '  <rect x="3" y="4" width="18" height="14" rx="2"/>',
+      '  <path d="M7 9h10M7 13h6"/>',
+      '</svg>',
+      '```',
+    ].join('\n'),
+  );
+  s.finish({});
+};
+
+/** A widget as real agents deliver it: some seconds of thinking, then the whole call at once. */
+const arrive: Scenario = async ({ s }) => {
+  await s.think('Latency per route for the last day against the 300 ms budget. A bar per route reads faster than a table.');
+  await s.pause(1800, 2400);
+  await s.widget('Latency by route', W.LATENCY_WIDGET, { whole: true });
+  await s.say('Two routes are over budget at p95; the Stripe webhook is the one to fix first.');
+  s.finish({});
+};
+
 // ─────────────────────────────────── selection ──────────────────────────────────
 
 export const SCENARIOS = {
@@ -1035,6 +1071,8 @@ export const SCENARIOS = {
   diagram: W.diagram,
   table: W.table,
   gallery: W.gallery,
+  arrive,
+  previews,
 } satisfies Record<string, Scenario>;
 export type ScenarioId = keyof typeof SCENARIOS;
 
@@ -1044,6 +1082,8 @@ export const ROTATION: ScenarioId[] = ['flagship', 'agents', 'search', 'question
 const KEYWORDS: [RegExp, ScenarioId][] = [
   // Generative UI (demo-widgets.ts).
   [/\b(sandbox|hostile)\b/i, 'sandbox'],
+  [/\b(whole|arrives?)\b/i, 'arrive'],
+  [/\b(previews?|snippets?)\b/i, 'previews'],
   [/\bescape\b/i, 'escape'],
   [/\b(gallery|visuals)\b/i, 'gallery'],
   [/\b(charts?|graphs?|latency)\b/i, 'chart'],

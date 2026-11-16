@@ -51,8 +51,10 @@ export const MermaidBlock = memo(function MermaidBlock({ code, streaming }: { co
   const key = useMemo(() => `mm:${hashCode(code)}`, [code]);
   const page = useMemo(() => (svg ? `<div style="display:flex;justify-content:center">${svg}</div>` : ''), [svg]);
 
-  if (streaming || error || source) {
-    const back = !streaming && svg && source && (
+  // While it is written, the diagram's place is held by the skeleton (the source would show and
+  // then be swapped away, at another height); the source stays one click away once it is drawn.
+  if (error || (source && !streaming)) {
+    const back = svg && source && (
       <LazyTip label="Show the diagram" side="top">
         <button type="button" className="icon-btn cb-btn" aria-label="Show the diagram" onClick={() => setSource(false)}>
           <Icon name="tree" size={13} />
@@ -62,7 +64,7 @@ export const MermaidBlock = memo(function MermaidBlock({ code, streaming }: { co
     return (
       <div className="mm" ref={ref}>
         {error && <p className="mm-error">This diagram could not be drawn: {error}</p>}
-        <CodeBlock code={code} lang="mermaid" title={streaming || error ? undefined : 'Diagram'} streaming={streaming} actions={back || undefined} />
+        <CodeBlock code={code} lang="mermaid" title={error ? undefined : 'Diagram'} actions={back || undefined} />
       </div>
     );
   }
@@ -73,8 +75,8 @@ export const MermaidBlock = memo(function MermaidBlock({ code, streaming }: { co
       <WidgetView
         cacheKey={key}
         title="Diagram"
-        code={page}
-        final={!!svg}
+        code={streaming ? '' : page}
+        final={!streaming && !!svg}
         reveal={live.current}
         copyText={code}
         actions={

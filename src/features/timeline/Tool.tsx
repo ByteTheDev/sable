@@ -29,10 +29,11 @@ function duration(item: ToolItem, min = 1000): string | null {
 /** The result at the right edge of a row, in tabular figures. Only the two marks carry colour. */
 function ToolMeta({ item }: { item: ToolItem }) {
   const s = item.status;
-  if (s === 'awaiting') return <span className="tool-await">{item.kind === 'question' ? 'Waiting for your answer' : 'Needs your approval'}</span>;
+  // Said once, in amber, by the turn's live line; the row only names what it waits for.
+  if (s === 'awaiting') return <span>{item.kind === 'question' ? 'Waiting for your answer' : 'Needs your approval'}</span>;
   if (s === 'pending' || s === 'running') return <Elapsed since={item.ts} />;
-  if (s === 'denied') return <span className="tool-await">Denied</span>;
-  if (s === 'cancelled') return item.result?.interrupted ? <span className="tool-await">Interrupted</span> : <span>Cancelled</span>;
+  if (s === 'denied') return <span>Denied</span>;
+  if (s === 'cancelled') return item.result?.interrupted ? <span>Interrupted</span> : <span>Cancelled</span>;
   const r = item.result;
   const parts: ReactNode[] = [];
   switch (item.kind) {
@@ -235,7 +236,7 @@ function AgentRow({ item }: { item: ToolItem }) {
         {active ? <span className="tool-sub agent-now shimmer truncate">{item.status === 'awaiting' ? '' : line || 'Starting'}</span> : tools > 0 && <span className="tool-sub num">{plural(tools, 'step')}</span>}
         <span className="tool-meta">
           {item.status === 'awaiting' ? (
-            <span className="tool-await">Needs your approval</span>
+            <span>Needs your approval</span>
           ) : active ? (
             <>
               {tools > 0 && <span className="num">{plural(tools, 'step')}</span>}
@@ -244,9 +245,9 @@ function AgentRow({ item }: { item: ToolItem }) {
           ) : failed ? (
             <span className="tool-fail">Failed</span>
           ) : item.status === 'denied' ? (
-            <span className="tool-await">Denied</span>
+            <span>Denied</span>
           ) : item.status === 'cancelled' ? (
-            <span className="tool-await">Interrupted</span>
+            <span>Interrupted</span>
           ) : item.endedAt ? (
             <span className="num">{shortDuration(item.endedAt - item.ts)}</span>
           ) : null}
@@ -299,7 +300,7 @@ function PlanCard({ item }: { item: ToolItem }) {
           <Icon name="compass" size={15} />
         </span>
         <span className={typing ? 'plan-title shimmer' : 'plan-title'}>{typing ? 'Writing the plan' : 'Plan'}</span>
-        <span className="tool-meta">{state && <span className={item.status === 'awaiting' ? 'tool-await' : item.status === 'error' ? 'tool-fail' : undefined}>{state}</span>}</span>
+        <span className="tool-meta">{state && <span className={item.status === 'error' ? 'tool-fail' : undefined}>{state}</span>}</span>
         <Icon name="caret-right" size={11} className="row-caret" />
       </button>
       <Collapse open={open && !!plan}>

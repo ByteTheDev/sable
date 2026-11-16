@@ -1,5 +1,4 @@
 .session {
-  --dock-h: 150px;
   position: relative;
   flex: 1;
   min-height: 0;
@@ -37,6 +36,21 @@
   from {
     opacity: 0;
   }
+}
+
+/* The dock's layer in the stage (App.tsx): above the conversation; above the dither veil too while
+   one session changes to another, so the composer stays in view as the conversation dissolves. */
+.stage-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.stage-body[data-session-swap] > .stage-dock {
+  z-index: 9;
 }
 
 .dock {
