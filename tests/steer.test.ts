@@ -281,7 +281,8 @@ describe('short answers', () => {
       return { calls, rpc };
     };
     const mine = fake('Always answer in German.');
-    const p = new CodexProvider(ctx({}));
+    // Generative UI adds its own line (tests/widget-provider.test.ts); this test is about short answers.
+    const p = new CodexProvider(ctx({ generativeUi: false }));
     (p as unknown as { client: () => Promise<unknown> }).client = async () => mine.rpc;
     expect(await p.developerInstructions('C:/proj')).toBe(`Always answer in German.\n\n${CONCISE_REPLIES_PROMPT}`);
     expect(mine.calls).toEqual([{ method: 'config/read', params: { cwd: 'C:/proj' } }]);
@@ -290,7 +291,7 @@ describe('short answers', () => {
     (p as unknown as { client: () => Promise<unknown> }).client = async () => none.rpc;
     expect(await p.developerInstructions('C:/proj')).toBe(CONCISE_REPLIES_PROMPT);
 
-    const off = new CodexProvider(ctx({ conciseReplies: false }));
+    const off = new CodexProvider(ctx({ conciseReplies: false, generativeUi: false }));
     (off as unknown as { client: () => Promise<unknown> }).client = async () => none.rpc;
     expect(await off.developerInstructions('C:/proj')).toBeUndefined();
   });

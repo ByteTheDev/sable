@@ -1,5 +1,6 @@
 import type { FileDiff, Question, Todo, ToolDetail, ToolKind, ToolResult } from '../../shared/protocol';
 import { countChanges, makeFileDiff } from '../../shared/diff';
+import { WIDGET_TOOL_ID, describeWidget } from './widget-tool';
 
 /** Normalizes Claude Code tool calls and results into Sable's display model. */
 
@@ -119,6 +120,8 @@ export function describeTool(name: string, input: Obj = {}): ToolView {
       return { kind: 'skill', title: `Use the ${input.skill ?? ''} skill`.replace('  ', ' '), detail: { skill: input.skill, description: input.args } };
     case 'ToolSearch':
       return { kind: 'other', title: 'Look up tools', detail: { query: input.query } };
+    case WIDGET_TOOL_ID:
+      return describeWidget(input);
     default: {
       if (name.startsWith('mcp__')) {
         const [, server, ...rest] = name.split('__');
@@ -336,7 +339,7 @@ export function mapResult(name: string, input: Obj, structured: unknown, content
 /** Pulls early field values out of a still-streaming JSON input so titles can update live. */
 export function peekPartialInput(json: string): Obj {
   const out: Obj = {};
-  for (const key of ['file_path', 'notebook_path', 'command', 'description', 'pattern', 'url', 'query', 'subagent_type', 'skill', 'subject']) {
+  for (const key of ['file_path', 'notebook_path', 'command', 'description', 'pattern', 'url', 'query', 'subagent_type', 'skill', 'subject', 'title']) {
     const m = json.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
     if (m) {
       try {

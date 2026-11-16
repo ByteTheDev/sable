@@ -1,0 +1,273 @@
+<!doctype html>
+<!--
+  Sable widget frame. The app embeds this page as <iframe sandbox="allow-scripts">, so it runs in an
+  opaque origin: no access to the app, its storage or the bridge. The page itself runs no widget code:
+  it creates one nested sandboxed frame (about:srcdoc, which inherits the policy below) and the widget
+  runs there. The policy allows no network at all, and its frame-src 'none' also stops the widget from
+  navigating its own frame to a remote page. The app talks to the nested frame directly (postMessage)
+  and treats everything it says as untrusted: src/features/genui/host.ts has the protocol and the guards.
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; manifest-src 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        color-scheme: dark;
+      }
+      iframe {
+        display: block;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: transparent;
+        color-scheme: dark;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      (function () {
+        /* Runs inside the nested frame, before any widget code. Nothing here is trusted by the app. */
+        function runtime() {
+          'use strict';
+          var HOST = window.parent && window.parent.parent;
+          var send = function (m) {
+            m.__sable = 1;
+            try {
+              HOST.postMessage(m, '*');
+            } catch (e) {}
+          };
+          var gesture = 0;
+          var lastH = -1;
+          var queued = 0;
+          var errors = 0;
+          var blocked = 0;
+
+          addEventListener('pointerdown', function (e) { if (e.isTrusted) gesture++; }, true);
+          addEventListener('keydown', function (e) { if (e.isTrusted) gesture++; }, true);
+
+          /* The one thing a widget may ask of the app: send a message as the user, after a click. */
+          window.sendPrompt = function (text) {
+            send({ type: 'prompt', text: String(text == null ? '' : text).slice(0, 4000), gesture: gesture });
+          };
+
+          addEventListener('error', function (e) {
+            if (errors++ < 5) send({ type: 'error', message: String((e && e.message) || 'Script error').slice(0, 300) });
+          });
+          addEventListener('unhandledrejection', function (e) {
+            var r = e && e.reason;
+            if (errors++ < 5) send({ type: 'error', message: String((r && r.message) || r || 'Unhandled rejection').slice(0, 300) });
+          });
+          document.addEventListener('securitypolicyviolation', function (e) {
+            if (blocked++ < 10) send({ type: 'blocked', directive: String(e.effectiveDirective || e.violatedDirective || ''), uri: String(e.blockedURI || '').slice(0, 160) });
+          });
+
+          /* Height follows the content. */
+          function measure() {
+            queued = 0;
+            var b = document.body;
+            if (!b) return;
+            var cs = getComputedStyle(b);
+            var m = (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+            var h = Math.ceil(Math.max(b.scrollHeight, b.getBoundingClientRect().height) + m);
+            if (!(h >= 0)) return;
+            if (h > 100000) h = 100000;
+            if (h !== lastH) {
+              lastH = h;
+              send({ type: 'size', h: h });
+            }
+          }
+          function schedule() {
+            if (queued) return;
+            queued = 1;
+            requestAnimationFrame(measure);
+            setTimeout(function () { if (queued) measure(); }, 48);
+          }
+          var ro = new ResizeObserver(schedule);
+          ro.observe(document.documentElement);
+          ro.observe(document.body);
+          document.addEventListener('load', schedule, true);
+          if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', schedule);
+
+          /* The app cannot see the pointer over this frame: say when it enters and leaves (for its bar). */
+          var over = false;
+          addEventListener('mouseover', function () {
+            if (over) return;
+            over = true;
+            send({ type: 'hover', on: true });
+          });
+          document.documentElement.addEventListener('mouseleave', function () {
+            over = false;
+            send({ type: 'hover', on: false });
+          });
+
+          /* Links never navigate the frame (there is nowhere to go). In-page anchors still work. */
+          document.addEventListener('click', function (e) {
+            var t = e.target;
+            var a = t && t.closest ? t.closest('a[href]') : null;
+            if (a && (a.getAttribute('href') || '').charAt(0) !== '#') e.preventDefault();
+            /* Forms cannot submit in the sandbox: turn a submit click into a submit event the widget can handle. */
+            var btn = t && t.closest ? t.closest('button, input[type=submit]') : null;
+            if (btn && btn.form && (btn.type === 'submit') && !e.defaultPrevented) {
+              e.preventDefault();
+              fakeSubmit(btn.form, btn);
+            }
+          });
+          document.addEventListener('keydown', function (e) {
+            var t = e.target;
+            if (e.key !== 'Enter' || !t || !t.form || t.tagName === 'TEXTAREA' || t.tagName === 'BUTTON') return;
+            e.preventDefault();
+            fakeSubmit(t.form, null);
+          });
+          function fakeSubmit(form, submitter) {
+            var ev;
+            try {
+              ev = new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: submitter });
+            } catch (err) {
+              ev = new Event('submit', { bubbles: true, cancelable: true });
+            }
+            form.dispatchEvent(ev);
+          }
+          try {
+            HTMLFormElement.prototype.requestSubmit = function (s) { fakeSubmit(this, s || null); };
+            HTMLFormElement.prototype.submit = function () {};
+          } catch (e) {}
+
+          /* After load, document.write would wipe the page: write in place instead. */
+          document.write = document.writeln = function () {
+            var html = Array.prototype.join.call(arguments, '');
+            var cur = document.currentScript;
+            if (cur && cur.parentNode) cur.insertAdjacentHTML('beforebegin', html);
+            else document.body.insertAdjacentHTML('beforeend', html);
+          };
+
+          var DROP = 'script,iframe,frame,frameset,object,embed,link,meta,base,portal';
+          /* A partial render must run nothing: drop scripts, frames and inline handlers. */
+          function inert(root) {
+            var drop = root.querySelectorAll(DROP);
+            for (var i = 0; i < drop.length; i++) drop[i].remove();
+            var all = root.querySelectorAll('*');
+            for (var k = 0; k < all.length; k++) {
+              var el = all[k];
+              var attrs = el.attributes;
+              for (var j = attrs.length - 1; j >= 0; j--) {
+                var n = attrs[j].name.toLowerCase();
+                if (n.indexOf('on') === 0 || (/^(href|src|xlink:href|action|formaction)$/.test(n) && /^\s*javascript:/i.test(attrs[j].value))) el.removeAttribute(attrs[j].name);
+              }
+            }
+          }
+
+          var deferred = [];
+          function runScripts() {
+            var docAdd = document.addEventListener;
+            var winAdd = window.addEventListener;
+            /* Widgets often wait for DOMContentLoaded or load, which fired long ago: call them once the scripts ran. */
+            document.addEventListener = function (t, fn, o) {
+              if (t === 'DOMContentLoaded' || t === 'readystatechange') return void deferred.push(fn);
+              return docAdd.call(document, t, fn, o);
+            };
+            window.addEventListener = function (t, fn, o) {
+              if (t === 'load' || t === 'DOMContentLoaded') return void deferred.push(fn);
+              return winAdd.call(window, t, fn, o);
+            };
+            var list = Array.prototype.slice.call(document.body.querySelectorAll('script'));
+            for (var i = 0; i < list.length; i++) {
+              var old = list[i];
+              var s = document.createElement('script');
+              for (var j = 0; j < old.attributes.length; j++) s.setAttribute(old.attributes[j].name, old.attributes[j].value);
+              s.text = old.textContent;
+              old.replaceWith(s);
+            }
+            var flush = function () {
+              var fns = deferred.splice(0);
+              for (var k = 0; k < fns.length; k++) {
+                try {
+                  var fn = fns[k];
+                  if (typeof fn === 'function') fn.call(document, new Event('DOMContentLoaded'));
+                  else if (fn && typeof fn.handleEvent === 'function') fn.handleEvent(new Event('DOMContentLoaded'));
+                } catch (err) {
+                  if (errors++ < 5) send({ type: 'error', message: String(err && err.message || err).slice(0, 300) });
+                }
+              }
+              if (typeof window.onload === 'function') {
+                var onload = window.onload;
+                window.onload = null;
+                try { onload.call(window, new Event('load')); } catch (err2) { if (errors++ < 5) send({ type: 'error', message: String(err2 && err2.message || err2).slice(0, 300) }); }
+              }
+            };
+            flush();
+            setTimeout(function () {
+              flush();
+              document.addEventListener = docAdd;
+              window.addEventListener = winAdd;
+              schedule();
+            }, 0);
+          }
+
+          var finalDone = false;
+          function render(code, final) {
+            if (finalDone) return;
+            var root = document.documentElement;
+            if (final) root.classList.remove('sable-streaming');
+            else root.classList.add('sable-streaming');
+            var t = document.createElement('template');
+            t.innerHTML = code;
+            if (!final) inert(t.content);
+            document.body.replaceChildren(t.content);
+            if (final) {
+              finalDone = true;
+              runScripts();
+            }
+            schedule();
+            send({ type: 'rendered', final: !!final });
+          }
+
+          addEventListener('message', function (e) {
+            if (e.source !== HOST) return;
+            var d = e.data;
+            if (!d || d.__sable !== 1) return;
+            if (d.type === 'init') {
+              document.getElementById('sable-base').textContent = String(d.css || '');
+              document.getElementById('sable-fonts').textContent = String(d.fonts || '');
+              schedule();
+            } else if (d.type === 'render') {
+              render(String(d.code || ''), !!d.final);
+            }
+          });
+          send({ type: 'ready' });
+        }
+
+        var doc =
+          '<!doctype html><html class="sable-streaming"><head><meta charset="utf-8"><meta name="color-scheme" content="dark">' +
+          '<style id="sable-fonts"></style><style id="sable-base"></style></head>' +
+          '<body><script>(' + runtime.toString() + ')();<\/script></body></html>';
+        var f = document.createElement('iframe');
+        f.setAttribute('sandbox', 'allow-scripts');
+        f.setAttribute('title', 'Widget');
+        f.setAttribute('referrerpolicy', 'no-referrer');
+        f.srcdoc = doc;
+        /* A second load means the widget navigated its frame (to the web, which frame-src 'none' turns
+           into an error page, or by reloading). Drop it and tell the app, which decides what to show. */
+        var loads = 0;
+        f.addEventListener('load', function () {
+          if (++loads < 2) return;
+          f.remove();
+          try {
+            parent.postMessage({ __sable: 1, type: 'left' }, '*');
+          } catch (e) {}
+        });
+        document.body.appendChild(f);
+      })();
+    </script>
+  </body>
+</html>

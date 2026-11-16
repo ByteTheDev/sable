@@ -12,6 +12,7 @@ import type { TimelineItem } from '@shared/protocol';
  *   w  a step: a tool call or thinking          n  any other notice (mode, model, compaction, retry)
  *   i  "Interrupted"                            e  an error notice
  *   T  turn end                                 F  turn end with an error
+ *   g  a widget (generative UI): never folded, shown with the answer
  *   .  nothing to show (an empty, finished text)
  */
 
@@ -37,6 +38,11 @@ export interface Segment {
   reply: string | null;
   /** Error notices: never folded. */
   errors: string[];
+  /**
+   * What shows under the work line, in order: the answer, every widget, and the text that leads
+   * into a widget ("Here is the chart:"). Just `[answer]` when there are no widgets.
+   */
+  shown: string[];
 }
 
 export type TurnState = 'running' | 'done' | 'failed' | 'interrupted';
@@ -77,7 +83,7 @@ export function shapeOf(item: TimelineItem | undefined): string {
     case 'thinking':
       return 'w';
     case 'tool':
-      return item.kind === 'plan' ? 'p' : 'w';
+      return item.kind === 'plan' ? 'p' : item.kind === 'widget' ? 'g' : 'w';
     case 'notice':
       if (item.variant === 'interrupted') return 'i';
       if (item.variant === 'error') return 'e';
@@ -117,6 +123,17 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
     const first = seg.chars.findIndex((c) => c === 't');
     if (first >= 0 && first !== answerAt) replyAt = first;
   }
+  // Widgets are never folded away, and neither is the text that leads into one.
+  const shownAt = new Set<number>();
+  if (answerAt >= 0) shownAt.add(answerAt);
+  for (let i = 0; i < seg.chars.length; i++) {
+    if (seg.chars[i] !== 'g') continue;
+    shownAt.add(i);
+    let j = i - 1;
+    while (j >= 0 && seg.chars[j] === '.') j--;
+    if (j >= 0 && seg.chars[j] === 't' && j !== replyAt) shownAt.add(j);
+  }
+  const shown: string[] = [];
   const work: string[] = [];
   const story: StoryChunk[] = [];
   let steps = 0;
@@ -130,7 +147,11 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
   for (let i = 0; i < seg.chars.length; i++) {
     const ch = seg.chars[i];
     const id = seg.ids[i];
-    if (i === answerAt || i === replyAt || ch === '.' || ch === 'i') continue;
+    if (i === replyAt || ch === '.' || ch === 'i') continue;
+    if (shownAt.has(i)) {
+      shown.push(id);
+      continue;
+    }
     if (ch === 'e') {
       errors.push(id);
       continue;
@@ -158,6 +179,7 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
     answer: answerAt >= 0 ? seg.ids[answerAt] : null,
     reply: replyAt >= 0 ? seg.ids[replyAt] : null,
     errors,
+    shown,
   };
 }
 

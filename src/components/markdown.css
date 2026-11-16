@@ -285,11 +285,100 @@
   white-space: pre-wrap;
 }
 
-/* Tables scroll sideways inside a soft well instead of squeezing the column. */
+/* Tables scroll sideways inside a soft well instead of squeezing the column. A long one also
+   scrolls down inside the well, under a header that stays. */
+.md-tablewrap {
+  position: relative;
+  min-width: 0;
+}
+
 .md-table {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background-color: rgb(0 0 0 / 0.22);
+}
+
+.md-table[data-tall] {
+  max-height: 480px;
+  overflow-y: auto;
+  overscroll-behavior-y: auto;
+}
+
+.md-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* Opaque: rows pass beneath it. The well's tone over the sheet, one step lighter. */
+  background-color: #101012;
+}
+
+.md-table .num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Copy as Markdown or CSV: on hover, straddling the top hairline like a widget's bar. */
+.md-table-copy {
+  position: absolute;
+  top: -12px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px 0 8px;
+  border-radius: 99px;
+  border: 1px solid var(--line-2);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+  background: var(--grain) 0 0 / var(--grain-size), var(--glass-strong);
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  transform: translateY(2px);
+  pointer-events: none;
+  transition:
+    opacity var(--d-2) var(--ease),
+    transform var(--d-2) var(--ease-out),
+    color var(--d-1) var(--ease);
+}
+
+.md-tablewrap:hover > .md-table-copy,
+.md-tablewrap:focus-within > .md-table-copy,
+.md-table-copy[data-state='open'],
+.md-table-copy[data-copied] {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.md-table-copy:hover,
+.md-table-copy[data-state='open'] {
+  color: var(--text);
+}
+
+.md-table-copy[data-copied] {
+  color: var(--green);
+}
+
+.md > .md-tablewrap {
+  margin-top: 1em;
+}
+
+.md > .md-tablewrap + * {
+  margin-top: 1em;
+}
+
+/* Widgets and diagrams in an answer get room for their bar above. */
+.md > .gw,
+.md > .mm {
+  margin-top: 1.25em;
+}
+
+.md > .gw + *,
+.md > .mm + * {
+  margin-top: 1.1em;
 }
 
 .md-table table {
@@ -318,6 +407,24 @@
 .md-table td {
   border-top: 1px solid var(--line);
   min-width: 72px;
+  max-width: 34em;
+}
+
+.md-table td.num {
+  min-width: 0;
+}
+
+/* A column of prose: wide enough to read in two or three lines, then the table scrolls sideways. */
+.md-table th.wide {
+  min-width: 16em;
+}
+
+.md-table tbody tr {
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.md-table tbody tr:hover {
+  background-color: rgb(255 255 255 / 0.018);
 }
 
 .md-table tbody tr:first-child td {

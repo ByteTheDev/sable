@@ -311,12 +311,38 @@ function harden() {
     "worker-src 'self' blob:",
     "object-src 'none'",
     // The panel browser is a <webview>; its pages run in a separate guest and are not framed by the app.
-    "frame-src 'none'",
+    // The only frame the app embeds is its own widget page (generative UI), sandboxed without same-origin.
+    "frame-src 'self'",
     "base-uri 'none'",
     "form-action 'none'",
   ].join('; ');
+  // The widget page runs code an agent wrote: no network of any kind, inline code only, and it can
+  // frame nothing but its own srcdoc child, which inherits this policy.
+  const widgetCsp = [
+    "default-src 'none'",
+    "script-src 'unsafe-inline'",
+    "style-src 'unsafe-inline'",
+    "img-src data: blob:",
+    "font-src data:",
+    "media-src data: blob:",
+    "connect-src 'none'",
+    "frame-src 'none'",
+    "child-src 'none'",
+    "worker-src 'none'",
+    "object-src 'none'",
+    "form-action 'none'",
+    "base-uri 'none'",
+    "manifest-src 'none'",
+  ].join('; ');
+  const isWidgetPage = (url: string): boolean => {
+    try {
+      return new URL(url).pathname === '/widget-frame.html';
+    } catch {
+      return false;
+    }
+  };
   session.defaultSession.webRequest.onHeadersReceived({ urls: [`${appOrigin}/*`] }, (details, callback) => {
-    callback({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [csp] } });
+    callback({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [isWidgetPage(details.url) ? widgetCsp : csp] } });
   });
 
   const allowed = new Set(['notifications', 'clipboard-read', 'clipboard-sanitized-write']);

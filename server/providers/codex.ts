@@ -28,6 +28,7 @@ import type { SessionRuntime } from '../core/runtime';
 import type { Provider, ProviderContext, ProviderSession } from './types';
 import { codexPlan } from './plans';
 import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
+import { WIDGET_DESCRIPTION, WIDGET_FENCE_HINT, WIDGET_INPUT_SCHEMA, WIDGET_TOOL, dynamicToolAnswer, widgetsEnabled } from './widget-tool';
 import { CodexRpc, RpcError, resolveCodexCommand, type ExitInfo } from './codex-rpc';
 import {
   PRESETS,
@@ -39,6 +40,7 @@ import {
   firstLine,
   mapHistory,
   mapLimits,
+  limitsMeta,
   mapMcp,
   mapModel,
   mapPlan,
@@ -225,6 +227,8 @@ export class CodexProvider implements Provider {
   }
 
   private onNotification(method: string, p: any) {
+    // Fresh plan limits when a turn ends (the rolling updates are sparse).
+    if (method === 'turn/completed') this.refreshLimitsSoon();
     switch (method) {
       case 'account/login/completed':
         return this.onLoginCompleted(p as AccountLoginCompletedNotification);
@@ -246,7 +250,7 @@ export class CodexProvider implements Provider {
         const prev = this.snapshots.get(key);
         // Sparse update: merge over the last full read.
         this.snapshots.set(key, { ...prev, ...snap, primary: snap.primary ?? prev?.primary ?? null, secondary: snap.secondary ?? prev?.secondary ?? null });
-        this.ctx.emit({ type: 'limits.updated', provider: 'codex', limits: mapLimits([...this.snapshots.values()]) });
+        this.ctx.emit({ type: 'limits.updated', provider: 'codex', limits: mapLimits([...this.snapshots.values()]), meta: limitsMeta([...this.snapshots.values()]) });
         return;
       }
       default: {
@@ -269,6 +273,8 @@ export class CodexProvider implements Provider {
         return { permissions: {}, scope: 'turn' };
       case 'item/tool/requestUserInput':
         return { answers: {} };
+      case 'item/tool/call':
+        return dynamicToolAnswer(p);
       case 'mcpServer/elicitation/request':
         return { action: 'decline', content: null, _meta: null };
       case 'execCommandApproval':
@@ -444,11 +450,14 @@ export class CodexProvider implements Provider {
 
   /**
    * Developer instructions for a thread: what the user configured for this folder
-   * (developer_instructions in config.toml) followed by the short-answers instruction when that
-   * setting is on. Undefined means "send nothing" (Codex then uses the config as it is).
+   * (developer_instructions in config.toml) followed by the short-answers instruction and the
+   * generative UI hint when those settings are on. Undefined means "send nothing" (Codex then uses
+   * the config as it is).
    */
   async developerInstructions(cwd: string): Promise<string | undefined> {
-    if (this.ctx.settings?.().conciseReplies === false) return undefined;
+    const settings = this.ctx.settings?.();
+    const ours = [settings?.conciseReplies === false ? '' : CONCISE_REPLIES_PROMPT, widgetsEnabled(settings) ? WIDGET_FENCE_HINT : ''].filter(Boolean).join('\n\n');
+    if (!ours) return undefined;
     let own: string | undefined;
     try {
       const rpc = await this.client();
@@ -457,7 +466,13 @@ export class CodexProvider implements Provider {
     } catch (err) {
       this.ctx.log('[codex] config/read failed:', errMsg(err));
     }
-    return own ? `${own}\n\n${CONCISE_REPLIES_PROMPT}` : CONCISE_REPLIES_PROMPT;
+    return own ? `${own}\n\n${ours}` : ours;
+  }
+
+  /** Client-defined tools for a new thread: show_widget while generative UI is on. */
+  dynamicTools(): { type: 'function'; name: string; description: string; inputSchema: unknown }[] | undefined {
+    if (!widgetsEnabled(this.ctx.settings?.())) return undefined;
+    return [{ type: 'function', name: WIDGET_TOOL, description: WIDGET_DESCRIPTION, inputSchema: WIDGET_INPUT_SCHEMA }];
   }
 
   // ── capabilities ──
@@ -560,11 +575,29 @@ export class CodexProvider implements Provider {
 
   async limits(): Promise<RateLimit[]> {
     const rpc = await this.client();
-    const r = await rpc.request<GetAccountRateLimitsResponse>('account/rateLimits/read', undefined, 20_000);
+    const r = await rpc.request<GetAccountRateLimitsResponse>('account/rateLimits/read', { excludeResetCreditDetails: true }, 20_000);
     this.snapshots.clear();
     const byId = r.rateLimitsByLimitId ? Object.values(r.rateLimitsByLimitId).filter((x): x is RateLimitSnapshot => !!x) : [];
     for (const s of byId.length ? byId : r.rateLimits ? [r.rateLimits] : []) this.snapshots.set(s.limitId ?? 'codex', s);
-    return mapLimits([...this.snapshots.values()]);
+    const snaps = [...this.snapshots.values()];
+    const limits = mapLimits(snaps);
+    this.ctx.emit({ type: 'limits.updated', provider: 'codex', limits, meta: limitsMeta(snaps) });
+    return limits;
+  }
+
+  private limitsTimer?: NodeJS.Timeout;
+  private limitsAt = 0;
+
+  /** One limits read shortly after a turn ends, at most every 20 seconds. */
+  private refreshLimitsSoon() {
+    if (this.limitsTimer || this.disposed) return;
+    const wait = Math.max(1500, 20_000 - (Date.now() - this.limitsAt));
+    this.limitsTimer = setTimeout(() => {
+      this.limitsTimer = undefined;
+      this.limitsAt = Date.now();
+      if (!this.disposed && this.rpc) void this.limits().catch(() => {});
+    }, wait);
+    this.limitsTimer.unref?.();
   }
 
   async history(cwd?: string, limit = 50): Promise<HistoryEntry[]> {
@@ -733,7 +766,9 @@ class CodexSession implements ProviderSession {
         this.log('thread', threadId, 'has no rollout yet; starting a new thread');
       }
     }
-    resp ??= await rpc.request<ThreadStartResponse>('thread/start', params, THREAD_TIMEOUT);
+    // Dynamic tools exist only on thread/start (a resumed thread keeps what it was started with).
+    const dynamicTools = this.provider.dynamicTools();
+    resp ??= await rpc.request<ThreadStartResponse>('thread/start', dynamicTools ? { ...params, dynamicTools } : params, THREAD_TIMEOUT);
     if (this.threadId && this.threadId !== resp.thread.id && this.provider.sessions.get(this.threadId) === this) this.provider.sessions.delete(this.threadId);
     this.threadId = resp.thread.id;
     this.loaded = true;
@@ -1204,6 +1239,9 @@ class CodexSession implements ProviderSession {
           return await this.approvePermissions(p as PermissionsRequestApprovalParams, ac.signal);
         case 'item/tool/requestUserInput':
           return await this.askUser(p as ToolRequestUserInputParams, ac.signal);
+        case 'item/tool/call':
+          // Client-defined tools (show_widget): the timeline already shows the call as the widget.
+          return dynamicToolAnswer(p);
         case 'execCommandApproval':
           return await this.legacyExec(p as ExecCommandApprovalParams, ac.signal);
         case 'applyPatchApproval':

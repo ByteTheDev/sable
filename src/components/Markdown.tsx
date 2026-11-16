@@ -3,6 +3,8 @@ import type { Token, Tokens } from 'marked';
 import { Icon } from '@/icons';
 import { onLinkClick } from '@/lib/links';
 import { PENDING_HREF, lexBlocks, repairTail, type LexState } from '@/lib/md';
+import { FenceWidget, MermaidBlock, WIDGET_FENCE } from '@/features/genui/blocks';
+import { numericColumns, TableCopy, wideColumns } from '@/features/genui/table';
 import { CodeBlock } from './CodeBlock';
 import './markdown.css';
 
@@ -156,11 +158,11 @@ const ListItem = memo(
 
 /** A table row, re-rendered only when its own cells change. */
 const TableRow = memo(
-  function TableRow({ row, align, live, k }: { raw: string; row: Tokens.TableCell[]; align: Tokens.Table['align']; live: boolean; k: string }) {
+  function TableRow({ row, align, figures, live, k }: { raw: string; row: Tokens.TableCell[]; align: Tokens.Table['align']; figures: boolean[]; live: boolean; k: string }) {
     return (
       <tr>
         {row.map((c, i) => (
-          <td key={i} style={align[i] ? { textAlign: align[i]! } : undefined}>
+          <td key={i} className={figures[i] ? 'num' : undefined} style={align[i] ? { textAlign: align[i]! } : undefined}>
             {inline(c.tokens, live, `${k}.${i}.`)}
           </td>
         ))}
@@ -201,6 +203,10 @@ function block(t: Token, live: boolean, key: string, tail = false): ReactNode {
     }
     case 'code': {
       const c = t as Tokens.Code;
+      const lang = (c.lang || '').trim().split(/\s+/)[0].toLowerCase();
+      // Generative UI in plain answers: ```widget renders in a frame, ```mermaid as a diagram.
+      if (lang === WIDGET_FENCE) return <FenceWidget key={key} code={c.text} streaming={live} />;
+      if (lang === 'mermaid') return <MermaidBlock key={key} code={c.text} streaming={live} />;
       return <CodeBlock key={key} code={c.text} lang={c.lang || undefined} streaming={live} />;
     }
     case 'blockquote': {
@@ -228,25 +234,33 @@ function block(t: Token, live: boolean, key: string, tail = false): ReactNode {
     }
     case 'table': {
       const tb = t as Tokens.Table;
-      const align = (i: number) => tb.align[i] ?? undefined;
+      const plain = { header: tb.header.map((c) => c.text), rows: tb.rows.map((r) => r.map((c) => c.text)) };
+      // Columns of figures align right in tabular digits, unless the author aligned them.
+      const figures = numericColumns(plain);
+      const wide = wideColumns(plain);
+      const align: Tokens.Table['align'] = tb.header.map((_, i) => tb.align[i] ?? (figures[i] ? 'right' : null));
+      const tall = tb.rows.length > 12;
       return (
-        <div className="md-table hscroll" key={key}>
-          <table>
-            <thead>
-              <tr>
-                {tb.header.map((c, i) => (
-                  <th key={i} style={align(i) ? { textAlign: align(i)! } : undefined}>
-                    {inline(c.tokens, live, `${key}.h${i}.`)}
-                  </th>
+        <div className="md-tablewrap" key={key}>
+          <div className="md-table hscroll" data-tall={tall || undefined}>
+            <table>
+              <thead>
+                <tr>
+                  {tb.header.map((c, i) => (
+                    <th key={i} className={figures[i] ? 'num' : wide[i] ? 'wide' : undefined} style={align[i] ? { textAlign: align[i]! } : undefined}>
+                      {inline(c.tokens, live, `${key}.h${i}.`)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {tb.rows.map((row, r) => (
+                  <TableRow key={r} raw={row.map((c) => c.text).join('|') + align.join(',')} row={row} align={align} figures={figures} live={live} k={`${key}.${r}`} />
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {tb.rows.map((row, r) => (
-                <TableRow key={r} raw={row.map((c) => c.text).join('|')} row={row} align={tb.align} live={live} k={`${key}.${r}`} />
-              ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
+          {!live && <TableCopy markdown={tb.raw} table={plain} />}
         </div>
       );
     }

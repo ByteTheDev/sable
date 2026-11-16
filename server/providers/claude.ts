@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import {
@@ -24,6 +25,7 @@ import type {
   ContextBreakdown,
   Effort,
   HistoryEntry,
+  LimitsMeta,
   McpServerInfo,
   ModeInfo,
   ModelInfo,
@@ -45,6 +47,8 @@ import { baseName, describeTool, flattenContent, mapResult, normalizeTodos, peek
 import type { Provider, ProviderContext, ProviderSession, WarmChoice } from './types';
 import { claudePlan } from './plans';
 import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
+import { widgetServer } from './claude-widget';
+import { WIDGET_SERVER, WIDGET_TOOL_ID, widgetsEnabled } from './widget-tool';
 
 type Obj = Record<string, any>;
 
@@ -164,6 +168,10 @@ export class ClaudeProvider implements Provider {
   private capsInflight = new Map<string, Promise<Capabilities>>();
   private loginProc?: ChildProcess;
   private limitsCache: RateLimit[] = [];
+  /** When limits were last read, the read in flight, and the last on-demand probe. */
+  private limitsAt = 0;
+  private limitsRun?: Promise<RateLimit[]>;
+  private limitsProbeAt = 0;
   readonly sessions = new Set<ClaudeSession>();
   /** The account's own config folder; undefined for the built-in default account. */
   private readonly configDir?: string;
@@ -266,6 +274,11 @@ export class ClaudeProvider implements Provider {
     return this.ctx.settings?.().conciseReplies !== false;
   }
 
+  /** Whether new agent processes get the show_widget tool (Settings > General > Generative UI). */
+  widgets() {
+    return widgetsEnabled(this.ctx.settings?.());
+  }
+
   agentOptions(meta: Pick<SessionMeta, 'cwd' | 'model' | 'effort' | 'mode' | 'options' | 'providerSessionId' | 'ultracode'>, owner: WarmOwner, resumeAt?: string): Options {
     const extraArgs: Record<string, string | null> = { 'replay-user-messages': null };
     // Claude in Chrome is a start-up flag; without it the CLI follows the machine's /chrome setting.
@@ -290,6 +303,9 @@ export class ClaudeProvider implements Provider {
       resume: meta.providerSessionId,
       resumeSessionAt: resumeAt,
       extraArgs,
+      // Generative UI: an in-process server with the show_widget tool, allowed without asking.
+      // The user's own MCP servers still load from their settings.
+      ...(this.widgets() ? { mcpServers: { [WIDGET_SERVER]: widgetServer() }, allowedTools: [WIDGET_TOOL_ID] } : {}),
       canUseTool: (name, toolInput, o) =>
         owner.session ? owner.session.canUseTool(name, toolInput, o) : Promise.resolve({ behavior: 'deny', message: 'No session is attached yet.' } as PermissionResult),
       stderr: (d) => {
@@ -303,7 +319,7 @@ export class ClaudeProvider implements Provider {
   private warm?: { key: string; q: Query; input: PushQueue<SDKUserMessage>; owner: WarmOwner; timer: NodeJS.Timeout };
 
   async prewarm(choice: WarmChoice) {
-    const key = warmKey(choice, this.concise());
+    const key = warmKey(choice, this.concise(), this.widgets());
     if (this.warm?.key === key) {
       this.warm.timer.refresh();
       return;
@@ -432,37 +448,113 @@ export class ClaudeProvider implements Provider {
     };
   }
 
-  async readLimits(q: Query): Promise<RateLimit[]> {
+  /**
+   * Reads plan limits through a live agent process (the SDK's usage request; no tokens). Reads
+   * closer together than `minGapMs` share the last answer.
+   */
+  readLimits(q: Query, minGapMs = 15_000): Promise<RateLimit[]> {
+    if (this.limitsRun) return this.limitsRun;
+    if (Date.now() - this.limitsAt < minGapMs) return Promise.resolve(this.limitsCache);
+    const run = this.readLimitsNow(q).finally(() => {
+      if (this.limitsRun === run) this.limitsRun = undefined;
+    });
+    this.limitsRun = run;
+    return run;
+  }
+
+  private async readLimitsNow(q: Query, retried = false): Promise<RateLimit[]> {
     try {
       const u = (await withTimeout(q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }), 10_000, 'usage')) as Obj;
-      const rl = u?.rate_limits as Obj | null;
-      if (!rl) return this.limitsCache;
-      const rows: RateLimit[] = [];
-      const add = (id: string, label: string, w: Obj | null | undefined) => {
-        if (!w || w.utilization == null) return;
-        rows.push({ id, label, percent: Math.round(Number(w.utilization)), resetsAt: w.resets_at ? Date.parse(w.resets_at) : undefined });
-      };
-      add('five_hour', '5-hour limit', rl.five_hour);
-      add('seven_day', 'Weekly · all models', rl.seven_day);
-      add('seven_day_opus', 'Weekly · Opus', rl.seven_day_opus);
-      add('seven_day_sonnet', 'Weekly · Sonnet', rl.seven_day_sonnet);
-      for (const m of (rl.model_scoped as Obj[] | undefined) ?? []) add(`model_${m.display_name}`, `Weekly · ${m.display_name}`, m);
-      if (rows.length) {
-        this.limitsCache = rows;
-        this.ctx.emit({ type: 'limits.updated', provider: 'claude', limits: rows });
+      // A process that just started may not have fetched them yet: ask once more a moment later.
+      if (!u?.rate_limits && u?.rate_limits_available && !retried) {
+        await new Promise((r) => setTimeout(r, 2500));
+        return this.readLimitsNow(q, true);
       }
-    } catch {
-      /* limits are optional */
+      this.limitsAt = Date.now();
+      const rl = u?.rate_limits as Obj | null;
+      // No subscription and no plan limits: an API key or a cloud provider. (Without the
+      // subscription missing too it is only a token that cannot read them: say nothing.)
+      if (!rl && u?.rate_limits_available === false && !u?.subscription_type) {
+        this.limitsCache = [];
+        this.ctx.emit({ type: 'limits.updated', provider: 'claude', limits: [], meta: { planLimits: false } });
+        return [];
+      }
+      if (!rl) {
+        this.ctx.log('claude: no plan limits in the usage answer', u?.rate_limits_available, u?.subscription_type ?? 'no subscription');
+        return this.limitsCache;
+      }
+      const rows: RateLimit[] = [];
+      const add = (id: string, label: string, w: Obj | null | undefined, windowMins: number) => {
+        if (!w || w.utilization == null) return;
+        const resetsAt = w.resets_at ? Date.parse(w.resets_at) : NaN;
+        rows.push({ id, label, percent: Math.max(0, Math.min(100, Math.round(Number(w.utilization)))), resetsAt: Number.isFinite(resetsAt) ? resetsAt : undefined, windowMins });
+      };
+      add('five_hour', '5-hour limit', rl.five_hour, 300);
+      add('seven_day', 'Weekly · all models', rl.seven_day, 10_080);
+      add('seven_day_opus', 'Weekly · Opus', rl.seven_day_opus, 10_080);
+      add('seven_day_sonnet', 'Weekly · Sonnet', rl.seven_day_sonnet, 10_080);
+      for (const m of (rl.model_scoped as Obj[] | undefined) ?? []) add(`model_${m.display_name}`, `Weekly · ${m.display_name}`, m, 10_080);
+      const meta: LimitsMeta = {};
+      const ex = rl.extra_usage as Obj | null | undefined;
+      if (ex) {
+        meta.extra = { enabled: !!ex.is_enabled };
+        if (ex.utilization != null) meta.extra.percent = Math.round(Number(ex.utilization));
+        if (ex.used_credits != null) meta.extra.used = Number(ex.used_credits);
+        if (ex.monthly_limit != null) meta.extra.limit = Number(ex.monthly_limit);
+        if (ex.currency) meta.extra.currency = String(ex.currency);
+      }
+      if (rows.length) {
+        meta.planLimits = true;
+        this.limitsCache = rows;
+        this.ctx.emit({ type: 'limits.updated', provider: 'claude', limits: rows, meta });
+      }
+    } catch (err) {
+      // Limits are optional: say why once in the log.
+      this.ctx.log('claude: plan limits could not be read:', (err as Error).message);
     }
     return this.limitsCache;
   }
 
-  async limits(): Promise<RateLimit[]> {
+  /** A request was refused at a limit: mark that window full until the next read says more. */
+  markLimitReached(info: Obj | undefined) {
+    if (info?.status !== 'rejected' || !info.rateLimitType) return;
+    const id = String(info.rateLimitType);
+    const row = this.limitsCache.find((l) => l.id === id);
+    if (!row) return;
+    const resetsAt = typeof info.resetsAt === 'number' ? (info.resetsAt < 1e12 ? info.resetsAt * 1000 : info.resetsAt) : row.resetsAt;
+    this.limitsCache = this.limitsCache.map((l) => (l === row ? { ...l, percent: 100, resetsAt } : l));
+    this.ctx.emit({ type: 'limits.updated', provider: 'claude', limits: this.limitsCache, meta: {} });
+  }
+
+  /**
+   * Limits from a running agent process when there is one (a session's, or the warm one). With
+   * `force` (the user asked) and none running, a short process starts just to read them: no
+   * settings, plugins or MCP servers, no tokens, at most once a minute.
+   */
+  async limits(force = false): Promise<RateLimit[]> {
     for (const s of this.sessions) {
       const q = s.liveQuery();
-      if (q) return this.readLimits(q);
+      if (q) return this.readLimits(q, force ? 0 : 15_000);
     }
-    return this.limitsCache;
+    if (this.warm) return this.readLimits(this.warm.q, force ? 0 : 15_000);
+    if (!force || Date.now() - this.limitsProbeAt < 60_000) return this.limitsCache;
+    this.limitsProbeAt = Date.now();
+    const input = new PushQueue<SDKUserMessage>();
+    const q = query({ prompt: input, options: { ...this.baseOptions(homedir()), settingSources: [], strictMcpConfig: true, persistSession: false } });
+    try {
+      await withTimeout(q.initializationResult(), 25_000, 'Claude Code startup');
+      return await this.readLimits(q, 0);
+    } catch (err) {
+      this.ctx.log('claude: the limits probe failed:', (err as Error).message);
+      return this.limitsCache;
+    } finally {
+      input.end();
+      try {
+        q.close();
+      } catch {
+        /* already gone */
+      }
+    }
   }
 
   async history(cwd?: string, limit = 40): Promise<HistoryEntry[]> {
@@ -507,9 +599,9 @@ interface WarmOwner {
 }
 
 /** Everything a process is started with: a warm process is only reused for the same choice. */
-function warmKey(c: { cwd: string; model?: string; mode?: string; effort?: Effort; options?: SessionOptions; ultracode?: boolean }, concise: boolean) {
+function warmKey(c: { cwd: string; model?: string; mode?: string; effort?: Effort; options?: SessionOptions; ultracode?: boolean }, concise: boolean, widgets = true) {
   const o = c.options ?? {};
-  return JSON.stringify([path.resolve(c.cwd).toLowerCase(), c.model && c.model !== 'default' ? c.model : '', c.mode || 'default', sdkEffort(c.effort) ?? '', o.browser ?? null, !!c.ultracode, concise]);
+  return JSON.stringify([path.resolve(c.cwd).toLowerCase(), c.model && c.model !== 'default' ? c.model : '', c.mode || 'default', sdkEffort(c.effort) ?? '', o.browser ?? null, !!c.ultracode, concise, widgets]);
 }
 
 /** Control requests the SDK does not wrap (remote_control, mcp_call): the CLI answers them on stdio. */
@@ -584,7 +676,7 @@ class ClaudeSession implements ProviderSession {
     if (this.q) return this.q;
     const meta = this.rt.meta;
     // A process started while the user was typing on the home screen, for exactly this choice.
-    const warm = !meta.providerSessionId && !this.resumeAt ? this.provider.takeWarm(warmKey(meta, this.provider.concise())) : undefined;
+    const warm = !meta.providerSessionId && !this.resumeAt ? this.provider.takeWarm(warmKey(meta, this.provider.concise(), this.provider.widgets())) : undefined;
     let q: Query;
     let input: PushQueue<SDKUserMessage>;
     if (warm) {
@@ -917,6 +1009,9 @@ class ClaudeSession implements ProviderSession {
     const toolUseId: string | undefined = o.toolUseID;
     const item = toolUseId ? rt.get<ToolItem>(toolUseId) : undefined;
 
+    // Showing a widget changes nothing outside Sable's sandboxed frame: never ask.
+    if (name === WIDGET_TOOL_ID) return { behavior: 'allow', updatedInput: input };
+
     if (name === 'AskUserQuestion') {
       const questions = describeTool(name, input).detail.questions ?? [];
       if (item) rt.patch<ToolItem>(item.id, { status: 'awaiting' });
@@ -1024,6 +1119,7 @@ class ClaudeSession implements ProviderSession {
       case 'system':
         return this.onSystem(any);
       case 'rate_limit_event':
+        this.provider.markLimitReached(any.rate_limit_info);
         void (this.q && this.provider.readLimits(this.q));
         return;
       case 'prompt_suggestion':
@@ -1073,6 +1169,8 @@ class ClaudeSession implements ProviderSession {
         else if (d.type === 'input_json_delta') {
           blk.json += d.partial_json ?? '';
           rt.delta(blk.itemId, 'inputText', d.partial_json ?? '');
+          // A widget's title is all there is to peek at; its code can be long, so stop looking once found.
+          if (blk.peeked && blk.name === WIDGET_TOOL_ID) break;
           // Surface the file / command as soon as it has streamed in.
           const peek = peekPartialInput(blk.json);
           const sig = JSON.stringify(peek);
@@ -1256,6 +1354,8 @@ class ClaudeSession implements ProviderSession {
         error,
       });
     }
+    // Fresh plan limits after every turn (shared with any read in the last few seconds).
+    if (this.q) void this.provider.readLimits(this.q);
     if (this.outstanding > 0) {
       // Queued messages are still coming: the next turn starts right away.
       this.interrupted = false;

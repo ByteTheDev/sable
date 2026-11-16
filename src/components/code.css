@@ -90,6 +90,29 @@
   color: var(--text-2);
 }
 
+/* HTML and SVG: a quiet switch between the code (default) and a preview in the widget sandbox. */
+.cb-toggle {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: var(--t-micro);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.cb-toggle:hover {
+  color: var(--text);
+  background-color: var(--fill-2);
+}
+
+.cb-toggle[aria-pressed='true'] {
+  color: var(--text);
+  background-color: var(--fill-3);
+}
+
 .cb-actions {
   display: flex;
   align-items: center;

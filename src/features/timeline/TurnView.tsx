@@ -36,7 +36,7 @@ function shapeSelector(sessionId: string, ids: string[]) {
   };
 }
 
-const segSig = (s: Segment) => `${s.lead}>${s.work.join(',')}>${s.reply}>${s.answer}>${s.errors.join(',')}`;
+const segSig = (s: Segment) => `${s.lead}>${s.work.join(',')}>${s.reply}>${s.answer}>${s.errors.join(',')}>${s.shown.join(',')}`;
 
 /**
  * Keeps the objects of turns and segments that did not change, so their memoized views skip
@@ -70,7 +70,7 @@ function groupHeight(g: Group, items: Record<string, TimelineItem>): number {
   for (const s of g.segments) {
     if (s.lead) h += estimate(items[s.lead]);
     if (s.work.length) h += 34;
-    if (s.answer) h += estimate(items[s.answer]);
+    for (const id of s.shown) h += estimate(items[id]);
     if (s.reply) h += estimate(items[s.reply]);
     h += s.errors.length * 64;
   }
@@ -248,7 +248,9 @@ const SegmentView = memo(function SegmentView({ seg, turn, index, live }: { seg:
           )}
         </div>
       )}
-      {seg.answer && <ItemRow key={seg.answer} id={seg.answer} answer />}
+      {seg.shown.map((id) => (
+        <ItemRow key={id} id={id} answer={id === seg.answer} />
+      ))}
       {seg.errors.map((id) => (
         <ItemRow key={id} id={id} />
       ))}
@@ -312,6 +314,10 @@ function liveSelector(sessionId: string, seg: Segment) {
         if (it.status === 'awaiting') waiting = true;
         if (!title) title = it.title;
       } else if (it.type === 'thinking' && it.streaming && !title) title = 'Thinking';
+    }
+    for (const id of seg.shown) {
+      const it = d.items[id];
+      if (!title && it?.type === 'tool' && (it.status === 'pending' || it.status === 'running')) title = it.title;
     }
     if (!title && answer?.type === 'text' && answer.streaming) title = 'Writing';
     if (!title) title = meta.status === 'starting' ? 'Starting' : meta.activity || 'Working';

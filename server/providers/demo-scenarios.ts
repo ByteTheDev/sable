@@ -9,6 +9,7 @@ import { makeFileDiff } from '../../shared/diff';
 import * as C from './demo-codebase';
 import { COMMANDS, SKILLS, contextBreakdown } from './demo-catalog';
 import { BASE_CONTEXT, Denied, type OutLine, type Script, between } from './demo-script';
+import * as W from './demo-widgets';
 
 // ───────────────────────────────── content file ─────────────────────────────────
 
@@ -963,13 +964,44 @@ export const command: Scenario = async (ctx) => {
 
 // ─────────────────────────────────── selection ──────────────────────────────────
 
-export const SCENARIOS = { flagship, plan, questions, agents, search, markdown, errors, mcp, long, greeting, command } satisfies Record<string, Scenario>;
+export const SCENARIOS = {
+  flagship,
+  plan,
+  questions,
+  agents,
+  search,
+  markdown,
+  errors,
+  mcp,
+  long,
+  greeting,
+  command,
+  chart: W.chart,
+  form: W.form,
+  dashboard: W.dashboard,
+  sandbox: W.sandbox,
+  escape: W.escape,
+  fence: W.fence,
+  diagram: W.diagram,
+  table: W.table,
+  gallery: W.gallery,
+} satisfies Record<string, Scenario>;
 export type ScenarioId = keyof typeof SCENARIOS;
 
 /** Rotation for prompts that match no keyword, so repeated prompts show different things. */
 export const ROTATION: ScenarioId[] = ['flagship', 'agents', 'search', 'questions', 'mcp', 'markdown'];
 
 const KEYWORDS: [RegExp, ScenarioId][] = [
+  // Generative UI (demo-widgets.ts).
+  [/\b(sandbox|hostile)\b/i, 'sandbox'],
+  [/\bescape\b/i, 'escape'],
+  [/\b(gallery|visuals)\b/i, 'gallery'],
+  [/\b(charts?|graphs?|latency)\b/i, 'chart'],
+  [/\b(forms?|options)\b/i, 'form'],
+  [/\b(dashboard|tall)\b/i, 'dashboard'],
+  [/\b(mermaid|diagrams?)\b/i, 'diagram'],
+  [/\btables?\b/i, 'table'],
+  [/\b(widgets?|explainer|simulation)\b/i, 'fence'],
   [/\b(long|stress)\b/i, 'long'],
   [/\b(markdown|showcase)\b/i, 'markdown'],
   [/\bmcp\b/i, 'mcp'],

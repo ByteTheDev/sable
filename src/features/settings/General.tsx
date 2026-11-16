@@ -45,6 +45,9 @@ export function General() {
         <Row label="Short answers" help="The outcome first, and a localhost link when there is something to preview.">
           <Switch label="Short answers" checked={settings.conciseReplies !== false} onChange={(conciseReplies) => setSettings({ conciseReplies })} />
         </Row>
+        <Row label="Generative UI">
+          <Switch label="Generative UI" checked={settings.generativeUi !== false} onChange={(generativeUi) => setSettings({ generativeUi })} />
+        </Row>
         <NotifyRow on={settings.notifyOnDone} />
       </Card>
       <SessionDefaults />

@@ -2,6 +2,8 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { TimelineItem, ToolItem } from '@shared/protocol';
 import { Collapse } from '@/components/Collapse';
 import { Markdown } from '@/components/Markdown';
+import { cachedHeight } from '@/features/genui/near';
+import { WidgetBlock } from '@/features/genui/WidgetBlock';
 import { Icon } from '@/icons';
 import { plural } from '@/lib/format';
 import { useStore } from '@/state/store';
@@ -71,6 +73,7 @@ export function estimate(item: TimelineItem | undefined): number {
     case 'text':
       return item.text ? 20 + Math.ceil(item.text.length / 95) * 27 + (item.text.match(/\n\n/g)?.length ?? 0) * 12 : 0;
     case 'tool':
+      if (item.kind === 'widget') return (cachedHeight(item.id) ?? 340) + 24;
       return item.kind === 'agent' || item.kind === 'plan' ? 72 : 28;
     case undefined:
       return 0;
@@ -105,6 +108,7 @@ export const LiveText = memo(function LiveText({ text, streaming }: { text: stri
 export const ItemRow = memo(function ItemRow({ id, nested = false, answer = false }: { id: string; nested?: boolean; answer?: boolean }) {
   const item = useItem(id);
   const fresh = useFresh(item?.ts);
+  const { sessionId } = useTimeline();
   if (!item) return null;
   let body;
   switch (item.type) {
@@ -124,7 +128,8 @@ export const ItemRow = memo(function ItemRow({ id, nested = false, answer = fals
       body = <Thinking item={item} />;
       break;
     case 'tool':
-      body = <ToolView item={item} />;
+      // Generative UI: the call is the widget itself, not a step.
+      body = item.kind === 'widget' ? <WidgetBlock item={item} sessionId={sessionId} /> : <ToolView item={item} />;
       break;
     case 'notice':
       body = <Notice item={item} />;

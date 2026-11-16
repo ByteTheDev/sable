@@ -365,6 +365,7 @@ export const TOOL_ICON: Record<string, { icon: IconName; tone: string }> = {
   question: { icon: 'question', tone: NEUTRAL },
   plan: { icon: 'compass', tone: NEUTRAL },
   skill: { icon: 'skill', tone: NEUTRAL },
+  widget: { icon: 'grid', tone: NEUTRAL },
   other: { icon: 'wrench', tone: NEUTRAL },
 };
 

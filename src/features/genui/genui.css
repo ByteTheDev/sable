@@ -1,0 +1,393 @@
+/*
+ * Generative UI: widgets in the conversation. A widget reads as part of the answer: a hairline and
+ * nothing else at rest; its bar appears on hover or focus. While it builds, a dither skeleton grows
+ * with the code; when it is complete, one band of light travels down over it.
+ */
+
+.tl-item[data-k='widget'] {
+  padding-top: 14px;
+  padding-bottom: 10px;
+  contain-intrinsic-size: auto 360px;
+}
+
+.gw {
+  position: relative;
+  margin: 0;
+  min-width: 0;
+}
+
+.gw-frame {
+  position: relative;
+}
+
+.gw-box {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  contain: layout paint;
+}
+
+/* The hairline sits above the frame (the frame would cover an inset shadow on the box). */
+.gw-box::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--line);
+  pointer-events: none;
+}
+
+.gw-box[data-anim] {
+  transition: height var(--d-3) var(--ease-out);
+}
+
+.gw-iframe {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color-scheme: dark;
+  opacity: 0;
+  transition: opacity var(--d-2) var(--ease);
+}
+
+.gw-box[data-phase='partial'] .gw-iframe {
+  opacity: 0.86;
+}
+
+.gw-box[data-phase='final'] .gw-iframe {
+  opacity: 1;
+}
+
+.gw-iframe:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+  border-radius: var(--r-lg);
+}
+
+/* ── while it builds ── */
+
+.gw-skel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px;
+  pointer-events: none;
+  animation: fade-in var(--d-3) var(--ease) both;
+}
+
+.gw-skel-title {
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+  max-width: 70%;
+}
+
+.gw-skel-rows {
+  display: grid;
+  gap: 11px;
+}
+
+.gw-skel-row {
+  height: 9px;
+  border-radius: 4px;
+  animation: gw-row var(--d-4) var(--ease-out) both;
+}
+
+/* The space the code will fill: a faint dither field, so the block reads as a surface being drawn. */
+.gw-skel::after {
+  content: '';
+  flex: 1;
+  min-height: 0;
+  border-radius: var(--r-md);
+  background: var(--dither-25) 0 0 / var(--dither-tone-size);
+  image-rendering: pixelated;
+  opacity: 0.045;
+}
+
+@keyframes gw-row {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.gw-live {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  max-width: 46%;
+  height: 24px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 99px;
+  font-size: var(--t-small);
+  color: var(--text-2);
+  border: 1px solid var(--line-2);
+  background: var(--glass-strong);
+  pointer-events: none;
+  animation: fade-in var(--d-2) var(--ease) both;
+}
+
+/* ── the reveal: one band of dithered light travels down the finished widget ── */
+
+.gw-box[data-reveal] .gw-iframe {
+  animation: gw-in 380ms var(--ease-out) both;
+}
+
+@keyframes gw-in {
+  from {
+    opacity: 0.5;
+    transform: translateY(3px);
+  }
+}
+
+.gw-sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 56px;
+  pointer-events: none;
+  background: var(--dither-50) 0 0 / var(--dither-tone-size);
+  image-rendering: pixelated;
+  opacity: 0;
+  animation: gw-sweep 760ms var(--ease-out) both;
+}
+
+.gw-sweep::before,
+.gw-sweep::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 16px;
+  background: var(--dither-25) 0 0 / var(--dither-tone-size);
+  image-rendering: pixelated;
+}
+
+.gw-sweep::before {
+  bottom: 100%;
+}
+
+.gw-sweep::after {
+  top: 100%;
+}
+
+@keyframes gw-sweep {
+  0% {
+    opacity: 0.1;
+    transform: translateY(-72px);
+  }
+  70% {
+    opacity: 0.07;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(var(--gw-h, 320px));
+  }
+}
+
+/* ── clipped: a tall widget rests at a calm height ── */
+
+.gw-fade {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  bottom: 0;
+  height: 88px;
+  background: linear-gradient(to bottom, transparent, var(--sheet) 92%);
+  pointer-events: none;
+}
+
+.gw-more {
+  position: absolute;
+  left: 50%;
+  bottom: -13px;
+  translate: -50% 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 11px 0 12px;
+  border-radius: 99px;
+  border: 1px solid var(--line-2);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+  background-color: var(--panel-2);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale 80ms var(--ease-out);
+}
+
+.gw-more:hover {
+  color: var(--text);
+  background-color: var(--panel-3);
+}
+
+.gw-more:active {
+  scale: 0.97;
+}
+
+.gw-more svg {
+  transition: transform var(--d-2) var(--ease-out);
+}
+
+.gw-more[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.gw-frame:has(> .gw-more) {
+  margin-bottom: 14px;
+}
+
+.gw-note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.gw-caption {
+  margin-top: 8px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* ── the bar: on hover or focus, straddling the top hairline ── */
+
+.gw-bar {
+  position: absolute;
+  top: -14px;
+  right: 10px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 28px;
+  max-width: calc(100% - 20px);
+  padding: 0 3px 0 11px;
+  border-radius: 99px;
+  border: 1px solid var(--line-2);
+  background: var(--grain) 0 0 / var(--grain-size), var(--glass-strong);
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  transform: translateY(2px);
+  pointer-events: none;
+  transition:
+    opacity var(--d-2) var(--ease),
+    transform var(--d-2) var(--ease-out);
+}
+
+.gw:hover > .gw-bar,
+.gw[data-hover] > .gw-bar,
+.gw:focus-within > .gw-bar {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.gw-title {
+  min-width: 0;
+  max-width: 280px;
+  padding-right: 6px;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+}
+
+.gw-flag {
+  flex-shrink: 0;
+  padding: 0 7px;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+  border-left: 1px solid var(--line);
+  border-radius: 2px;
+}
+
+.gw-flag:focus-visible {
+  outline: 2px solid var(--focus);
+}
+
+.gw-btn {
+  width: 26px;
+  height: 22px;
+  border-radius: 99px;
+}
+
+/* ── the larger view ── */
+
+.dialog.gw-dialog {
+  padding: 0;
+  max-height: calc(100 * var(--vh) - 56px);
+}
+
+.gw-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 48px;
+  flex-shrink: 0;
+  padding: 0 10px 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.gw-dialog-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-ui);
+  font-weight: var(--w-semi);
+  letter-spacing: -0.01em;
+}
+
+.gw-dialog-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.gw-dialog-body .gw-box::after {
+  box-shadow: none;
+}
+
+/* ── code blocks with a preview, and diagrams ── */
+
+.cb-preview {
+  padding: 0;
+}
+
+.cb-preview .gw-box {
+  border-radius: 0;
+}
+
+.cb-preview .gw-box::after {
+  display: none;
+}
+
+.mm {
+  position: relative;
+}
+
+.mm-error {
+  margin: 0 0 8px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gw-sweep,
+  .gw-box[data-reveal] .gw-iframe,
+  .gw-skel-row {
+    animation: none;
+  }
+}

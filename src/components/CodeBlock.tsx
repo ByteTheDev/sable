@@ -1,4 +1,6 @@
-import { Fragment, memo, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useMemo, useRef, useState, type ReactNode } from 'react';
+import { hashCode } from '@/features/genui/partial';
+import { WidgetFrame } from '@/features/genui/WidgetFrame';
 import { Icon } from '@/icons';
 import { langLabel, useHighlight } from '@/lib/highlight';
 import { useNearViewport } from '@/lib/view-hooks';
@@ -22,6 +24,17 @@ export interface CodeBlockProps {
   /** Show a line-number gutter starting at this number. */
   startLine?: number;
   className?: string;
+  /** More buttons for the header, before wrap and copy. */
+  actions?: ReactNode;
+}
+
+/** HTML and SVG can be previewed (in the widget sandbox); the code stays the default view. */
+function previewable(lang: string | undefined, text: string): boolean {
+  const l = (lang ?? '').toLowerCase();
+  if (l === 'svg') return /<svg\b/i.test(text);
+  if (l === 'html' || l === 'htm' || l === 'xhtml') return /<[a-z][\s\S]*>/i.test(text);
+  if (l === 'xml') return /^\s*(<\?xml[^>]*>\s*)?<svg\b/i.test(text);
+  return false;
 }
 
 const LINE_H = 18;
@@ -37,7 +50,7 @@ function countLines(text: string): number {
  * Code in a recessed well: a slim header (language, wrap, copy) over the text.
  * Colours arrive in idle time and never change the layout.
  */
-export const CodeBlock = memo(function CodeBlock({ code, lang, title, maxHeight = 380, wrap = false, streaming = false, startLine, className }: CodeBlockProps) {
+export const CodeBlock = memo(function CodeBlock({ code, lang, title, maxHeight = 380, wrap = false, streaming = false, startLine, className, actions }: CodeBlockProps) {
   const text = code.endsWith('\n') ? code.slice(0, -1) : code;
   const root = useRef<HTMLDivElement>(null);
   const near = useNearViewport(root, streaming);
@@ -47,6 +60,10 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, title, maxHeight 
   // A block the reader watched arrive stays open: clipping it at the end would make the page jump.
   const watched = useRef(streaming);
   const [expanded, setExpanded] = useState(false);
+  const canPreview = !streaming && previewable(lang, text);
+  const [preview, setPreview] = useState(false);
+  const showPreview = canPreview && preview;
+  const previewKey = useMemo(() => (canPreview ? `cb:${hashCode(text)}` : ''), [canPreview, text]);
 
   const full = lineCount * LINE_H + PAD;
   const long = Number.isFinite(maxHeight) && full > maxHeight + 120 && !watched.current && !streaming;
@@ -86,21 +103,35 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, title, maxHeight 
       <div className="cb-head">
         {/* Paths and commands read as code; plain labels stay in the interface face. */}
         <span className={`cb-label truncate ${title && /[\/.:]/.test(title) ? 'cb-title' : ''}`}>{title ?? langLabel(lang)}</span>
+        {canPreview && (
+          <button type="button" className="cb-toggle" aria-pressed={showPreview} onClick={() => setPreview((p) => !p)}>
+            {showPreview ? 'Code' : 'Preview'}
+          </button>
+        )}
         <span className="cb-actions">
-          <LazyTip label={wrapped ? 'Stop wrapping lines' : 'Wrap lines'} side="top">
-            <button type="button" className="icon-btn cb-btn" aria-label="Wrap lines" aria-pressed={wrapped} data-active={wrapped || undefined} onClick={() => setWrapped((w) => !w)}>
-              <Icon name="enter" size={13} />
-            </button>
-          </LazyTip>
+          {actions}
+          {!showPreview && (
+            <LazyTip label={wrapped ? 'Stop wrapping lines' : 'Wrap lines'} side="top">
+              <button type="button" className="icon-btn cb-btn" aria-label="Wrap lines" aria-pressed={wrapped} data-active={wrapped || undefined} onClick={() => setWrapped((w) => !w)}>
+                <Icon name="enter" size={13} />
+              </button>
+            </LazyTip>
+          )}
           <CopyButton text={code} label="Copy code" size={13} className="cb-btn" />
         </span>
       </div>
-      <div className="cb-body hscroll" style={long ? { maxHeight: clipped ? maxHeight : wrapped ? undefined : full } : undefined}>
-        <pre className="cb-pre">
-          <code>{body}</code>
-        </pre>
-      </div>
-      {long && (
+      {showPreview ? (
+        <div className="cb-preview">
+          <WidgetFrame cacheKey={previewKey} code={text} final title={title ?? langLabel(lang)} />
+        </div>
+      ) : (
+        <div className="cb-body hscroll" style={long ? { maxHeight: clipped ? maxHeight : wrapped ? undefined : full } : undefined}>
+          <pre className="cb-pre">
+            <code>{body}</code>
+          </pre>
+        </div>
+      )}
+      {long && !showPreview && (
         <button type="button" className="cb-more" onClick={() => setExpanded((e) => !e)} aria-expanded={expanded}>
           {expanded ? 'Show less' : `Show all ${lineCount} lines`}
           <Icon name="caret-down" size={11} />

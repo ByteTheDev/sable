@@ -25,6 +25,7 @@ import type {
   UserItem,
 } from '../../shared/protocol';
 import { makeFileDiff } from '../../shared/diff';
+import { WIDGET_TOOL_ID } from './widget-tool';
 
 // ───────────────────────────── control-flow signals ─────────────────────────────
 
@@ -386,6 +387,34 @@ export class Script {
       this.countOut(JSON.stringify(spec.input ?? {}));
       await this.pause(60, 170);
     }
+    return item.id;
+  }
+
+  /**
+   * A show_widget call, the way an agent sends it: the input streams in as JSON (title first,
+   * then the code, in larger chunks than prose), then the call completes. The timeline shows it
+   * as the widget itself.
+   */
+  async widget(title: string, code: string, opts: { parentId?: string } = {}): Promise<string> {
+    await this.answerSteers();
+    this.check();
+    const input = { title, code };
+    this.activity(title);
+    const item = this.rt.add<ToolItem>({ type: 'tool', name: WIDGET_TOOL_ID, kind: 'widget', title, status: 'pending', detail: {}, inputText: '', parentId: opts.parentId });
+    const json = JSON.stringify(input);
+    for (let i = 0; i < json.length; ) {
+      const n = Math.round(between(60, 150));
+      const part = json.slice(i, i + n);
+      this.check();
+      this.rt.delta(item.id, 'inputText', part);
+      this.countOut(part);
+      i += n;
+      await this.sleep(between(16, 34) * this.env.pricing.pace);
+    }
+    this.check();
+    this.rt.patch<ToolItem>(item.id, { input, status: 'running' });
+    await this.pause(60, 140);
+    this.complete(item.id, { text: 'The widget is shown to the user.' });
     return item.id;
   }
 
