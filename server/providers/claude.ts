@@ -50,7 +50,7 @@ import { claudePlan } from './plans';
 import { carryClaudeConversation } from '../accounts/handover';
 import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
 import { widgetServer } from './claude-widget';
-import { WIDGET_SERVER, WIDGET_TOOL_ID, widgetsEnabled } from './widget-tool';
+import { WIDGET_FENCE_HINT, WIDGET_SERVER, WIDGET_TOOL_ID, widgetsEnabled } from './widget-tool';
 
 type Obj = Record<string, any>;
 
@@ -284,6 +284,15 @@ export class ClaudeProvider implements Provider {
     return widgetsEnabled(this.ctx.settings?.());
   }
 
+  /**
+   * What Sable appends to Claude Code's own prompt: the short-answers instruction and, with
+   * generative UI on, one line that reminds the model the widget tool exists (a tool description
+   * alone is rarely enough for a model to reach for an optional tool unprompted).
+   */
+  appendix(): string {
+    return [this.concise() ? CONCISE_REPLIES_PROMPT : '', this.widgets() ? WIDGET_FENCE_HINT : ''].filter(Boolean).join('\n\n');
+  }
+
   agentOptions(meta: Pick<SessionMeta, 'cwd' | 'model' | 'effort' | 'mode' | 'options' | 'providerSessionId' | 'ultracode'>, owner: WarmOwner, resumeAt?: string): Options {
     const extraArgs: Record<string, string | null> = { 'replay-user-messages': null };
     // Claude in Chrome is a start-up flag; without it the CLI follows the machine's /chrome setting.
@@ -293,7 +302,7 @@ export class ClaudeProvider implements Provider {
     return {
       ...base,
       // Appended to Claude Code's own prompt: CLAUDE.md, output styles and settings still apply.
-      systemPrompt: this.concise() ? { type: 'preset', preset: 'claude_code', append: CONCISE_REPLIES_PROMPT } : base.systemPrompt,
+      systemPrompt: this.appendix() ? { type: 'preset', preset: 'claude_code', append: this.appendix() } : base.systemPrompt,
       // Flag-tier settings for this process (what applyFlagSettings changes later on).
       settings: meta.ultracode ? ({ ultracode: true } as Options['settings']) : undefined,
       model: meta.model && meta.model !== 'default' ? meta.model : undefined,

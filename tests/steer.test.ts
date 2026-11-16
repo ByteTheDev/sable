@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CONCISE_REPLIES_PROMPT, DEFAULT_SETTINGS, type AppSettings, type Attachment, type BridgeEvent, type TextItem, type TurnItem, type UserItem } from '@shared/protocol';
+import { WIDGET_FENCE_HINT } from '../server/providers/widget-tool';
 import { App } from '../server/app';
 import { ClaudeProvider } from '../server/providers/claude';
 import { CodexProvider } from '../server/providers/codex';
@@ -267,11 +268,17 @@ describe('short answers', () => {
   });
 
   it('Claude Code: appended to the preset system prompt, nothing replaced', () => {
-    const on = new ClaudeProvider(ctx({})).agentOptions({ cwd: tmpdir(), model: '', mode: 'default' }, {});
+    // Generative UI adds its own line; this test is about short answers, so it is off here.
+    const on = new ClaudeProvider(ctx({ generativeUi: false })).agentOptions({ cwd: tmpdir(), model: '', mode: 'default' }, {});
     expect(on.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code', append: CONCISE_REPLIES_PROMPT });
     expect(on.settingSources).toEqual(['user', 'project', 'local']);
-    const off = new ClaudeProvider(ctx({ conciseReplies: false })).agentOptions({ cwd: tmpdir(), model: '', mode: 'default' }, {});
+    const off = new ClaudeProvider(ctx({ conciseReplies: false, generativeUi: false })).agentOptions({ cwd: tmpdir(), model: '', mode: 'default' }, {});
     expect(off.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+    // Both on (the default): the two instructions, short answers first.
+    const both = new ClaudeProvider(ctx({})).agentOptions({ cwd: tmpdir(), model: '', mode: 'default' }, {});
+    expect(both.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code', append: `${CONCISE_REPLIES_PROMPT}\n\n${WIDGET_FENCE_HINT}` });
+    const widgetsOnly = new ClaudeProvider(ctx({ conciseReplies: false })).agentOptions({ cwd: tmpdir(), model: '', mode: 'default' }, {});
+    expect(widgetsOnly.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code', append: WIDGET_FENCE_HINT });
   });
 
   it('Codex: developer instructions keep what the user configured and add the instruction', async () => {
