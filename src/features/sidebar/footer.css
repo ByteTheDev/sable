@@ -1,4 +1,67 @@
-/* The account row in the sidebar footer: the plan leads, the email follows quietly. */
+/* The footer: one quiet row. The account (it opens every account with its limits) and Settings. */
+
+.side-foot {
+  flex-shrink: 0;
+  padding: 4px 4px 6px 2px;
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+}
+
+.account-switch {
+  display: contents;
+}
+
+.account-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 36px;
+  padding: 0 10px 0 9px;
+  border-radius: var(--r-sm);
+  text-align: left;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.account-main:hover,
+.account-main[data-state='open'] {
+  background-color: var(--fill-2);
+}
+
+.account-main:active {
+  background-color: var(--fill-3);
+}
+
+.account-main:focus-visible {
+  outline: 1.5px solid var(--focus);
+  outline-offset: -1.5px;
+}
+
+/* The agents signed in: small discs, the first on the icon column. */
+.account-marks {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.account-mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: var(--panel-2);
+  box-shadow: 0 0 0 2px var(--side-bg, var(--sheet));
+}
+
+.account-mark + .account-mark {
+  margin-left: -4px;
+}
 
 .account-who {
   flex: 1;
@@ -10,14 +73,89 @@
 
 .account-plan {
   flex-shrink: 0;
-  font-size: var(--t-small);
+  font-size: var(--t-ui);
   font-weight: var(--w-medium);
-  color: var(--text);
+  color: var(--text-2);
   white-space: nowrap;
+  transition: color var(--d-1) var(--ease);
+}
+
+.account-main:hover .account-plan,
+.account-main[data-state='open'] .account-plan {
+  color: var(--text);
 }
 
 .account-email-dim {
   min-width: 0;
   font-size: var(--t-micro);
   color: var(--text-3);
+}
+
+/* The menu's caret answers the pointer; at rest the row is only who you are. */
+.account-caret {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.account-main:hover .account-caret,
+.account-main:focus-visible .account-caret,
+.account-main[data-state='open'] .account-caret {
+  opacity: 1;
+}
+
+/* No agent signed in: the same row, saying what to do. */
+.connect {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  text-align: left;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.connect:hover {
+  background-color: var(--fill-2);
+}
+
+.connect:active {
+  background-color: var(--fill-3);
+}
+
+.connect:focus-visible {
+  outline: 1.5px solid var(--focus);
+  outline-offset: -1.5px;
+}
+
+.connect-marks {
+  display: grid;
+  gap: 2px;
+  width: 16px;
+  flex-shrink: 0;
+  justify-items: center;
+}
+
+.connect-title {
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.connect-arrow {
+  flex-shrink: 0;
+  color: var(--text-3);
+  transition:
+    transform var(--d-2) var(--ease-out),
+    color var(--d-1) var(--ease);
+}
+
+.connect:hover .connect-arrow {
+  transform: translateX(2px);
+  color: var(--text);
 }

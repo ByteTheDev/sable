@@ -1,31 +1,33 @@
-import { memo, useEffect, type CSSProperties } from 'react';
-import { DEFAULT_ACCOUNT, type RateLimit } from '@shared/protocol';
-import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
+import { memo, useEffect } from 'react';
+import { DEFAULT_ACCOUNT } from '@shared/protocol';
+import { ProviderMark } from '@/art/Logo';
 import { AccountSwitcher, AddAccountDialog } from '@/features/accounts';
 import { connectableAgents, isSignedIn } from '@/features/connect/plan';
 import { Icon } from '@/icons';
-import { resetIn } from '@/lib/format';
-import { useNow } from '@/lib/useNow';
 import { openSettings, refreshLimits } from '@/state/actions';
-import { useAccountLimits, useFocusAccount } from '@/state/hooks';
+import { useFocusAccount } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { IconButton } from '@/ui';
 import './footer.css';
 
 const REFRESH_MS = 4 * 60_000;
 
-/** Usage limits for the account in focus, then who is signed in. */
+/**
+ * One quiet row: who is signed in (it opens the accounts, each with its limits) and Settings.
+ * The limits themselves live in that menu; the row only marks an account near or at a cap.
+ */
 export const SidebarFooter = memo(function SidebarFooter() {
+  useLimitRefresh();
   return (
     <div className="side-foot">
-      <Usage />
       <Account />
       <AddAccountDialog />
     </div>
   );
 });
 
-function Usage() {
+/** Keeps the account in focus's limits fresh while the window is visible, so the row's limit mark is current. */
+function useLimitRefresh() {
   const { provider, accountId } = useFocusAccount();
   const ready = useStore((s) => s.ready);
   const connected = useStore((s) => {
@@ -33,7 +35,6 @@ function Usage() {
     const a = p?.accounts?.find((x) => x.id === accountId);
     return !!(a ? a.auth.loggedIn : accountId === DEFAULT_ACCOUNT && p?.auth.loggedIn);
   });
-  const limits = useAccountLimits(provider, accountId);
 
   useEffect(() => {
     if (!ready || !connected) return;
@@ -55,73 +56,59 @@ function Usage() {
       document.removeEventListener('visibilitychange', onVis);
     };
   }, [provider, accountId, ready, connected]);
-
-  if (!connected || !limits?.length) return null;
-  return (
-    <div className="usage" aria-label={`${PROVIDER_NAME[provider]} usage`}>
-      {limits.map((l) => (
-        <LimitRow key={l.id} limit={l} />
-      ))}
-    </div>
-  );
 }
 
-function LimitRow({ limit }: { limit: RateLimit }) {
-  const now = useNow();
-  const pct = Math.max(0, Math.min(100, limit.percent));
-  const level = pct > 95 ? 'red' : pct > 80 ? 'amber' : undefined;
-  const reset = resetIn(limit.resetsAt, now);
-  return (
-    <div className="limit" data-level={level} tabIndex={0} aria-label={`${limit.label}: ${Math.round(pct)}% used${reset ? `, resets in ${reset}` : ''}`}>
-      <div className="limit-top">
-        <span className="limit-label truncate">{limit.label}</span>
-        <span className="limit-val num">
-          {reset && <span className="limit-reset">Resets in {reset}</span>}
-          <span className="limit-pct">{Math.round(pct)}%</span>
-        </span>
-      </div>
-      <span className="limit-track meter" data-level={level}>
-        <span className="meter-fill" style={{ '--p': pct / 100 } as CSSProperties} />
-      </span>
-    </div>
-  );
-}
-
-/** Who is signed in: the plan first ("Max plan"), the account's name after it when there are several. */
 function Account() {
   const providers = useStore((s) => s.providers);
   const { provider: active } = useFocusAccount();
   const ready = useStore((s) => s.ready);
 
   const connected = connectableAgents(providers).filter((id) => isSignedIn(providers[id]));
-  const openAccounts = () => openSettings('accounts');
 
-  if (!ready) return null;
+  if (!ready) return <div className="account" aria-hidden />;
   // An agent without an account to connect still shows while it is the one in focus.
   if (!connected.includes(active) && isSignedIn(providers[active])) connected.push(active);
   if (!connected.length) {
     return (
       <div className="account">
-        <button type="button" className="connect" data-spot onClick={openAccounts}>
-
+        <button type="button" className="connect" onClick={() => openSettings('accounts')}>
           <span className="connect-marks" aria-hidden>
             <ProviderMark provider="claude" size={13} />
             <ProviderMark provider="codex" size={13} />
           </span>
-          <span className="col grow">
-            <span className="connect-title">Connect an agent</span>
-            <span className="connect-sub truncate">Sign in to Claude Code or Codex</span>
-          </span>
-          <Icon name="arrow-right" size={13} className="connect-arrow" />
+          <span className="connect-title grow truncate">Connect an agent</span>
+          <Icon name="arrow-right" size={14} className="connect-arrow" />
         </button>
+        <IconButton icon="settings" label="Settings" keys="mod+," tipSide="top" onClick={() => openSettings()} />
       </div>
     );
   }
 
   return (
     <div className="account">
-      <AccountSwitcher />
+      <div className="account-switch" onPointerDownCapture={peekCurrent} onKeyDownCapture={peekCurrent}>
+        <AccountSwitcher />
+      </div>
       <IconButton icon="settings" label="Settings" keys="mod+," tipSide="top" onClick={() => openSettings()} />
     </div>
+  );
+}
+
+const OPEN_KEYS = new Set(['Enter', ' ', 'ArrowDown', 'ArrowUp']);
+
+/**
+ * The limits left the footer for the account menu: as it opens, the account in use takes the
+ * focus, so its limits show beside the menu at once instead of after pointing at a row.
+ * (Belongs in the switcher itself; until it does this there, the footer does it from outside.)
+ */
+function peekCurrent(e: { type: string; key?: string; currentTarget: HTMLElement }) {
+  if (e.type === 'keydown' && !OPEN_KEYS.has(e.key ?? '')) return;
+  if (e.currentTarget.querySelector('.acs-trigger[data-state="open"]')) return;
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      const pop = document.querySelector('.acs-pop');
+      if (!pop || (pop.contains(document.activeElement) && document.activeElement?.matches('[data-current]'))) return;
+      (pop.querySelector<HTMLElement>('.acs-row[data-current]') ?? pop.querySelector<HTMLElement>('.acs-row'))?.focus();
+    }),
   );
 }

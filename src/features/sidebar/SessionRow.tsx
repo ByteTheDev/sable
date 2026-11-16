@@ -1,13 +1,14 @@
-import { createContext, memo, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 import { ContextMenu as RC, DropdownMenu as RM } from 'radix-ui';
-import type { SessionMeta } from '@shared/protocol';
-import { PROVIDER_NAME, StatusGlyph, type StatusTone } from '@/art/Logo';
+import type { ProviderId, SessionMeta } from '@shared/protocol';
+import { PROVIDER_NAME, ProviderMark, StatusGlyph, type StatusTone } from '@/art/Logo';
 import { Icon, type IconName } from '@/icons';
 import { timeAgo } from '@/lib/format';
-import { useNow } from '@/lib/useNow';
 import { interrupt, openSession, renameSession, updateSession } from '@/state/actions';
+import { accountName } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { cx } from '@/ui';
+import type { Mix } from './groups';
 
 // ── shared row state (rename / delete confirm) ──
 
@@ -33,7 +34,7 @@ const useRenaming = (id: string) => useSyncExternalStore(subscribeRename, () => 
 export const SidebarRowContext = createContext<RowCtx>({ setRenaming, askDelete: () => {} });
 
 /** The fields a row shows. Anything else changing on a session (usage, model, options) must not re-render it. */
-const SHOWN = ['id', 'title', 'status', 'unread', 'pinned', 'archived', 'updatedAt', 'activity', 'lastError', 'provider'] as const;
+const SHOWN = ['id', 'title', 'status', 'unread', 'pinned', 'archived', 'updatedAt', 'activity', 'lastError', 'provider', 'accountId'] as const;
 const sameShown = (a: SessionMeta, b: SessionMeta) => SHOWN.every((k) => a[k] === b[k]);
 
 /** The session as the row shows it: the same object while only unshown fields change. */
@@ -50,6 +51,32 @@ function useRowSession(id: string): SessionMeta | undefined {
     [id],
   );
   return useStore(select);
+}
+
+// ── relative time: one minute clock; a row's time re-renders only when its label changes ──
+
+let clockNow = Date.now();
+const clockListeners = new Set<() => void>();
+let clockTimer: number | undefined;
+function subscribeClock(l: () => void) {
+  clockListeners.add(l);
+  clockTimer ??= window.setInterval(() => {
+    clockNow = Date.now();
+    for (const fn of clockListeners) fn();
+  }, 30_000);
+  return () => {
+    clockListeners.delete(l);
+    if (!clockListeners.size && clockTimer !== undefined) {
+      window.clearInterval(clockTimer);
+      clockTimer = undefined;
+    }
+  };
+}
+
+function RowTime({ ts }: { ts: number }) {
+  // A fresh reading on mount, so a row that appears between ticks is not a minute behind.
+  const label = useSyncExternalStore(subscribeClock, () => timeAgo(ts, Math.max(clockNow, ts)));
+  return <span className="srow-time num">{label}</span>;
 }
 
 // ── sliding active pill ──
@@ -74,7 +101,7 @@ function ActivePill() {
       lastPill = top;
       el.style.opacity = '';
       if (dy && Math.abs(dy) < 480 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 280, easing: 'cubic-bezier(0.2, 0.9, 0.25, 1.04)' });
+        el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 300, easing: 'cubic-bezier(0.2, 0.9, 0.25, 1.02)' });
       }
     });
     return () => cancelAnimationFrame(raf);
@@ -82,8 +109,7 @@ function ActivePill() {
   // Hidden for the one frame before it knows where it slides from. Decided once at mount: reading
   // `lastPill` on a later render (after the frame above set it) would hide the pill again.
   const [hidden] = useState(() => lastPill !== null);
-  return <span ref={ref} className="srow-pill dither-sel" style={hidden ? { opacity: 0 } : undefined} />;
-
+  return <span ref={ref} className="srow-pill" style={hidden ? { opacity: 0 } : undefined} />;
 }
 
 // ── status mark ──
@@ -106,6 +132,8 @@ export function statusLabel(s: SessionMeta): string | null {
   return null;
 }
 
+type RowMix = Mix;
+
 // ── row menu (dropdown and context menu share one list) ──
 
 interface MenuAction {
@@ -116,14 +144,17 @@ interface MenuAction {
   sepBefore?: boolean;
 }
 
+const togglePin = (s: SessionMeta) => void updateSession(s.id, { pinned: !s.pinned });
+const toggleArchive = (s: SessionMeta) => void updateSession(s.id, { archived: !s.archived, ...(s.archived ? {} : { pinned: false }) });
+
 function rowActions(s: SessionMeta, ctx: RowCtx): MenuAction[] {
   const running = s.status === 'running' || s.status === 'starting' || s.status === 'awaiting';
   const list: MenuAction[] = [
     { icon: 'pencil', label: 'Rename', run: () => ctx.setRenaming(s.id) },
-    { icon: 'pin', label: s.pinned ? 'Unpin' : 'Pin', run: () => void updateSession(s.id, { pinned: !s.pinned }) },
+    { icon: s.pinned ? 'pin-off' : 'pin', label: s.pinned ? 'Unpin' : 'Pin', run: () => togglePin(s) },
   ];
   if (!s.unread) list.push({ icon: 'circle', label: 'Mark unread', run: () => void updateSession(s.id, { unread: true }) });
-  list.push({ icon: 'archive', label: s.archived ? 'Unarchive' : 'Archive', run: () => void updateSession(s.id, { archived: !s.archived, ...(s.archived ? {} : { pinned: false }) }) });
+  list.push({ icon: 'archive', label: s.archived ? 'Unarchive' : 'Archive', run: () => toggleArchive(s) });
   if (running) list.push({ icon: 'stop', label: 'Stop', run: () => void interrupt(s.id), sepBefore: true });
   list.push({ icon: 'trash', label: 'Delete', tone: 'danger', run: () => ctx.askDelete(s.id), sepBefore: !running });
   return list;
@@ -200,6 +231,9 @@ function RenameField({ session, onDone }: { session: SessionMeta; onDone: () => 
     const title = value.trim();
     if (save && title && title !== session.title) void renameSession(session.id, title);
     onDone();
+    // Back to the row, so the keys carry on from where they were.
+    if (ref.current === document.activeElement)
+      requestAnimationFrame(() => document.querySelector<HTMLElement>(`.srow[data-row="${CSS.escape(session.id)}"] .srow-main`)?.focus());
   };
 
   return (
@@ -224,38 +258,56 @@ function RenameField({ session, onDone }: { session: SessionMeta; onDone: () => 
 
 // ── the row ──
 
+/** Who a row's session runs as, for the tooltip and screen readers, when its folder mixes them. */
+function whoLabel(s: SessionMeta, mix: RowMix): string | null {
+  if (mix === 'agent') return PROVIDER_NAME[s.provider];
+  if (mix === 'account') {
+    const a = useStore.getState().providers[s.provider]?.accounts?.find((x) => x.id === (s.accountId ?? 'default'));
+    return a ? accountName(a) : null;
+  }
+  return null;
+}
+
 /**
- * A sidebar row. It reads its own session and active state from the store, so a status change
- * in one session re-renders only that row. `enter` is read once: rows added after the list
- * first drew fade in (plain CSS), the first paint does not animate.
+ * A sidebar row: one line, the status mark at the folder icon's column, the title, a quiet time
+ * that the hover actions replace. It reads its own session and active state from the store, so
+ * a status change in one session re-renders only that row. `enter` is read once: rows added after
+ * the list first drew rise in (plain CSS), the first paint does not animate.
  */
-export const SessionRow = memo(function SessionRow({ id, enter }: { id: string; enter?: boolean }) {
+export const SessionRow = memo(function SessionRow({ id, enter, mix, major }: { id: string; enter?: boolean; mix?: RowMix; major?: ProviderId }) {
   const session = useRowSession(id);
   const active = useStore((s) => s.ui.activeSessionId === id);
   const renaming = useRenaming(id);
   const ctx = useContext(SidebarRowContext);
-  const now = useNow();
   const [menuOpen, setMenuOpen] = useState(false);
-  // The dropdown is mounted the first time it is asked for: a menu per row is most of a row's cost.
+  // The hover actions are built the first time the row is pointed at or focused, the dropdown the
+  // first time it is asked for: a menu per row is most of a row's cost.
+  const [armed, setArmed] = useState(false);
   const [menuArmed, setMenuArmed] = useState(false);
   const [animateIn] = useState(!!enter);
   if (!session) return null;
   const label = statusLabel(session);
+  const who = whoLabel(session, mix);
+  const tone = statusTone(session);
+  const arm = armed ? undefined : () => setArmed(true);
+  const openMenu = () => {
+    setArmed(true);
+    setMenuArmed(true);
+    setMenuOpen(true);
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === 'F2') {
+      e.preventDefault();
+      ctx.setRenaming(session.id);
+    } else if (e.key === 'Delete') {
+      e.preventDefault();
+      ctx.askDelete(session.id);
+    }
+  };
+
   const more = (
-    <button
-      type="button"
-      className="srow-more"
-      aria-label={`Actions for ${session.title}`}
-      aria-haspopup="menu"
-      onClick={
-        menuArmed
-          ? undefined
-          : () => {
-              setMenuArmed(true);
-              setMenuOpen(true);
-            }
-      }
-    >
+    <button type="button" className="srow-act" tabIndex={-1} aria-label={`More actions for ${session.title}`} aria-haspopup="menu" onClick={menuArmed ? undefined : openMenu}>
       <Icon name="dots" size={15} />
     </button>
   );
@@ -263,61 +315,79 @@ export const SessionRow = memo(function SessionRow({ id, enter }: { id: string; 
   return (
     <div
       className={cx('srow', session.archived && 'srow-archived')}
+      role="listitem"
+      data-flip={id}
       data-row={id}
       data-enter={animateIn || undefined}
       data-active={active || undefined}
       data-menu={menuOpen || undefined}
       data-status={session.status}
       data-unread={session.unread || undefined}
+      // A moving pointer, not an entering one: rows passing under a still pointer while the list
+      // scrolls must not each build their tools.
+      onPointerMove={arm}
+      onFocus={arm}
     >
       {active && <ActivePill />}
-      <span className="srow-mark">
-        <StatusMark session={session} />
-      </span>
-      {renaming ? (
-        <RenameField session={session} onDone={() => ctx.setRenaming(null)} />
-      ) : (
-        <button
-          type="button"
-          className="srow-main"
-          data-nav
-          data-id={session.id}
-          aria-current={active ? 'page' : undefined}
-          title={label ?? undefined}
-          onClick={() => openSession(session.id)}
-          onDoubleClick={() => ctx.setRenaming(session.id)}
-        >
-          <span className="srow-title truncate">{session.title}</span>
-          <span className="sr-only">
-            {PROVIDER_NAME[session.provider]}
-            {label ? `, ${label}` : ''}
-          </span>
-        </button>
-      )}
-      {!renaming && (
-        <span className="srow-end">
-          <span className="srow-time num">{timeAgo(session.updatedAt, now)}</span>
-          {menuArmed ? (
-            <RM.Root modal={false} open={menuOpen} onOpenChange={setMenuOpen}>
-              <RM.Trigger asChild>{more}</RM.Trigger>
-              <RM.Portal>
-                <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 188 }} onCloseAutoFocus={onCloseAutoFocus}>
-                  <DropdownItems actions={rowActions(session, ctx)} />
-                </RM.Content>
-              </RM.Portal>
-            </RM.Root>
-          ) : (
-            more
-          )}
+      <div className="srow-in">
+        <span className="srow-mark">
+          {tone === 'idle' && mix === 'agent' && session.provider !== major ? <ProviderMark provider={session.provider} size={12} className="srow-agent" /> : <StatusGlyph tone={tone} />}
         </span>
-      )}
+        {renaming ? (
+          <RenameField session={session} onDone={() => ctx.setRenaming(null)} />
+        ) : (
+          <button
+            type="button"
+            className="srow-main"
+            data-nav
+            tabIndex={-1}
+            data-id={session.id}
+            aria-current={active ? 'page' : undefined}
+            title={[label, who].filter(Boolean).join(' · ') || undefined}
+            onClick={() => openSession(session.id)}
+            onDoubleClick={() => ctx.setRenaming(session.id)}
+            onKeyDown={onKeyDown}
+          >
+            <span className="srow-title truncate">{session.title}</span>
+            <span className="sr-only">{[who ?? PROVIDER_NAME[session.provider], label].filter(Boolean).join(', ')}</span>
+          </button>
+        )}
+        {!renaming && (
+          <span className="srow-end">
+            <RowTime ts={session.updatedAt} />
+            {armed && (
+              <span className="srow-acts">
+                <button type="button" className="srow-act" tabIndex={-1} aria-label={session.pinned ? 'Unpin' : 'Pin'} onClick={() => togglePin(session)}>
+                  <Icon name={session.pinned ? 'pin-off' : 'pin'} size={14} />
+                </button>
+                <button type="button" className="srow-act" tabIndex={-1} aria-label={session.archived ? 'Unarchive' : 'Archive'} onClick={() => toggleArchive(session)}>
+                  <Icon name="archive" size={14} />
+                </button>
+                {menuArmed ? (
+                  <RM.Root modal={false} open={menuOpen} onOpenChange={setMenuOpen}>
+                    <RM.Trigger asChild>{more}</RM.Trigger>
+                    <RM.Portal>
+                      <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 188 }} onCloseAutoFocus={onCloseAutoFocus}>
+                        <DropdownItems actions={rowActions(session, ctx)} />
+                      </RM.Content>
+                    </RM.Portal>
+                  </RM.Root>
+                ) : (
+                  more
+                )}
+              </span>
+            )}
+          </span>
+        )}
+      </div>
     </div>
   );
-}, (a, b) => a.id === b.id);
+}, (a, b) => a.id === b.id && a.mix === b.mix && a.major === b.major);
 
 /**
  * One context menu for every row in the list (a context menu per row costs more than the row).
  * The row under the pointer is found from the event; a renaming row keeps the native menu.
+ * The keyboard's menu key and Shift+F10 reach it too: the browser sends the focused row the event.
  */
 export function RowContextMenu({ children }: { children: ReactNode }) {
   const ctx = useContext(SidebarRowContext);

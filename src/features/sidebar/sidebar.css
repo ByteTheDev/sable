@@ -1,6 +1,16 @@
-/* The sidebar sits directly on the canvas: no panel, no border. Light comes from rows. */
+/*
+ * The sidebar sits on the same ground as the stage (app.css): no panel, no border, no step in
+ * tone. Light comes from rows. One grid for everything: an icon column 16 px wide whose centre
+ * is 20 px from the sidebar's left edge (brand mark, action icon, folder icons, status marks,
+ * account mark), a text column at 38 px (wordmark, labels, folder names, titles), and one right
+ * edge for times, counts and hover tools.
+ */
 
 .side {
+  --side-bg: var(--sheet);
+  /* What a row's hover tools fade over: the row's own fill composited on the ground. */
+  --row-hover: color-mix(in srgb, var(--side-bg) 94%, white);
+  --row-active: color-mix(in srgb, var(--side-bg) 91%, white);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -12,25 +22,25 @@
 
 .side-top {
   flex-shrink: 0;
-  padding: 0 4px 0 2px;
+  padding: 0 4px 10px 2px;
 }
 
+/* One pixel taller than the top bar and pushed down by one: the stage's hairline sits above its bar,
+   so both rows share a centre line. */
 .side-brand {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: var(--topbar-h);
-  padding-right: 4px;
+  height: calc(var(--topbar-h) + 1px);
+  padding-top: 1px;
 }
 
 .brand {
   display: inline-flex;
   align-items: center;
-  /* The mark's cells sit 4 px inside its 20 px box: 7 px here makes the visible gap 11. */
-  gap: 7px;
+  /* The mark's cells fill its 20 px box edge to edge at this size: 8 px to the wordmark. */
+  gap: 8px;
   height: 32px;
   padding: 0 10px 0 8px;
-  margin-left: -1px;
   border-radius: var(--r-sm);
   transition: background-color var(--d-1) var(--ease);
 }
@@ -43,23 +53,30 @@
   background-color: var(--fill-2);
 }
 
+.brand:focus-visible {
+  outline: 1.5px solid var(--focus);
+  outline-offset: -1px;
+}
+
 .brand .wordmark {
   color: var(--text);
 }
 
 .side-actions {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 6px 0 10px;
+  align-items: center;
+  gap: 2px;
+  margin-top: 4px;
 }
 
-.side-action {
+.side-new {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
   height: 30px;
-  padding: 0 8px 0 9px;
+  padding: 0 10px;
   border-radius: var(--r-sm);
   font-size: var(--t-ui);
   font-weight: var(--w-medium);
@@ -70,36 +87,36 @@
     color var(--d-1) var(--ease);
 }
 
-.side-action svg {
+.side-new-icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  flex-shrink: 0;
   color: var(--text-3);
   transition: color var(--d-1) var(--ease);
 }
 
-.side-action:hover {
+.side-new:hover {
   background-color: var(--fill-2);
   color: var(--text);
 }
 
-.side-action:hover svg {
+.side-new:hover .side-new-icon {
   color: var(--text);
 }
 
-.side-action:active {
+.side-new:active {
   background-color: var(--fill-3);
 }
 
-.side-action-kbd {
-  opacity: 0.85;
-  transition: opacity var(--d-1) var(--ease);
+.side-new:focus-visible {
+  outline: 1.5px solid var(--focus);
+  outline-offset: -1px;
 }
 
-.side-action-kbd.on-hover {
-  opacity: 0;
-}
-
-.side-action:hover .side-action-kbd,
-.side-action:focus-visible .side-action-kbd {
-  opacity: 1;
+/* 28 px like every icon button; their glyphs share a centre line with the footer's Settings. */
+.side-tool {
+  height: 30px;
 }
 
 /* ── list ── */
@@ -108,10 +125,36 @@
   position: relative;
   flex: 1;
   min-height: 0;
-  padding: 6px 4px 18px 2px;
+  padding: 0 4px 18px 2px;
+  outline: none;
+  /* Opaque, so the scroller gets its own layer even at 1x (where a transparent one keeps LCD text by
+     repainting on every scroll step instead). */
+  background-color: var(--side-bg);
 }
 
-/* Edge fades: sticky overlays in the canvas colour (no mask, so scrolling stays cheap). */
+/* While the list scrolls, a clear shield over the visible rows takes the pointer, so rows sliding
+   under it do not hover. One element shows and hides; the rows' own styles never change (turning
+   their pointer-events off instead restyled every row on each toggle). */
+.side-shield {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: none;
+  height: 0;
+}
+
+.side-shield::before {
+  content: '';
+  position: absolute;
+  inset: 0 -4px auto -2px;
+  height: 200vh;
+}
+
+.side-list[data-scrolling] > .side-shield {
+  display: block;
+}
+
+/* Edge fades: sticky overlays in the ground colour (no mask, so scrolling stays cheap). */
 .side-list::before,
 .side-list::after {
   content: '';
@@ -122,17 +165,17 @@
 }
 
 .side-list::before {
-  top: -6px;
-  height: 14px;
-  margin: -6px 0 -8px;
-  background: linear-gradient(to bottom, var(--bg), transparent);
+  top: 0;
+  height: 10px;
+  margin-bottom: -10px;
+  background: linear-gradient(to bottom, var(--side-bg), transparent);
 }
 
 .side-list::after {
   bottom: -18px;
   height: 22px;
   margin-top: -22px;
-  background: linear-gradient(to top, var(--bg), transparent);
+  background: linear-gradient(to top, var(--side-bg), transparent);
 }
 
 .side-empty {
@@ -140,14 +183,34 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 12px;
-  padding: 14px 10px;
+  padding: 10px;
   color: var(--text-3);
   font-size: var(--t-ui);
   line-height: 1.5;
 }
 
+.side-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-top: 30px;
+}
+
+.side-skel-row {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 40px 0 36px;
+}
+
+.side-skel-row .skel {
+  height: 8px;
+}
+
+/* ── folders ── */
+
 .sgroup + .sgroup {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .sgroup-head {
@@ -159,7 +222,9 @@
   transition: background-color var(--d-1) var(--ease);
 }
 
-.sgroup-head:hover {
+.sgroup-head:hover,
+.sgroup-head[data-menu],
+.sgroup-head[data-state='open'] {
   background-color: var(--fill-1);
 }
 
@@ -167,32 +232,33 @@
   background: none;
 }
 
-.sgroup-head[data-state='open'] {
-  background: var(--fill-2);
-}
-
 .sgroup-toggle {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   height: 100%;
-  padding: 0 8px 0 9px;
+  padding: 0 10px;
   border-radius: var(--r-sm);
   text-align: left;
 }
 
+.sgroup-toggle:focus-visible {
+  outline: 1.5px solid var(--focus);
+  outline-offset: -1px;
+}
+
 .sgroup-head-static {
-  gap: 9px;
-  padding: 0 8px 0 9px;
+  gap: 10px;
+  padding: 0 10px;
 }
 
 .sgroup-icon {
   display: grid;
   place-items: center;
   width: 16px;
-  color: var(--text-3);
+  color: var(--text-4);
   flex-shrink: 0;
   transition: color var(--d-1) var(--ease);
 }
@@ -205,30 +271,34 @@
 }
 
 .sgroup-head:hover .sgroup-name,
-.sgroup-head:hover .sgroup-icon,
-.sgroup-head:focus-within .sgroup-name {
+.sgroup-head:focus-within .sgroup-name,
+.sgroup-head[data-current] .sgroup-name {
   color: var(--text-2);
 }
 
-.sgroup-head[data-current] .sgroup-name,
+.sgroup-head:hover .sgroup-icon,
+.sgroup-head:focus-within .sgroup-icon,
 .sgroup-head[data-current] .sgroup-icon {
-  color: var(--text);
+  color: var(--text-3);
 }
 
-.sgroup-count {
+/* A collapsed folder: its count, or the most pressing state inside it. */
+.sgroup-end {
+  display: grid;
+  place-items: center end;
   margin-left: auto;
-  font-size: var(--t-micro);
-  color: var(--text-4);
+  min-width: 16px;
   transition: opacity var(--d-1) var(--ease);
 }
 
-.sgroup-count.busy {
-  color: var(--text-2);
-  font-weight: var(--w-medium);
+.sgroup-count {
+  font-size: var(--t-micro);
+  color: var(--text-4);
 }
 
-.sgroup-head:hover .sgroup-count,
-.sgroup-head:focus-within .sgroup-count {
+.sgroup-head:hover .sgroup-end,
+.sgroup-head:focus-within .sgroup-end,
+.sgroup-head[data-menu] .sgroup-end {
   opacity: 0;
 }
 
@@ -238,7 +308,7 @@
   top: 50%;
   translate: 0 -50%;
   display: flex;
-  gap: 1px;
+  gap: 0;
   opacity: 0;
   transition: opacity var(--d-1) var(--ease);
 }
@@ -249,17 +319,28 @@
   opacity: 1;
 }
 
-.sgroup-head[data-menu] {
-  background: var(--fill-2);
+.sgroup-tool {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--text-3);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale 80ms var(--ease-out);
 }
 
-.sgroup-head[data-menu] .sgroup-count {
-  opacity: 0;
-}
-
+.sgroup-tool:hover,
 .sgroup-tool[data-state='open'] {
-  background: var(--fill-3);
+  background-color: var(--fill-3);
   color: var(--text);
+}
+
+.sgroup-tool:active {
+  background-color: var(--fill-4);
+  scale: 0.94;
 }
 
 /* Disabled but still readable: its hint says why. */
@@ -267,38 +348,8 @@
   opacity: 0.6;
 }
 
-.sgroup-tool {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  color: var(--text-3);
-  transition:
-    background-color var(--d-1) var(--ease),
-    color var(--d-1) var(--ease);
-}
-
-.sgroup-tool:hover {
-  background-color: var(--fill-3);
-  color: var(--text);
-}
-
-.sgroup-tool:active {
-  background-color: var(--fill-4);
-}
-
-.sgroup-chev svg {
-  transition: transform var(--d-2) var(--ease-out);
-}
-
-.sgroup-head[data-collapsed] .sgroup-chev svg {
-  transform: rotate(-90deg);
-}
-
-.sgroup-body {
-  overflow: hidden;
-}
+/* .sgroup-body is clipped only while its height animates (motion sets overflow and clears it at the
+   end), so rows sliding into a gap that closes are never cut off. */
 
 .srows {
   display: flex;
@@ -311,13 +362,14 @@
 
 .srow {
   position: relative;
-  display: flex;
-  align-items: center;
   height: 30px;
+  flex-shrink: 0;
   border-radius: var(--r-sm);
   isolation: isolate;
+  --row-bg: var(--side-bg);
 }
 
+/* Hover fill under the row (the pill is a separate layer that slides). */
 .srow::before {
   content: '';
   position: absolute;
@@ -329,17 +381,27 @@
   transition: opacity var(--d-1) var(--ease);
 }
 
+.srow:hover,
+.srow:focus-within,
+.srow[data-menu],
+.srow[data-state='open'] {
+  --row-bg: var(--row-hover);
+}
+
 .srow:hover::before,
 .srow[data-menu]::before,
 .srow[data-state='open']::before {
   opacity: 1;
 }
 
+.srow[data-active] {
+  --row-bg: var(--row-active);
+}
+
 .srow[data-active]::before {
   opacity: 0;
 }
 
-/* The selected pill under the active row (a flat fill); it slides between rows (layoutId). */
 .srow[data-enter] {
   animation: srow-in var(--d-3) var(--ease-out) both;
 }
@@ -357,6 +419,7 @@
   }
 }
 
+/* The selected row: one flat step of light. It slides between rows (ActivePill). */
 .srow-pill {
   position: absolute;
   inset: 0;
@@ -365,9 +428,20 @@
   background-color: var(--fill-3);
 }
 
+/* The row's contents skip style, layout and paint while scrolled out of view: 500 rows cost what 30 do.
+   The pill stays outside, so its slide is never clipped. */
+.srow-in {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 30px;
+  border-radius: inherit;
+  content-visibility: auto;
+}
+
 .srow-mark {
   position: absolute;
-  left: 9px;
+  left: 10px;
   top: 50%;
   translate: 0 -50%;
   display: grid;
@@ -387,19 +461,31 @@
   color: var(--text);
 }
 
+/* A folder that mixes agents: whose session it is, quietly, where an idle row has no mark. */
+.srow-agent {
+  opacity: 0.5;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.srow:hover .srow-agent,
+.srow[data-active] .srow-agent {
+  opacity: 0.9;
+}
+
 .srow-main {
   flex: 1;
   min-width: 0;
   height: 100%;
   display: flex;
   align-items: center;
-  padding: 0 46px 0 34px;
+  padding: 0 44px 0 36px;
   border-radius: inherit;
   text-align: left;
 }
 
 .srow-main:focus-visible {
-  outline-offset: -1px;
+  outline: 1.5px solid var(--focus);
+  outline-offset: -1.5px;
 }
 
 .srow-title {
@@ -408,78 +494,62 @@
   transition: color var(--d-1) var(--ease);
 }
 
-.srow:hover .srow-title {
+.srow:hover .srow-title,
+.srow[data-status='awaiting'] .srow-title {
   color: var(--text);
 }
 
-.srow[data-active] .srow-title {
-  color: var(--text);
-  font-weight: var(--w-medium);
-}
-
+.srow[data-active] .srow-title,
 .srow[data-unread] .srow-title {
   color: var(--text);
   font-weight: var(--w-medium);
-}
-
-.srow[data-status='awaiting'] .srow-title {
-  color: var(--text);
 }
 
 .srow-archived .srow-title {
   color: var(--text-3);
 }
 
+/* The right end: the time at rest, the tools over it on hover (they cover the title's end, nothing moves). */
 .srow-end {
   position: absolute;
-  right: 4px;
-  top: 50%;
-  translate: 0 -50%;
-  display: grid;
-  place-items: center end;
+  inset: 0 0 0 auto;
+  display: flex;
+  align-items: center;
   pointer-events: none;
 }
 
-.srow-end > * {
-  grid-area: 1 / 1;
-}
-
 .srow-time {
-  padding-right: 6px;
+  padding-right: 10px;
   font-size: var(--t-micro);
   color: var(--text-4);
   transition: opacity var(--d-1) var(--ease);
 }
 
-.srow[data-active] .srow-time {
+.srow[data-active] .srow-time,
+.srow[data-unread] .srow-time {
   color: var(--text-3);
 }
 
-.srow-more {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  color: var(--text-3);
+.srow-acts {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 3px 0 18px;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: linear-gradient(to right, transparent, var(--row-bg) 16px);
   opacity: 0;
-  pointer-events: auto;
-  transition:
-    opacity var(--d-1) var(--ease),
-    background-color var(--d-1) var(--ease),
-    color var(--d-1) var(--ease);
+  pointer-events: none;
+  transition: opacity var(--d-1) var(--ease);
 }
 
-.srow-more:hover,
-.srow-more[data-state='open'] {
-  background-color: var(--fill-3);
-  color: var(--text);
-}
-
-.srow:hover .srow-more,
-.srow:focus-within .srow-more,
-.srow[data-menu] .srow-more {
+.srow:hover .srow-acts,
+.srow:focus-within .srow-acts,
+.srow[data-menu] .srow-acts {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .srow:hover .srow-time,
@@ -488,14 +558,38 @@
   opacity: 0;
 }
 
+.srow-act {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--text-3);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale 80ms var(--ease-out);
+}
+
+.srow-act:hover,
+.srow-act[data-state='open'] {
+  background-color: var(--fill-3);
+  color: var(--text);
+}
+
+.srow-act:active {
+  background-color: var(--fill-4);
+  scale: 0.94;
+}
+
 .srow-rename {
   flex: 1;
   min-width: 0;
-  height: 26px;
-  margin: 0 4px 0 28px;
+  height: 24px;
+  margin: 0 4px 0 30px;
   padding: 0 6px;
   border: 1px solid var(--focus-field);
-  border-radius: 7px;
+  border-radius: 6px;
   font-size: var(--t-ui);
   color: var(--text);
   background-color: rgb(0 0 0 / 0.3);
@@ -513,9 +607,9 @@
   display: flex;
   align-items: center;
   width: 100%;
-  height: 28px;
+  height: 30px;
   margin-top: 1px;
-  padding: 0 10px 0 34px;
+  padding: 0 10px 0 36px;
   border-radius: var(--r-sm);
   font-size: var(--t-small);
   color: var(--text-4);
@@ -534,216 +628,20 @@
   color: var(--text-2);
 }
 
-.sarchived-chev {
-  transform: rotate(-90deg);
-  transition: transform var(--d-2) var(--ease-out);
+.sarchived:focus-visible {
+  outline: 1.5px solid var(--focus);
+  outline-offset: -1.5px;
 }
 
-.sarchived[aria-expanded='true'] .sarchived-chev {
-  transform: none;
+.sarchived-count {
+  font-size: var(--t-micro);
+}
+
+.sarchived[aria-expanded='true'] {
+  color: var(--text-3);
 }
 
 .del-title {
   color: var(--text);
   font-weight: var(--w-medium);
-}
-
-/* ── footer ── */
-
-.side-foot {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 4px 4px 2px 2px;
-}
-
-.usage {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  padding: 2px 9px 4px;
-}
-
-.limit {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border-radius: 6px;
-  outline-offset: 4px;
-}
-
-.limit-top {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: var(--t-micro);
-  line-height: 1.2;
-}
-
-.limit-label {
-  color: var(--text-3);
-}
-
-.limit-val {
-  display: grid;
-  margin-left: auto;
-  flex-shrink: 0;
-  justify-items: end;
-  color: var(--text-2);
-}
-
-.limit-val > * {
-  grid-area: 1 / 1;
-  white-space: nowrap;
-  transition:
-    opacity var(--d-1) var(--ease),
-    translate var(--d-2) var(--ease-out);
-}
-
-.limit-reset {
-  opacity: 0;
-  translate: 0 3px;
-  color: var(--text-2);
-}
-
-.limit:hover .limit-reset,
-.limit:focus-visible .limit-reset {
-  opacity: 1;
-  translate: 0 0;
-}
-
-.limit:hover .limit-pct,
-.limit:focus-visible .limit-pct {
-  opacity: 0;
-  translate: 0 -3px;
-}
-
-
-.limit[data-level='amber'] .limit-pct {
-  color: var(--amber);
-}
-
-.limit[data-level='red'] .limit-pct {
-  color: var(--red);
-}
-
-.account {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding-right: 4px;
-}
-
-.account-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  height: 36px;
-  padding: 0 8px;
-  border-radius: var(--r-sm);
-  text-align: left;
-  transition: background-color var(--d-1) var(--ease);
-}
-
-.account-main:hover {
-  background-color: var(--fill-2);
-}
-
-.account-main:active {
-  background-color: var(--fill-3);
-}
-
-.account-marks {
-  display: flex;
-  flex-shrink: 0;
-}
-
-.account-mark {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background-color: var(--panel-3);
-  box-shadow: 0 0 0 1.5px var(--bg);
-}
-
-.account-mark + .account-mark {
-  margin-left: -6px;
-}
-
-.account-email {
-  font-size: var(--t-small);
-  color: var(--text-2);
-}
-
-/* Several accounts: the row opens a switcher. */
-.account-caret {
-  flex-shrink: 0;
-  margin-left: auto;
-  color: var(--text-4);
-  transition: color var(--d-1) var(--ease);
-}
-
-.account-main:hover .account-caret,
-.account-main[data-state='open'] .account-caret {
-  color: var(--text-2);
-}
-
-.account-main[data-state='open'] {
-  background: var(--fill-2);
-}
-
-/* Call to action when no agent is signed in: one flat card, calm; its hairline answers the pointer. */
-.connect {
-
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  margin: 0 0 2px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  text-align: left;
-  background-color: var(--panel);
-  transition: background-color var(--d-1) var(--ease);
-}
-
-.connect:hover {
-  background-color: var(--panel-2);
-}
-
-.connect:active {
-  background-color: var(--panel-3);
-}
-
-.connect-marks {
-  display: grid;
-  gap: 2px;
-}
-
-.connect-title {
-  font-size: var(--t-ui);
-  font-weight: var(--w-medium);
-  color: var(--text);
-}
-
-.connect-sub {
-  font-size: var(--t-micro);
-  color: var(--text-3);
-}
-
-.connect-arrow {
-  color: var(--text-3);
-  transition: transform var(--d-2) var(--ease-out);
-}
-
-.connect:hover .connect-arrow {
-  transform: translateX(2px);
-  color: var(--text);
 }

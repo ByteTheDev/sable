@@ -1,52 +1,27 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type HTMLAttributes, type KeyboardEvent, type Ref, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState, type ComponentType, type FocusEvent, type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { ContextMenu as RC, DropdownMenu as RM } from 'radix-ui';
-import type { SessionMeta } from '@shared/protocol';
-import { LogoMark, Wordmark } from '@/art/Logo';
-import { Icon, type IconName } from '@/icons';
+import type { ProviderId, SessionMeta } from '@shared/protocol';
+import { LogoMark, StatusGlyph, Wordmark } from '@/art/Logo';
+import { Icon } from '@/icons';
 import { dissolve } from '@/lib/dissolve';
+import { reducedMotion } from '@/lib/motion';
 import { closeSession, goHome, pinProject, removeProject } from '@/state/actions';
 import { useStore } from '@/state/store';
-import { IconButton, Kbd, Modal, Tip, cx } from '@/ui';
-import { buildGroups, loadCollapsed, pathKey, saveCollapsed, type ProjectGroup } from './groups';
+import { IconButton, Modal, Tip } from '@/ui';
+import { Flip } from './flip';
+import { createGroupsSelector, idsOf, loadCollapsed, pathKey, saveCollapsed, type Mix, type ProjectGroup } from './groups';
 import { RowContextMenu, SessionRow, SidebarRowContext, setRenaming, type RowCtx } from './SessionRow';
 import { SidebarFooter } from './SidebarFooter';
 import './sidebar.css';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
-type Sessions = Record<string, SessionMeta>;
-
-/** True when two session maps differ only in usage, which the sidebar never shows. */
-function sameRows(a: Sessions, b: Sessions): boolean {
-  const ids = Object.keys(b);
-  if (Object.keys(a).length !== ids.length) return false;
-  for (const id of ids) {
-    const x = a[id];
-    const y = b[id];
-    if (x === y) continue;
-    if (!x) return false;
-    for (const k in y) if (k !== 'usage' && x[k as keyof SessionMeta] !== y[k as keyof SessionMeta]) return false;
-    for (const k in x) if (!(k in y)) return false;
-  }
-  return true;
-}
-
-let seenSessions: Sessions | undefined;
-let shownSessions: Sessions | undefined;
-/** The sessions map, kept as the same object while only usage changes (it ticks while a turn streams). */
-function selectSessions(s: { sessions: Sessions }): Sessions {
-  if (s.sessions === seenSessions) return shownSessions!;
-  const unchanged = seenSessions && shownSessions && sameRows(seenSessions, s.sessions);
-  seenSessions = s.sessions;
-  if (!unchanged) shownSessions = s.sessions;
-  return shownSessions!;
-}
-
 /** Memoized whole: the app shell re-renders on navigation, the sidebar parts subscribe to what they show. */
 export const Sidebar = memo(function Sidebar() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const ctx = useMemo<RowCtx>(() => ({ setRenaming, askDelete: setDeleting }), []);
+  useStageFreeze();
 
   return (
     <nav className="side" aria-label="Sessions">
@@ -63,7 +38,7 @@ export const Sidebar = memo(function Sidebar() {
   );
 });
 
-/** Brand and the three actions: nothing here depends on sessions. */
+/** The brand, then one row: a new session, search and history. Nothing here depends on sessions. */
 const SidebarTop = memo(function SidebarTop() {
   const setUi = useStore((s) => s.setUi);
   return (
@@ -73,32 +48,37 @@ const SidebarTop = memo(function SidebarTop() {
           <LogoMark size={20} />
           <Wordmark />
         </button>
-        <IconButton icon="compose" label="New session" keys="mod+shift+o" onClick={() => goHome()} />
       </div>
-
       <div className="side-actions">
-        <ActionRow icon="plus" label="New session" onClick={() => goHome()} hint="mod+shift+o" hintOnHover />
-        <ActionRow icon="search" label="Search" onClick={() => setUi({ paletteOpen: true })} hint="mod+k" />
-        <ActionRow icon="history" label="History" onClick={() => setUi({ historyOpen: true })} />
+        <Tip label="New session" keys="mod+shift+o" side="right">
+          <button type="button" className="side-new" onClick={() => goHome()}>
+            <span className="side-new-icon">
+              <Icon name="plus" size={15} />
+            </span>
+            <span className="truncate">New session</span>
+          </button>
+        </Tip>
+        <IconButton icon="search" label="Search" keys="mod+k" className="side-tool" onClick={() => setUi({ paletteOpen: true })} />
+        <IconButton icon="history" label="History" className="side-tool" onClick={() => setUi({ historyOpen: true })} />
       </div>
     </div>
   );
 });
 
+const selectGroups = createGroupsSelector();
+
 /** Props and ref come from the context menu trigger wrapping it. */
 function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDivElement> }) {
-  const sessions = useStore(selectSessions);
-  const projects = useStore((s) => s.projects);
+  const groups = useStore(selectGroups);
   const ready = useStore((s) => s.ready);
   // The open session's folder, not its id: switching sessions within a folder does not re-render the list.
   const activeKey = useStore(selectActiveKey);
   const setUi = useStore((s) => s.setUi);
-
-  const groups = useMemo(() => buildGroups(sessions, projects), [sessions, projects]);
   const [collapsed, setCollapsed] = useState(loadCollapsed);
 
-  const toggle = useCallback((key: string) => {
+  const toggle = useCallback((key: string, open?: boolean) => {
     setCollapsed((prev) => {
+      if (open !== undefined && prev.has(key) !== open) return prev;
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -127,10 +107,14 @@ function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDiv
   }, []);
 
   const empty = ready && !groups.pinned.length && !groups.projects.length;
+  // Any change of membership, not only of folder order: a folder that grows or shrinks moves the ones below it.
+  const order = `pinned:${idsOf(groups.pinned)}` + groups.projects.map((g) => `\n${g.key}:${idsOf(g.sessions)}:${g.archived.length}`).join('');
 
   return (
-    <div {...props} className="side-list scroll" onKeyDown={onListKey}>
-      {empty ? (
+    <div {...props} className="side-list scroll" tabIndex={0} aria-label="Sessions list" onKeyDown={onListKey} onFocus={onListFocus} onBlur={onListBlur} onScroll={onListScroll}>
+      {!ready ? (
+        <SkeletonRows />
+      ) : empty ? (
         <div className="side-empty">
           <p>Open a folder to start your first session.</p>
           <button type="button" className="btn btn-sm" onClick={() => setUi({ projectPicker: true })}>
@@ -140,29 +124,37 @@ function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDiv
         </div>
       ) : (
         <MotionConfig reducedMotion="user">
-          {groups.pinned.length > 0 && (
-            <section className="sgroup" aria-label="Pinned">
-              <div className="sgroup-head sgroup-head-static">
-                <span className="sgroup-icon">
-                  <Icon name="pin" size={14} />
-                </span>
-                <span className="sgroup-name">Pinned</span>
-              </div>
-              <SessionList ids={idsOf(groups.pinned)} />
-            </section>
-          )}
-          {groups.projects.map((g) => (
-            <ProjectSection
-              key={g.key}
-              group={g}
-              collapsed={collapsed.has(g.key)}
-              onToggle={toggle}
-              hiddenActive={collapsed.has(g.key) && activeKey === g.key}
-              busy={collapsed.has(g.key) && g.sessions.some(isBusy)}
-            />
-          ))}
+          <div className="side-shield" aria-hidden />
+          <Flip order={order} className="side-rows">
+            {groups.pinned.length > 0 && (
+              <section className="sgroup" data-flip="pinned" aria-label="Pinned">
+                <div className="sgroup-head sgroup-head-static">
+                  <span className="sgroup-icon">
+                    <Icon name="pin" size={15} />
+                  </span>
+                  <span className="sgroup-name">Pinned</span>
+                </div>
+                <SessionList ids={idsOf(groups.pinned)} mix={groups.pinnedMix} major={groups.pinnedMajor} />
+              </section>
+            )}
+            {groups.projects.map((g) => (
+              <ProjectSection key={g.key} group={g} collapsed={collapsed.has(g.key)} onToggle={toggle} current={activeKey === g.key} />
+            ))}
+          </Flip>
         </MotionConfig>
       )}
+    </div>
+  );
+}
+
+function SkeletonRows() {
+  return (
+    <div className="side-skel" aria-hidden>
+      {[62, 78, 54, 70, 46].map((w, i) => (
+        <span key={i} className="side-skel-row">
+          <span className="skel" style={{ width: `${w}%` }} />
+        </span>
+      ))}
     </div>
   );
 }
@@ -191,10 +183,7 @@ function DeleteDialog({ id, onClose }: { id: string | null; onClose: () => void 
             autoFocus
             onClick={() => {
               onClose();
-              if (id) {
-                dissolve(document.querySelector(`.srow[data-row="${CSS.escape(id)}"]`));
-                void closeSession(id, true);
-              }
+              if (id) removeRow(id);
             }}
           >
             <Icon name="trash" size={14} />
@@ -208,79 +197,79 @@ function DeleteDialog({ id, onClose }: { id: string | null; onClose: () => void 
   );
 }
 
-function ActionRow({ icon, label, onClick, hint, hintOnHover }: { icon: IconName; label: string; onClick: () => void; hint?: string; hintOnHover?: boolean }) {
-  return (
-    <button type="button" className="side-action" onClick={onClick}>
-      <Icon name={icon} size={16} />
-      <span className="grow truncate">{label}</span>
-      {hint && <Kbd combo={hint} className={cx('side-action-kbd', hintOnHover && 'on-hover')} />}
-    </button>
-  );
+/** The row breaks into dither cells where it stood; its neighbours close the gap as it goes. */
+function removeRow(id: string) {
+  const row = document.querySelector<HTMLElement>(`.srow[data-row="${CSS.escape(id)}"]`);
+  // The next row takes the keyboard focus the deleted one had.
+  const focusNext = row?.contains(document.activeElement) || document.activeElement === document.body;
+  const next = row && (row.nextElementSibling ?? row.previousElementSibling)?.querySelector<HTMLElement>('.srow-main');
+  dissolve(row);
+  if (row) {
+    row.style.visibility = 'hidden';
+    // Should the bridge refuse, the row comes back.
+    window.setTimeout(() => row.isConnected && (row.style.visibility = ''), 2500);
+  }
+  void closeSession(id, true);
+  if (focusNext && next) requestAnimationFrame(() => next.focus());
 }
 
-function selectActiveKey(s: { ui: { activeSessionId: string | null }; sessions: Sessions }): string | null {
+function selectActiveKey(s: { ui: { activeSessionId: string | null }; sessions: Record<string, SessionMeta> }): string | null {
   const a = s.ui.activeSessionId ? s.sessions[s.ui.activeSessionId] : undefined;
   return a && !a.pinned ? pathKey(a.cwd) : null;
 }
 
-const isBusy = (s: SessionMeta) => s.status === 'running' || s.status === 'awaiting' || s.status === 'starting';
-const idsOf = (list: SessionMeta[]) => list.map((s) => s.id).join(' ');
-
 /** Rows by id (a space-joined string, so the list re-renders only when membership or order changes). */
-const SessionList = memo(function SessionList({ ids }: { ids: string }) {
+const SessionList = memo(function SessionList({ ids, mix, major }: { ids: string; mix: Mix; major?: ProviderId }) {
   // Rows that arrive after the first paint animate in; the first paint does not.
-  const drawn = useRef(false);
-  const enter = drawn.current;
-  useEffect(() => {
-    drawn.current = true;
-  }, []);
+  const [drawnAt] = useState(() => performance.now());
+  const enter = performance.now() - drawnAt > 400;
   return (
-    <div className="srows" role="list">
-      {ids
-        ? ids.split(' ').map((id) => <SessionRow key={id} id={id} enter={enter} />)
-        : null}
-    </div>
+    <Flip order={ids} className="srows" role="list">
+      {ids ? ids.split(' ').map((id) => <SessionRow key={id} id={id} enter={enter} mix={mix} major={major} />) : null}
+    </Flip>
   );
 });
 
 interface SectionProps {
   group: ProjectGroup;
   collapsed: boolean;
-  onToggle: (key: string) => void;
-  /** Collapsed and holding the open session. */
-  hiddenActive: boolean;
-  /** Collapsed and holding a session at work. */
-  busy: boolean;
+  onToggle: (key: string, open?: boolean) => void;
+  /** Holds the open session. */
+  current: boolean;
 }
 
 /** Re-render a project only for what its header and lists show; rows update themselves. */
-const sameSection = (a: SectionProps, b: SectionProps) =>
-  a.collapsed === b.collapsed &&
-  a.onToggle === b.onToggle &&
-  a.hiddenActive === b.hiddenActive &&
-  a.busy === b.busy &&
-  a.group.key === b.group.key &&
-  a.group.name === b.group.name &&
-  a.group.path === b.group.path &&
-  a.group.pinned === b.group.pinned &&
-  idsOf(a.group.sessions) === idsOf(b.group.sessions) &&
-  idsOf(a.group.archived) === idsOf(b.group.archived);
+const sameGroup = (a: ProjectGroup, b: ProjectGroup) =>
+  a === b ||
+  (a.key === b.key &&
+    a.name === b.name &&
+    a.path === b.path &&
+    a.pinned === b.pinned &&
+    a.mix === b.mix &&
+    a.major === b.major &&
+    a.attention === b.attention &&
+    idsOf(a.sessions) === idsOf(b.sessions) &&
+    idsOf(a.archived) === idsOf(b.archived));
+const sameSection = (a: SectionProps, b: SectionProps) => a.collapsed === b.collapsed && a.onToggle === b.onToggle && a.current === b.current && sameGroup(a.group, b.group);
 
-const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle, hiddenActive, busy }: SectionProps) {
+const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle, current }: SectionProps) {
   const [showArchived, setShowArchived] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const hasSessions = group.sessions.length > 0 || group.archived.length > 0;
   const open = hasSessions && !collapsed;
+  const ids = idsOf(group.sessions);
 
   return (
-    <section className="sgroup" aria-label={group.name}>
+    <section className="sgroup" data-flip={group.key} aria-label={group.name}>
       <RC.Root>
         <RC.Trigger asChild>
-          <div className="sgroup-head" data-collapsed={collapsed || undefined} data-current={hiddenActive || undefined} data-menu={menuOpen || undefined}>
+          <div className="sgroup-head" data-collapsed={!open || undefined} data-current={current || undefined} data-menu={menuOpen || undefined}>
             <button
               type="button"
               className="sgroup-toggle"
               data-nav
+              data-folder={group.key}
+              tabIndex={-1}
               aria-expanded={hasSessions ? open : undefined}
               title={group.path}
               onClick={() => (hasSessions ? onToggle(group.key) : goHome(group.path))}
@@ -289,12 +278,16 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
                 <Icon name={open ? 'folder-open' : 'folder'} size={15} />
               </span>
               <span className="sgroup-name truncate">{group.name}</span>
-              {collapsed && hasSessions && <span className={cx('sgroup-count num', busy && 'busy')}>{group.sessions.length || ''}</span>}
+              {collapsed && hasSessions && (
+                <span className="sgroup-end">
+                  {group.attention ? <StatusGlyph tone={group.attention} /> : <span className="sgroup-count num">{group.sessions.length || ''}</span>}
+                </span>
+              )}
             </button>
             <span className="sgroup-tools">
               <RM.Root modal={false} open={menuOpen} onOpenChange={setMenuOpen}>
-                <RM.Trigger className="sgroup-tool" aria-label={`Actions for ${group.name}`}>
-                  <Icon name="dots" size={14} />
+                <RM.Trigger className="sgroup-tool" tabIndex={-1} aria-label={`Actions for ${group.name}`}>
+                  <Icon name="dots" size={15} />
                 </RM.Trigger>
                 <RM.Portal>
                   <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 220 }}>
@@ -303,15 +296,10 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
                 </RM.Portal>
               </RM.Root>
               <Tip label={`New session in ${group.name}`}>
-                <button type="button" className="sgroup-tool" aria-label={`New session in ${group.name}`} onClick={() => goHome(group.path)}>
-                  <Icon name="plus" size={13} />
+                <button type="button" className="sgroup-tool" tabIndex={-1} aria-label={`New session in ${group.name}`} onClick={() => goHome(group.path)}>
+                  <Icon name="plus" size={14} />
                 </button>
               </Tip>
-              {hasSessions && (
-                <button type="button" className="sgroup-tool sgroup-chev" aria-label={collapsed ? 'Expand' : 'Collapse'} onClick={() => onToggle(group.key)}>
-                  <Icon name="caret-down" size={11} />
-                </button>
-              )}
             </span>
           </div>
         </RC.Trigger>
@@ -327,32 +315,32 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
           <motion.div
             key="body"
             className="sgroup-body"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.26, ease: EASE }}
+            initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
+            animate={{ height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } }}
+            exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
+            transition={{ height: { duration: 0.26, ease: EASE }, opacity: { duration: 0.18, ease: EASE } }}
           >
-            <SessionList ids={idsOf(group.sessions)} />
+            <SessionList ids={ids} mix={group.mix} major={group.major} />
             {group.archived.length > 0 && (
               <>
-                <button type="button" className="sarchived" data-nav aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>
+                <button type="button" className="sarchived" data-nav tabIndex={-1} aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>
                   <span className="srow-mark">
-                    <Icon name="archive" size={13} />
+                    <Icon name="archive" size={14} />
                   </span>
-                  <span className="grow">Archived ({group.archived.length})</span>
-                  <Icon name="caret-down" size={10} className="sarchived-chev" />
+                  <span className="grow">Archived</span>
+                  <span className="sarchived-count num">{group.archived.length}</span>
                 </button>
                 <AnimatePresence initial={false}>
                   {showArchived && (
                     <motion.div
                       key="archived"
                       className="sgroup-body"
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
+                      initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
+                      animate={{ height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } }}
+                      exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
                       transition={{ duration: 0.24, ease: EASE }}
                     >
-                      <SessionList ids={idsOf(group.archived)} />
+                      <SessionList ids={idsOf(group.archived)} mix={undefined} />
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -393,20 +381,132 @@ function ProjectItems({ group, hasSessions, Item, Separator }: { group: ProjectG
   );
 }
 
-/** Arrow keys move between rows and folder headers; Enter activates the focused one. */
+// ── scrolling: rows passing under a still pointer do not hover ──
+
+/**
+ * While the list scrolls, rows stop answering the pointer: otherwise every row that slides under
+ * it restyles (and builds its tools), which was nine tenths of a scroll's cost with many rows.
+ */
+let scrollIdle = 0;
+function onListScroll(e: { currentTarget: HTMLElement }) {
+  const list = e.currentTarget;
+  if (!scrollIdle) list.dataset.scrolling = '';
+  window.clearTimeout(scrollIdle);
+  scrollIdle = window.setTimeout(() => {
+    scrollIdle = 0;
+    delete list.dataset.scrolling;
+  }, 140);
+}
+
+// ── keyboard: one tab stop for the whole list, arrows inside it ──
+
+// Collapsed folders unmount their rows, so every match is a visible item (no layout read per key).
+const navItems = (list: HTMLElement) => [...list.querySelectorAll<HTMLElement>('[data-nav]')];
+
+function focusItem(el: HTMLElement | undefined) {
+  if (!el) return;
+  el.focus();
+  el.scrollIntoView({ block: 'nearest' });
+}
+
+/** Tabbing into the list lands on the open session (or the first row); the list itself steps aside. */
+function onListFocus(e: FocusEvent<HTMLDivElement>) {
+  const list = e.currentTarget;
+  if (e.target !== list) {
+    list.tabIndex = -1;
+    return;
+  }
+  const items = navItems(list);
+  focusItem(items.find((el) => el.getAttribute('aria-current') === 'page') ?? items[0]);
+}
+
+function onListBlur(e: FocusEvent<HTMLDivElement>) {
+  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) e.currentTarget.tabIndex = 0;
+}
+
+/**
+ * Up and Down move between rows and folder headers, Home and End to the ends; Right opens a
+ * folder, Left closes it (or, on a row, goes to its folder). Enter and Space activate, F2
+ * renames, Delete deletes, the menu key or Shift+F10 opens the row's menu.
+ */
 function onListKey(e: KeyboardEvent<HTMLDivElement>) {
-  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
   const target = e.target as HTMLElement;
   if (target.tagName === 'INPUT') return;
-  const items = [...e.currentTarget.querySelectorAll<HTMLElement>('[data-nav]')];
+  const list = e.currentTarget;
+  const current = target.closest<HTMLElement>('[data-nav]');
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    if (!current) return;
+    e.preventDefault();
+    const folder = current.dataset.folder;
+    const expanded = current.getAttribute('aria-expanded');
+    if (folder && expanded !== null) {
+      if ((e.key === 'ArrowRight') !== (expanded === 'true')) current.click();
+      else if (e.key === 'ArrowRight') focusItem(navItems(list)[navItems(list).indexOf(current) + 1]);
+    } else if (e.key === 'ArrowLeft') {
+      focusItem(current.closest('.sgroup')?.querySelector<HTMLElement>('.sgroup-toggle') ?? undefined);
+    }
+    return;
+  }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+  const items = navItems(list);
   if (!items.length) return;
   e.preventDefault();
-  const i = items.indexOf(target.closest<HTMLElement>('[data-nav]') ?? target);
+  const i = current ? items.indexOf(current) : -1;
   let next = 0;
   if (e.key === 'Home') next = 0;
   else if (e.key === 'End') next = items.length - 1;
   else if (i < 0) next = e.key === 'ArrowDown' ? 0 : items.length - 1;
   else next = Math.max(0, Math.min(items.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
-  items[next].focus();
-  items[next].scrollIntoView({ block: 'nearest' });
+  focusItem(items[next]);
+}
+
+// ── collapse: the stage widens or narrows without laying the conversation out every frame ──
+
+/**
+ * While the sidebar opens or closes, the stage's box animates its width (the sidebar's width
+ * transition in app.css) but the view inside it keeps one width, the wider of the two, anchored
+ * to the stage's right edge, and slides by half the difference so its centre column glides
+ * exactly where the resizing stage puts it. One layout at the start (when the stage grows) or
+ * at the end (when it narrows) instead of one per frame; the backdrop's canvas resizes once.
+ */
+function useStageFreeze() {
+  useEffect(() => {
+    let timer = 0;
+    let anims: Animation[] = [];
+    const release = (body: HTMLElement | null) => {
+      window.clearTimeout(timer);
+      for (const a of anims) a.cancel();
+      anims = [];
+      if (body) {
+        delete body.dataset.freeze;
+        body.style.removeProperty('--freeze-w');
+      }
+    };
+    return useStore.subscribe((s, p) => {
+      if (s.ui.sidebarOpen === p.ui.sidebarOpen) return;
+      const body = document.querySelector<HTMLElement>('.stage > .stage-body');
+      const side = document.querySelector<HTMLElement>('.app-side');
+      const inner = side?.firstElementChild as HTMLElement | null;
+      release(body);
+      if (!body || !side || !inner || reducedMotion()) return;
+      const cs = getComputedStyle(side);
+      const ms = parseFloat(cs.transitionDuration) * (cs.transitionDuration.trim().endsWith('ms') ? 1 : 1000);
+      if (!(ms > 20)) return;
+      const opening = s.ui.sidebarOpen;
+      const gap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gap')) || 0;
+      const w0 = body.clientWidth;
+      const delta = inner.offsetWidth + gap;
+      const w1 = opening ? w0 - delta : w0 + delta;
+      if (w1 <= 0) return;
+      const from = opening ? 0 : (w1 - w0) / 2;
+      const to = opening ? (w0 - w1) / 2 : 0;
+      body.style.setProperty('--freeze-w', `${Math.max(w0, w1)}px`);
+      body.dataset.freeze = '';
+      const easing = cs.transitionTimingFunction.split(/,(?![^(]*\))/)[0]?.trim() || 'ease-out';
+      for (const view of body.querySelectorAll<HTMLElement>(':scope > .stage-view')) {
+        anims.push(view.animate([{ translate: `${from}px 0` }, { translate: `${to}px 0` }], { duration: ms, easing }));
+      }
+      timer = window.setTimeout(() => release(body), ms + 20);
+    });
+  }, []);
 }

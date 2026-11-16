@@ -1,8 +1,14 @@
-import type { Project, SessionMeta } from '@shared/protocol';
+import type { Project, ProviderId, SessionMeta } from '@shared/protocol';
 import { baseName } from '@/lib/format';
 
 /** Case- and slash-insensitive key for a folder path. */
 export const pathKey = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+/** How a folder's rows tell sessions apart: by agent, by account, or not at all (all alike). */
+export type Mix = 'agent' | 'account' | undefined;
+
+/** What a collapsed folder shows in place of its count: the most pressing state inside it. */
+export type Attention = 'awaiting' | 'error' | 'working' | 'unread' | undefined;
 
 export interface ProjectGroup {
   key: string;
@@ -13,11 +19,53 @@ export interface ProjectGroup {
   last: number;
   sessions: SessionMeta[];
   archived: SessionMeta[];
+  mix: Mix;
+  /** With a mix of agents: the one most sessions run (the others carry its mark). */
+  major: ProviderId | undefined;
+  attention: Attention;
 }
 
 export interface SidebarGroups {
   pinned: SessionMeta[];
+  pinnedMix: Mix;
+  pinnedMajor: ProviderId | undefined;
   projects: ProjectGroup[];
+}
+
+function mixOf(list: SessionMeta[]): Mix {
+  if (list.length < 2) return undefined;
+  const p = list[0].provider;
+  const a = list[0].accountId ?? 'default';
+  let accounts = false;
+  for (const s of list) {
+    if (s.provider !== p) return 'agent';
+    if ((s.accountId ?? 'default') !== a) accounts = true;
+  }
+  return accounts ? 'account' : undefined;
+}
+
+/** The agent most of a folder's sessions run: only the others carry a mark. */
+function majorOf(list: SessionMeta[]): ProviderId | undefined {
+  const n = new Map<ProviderId, number>();
+  let best: ProviderId | undefined;
+  for (const s of list) {
+    const c = (n.get(s.provider) ?? 0) + 1;
+    n.set(s.provider, c);
+    if (!best || c > n.get(best)!) best = s.provider;
+  }
+  return best;
+}
+
+const RANK: Record<Exclude<Attention, undefined>, number> = { awaiting: 4, error: 3, working: 2, unread: 1 };
+
+function attentionOf(list: SessionMeta[]): Attention {
+  let best: Attention;
+  for (const s of list) {
+    const a: Attention =
+      s.status === 'awaiting' ? 'awaiting' : s.status === 'error' ? 'error' : s.status === 'running' || s.status === 'starting' ? 'working' : s.unread ? 'unread' : undefined;
+    if (a && (!best || RANK[a] > RANK[best])) best = a;
+  }
+  return best;
 }
 
 /**
@@ -31,7 +79,7 @@ export function buildGroups(sessions: Record<string, SessionMeta>, projects: Pro
     const key = pathKey(path);
     let g = byKey.get(key);
     if (!g) {
-      g = { key, path, name: baseName(path) || path, pinned: false, last: 0, sessions: [], archived: [] };
+      g = { key, path, name: baseName(path) || path, pinned: false, last: 0, sessions: [], archived: [], mix: undefined, major: undefined, attention: undefined };
       byKey.set(key, g);
     }
     return g;
@@ -66,9 +114,46 @@ export function buildGroups(sessions: Record<string, SessionMeta>, projects: Pro
     g.sessions.sort(recent);
     g.archived.sort(recent);
     if (!g.last) g.last = g.archived[0]?.updatedAt ?? 0;
+    g.mix = mixOf(g.sessions);
+    g.major = g.mix === 'agent' ? majorOf(g.sessions) : undefined;
+    g.attention = attentionOf(g.sessions);
   }
   list.sort((a, b) => (a.pinned !== b.pinned ? (a.pinned ? -1 : 1) : b.last - a.last));
-  return { pinned, projects: list };
+  const pinnedMix = mixOf(pinned);
+  return { pinned, pinnedMix, pinnedMajor: pinnedMix === 'agent' ? majorOf(pinned) : undefined, projects: list };
+}
+
+export const idsOf = (list: SessionMeta[]) => list.map((s) => s.id).join(' ');
+
+/** Everything the list's structure shows: order, membership, names, marks. Rows show the rest themselves. */
+export function groupsSignature(g: SidebarGroups): string {
+  let sig = `P${g.pinnedMix ?? ''}${g.pinnedMajor ?? ''}:${idsOf(g.pinned)}`;
+  for (const p of g.projects) sig += `\n${p.key}|${p.name}|${p.path}|${p.pinned ? 1 : 0}|${p.mix ?? ''}${p.major ?? ''}|${p.attention ?? ''}|${idsOf(p.sessions)}|${idsOf(p.archived)}`;
+  return sig;
+}
+
+/**
+ * The groups, as the same object until their structure changes. A session's activity, time or
+ * usage ticking (several times a second while it streams) leaves the list alone: rows update
+ * themselves. Rebuilt only when the sessions map or the projects change identity.
+ */
+export function createGroupsSelector() {
+  let seenSessions: Record<string, SessionMeta> | undefined;
+  let seenProjects: Project[] | undefined;
+  let sig = '';
+  let groups: SidebarGroups = { pinned: [], pinnedMix: undefined, pinnedMajor: undefined, projects: [] };
+  return (s: { sessions: Record<string, SessionMeta>; projects: Project[] }): SidebarGroups => {
+    if (s.sessions === seenSessions && s.projects === seenProjects) return groups;
+    seenSessions = s.sessions;
+    seenProjects = s.projects;
+    const next = buildGroups(s.sessions, s.projects);
+    const nextSig = groupsSignature(next);
+    if (nextSig !== sig) {
+      sig = nextSig;
+      groups = next;
+    }
+    return groups;
+  };
 }
 
 // ── collapsed folders, remembered per machine ──
