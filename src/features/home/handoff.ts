@@ -12,27 +12,39 @@ import { reducedMotion, uiZoom } from '@/lib/motion';
  * Meanwhile the headline dissolves upward and the home view (with its backdrop) fades out while the
  * session's quiet band fades in (App reads `handoffActive()` for those exits).
  *
+ * The spring is stepped ahead of time and handed over as animations (like the sent words in
+ * `composer/flight.ts`): the glide is one compositor transform, so the session view mounting under
+ * it cannot make it stutter; the small change of width rides along as a declarative animation of
+ * the ghost alone. The main thread only acts at the send, the claim and the landing.
+ *
  * Under reduced motion there is no ghost: the views crossfade.
  */
 
 type Phase = 'idle' | 'flying';
 
-interface Flight {
-  ghost: HTMLElement;
-  source: HTMLElement;
-  /** Current offset from the start (zoomed px), velocity, and width. */
+/** A point on the glide: ms since the send, offset from the start and width (px), and their speeds. */
+interface Sample {
+  t: number;
   x: number;
   y: number;
   w: number;
   vx: number;
   vy: number;
   vw: number;
+}
+
+interface Flight {
+  ghost: HTMLElement;
+  source: HTMLElement;
   start: { left: number; top: number; width: number; height: number };
-  target: { left: number; top: number; width: number };
   dock: HTMLElement | null;
-  raf: number;
-  last: number;
-  born: number;
+  /** The path the ghost is on and its two animations (transform on the compositor, width beside it). */
+  path: Sample[];
+  move: Animation | null;
+  size: Animation | null;
+  /** Corrections run after the claim (the docked card can still move as the session settles). */
+  fixes: number;
+  timer: number;
   ending: boolean;
 }
 
@@ -58,6 +70,8 @@ export const handoffActive = () => phase === 'flying';
 const STIFF = 260;
 const DAMP = 30;
 const LINE = 32;
+/** No session after this long (the bridge is slow or the send failed silently): give up quietly. */
+const GIVE_UP = 8000;
 
 /** Where the docked composer will be, from the stage's geometry (see session.css `.dock`). */
 function predictDock(height: number): { left: number; top: number; width: number } | null {
@@ -82,6 +96,90 @@ function strip(el: Element) {
   for (const c of [...el.children]) strip(c);
 }
 
+/** The spring from `from` to (tx, ty, tw), semi-implicit Euler in 4 ms steps, sampled every 16 ms. */
+function glide(from: Sample, tx: number, ty: number, tw: number): Sample[] {
+  const out = [from];
+  let { t, x, y, w, vx, vy, vw } = from;
+  const h = 0.004;
+  for (let i = 1; i < 600; i++) {
+    t += 4;
+    vx += (STIFF * (tx - x) - DAMP * vx) * h;
+    vy += (STIFF * (ty - y) - DAMP * vy) * h;
+    vw += (STIFF * (tw - w) - DAMP * vw) * h;
+    x += vx * h;
+    y += vy * h;
+    w += vw * h;
+    const done = Math.abs(tx - x) < 0.4 && Math.abs(ty - y) < 0.4 && Math.abs(tw - w) < 0.4 && Math.abs(vx) + Math.abs(vy) < 8;
+    if (done) {
+      out.push({ t, x: tx, y: ty, w: tw, vx: 0, vy: 0, vw: 0 });
+      break;
+    }
+    if (i % 4 === 0) out.push({ t, x, y, w, vx, vy, vw });
+  }
+  return out;
+}
+
+/** Plays a path on the ghost, replacing the one it was on; `then` runs when it has been flown. */
+function run(f: Flight, path: Sample[], then: () => void) {
+  const t0 = path[0].t;
+  const dur = Math.max(1, path[path.length - 1].t - t0);
+  const at = (p: Sample) => Math.min(1, (p.t - t0) / dur);
+  const moves: Keyframe[] = path.map((p) => ({ offset: at(p), transform: `translate3d(${p.x.toFixed(2)}px, ${p.y.toFixed(2)}px, 0)` }));
+  const sizes: Keyframe[] = path.map((p) => ({ offset: at(p), width: `${p.w.toFixed(2)}px` }));
+  if (moves.length < 2) {
+    moves.push({ ...moves[0] });
+    sizes.push({ ...sizes[0] });
+  }
+  moves[moves.length - 1].offset = 1;
+  sizes[sizes.length - 1].offset = 1;
+  const opts: KeyframeAnimationOptions = { duration: dur, easing: 'linear', fill: 'forwards' };
+  const oldMove = f.move;
+  const oldSize = f.size;
+  f.path = path;
+  const move = (f.move = f.ghost.animate(moves, opts));
+  f.size = f.ghost.animate(sizes, opts);
+  oldMove?.cancel();
+  oldSize?.cancel();
+  move.finished.then(() => f.move === move && !f.ending && then(), () => {});
+}
+
+/** Where the ghost is right now on its path (read from the animation's own clock). */
+function whereNow(f: Flight): Sample {
+  const p = f.path;
+  const t = p[0].t + (Number(f.move?.currentTime) || 0);
+  for (let i = 1; i < p.length; i++) {
+    if (p[i].t < t) continue;
+    const a = p[i - 1];
+    const b = p[i];
+    const u = (t - a.t) / Math.max(1, b.t - a.t);
+    const mix = (k: keyof Sample) => a[k] + (b[k] - a[k]) * u;
+    return { t, x: mix('x'), y: mix('y'), w: mix('w'), vx: mix('vx'), vy: mix('vy'), vw: mix('vw') };
+  }
+  const e = p[p.length - 1];
+  return { ...e, t: Math.max(t, e.t), vx: 0, vy: 0, vw: 0 };
+}
+
+/** The docked card's place as an offset from the start. */
+function dockTarget(f: Flight): { x: number; y: number; w: number } | null {
+  const d = f.dock;
+  if (!d?.isConnected) return null;
+  const z = uiZoom();
+  const r = d.getBoundingClientRect();
+  if (!r.width) return null;
+  return { x: r.left / z - f.start.left, y: r.top / z - f.start.top, w: r.width / z };
+}
+
+/** The path has been flown: land on the docked card, or glide on to where it is now. */
+function arrived(f: Flight) {
+  if (!f.dock) return; // waiting at the predicted place for the session to mount
+  const to = dockTarget(f);
+  if (!to) return cancelHandoff();
+  const end = f.path[f.path.length - 1];
+  if (Math.abs(to.x - end.x) < 0.5 && Math.abs(to.y - end.y) < 0.5 && Math.abs(to.w - end.w) < 0.5) return land();
+  if (++f.fixes > 4) return land();
+  run(f, glide(whereNow(f), to.x, to.y, to.w), () => arrived(f));
+}
+
 /** Starts the flight from the home composer card. Safe to call when one is already running. */
 export function beginHandoff(card: HTMLElement | null) {
   if (!card || flight || phase === 'flying') return;
@@ -103,7 +201,7 @@ export function beginHandoff(card: HTMLElement | null) {
   ghost.dataset.variant = 'session';
   ghost.setAttribute('aria-hidden', 'true');
   ghost.inert = true;
-  ghost.style.cssText = `position:fixed;left:${start.left}px;top:${start.top}px;width:${start.width}px;z-index:30;pointer-events:none;will-change:transform;`;
+  ghost.style.cssText = `position:fixed;left:${start.left}px;top:${start.top}px;width:${start.width}px;z-index:30;pointer-events:none;will-change:transform;contain:layout style;`;
   const copy = card.cloneNode(true) as HTMLElement;
   strip(copy);
   copy.removeAttribute('data-rolling');
@@ -132,44 +230,11 @@ export function beginHandoff(card: HTMLElement | null) {
   // (the docked composer takes them over when it claims the flight).
   card.style.opacity = '0';
 
-  flight = { ghost, source: card, x: 0, y: 0, w: start.width, vx: 0, vy: 0, vw: 0, start, target, dock: null, raf: 0, last: performance.now(), born: performance.now(), ending: false };
+  const f: Flight = { ghost, source: card, start, dock: null, path: [], move: null, size: null, fixes: 0, timer: 0, ending: false };
+  flight = f;
   set('flying');
-  flight.raf = requestAnimationFrame(step);
-}
-
-function step(now: number) {
-  const f = flight;
-  if (!f) return;
-  // Wall-clock time (a slow frame must not stretch the motion), integrated in small sub-steps.
-  const dt = Math.min(0.1, Math.max(0, (now - f.last) / 1000));
-  f.last = now;
-  // The docked card can still move as the session view settles (fonts, the timeline's first items).
-  if (f.dock?.isConnected) {
-    const z = uiZoom();
-    const r = f.dock.getBoundingClientRect();
-    if (r.width) f.target = { left: r.left / z, top: r.top / z, width: r.width / z };
-  }
-  const tx = f.target.left - f.start.left;
-  const ty = f.target.top - f.start.top;
-  const tw = f.target.width;
-  // Semi-implicit Euler in sub-steps of at most 6 ms: stable at these stiffnesses.
-  const n = Math.max(1, Math.ceil(dt / 0.006));
-  for (let i = 0; i < n; i++) {
-    const h = dt / n;
-    f.vx += (STIFF * (tx - f.x) - DAMP * f.vx) * h;
-    f.vy += (STIFF * (ty - f.y) - DAMP * f.vy) * h;
-    f.vw += (STIFF * (tw - f.w) - DAMP * f.vw) * h;
-    f.x += f.vx * h;
-    f.y += f.vy * h;
-    f.w += f.vw * h;
-  }
-  f.ghost.style.transform = `translate3d(${f.x.toFixed(2)}px, ${f.y.toFixed(2)}px, 0)`;
-  f.ghost.style.width = `${f.w.toFixed(2)}px`;
-  const settled = Math.abs(tx - f.x) < 0.4 && Math.abs(ty - f.y) < 0.4 && Math.abs(tw - f.w) < 0.4 && Math.abs(f.vx) + Math.abs(f.vy) < 8;
-  if (settled && f.dock) return land();
-  // No session after a long wait (the bridge is slow or the send failed silently): give up quietly.
-  if (now - f.born > 8000) return cancelHandoff();
-  f.raf = requestAnimationFrame(step);
+  run(f, glide({ t: 0, x: 0, y: 0, w: start.width, vx: 0, vy: 0, vw: 0 }, target.left - start.left, target.top - start.top, target.width), () => arrived(f));
+  f.timer = window.setTimeout(() => flight === f && !f.dock && cancelHandoff(), GIVE_UP);
 }
 
 /** The docked composer replaces the ghost. */
@@ -177,15 +242,19 @@ function land() {
   const f = flight;
   if (!f || f.ending) return;
   f.ending = true;
-  cancelAnimationFrame(f.raf);
+  window.clearTimeout(f.timer);
   if (f.dock) f.dock.style.opacity = '';
+  fadeOut(f, 90);
+  flight = null;
+  set('idle');
+}
+
+function fadeOut(f: Flight, duration: number) {
   const g = f.ghost;
-  const fade = g.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: 90, easing: 'linear', fill: 'forwards' });
+  const fade = g.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration, easing: 'linear', fill: 'forwards' });
   const done = () => g.remove();
   if (fade) fade.finished.then(done, done);
   else done();
-  flight = null;
-  set('idle');
 }
 
 /**
@@ -200,12 +269,11 @@ export function claimHandoff(card: HTMLElement | null): boolean {
     return false;
   }
   const f = flight;
-  if (!f || f.dock) return false;
+  if (!f || f.dock || f.ending) return false;
   f.dock = card;
   card.style.opacity = '0';
-  const z = uiZoom();
-  const r = card.getBoundingClientRect();
-  f.target = { left: r.left / z, top: r.top / z, width: r.width / z };
+  const to = dockTarget(f);
+  if (to) run(f, glide(whereNow(f), to.x, to.y, to.w), () => arrived(f));
   return true;
 }
 
@@ -218,14 +286,13 @@ export function cancelHandoff() {
   }
   const f = flight;
   if (!f) return;
-  cancelAnimationFrame(f.raf);
+  f.ending = true;
+  window.clearTimeout(f.timer);
+  f.move?.pause();
+  f.size?.pause();
   f.source.style.opacity = '';
   if (f.dock) f.dock.style.opacity = '';
-  const g = f.ghost;
-  const fade = g.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'linear', fill: 'forwards' });
-  const done = () => g.remove();
-  if (fade) fade.finished.then(done, done);
-  else done();
+  fadeOut(f, 140);
   flight = null;
   set('idle');
 }

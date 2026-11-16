@@ -966,6 +966,11 @@ textarea.field {
   pointer-events: none;
 }
 
+/* The positioning box around a tip takes no pointer either, or it would hold a neighbour's hover. */
+[data-radix-popper-content-wrapper]:has(> .tooltip) {
+  pointer-events: none;
+}
+
 /* ───────────── dialog ───────────── */
 
 .overlay {

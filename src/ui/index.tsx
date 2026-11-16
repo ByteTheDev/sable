@@ -31,7 +31,9 @@ export function Kbd({ combo, className }: { combo: string; className?: string })
 
 export function TipProvider({ children }: { children: ReactNode }) {
   return (
-    <RT.Provider delayDuration={380} skipDelayDuration={250}>
+    // Not hoverable: a tip closes as the pointer leaves its control, so it never holds the hover
+    // of a neighbour it happens to lie over (the sidebar's tools, the composer's field).
+    <RT.Provider delayDuration={380} skipDelayDuration={250} disableHoverableContent>
       {children}
     </RT.Provider>
   );

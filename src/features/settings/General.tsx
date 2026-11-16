@@ -59,7 +59,11 @@ const CAPS: { key: keyof SessionOptions; label: string; help: string }[] = [
   { key: 'browser', label: 'Browser control', help: 'Claude in Chrome, or the Codex app’s browser plugin.' },
   { key: 'computerUse', label: 'Computer use', help: 'Where the agent offers it. Codex switches it with browser control.' },
   { key: 'remoteControl', label: 'Remote control', help: 'Continue sessions from claude.ai/code or another device.' },
+  { key: 'browserTab', label: 'Browser tab', help: 'The agent can open, read and capture pages in the side panel’s Browser.' },
 ];
+
+/** Settings that apply to one agent's own session option, not Codex's linked browser plugin. */
+const OWN = new Set<keyof SessionOptions>(['remoteControl', 'browserTab']);
 
 /** What new sessions start with, per agent, and whether the agent starts before the first send. */
 function SessionDefaults() {
@@ -68,7 +72,8 @@ function SessionDefaults() {
   const [provider, setProvider] = useState<ProviderId>(() => (installed.includes(settings.defaultProvider) ? settings.defaultProvider : (installed[0] ?? 'claude')));
   const opts = settings.sessionOptions?.[provider] ?? {};
   // Codex: absent means its own config decides (its plugin is on when installed).
-  const on = (key: keyof SessionOptions) => opts[key] ?? (provider === 'codex' && key !== 'remoteControl');
+  // The Browser tab: absent means on, for every agent.
+  const on = (key: keyof SessionOptions) => opts[key] ?? (key === 'browserTab' || (provider === 'codex' && key !== 'remoteControl'));
 
   return (
     <Card
@@ -84,7 +89,7 @@ function SessionDefaults() {
           <Switch
             label={c.label}
             checked={on(c.key)}
-            onChange={(v) => void setDefaultSessionOptions(provider, provider === 'codex' && c.key !== 'remoteControl' ? { browser: v, computerUse: v } : { [c.key]: v })}
+            onChange={(v) => void setDefaultSessionOptions(provider, provider === 'codex' && !OWN.has(c.key) ? { browser: v, computerUse: v } : { [c.key]: v })}
           />
         </Row>
       ))}

@@ -50,7 +50,7 @@ const SidebarTop = memo(function SidebarTop() {
         </button>
       </div>
       <div className="side-actions">
-        <Tip label="New session" keys="mod+shift+o" side="right">
+        <Tip label="New session" keys="mod+shift+o">
           <button type="button" className="side-new" onClick={() => goHome()}>
             <span className="side-new-icon">
               <Icon name="plus" size={15} />

@@ -72,6 +72,8 @@ interface Run {
   impatient: boolean;
   /** What was typed before there was a composer to type into. */
   typed: string;
+  /** A hand-over of `typed` to the composer is waiting for a frame. */
+  handing?: boolean;
   ended: boolean;
   parts: HomeParts | null;
   /** Keeps the home mark out of sight until the launch mark has landed on it. */
@@ -224,7 +226,13 @@ function start(root: HTMLDivElement, mark: HTMLDivElement, onDone: () => void, o
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
     // Typed before the bridge answered: kept, and handed to the composer when it exists.
-    if (!r.ready && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && r.typed.length < 200) r.typed += e.key;
+    // So is anything typed before a composer has the keyboard (a restored session's view loads on demand).
+    const fielded = document.activeElement instanceof HTMLTextAreaElement && document.activeElement.matches(COMPOSER_FIELD);
+    if ((!r.ready || !fielded) && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && r.typed.length < 200) {
+      e.preventDefault();
+      r.typed += e.key;
+      if (r.yielded) handOver(r);
+    }
     yieldNow(r);
   };
   const onPointer = () => yieldNow(r);
@@ -424,6 +432,34 @@ function release(r: Run) {
   cue(r, L.inhale + L.burst + 700, () => end(r));
 }
 
+/** The composer that takes what was typed during the piece: home's, or a restored session's. */
+const COMPOSER_FIELD = '.home-composer textarea.cmp-input:not(.cmp-mirror), .composer[data-variant=session] textarea.cmp-input:not(.cmp-mirror)';
+
+/**
+ * Hands what was typed to the composer, as if typed there, so its own input handling takes it:
+ * once it has mounted (a restored session's view can take a few frames longer than home's).
+ */
+function handOver(r: Run, tries = 0) {
+  if (!r.typed || r.handing) return;
+  r.handing = true;
+  requestAnimationFrame(() => {
+    r.handing = false;
+    const field = document.querySelector<HTMLTextAreaElement>(COMPOSER_FIELD);
+    if (!field) {
+      if (tries < 90) handOver(r, tries + 1);
+      return;
+    }
+    const active = document.activeElement;
+    if (active !== field) {
+      if (active && active !== document.body) return;
+      field.focus();
+    }
+    const text = r.typed;
+    r.typed = '';
+    document.execCommand('insertText', false, text);
+  });
+}
+
 /** A key or a click: the piece gives way at once. */
 function yieldNow(r: Run) {
   if (r.ended || r.yielded) return;
@@ -448,21 +484,7 @@ function yieldNow(r: Run) {
   r.hold?.cancel();
   r.hold = null;
   r.mark.style.visibility = 'hidden';
-  if (r.typed) {
-    const text = r.typed;
-    r.typed = '';
-    // Once the composer has mounted and taken the focus: as if typed, so its own input handling takes it.
-    requestAnimationFrame(() => {
-      const field = document.querySelector<HTMLTextAreaElement>('.home-composer textarea');
-      if (!field) return;
-      const active = document.activeElement;
-      if (active !== field) {
-        if (active && active !== document.body) return;
-        field.focus();
-      }
-      document.execCommand('insertText', false, text);
-    });
-  }
+  handOver(r);
   // Nothing drawn yet (a key in the first instant): a plain cut, no canvas over the app.
   if (r.plain || !r.port || !r.ignited) return end(r);
   r.port.post({ type: 'launch', id: r.port.id, op: 'finish' } satisfies LaunchMessage);

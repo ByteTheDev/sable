@@ -578,6 +578,50 @@ const SCENARIOS = {
     await page.keyboard.press('Backspace');
     return r;
   },
+  // A message sent in a finished Demo session: the flight of the words and the short turn.
+  send: async () => {
+    await finishedSession();
+    await page.click('.composer[data-variant=session] textarea.cmp-input:not(.cmp-mirror)');
+    await sleep(300);
+    const r = await measure('send', async () => {
+      await page.keyboard.type('hi');
+      await page.keyboard.press('Enter');
+      await sleep(3000);
+    });
+    await waitIdle(finishedId).catch(() => {});
+    return r;
+  },
+  // The first message from home (the composer's glide to the dock). Demo only: refuses otherwise.
+  'send-home': async () => {
+    await home();
+    await ev(() => {
+      const s = window.sable.store.getState();
+      s.setUi({ homeProvider: 'demo', homeCwd: s.ui.homeCwd ?? s.home, homeMode: { ...s.ui.homeMode, demo: 'bypassPermissions' } });
+    });
+    await sleep(300);
+    const p = await ev(() => window.sable.actions.homeChoice()?.provider);
+    if (p !== 'demo') throw new Error('send-home: the home agent is not Demo (' + p + ')');
+    await page.click('.home-composer textarea.cmp-input:not(.cmp-mirror)');
+    return measure('send-home', async () => {
+      await page.keyboard.type('hi');
+      await page.keyboard.press('Enter');
+      await sleep(2500);
+    });
+  },
+  // Six switches between two finished sessions, 400 ms apart.
+  switch: async () => {
+    await finishedSession();
+    const other = await ev(() => window.sable.demo('hi', { mode: 'bypassPermissions' }));
+    await waitIdle(other);
+    await sleep(800);
+    return measure('switch', async () => {
+      for (let i = 0; i < 6; i++) {
+        await ev((id) => window.sable.actions.openSession(id), i % 2 ? other : finishedId);
+        await sleep(400);
+      }
+      await sleep(400);
+    });
+  },
   stream: async () => {
     await home();
     return measure('stream', async () => {

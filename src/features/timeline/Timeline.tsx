@@ -17,6 +17,13 @@ const AWAY = 160;
 const FOLLOW_W = 24;
 
 /**
+ * Where the reader left each conversation they had scrolled away from the end of, as the distance
+ * from the end (the end is always built, older turns wait behind a spacer of estimated height), so
+ * switching back lands where they were reading. For the window's life only.
+ */
+const keptAt = new Map<string, number>();
+
+/**
  * The conversation. A scroller that stays with the newest content until the reader
  * scrolls away, a centred reading column, and one component per item that subscribes
  * to that item alone, so streaming touches nothing that has settled.
@@ -123,10 +130,51 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     tailAt.current.anim = play(tail, [{ transform: `translateY(${d}px)` }, { transform: 'translateY(0px)' }], { duration: 240, easing: EASE_OUT });
   }, []);
 
-  // Land at the end of an existing transcript before the first paint.
+  // Where the reader left this conversation, until the content is tall enough to go back there
+  // (the last turns build a moment after the view mounts).
+  const restoreTo = useRef<number | null>(null);
+  const restore = useCallback(() => {
+    const el = scroller.current;
+    const dist = restoreTo.current;
+    if (!el || dist === null) return false;
+    const max = el.scrollHeight - el.clientHeight;
+    if (max < dist + STICK) return false;
+    restoreTo.current = null;
+    el.scrollTop = max - dist;
+    lastTop.current = el.scrollTop;
+    glide.current.pos = el.scrollTop;
+    setAway(dist > AWAY);
+    return true;
+  }, []);
+
+  // Land at the end of an existing transcript before the first paint, or where the reader left it.
   useLayoutEffect(() => {
-    if (loaded) pin();
-  }, [loaded, pin]);
+    if (!loaded) return;
+    const dist = keptAt.get(sessionId);
+    if (dist === undefined) return pin();
+    stuck.current = false;
+    restoreTo.current = dist;
+    if (restore()) return;
+    // The content never grew that tall (it changed meanwhile): the end, as usual.
+    const t = window.setTimeout(() => {
+      if (restoreTo.current === null) return;
+      restoreTo.current = null;
+      stuck.current = true;
+      pin();
+    }, 1500);
+    return () => window.clearTimeout(t);
+  }, [loaded, pin]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Leaving the conversation: remember the place when the reader was away from the end.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    return () => {
+      if (!el) return;
+      const dist = restoreTo.current ?? el.scrollHeight - el.clientHeight - el.scrollTop;
+      if (!stuck.current && dist > STICK) keptAt.set(sessionId, dist);
+      else keptAt.delete(sessionId);
+    };
+  }, [sessionId]);
 
   // History is laid out without entrance animations; anything arriving after that rises in.
   useEffect(() => {
@@ -142,6 +190,7 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     if (!el || !inner) return;
     const ro = new ResizeObserver(() => {
       glideTail();
+      if (restoreTo.current !== null && restore()) return;
       if (stuck.current) follow();
       else setAway(el.scrollHeight - el.scrollTop - el.clientHeight > AWAY);
     });
@@ -149,7 +198,7 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     ro.observe(inner, { box: 'border-box' });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [follow, glideTail]);
+  }, [follow, glideTail, restore]);
 
   // Only the reader lets go of the end. Layout moving the scroll position (rows above built
   // or settling to their real height, scroll anchoring, the dock resizing) never does.
@@ -170,6 +219,7 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     // Scrolling up with the wheel lets go at once, before the scroll event arrives.
     const onWheel = (e: WheelEvent) => {
       mark();
+      restoreTo.current = null;
       scrolling();
       if (e.deltaY < 0 && el.scrollHeight - el.clientHeight - el.scrollTop > 1) stuck.current = false;
     };
@@ -208,7 +258,7 @@ export function Timeline({ sessionId }: { sessionId: string }) {
 
   const onScroll = useCallback(() => {
     const el = scroller.current;
-    if (!el) return;
+    if (!el || restoreTo.current !== null) return;
     const top = el.scrollTop;
     const dist = el.scrollHeight - top - el.clientHeight;
     const byReader = dragging.current || performance.now() - intent.current < 600;
