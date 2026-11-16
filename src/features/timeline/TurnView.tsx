@@ -236,7 +236,11 @@ function segmentSpan(items: Record<string, TimelineItem>, turn: TurnGroup, index
 
 const SegmentView = memo(function SegmentView({ seg, turn, index, live }: { seg: Segment; turn: TurnGroup; index: number; live: boolean }) {
   const { sessionId } = useTimeline();
-  const hasWork = seg.work.length > 0;
+  // While the only work so far is the first thought, the live line already says "Thinking": the
+  // trail (one "Thinking" row) waits until there is more than that to show.
+  const firstType = useStore((s) => (live && seg.work.length === 1 && seg.story.length === 1 && seg.story[0].kind !== 'text' ? s.data[sessionId]?.items[seg.work[0]]?.type : undefined));
+  const soloThought = firstType === 'thinking';
+  const hasWork = seg.work.length > 0 && !soloThought;
   // The trail is open while the agent works and folds away when it is done, unless the reader chose.
   const [open, setOpen] = useFold(foldKey(sessionId, seg.key), live);
 
@@ -265,7 +269,7 @@ const SegmentView = memo(function SegmentView({ seg, turn, index, live }: { seg:
       {(hasWork || live) && (
         <div key="work" ref={workEl} className="tl-item tl-work" data-live={live || undefined} data-open={(open && hasWork) || undefined} data-gather={gather || undefined}>
           {live ? (
-            <LiveLine seg={seg} open={open && hasWork} onToggle={hasWork ? () => setOpen(!open) : undefined} />
+            <LiveLine seg={seg} open={open && hasWork} onToggle={hasWork ? () => setOpen(!open) : undefined} quiet={soloThought} />
           ) : (
             <WorkLine seg={seg} turn={turn} index={index} open={open} onToggle={() => setOpen(!open)} landed={gather} />
           )}
@@ -349,7 +353,7 @@ function liveSelector(sessionId: string, seg: Segment) {
  * The running segment's line: the working indicator, what it is doing now, the time so far and
  * how to stop. It stays in view (sticky) while the trail under it grows past the top.
  */
-function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onToggle?: () => void }) {
+function LiveLine({ seg, open, onToggle, quiet }: { seg: Segment; open: boolean; onToggle?: () => void; quiet?: boolean }) {
   const { sessionId } = useTimeline();
   const info = useStore(useMemo(() => liveSelector(sessionId, seg), [sessionId, seg]));
   const lead = useItem(seg.lead ?? seg.work[0] ?? '');
@@ -371,7 +375,7 @@ function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onTogg
       )}
       <span className={waiting ? 'work-label work-waiting' : 'work-label work-live-title shimmer truncate'}>{waiting ? 'Waiting for you' : title}</span>
       {elapsed >= 1000 && <span className="work-time num">{shortDuration(elapsed)}</span>}
-      {seg.steps > 0 && <span className="work-time num">{plural(seg.steps, 'step')}</span>}
+      {seg.steps > 0 && !quiet && <span className="work-time num">{plural(seg.steps, 'step')}</span>}
       {onToggle && <Icon name="caret-right" size={10} className="row-caret" />}
     </>
   );

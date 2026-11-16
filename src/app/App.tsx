@@ -482,13 +482,13 @@ function Topbar() {
         <div className="topbar-title">
           <ProviderMark provider={session.provider} size={15} />
           <span className="truncate topbar-name">{session.title}</span>
-          <span className="topbar-crumb truncate">
+          <span className="topbar-crumb">
             <Icon name="folder" size={13} />
-            {baseName(session.cwd)}
+            <span className="truncate">{baseName(session.cwd)}</span>
             {session.branch && (
               <>
                 <Icon name="branch" size={13} />
-                {session.branch}
+                <span className="truncate">{session.branch}</span>
               </>
             )}
             {/* The account, when its agent has several: opens "Continue with another account". */}

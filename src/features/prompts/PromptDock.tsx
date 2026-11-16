@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { PermissionRequest, QuestionRequest, Todo } from '@shared/protocol';
 import { useStore } from '@/state/store';
-import { PermissionCard } from './PermissionCard';
+import { CardWarmup, PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
 import { TaskStrip } from './TaskStrip';
 import './prompts.css';
@@ -62,6 +62,7 @@ export function PromptDock({ sessionId }: { sessionId: string }) {
 
   return (
     <>
+      <CardWarmup active={running} />
       <AnimatePresence initial={false}>
         {showTasks && (
           <motion.div key="tasks" className="pd-slot" {...rise}>

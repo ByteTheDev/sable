@@ -11,6 +11,7 @@ import type {
   SessionSnapshot,
   TimelineItem,
   Todo,
+  ToolItem,
   UserItem,
 } from '../../shared/protocol';
 import type { ProviderSession } from '../providers/types';
@@ -46,6 +47,9 @@ export class SessionRuntime {
   private index = new Map<string, TimelineItem>();
   private permissions = new Map<string, { request: PermissionRequest; resolve: (a: PermissionAnswer | null) => void }>();
   private questions = new Map<string, { request: QuestionRequest; resolve: (a: Record<string, string[]> | null) => void }>();
+  /** Spans in which a prompt waited for the user ([start, end] ms), and the start of the open one. */
+  private waits: [number, number][] = [];
+  private waitSince?: number;
 
   constructor(
     public meta: SessionMeta,
@@ -156,6 +160,12 @@ export class SessionRuntime {
   patch<T extends TimelineItem>(id: string, patch: Partial<T>) {
     const item = this.index.get(id);
     if (!item) return;
+    // A step that ends: the time it spent waiting for the user does not count as its own.
+    const endedAt = (patch as Partial<ToolItem>).endedAt;
+    if (item.type === 'tool' && endedAt && !('waitedMs' in patch)) {
+      const waited = this.waitedBetween(item.ts, endedAt);
+      if (waited > 0) patch = { ...patch, waitedMs: waited };
+    }
     Object.assign(item, patch);
     this.emit({ type: 'item.patch', sessionId: this.id, id, patch: patch as Partial<TimelineItem> });
     this.onDirty(this, 'items');
@@ -269,7 +279,27 @@ export class SessionRuntime {
     this.onTurnEnd?.(this, error);
   }
 
+  /** How long, between `from` and `to`, the session waited for the user (some prompt was open). */
+  waitedBetween(from: number, to: number): number {
+    let ms = 0;
+    const spans = this.waitSince !== undefined ? [...this.waits, [this.waitSince, to] as const] : this.waits;
+    for (const [a, b] of spans) ms += Math.max(0, Math.min(b, to) - Math.max(a, from));
+    return ms;
+  }
+
+  /** Opens or closes a waiting span as the first prompt opens and the last one closes. */
+  private trackWait() {
+    const open = this.permissions.size + this.questions.size > 0;
+    if (open && this.waitSince === undefined) this.waitSince = Date.now();
+    else if (!open && this.waitSince !== undefined) {
+      this.waits.push([this.waitSince, Date.now()]);
+      this.waitSince = undefined;
+      if (this.waits.length > 200) this.waits.shift();
+    }
+  }
+
   private refreshStatus() {
+    this.trackWait();
     if (!this.turnActive) return;
     const waiting = this.permissions.size + this.questions.size > 0;
     this.update({ status: waiting ? 'awaiting' : 'running' });

@@ -19,7 +19,9 @@ import {
   sandboxPolicy,
   toEffort,
   transcript,
+  shortenPaths,
   unwrapCommand,
+  warningNotice,
 } from '../server/providers/codex-map';
 
 const X = <T>(v: unknown) => v as T;
@@ -289,5 +291,32 @@ describe('draftItem and transcript', () => {
     expect(items[3]).toMatchObject({ type: 'notice', variant: 'interrupted' });
     expect(items[4] as TurnItem).toMatchObject({ type: 'turn', durationMs: 3000, stopReason: 'interrupted', ts: 103_000 });
     expect(items[5] as TurnItem).toMatchObject({ durationMs: 50, error: 'Boom' });
+  });
+});
+
+describe('codex warnings', () => {
+  const PATH = String.raw`E:\Codex\.codex\config.toml`;
+  const CONFIG = [
+    'Codex is ignoring 2 unrecognized configuration settings. Check for typos or deprecated settings.',
+    `  user (${PATH}): \`a.b\` is ignored.`,
+    `  user (${PATH}): \`c.d\` is ignored.`,
+  ].join('\n');
+
+  it('shortens absolute paths to the file name', () => {
+    expect(shortenPaths(`user (${PATH}): x`)).toBe('user (config.toml): x');
+    expect(shortenPaths('see /home/someone/.codex/config.toml now')).toBe('see config.toml now');
+    expect(shortenPaths('in ~/.codex/config.toml')).toBe('in config.toml');
+    expect(shortenPaths('a/b and http: fine')).toBe('a/b and http: fine');
+  });
+
+  it('shows a warning once per run, without the full path', () => {
+    const seen = new Set<string>();
+    const n = warningNotice(CONFIG, seen);
+    expect(n?.text).toBe('Codex is ignoring 2 unrecognized configuration settings. Check for typos or deprecated settings.');
+    expect(n?.detail).toBe('user (config.toml): `a.b` is ignored.\nuser (config.toml): `c.d` is ignored.');
+    // The next thread (or a resume) sends it again: shown no more.
+    expect(warningNotice(CONFIG, seen)).toBeNull();
+    expect(warningNotice('', seen)).toBeNull();
+    expect(warningNotice('Something else', seen)).toEqual({ text: 'Something else', detail: undefined });
   });
 });

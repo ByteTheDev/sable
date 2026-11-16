@@ -87,6 +87,10 @@ export class App {
   private opening = new Map<string, Promise<void>>();
   /** Sessions with a first message waiting for that start: they stay "starting" rather than flash idle. */
   private delivering = new Set<string>();
+  /** Per session, the messages shown while the agent starts that still wait to go out. */
+  private earlyWaiting = new Map<string, string[]>();
+  /** Such messages the user stopped before the agent was there: never sent. */
+  private stoppedEarly = new Set<string>();
   /** Automatic continues already made per session, as `${messageId}:${accountId}` (never the same twice). */
   private autoContinued = new Map<string, Set<string>>();
 
@@ -422,18 +426,24 @@ export class App {
     if (this.opening.has(rt.id)) {
       early = addUser();
       this.delivering.add(rt.id);
+      this.earlyWaiting.set(rt.id, [...(this.earlyWaiting.get(rt.id) ?? []), early.id]);
+      if (rt.meta.status !== 'starting') rt.update({ status: 'starting' });
     }
     let handle: ProviderSession;
     try {
       handle = await this.ensureHandle(rt);
     } catch (err) {
       if (!early) throw err;
+      if (this.stoppedEarly.delete(early.id)) return;
       rt.update({ status: 'error', lastError: (err as Error).message });
       rt.notice('error', 'Could not send the message', (err as Error).message);
       return;
     } finally {
       this.delivering.delete(rt.id);
+      if (early) this.earlyWaiting.set(rt.id, (this.earlyWaiting.get(rt.id) ?? []).filter((id) => id !== early.id));
     }
+    // Stopped while the agent was starting: the message stays where it was sent, and is not sent later.
+    if (early && this.stoppedEarly.delete(early.id)) return;
     const item = early ?? addUser();
     try {
       await handle.send(this.withHandover(rt, item));
@@ -945,6 +955,16 @@ export class App {
       const rt = this.runtime(sessionId);
       if (rt.turnActive) rt.stopRequested = true;
       rt.cancelPrompts();
+      // Stopped while the agent is still starting: what waits for it is not sent once it is there,
+      // and the session is idle again (the message stays in the conversation, stopped, as after any stop).
+      const waiting = this.earlyWaiting.get(rt.id);
+      if (waiting?.length && !rt.turnActive) {
+        for (const id of waiting) this.stoppedEarly.add(id);
+        this.earlyWaiting.delete(rt.id);
+        rt.notice('interrupted', 'Interrupted');
+        rt.update({ status: 'idle', activity: undefined });
+        return { ok: true };
+      }
       await rt.handle?.interrupt();
       return { ok: true };
     });

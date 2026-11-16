@@ -55,7 +55,11 @@ import {
   toEffort,
   transcript,
   unwrapCommand,
+  warningNotice,
 } from './codex-map';
+
+/** Codex warnings already shown in this app run (config warnings arrive again for every thread). */
+const shownWarnings = new Set<string>();
 import type {
   AccountLoginCompletedNotification,
   ApplyPatchApprovalParams,
@@ -337,6 +341,13 @@ export class CodexProvider implements Provider {
       else if (a) auth = { loggedIn: true, method: a.type, ...plan };
       else if (!r.requiresOpenaiAuth) auth = { loggedIn: true, method: 'custom provider', ...plan };
       this.lastAuth = JSON.stringify(auth);
+      // The app-server is up and signed in: read the limits now (free, about half a second), so a
+      // first launch has them when the app is ready instead of asking only once the UI is up and
+      // waiting another round trip. A view that asks meanwhile shares this read.
+      if (auth.loggedIn && !this.limitsPrimed) {
+        this.limitsPrimed = true;
+        void this.limits().catch(() => {});
+      }
       return { ...base, auth };
     } catch (err) {
       return { ...base, auth: { loggedIn: false }, problem: errMsg(err) };
@@ -593,16 +604,28 @@ export class CodexProvider implements Provider {
     return run;
   }
 
-  async limits(): Promise<RateLimit[]> {
-    const rpc = await this.client();
-    const r = await rpc.request<GetAccountRateLimitsResponse>('account/rateLimits/read', { excludeResetCreditDetails: true }, 20_000);
-    this.snapshots.clear();
-    const byId = r.rateLimitsByLimitId ? Object.values(r.rateLimitsByLimitId).filter((x): x is RateLimitSnapshot => !!x) : [];
-    for (const s of byId.length ? byId : r.rateLimits ? [r.rateLimits] : []) this.snapshots.set(s.limitId ?? 'codex', s);
-    const snaps = [...this.snapshots.values()];
-    const limits = mapLimits(snaps);
-    this.ctx.emit({ type: 'limits.updated', provider: 'codex', limits, meta: limitsMeta(snaps) });
-    return limits;
+  /** A read in flight: callers that ask meanwhile (the start-up read, a view opening) share it. */
+  private limitsRun?: Promise<RateLimit[]>;
+  /** The first sign-in seen in this run started a limits read. */
+  private limitsPrimed = false;
+
+  limits(): Promise<RateLimit[]> {
+    if (this.limitsRun) return this.limitsRun;
+    const run = (async () => {
+      const rpc = await this.client();
+      const r = await rpc.request<GetAccountRateLimitsResponse>('account/rateLimits/read', { excludeResetCreditDetails: true }, 20_000);
+      this.snapshots.clear();
+      const byId = r.rateLimitsByLimitId ? Object.values(r.rateLimitsByLimitId).filter((x): x is RateLimitSnapshot => !!x) : [];
+      for (const s of byId.length ? byId : r.rateLimits ? [r.rateLimits] : []) this.snapshots.set(s.limitId ?? 'codex', s);
+      const snaps = [...this.snapshots.values()];
+      const limits = mapLimits(snaps);
+      this.ctx.emit({ type: 'limits.updated', provider: 'codex', limits, meta: limitsMeta(snaps) });
+      return limits;
+    })().finally(() => {
+      if (this.limitsRun === run) this.limitsRun = undefined;
+    });
+    this.limitsRun = run;
+    return run;
   }
 
   private limitsTimer?: NodeJS.Timeout;
@@ -680,7 +703,6 @@ class CodexSession implements ProviderSession {
   private prompts = new Map<string, AbortController>();
   private reasoningSource = new Map<string, 'summary' | 'content'>();
   private compactSeen = false;
-  private warned = new Set<string>();
   private turnError?: string;
   /** Last thread-wide total seen in this session (undefined until the first usage update). */
   private lastTotal?: TokenUsageBreakdown;
@@ -1180,14 +1202,10 @@ class CodexSession implements ProviderSession {
         return;
       }
       case 'warning': {
-        const msg = (p as WarningNotification).message;
-        if (!msg || this.warned.has(msg)) return; // e.g. config warnings repeat on every resume
-        this.warned.add(msg);
-        // The headline is the first line; the detail is what follows it (the whole text only when the headline was cut short).
-        const head = firstLine(msg, 120);
-        const lines = msg.trim().split('\n');
-        const rest = head.endsWith('…') ? msg.trim() : lines.slice(1).join('\n').trim();
-        return void rt.notice('info', head, rest || undefined);
+        // Once per app run, paths cut to the file name (config warnings repeat for every thread).
+        const n = warningNotice((p as WarningNotification).message, shownWarnings);
+        if (n) rt.notice('info', n.text, n.detail);
+        return;
       }
       case 'model/rerouted':
         return void rt.notice('model', `Switched to ${p.toModel}`, p.fromModel ? `Rerouted from ${p.fromModel}` : undefined);

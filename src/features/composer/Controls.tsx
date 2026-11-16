@@ -37,9 +37,9 @@ function useMenuOpen(which: 'model' | 'mode') {
 }
 
 /**
- * These menus open over their trigger with the current row lying on it, so the release of the
- * click that opened one lands on that row, and Radix picks an item on pointer-up. A release
- * shortly after opening, with no press inside the menu, is ignored.
+ * Radix picks an item on pointer-up: the release of the click that opened a menu must never pick
+ * one (a menu flipped by the window edge can open under the pointer). A release shortly after
+ * opening, with no press inside the menu, is ignored.
  */
 function useReleaseGuard(open: boolean) {
   const at = useRef(0);
@@ -57,12 +57,23 @@ function useReleaseGuard(open: boolean) {
 }
 
 /**
- * The mode and model menus open over their trigger and put focus on the current row themselves
- * (ui/grow.ts, at the next frame). Radix's own focus on the menu first would be a second focus
- * move, and a second forced style pass, inside the task that opens the menu.
+ * The mode and model menus open above their trigger, aligned to its outer edge, 8px away, like the
+ * effort popover. Focus goes to the current row at the start of the next frame, not inside the task
+ * that opens the menu (Radix's own focus on the menu first would be a second focus move, and a
+ * second forced style pass, there). A search field that already took focus keeps it.
  */
 // DropdownMenu.Content passes this through to the menu's focus scope; its types leave it out.
-const SKIP_OPEN_FOCUS = { onOpenAutoFocus: (e: Event) => e.preventDefault() } as object;
+const FOCUS_CURRENT = {
+  onOpenAutoFocus: (e: Event) => {
+    e.preventDefault();
+    const pop = e.currentTarget as HTMLElement;
+    requestAnimationFrame(() => {
+      const at = document.activeElement;
+      if (!pop.isConnected || pop.dataset.state === 'closed' || (at && at !== pop && pop.contains(at))) return;
+      (pop.querySelector<HTMLElement>('[data-current]') ?? pop.querySelector<HTMLElement>('[role="menuitem"]'))?.focus({ preventScroll: true });
+    });
+  },
+} as object;
 
 interface MenuProps {
   choice: Choice;
@@ -86,8 +97,7 @@ export const ModeMenu = memo(function ModeMenu({ choice, side, onClosed }: MenuP
   }, [open, cur?.id]);
   if (!choice.caps) return choice.capsPending ? <ChipSkeleton w={84} /> : null;
   if (!modes.length) return null;
-  // The list is the Shift+Tab cycle, turned so the mode in use is the row nearest the trigger:
-  // the menu opens over the chip with that row lying on it.
+  // The list is the Shift+Tab cycle, turned so the mode in use is the row nearest the trigger.
   const at = Math.max(0, modes.findIndex((m) => m.id === anchor));
   const up = side === 'top';
   const ordered = up ? [...modes.slice(at + 1), ...modes.slice(0, at + 1)] : [...modes.slice(at), ...modes.slice(0, at)];
@@ -113,14 +123,13 @@ export const ModeMenu = memo(function ModeMenu({ choice, side, onClosed }: MenuP
       <RM.Portal>
         <RM.Content
           className="pop cm-pop mm-pop"
-          data-origin="select"
           data-spot
           side={side}
           align="start"
           sideOffset={8}
           collisionPadding={10}
           style={{ width: MENU_W - 24 }}
-          {...SKIP_OPEN_FOCUS}
+          {...FOCUS_CURRENT}
           onCloseAutoFocus={(e) => {
             e.preventDefault();
             onClosed();
@@ -229,7 +238,6 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
         <RM.Content
           ref={content}
           className="pop cm-pop mm-pop"
-          data-origin="select"
           data-spot
           side={side}
           align="end"
@@ -238,7 +246,7 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
           loop
           style={{ width: MENU_W }}
           aria-label="Model"
-          {...SKIP_OPEN_FOCUS}
+          {...FOCUS_CURRENT}
           onKeyDown={onKeyDown}
           onEscapeKeyDown={(e) => {
             if (!query) return;

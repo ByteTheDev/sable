@@ -147,9 +147,11 @@ export function commandRows(query: string, caps: Capabilities | undefined, sessi
   const rows: SuggestRow[] = [];
   const shift = (ix: number[]) => ix.map((i) => i + 1);
   for (const { t, indices } of rank(app, query, (c) => c.name))
-    rows.push({ id: `app:${t.name}`, group: 'Sable', kind: 'app', name: t.name, label: `/${t.name}`, indices: shift(indices), hint: t.argumentHint, detail: t.description });
+    rows.push({ id: `app:${t.name}`, group: 'Sable', kind: 'app', name: t.name, label: `/${t.name}`, indices: shift(indices), hint: t.argumentHint });
+  // Built-in commands (Sable's and the agent's) need no description: people know them. Only what the
+  // user's or the agent's own setup adds (custom commands, skills) keeps one, since its meaning is not known in advance.
   for (const { t, indices } of rank(cmds, query, (c) => short(c.name), (c) => c.name))
-    rows.push({ id: `cmd:${t.name}`, group: 'Commands', kind: t.kind, name: short(t.name), label: `/${short(t.name)}`, indices: shift(indices), hint: t.argumentHint, detail: t.description });
+    rows.push({ id: `cmd:${t.name}`, group: 'Commands', kind: t.kind, name: short(t.name), label: `/${short(t.name)}`, indices: shift(indices), hint: t.argumentHint, detail: t.kind === 'builtin' ? undefined : t.description });
   for (const { t, indices } of rank(skills, query, (c) => short(c.name), (c) => c.name))
     rows.push({ id: `skill:${t.name}`, group: 'Skills', kind: 'skill', name: short(t.name), label: `/${short(t.name)}`, indices: shift(indices), detail: t.description });
   return rows;

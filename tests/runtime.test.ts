@@ -1,5 +1,5 @@
 /** SessionRuntime: the timeline, prompts and status transitions providers write to. */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { BridgeEvent, SessionMeta, TextItem, ThinkingItem, ToolItem } from '@shared/protocol';
 import { autoTitle, SessionRuntime } from '../server/core/runtime';
 
@@ -163,6 +163,41 @@ describe('turns and prompts', () => {
     expect(rt.get<ToolItem>(waiting.id)!.status).toBe('error');
     expect(rt.get<ToolItem>(done.id)!.status).toBe('done');
     expect(rt.get<ToolItem>(done.id)!.endedAt).toBeUndefined();
+  });
+
+  it('a step does not count the time spent waiting for approval as its own', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(10_000);
+      const { rt } = make();
+      rt.beginTurn();
+      // Two calls at once: the first waits 40s for approval, the second runs after it for 2s.
+      const a = rt.add<ToolItem>({ type: 'tool', name: 'Skill', kind: 'skill', title: 'Use a skill', status: 'awaiting', detail: {} });
+      const b = rt.add<ToolItem>({ type: 'tool', name: 'Bash', kind: 'bash', title: 'Run', status: 'running', detail: {} });
+      const answer = rt.requestPermission({ ...perm, itemId: a.id });
+      vi.setSystemTime(50_000);
+      rt.answerPermission(rt.snapshot().permissions[0].id, { optionId: 'allow' });
+      await answer;
+      vi.setSystemTime(51_000);
+      rt.patch<ToolItem>(a.id, { status: 'done', endedAt: Date.now() });
+      vi.setSystemTime(53_000);
+      rt.patch<ToolItem>(b.id, { status: 'done', endedAt: Date.now() });
+      expect(rt.get<ToolItem>(a.id)!.waitedMs).toBe(40_000);
+      expect(rt.get<ToolItem>(b.id)!.waitedMs).toBe(40_000);
+      // A call that started after the wait carries nothing.
+      const c = rt.add<ToolItem>({ type: 'tool', name: 'Read', kind: 'read', title: 'Read', status: 'running', detail: {} });
+      vi.setSystemTime(54_000);
+      rt.patch<ToolItem>(c.id, { status: 'done', endedAt: Date.now() });
+      expect(rt.get<ToolItem>(c.id)!.waitedMs).toBeUndefined();
+      // A prompt still open when a step ends counts up to that end.
+      const d = rt.add<ToolItem>({ type: 'tool', name: 'Bash', kind: 'bash', title: 'Run', status: 'awaiting', detail: {} });
+      void rt.requestPermission(perm);
+      vi.setSystemTime(57_000);
+      rt.patch<ToolItem>(d.id, { status: 'cancelled', endedAt: Date.now() });
+      expect(rt.get<ToolItem>(d.id)!.waitedMs).toBe(3_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -22,6 +22,16 @@ export const FenceWidget = memo(function FenceWidget({ code, streaming }: { code
   return <WidgetView cacheKey={key} title="" code={code} final={!streaming} sessionId={sessionId || undefined} />;
 });
 
+/**
+ * The diagram's frame page: a diagram wider than the column at its smallest legible size (see
+ * fitDiagram) scrolls sideways, and its right edge fades until it is scrolled to the end, as wide
+ * tables do (markdown.css: driven by the scroll itself; one that fits has no scroll timeline and no fade).
+ */
+const DIAGRAM_CSS =
+  '<style>.mmw{position:relative;timeline-scope:--mmx}.mmx{overflow-x:auto;overflow-y:hidden;scroll-timeline:--mmx inline}' +
+  ".mmw::after{content:'';position:absolute;top:0;right:0;bottom:0;width:48px;background:linear-gradient(to right,rgb(9 9 11/0),rgb(9 9 11/.92));pointer-events:none;opacity:0;animation:mmx-edge linear both;animation-timeline:--mmx}" +
+  '@keyframes mmx-edge{0%,90%{opacity:1}100%{opacity:0}}</style>';
+
 /** A ```mermaid block: drawn as a diagram in Sable's monochrome, with the source one click away. */
 export const MermaidBlock = memo(function MermaidBlock({ code, streaming }: { code: string; streaming: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -49,7 +59,7 @@ export const MermaidBlock = memo(function MermaidBlock({ code, streaming }: { co
   }, [near, streaming, code]);
 
   const key = useMemo(() => `mm:${hashCode(code)}`, [code]);
-  const page = useMemo(() => (svg ? `<div style="display:flex;justify-content:center">${svg}</div>` : ''), [svg]);
+  const page = useMemo(() => (svg ? DIAGRAM_CSS + `<div class="mmw"><div class="mmx">${svg}</div></div>` : ''), [svg]);
 
   // While it is written, the diagram's place is held by the skeleton (the source would show and
   // then be swapped away, at another height); the source stays one click away once it is drawn.

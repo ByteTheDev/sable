@@ -209,6 +209,28 @@ export function firstLine(text: string, max = 80): string {
   return line.length > max ? line.slice(0, max - 1).trimEnd() + '…' : line;
 }
 
+/** Absolute paths in a message shortened to their file name (`E:\x\.codex\config.toml` → `config.toml`). */
+export function shortenPaths(text: string): string {
+  return text
+    .replace(/(?:\\\\\?\\)?(?<![\w/])[A-Za-z]:[\\/][^\s()'"`:;,]*/g, (p) => p.split(/[\\/]/).filter(Boolean).pop() ?? p)
+    .replace(/(^|[\s('"`])(~?\/(?:[^\s/()'"`:;,]+\/)+[^\s/()'"`:;,]+)/g, (_m, pre: string, p: string) => pre + (p.split('/').pop() ?? p));
+}
+
+/**
+ * Codex's own warning (e.g. unknown keys in config.toml, sent again for every thread) as a quiet
+ * notice: paths shortened to the file name, and null when the same warning was already shown
+ * (`seen` lives as long as the app run).
+ */
+export function warningNotice(message: string | null | undefined, seen: Set<string>): { text: string; detail?: string } | null {
+  const msg = shortenPaths(message ?? '').trim();
+  if (!msg || seen.has(msg)) return null;
+  seen.add(msg);
+  // The headline is the first line; the detail is what follows it (the whole text only when the headline was cut short).
+  const text = firstLine(msg, 120);
+  const rest = text.endsWith('…') ? msg : msg.split('\n').slice(1).map((l) => l.trim()).filter(Boolean).join('\n');
+  return { text, detail: rest || undefined };
+}
+
 export function mapHistory(t: Thread): HistoryEntry {
   return {
     provider: 'codex',

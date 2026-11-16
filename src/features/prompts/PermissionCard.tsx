@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { PermissionOption, PermissionRequest } from '@shared/protocol';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import type { FileDiff, PermissionOption, PermissionRequest } from '@shared/protocol';
 import { CodeBlock } from '@/components/CodeBlock';
 import { DiffView } from '@/components/DiffView';
 import { Markdown } from '@/components/Markdown';
@@ -24,6 +24,91 @@ function Field({ label, value, mono, path }: { label: string; value?: string; mo
   );
 }
 
+/**
+ * A scroller whose lower edge fades into the well while more is below (as the composer field does),
+ * so no line is cut hard at the bottom; the fade goes once the end is in view.
+ */
+function FadeScroll({ className, children }: { className: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (el) setMore(el.scrollHeight - el.clientHeight - el.scrollTop > 2);
+  }, []);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    measure();
+    // The scroller's own height (the card is capped by the window) and its content's.
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    for (const c of Array.from(el.children)) ro.observe(c);
+    return () => ro.disconnect();
+  }, [measure]);
+  return (
+    <div ref={ref} className={className} onScroll={measure}>
+      {children}
+      <div className="pc-fade" data-on={more || undefined} aria-hidden />
+    </div>
+  );
+}
+
+const WARM_DIFF: FileDiff = {
+  path: 'warm.ts',
+  status: 'modified',
+  additions: 2,
+  deletions: 1,
+  hunks: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 4, lines: [" import { a } from './a';", '-export const b = a(1);', '+export const b = a(2);', '+export const c = b + 1;', ' '] }],
+};
+
+let warmed = false;
+
+/**
+ * The first card of a run used to take several times longer than later ones (code paths and style
+ * rules met for the first time, the highlighter's grammar loading). Once per run, when a turn
+ * starts, a card with a small diff is laid out unseen during idle time and dropped, so the first
+ * real card costs what later ones do. No handlers, no keys, nothing painted.
+ */
+export function CardWarmup({ active }: { active: boolean }) {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    if (!active || warmed) return;
+    warmed = true;
+    const idle = window.requestIdleCallback ?? ((fn: () => void) => window.setTimeout(fn, 200));
+    const id = idle(() => setOn(true), { timeout: 2000 });
+    return () => (window.cancelIdleCallback ?? window.clearTimeout)(id);
+  }, [active]);
+  useEffect(() => {
+    if (!on) return;
+    const t = window.setTimeout(() => setOn(false), 1500);
+    return () => window.clearTimeout(t);
+  }, [on]);
+  if (!on) return null;
+  return (
+    <div className="pc-warm" aria-hidden>
+      <section className="pc glass-card" data-kind="edit">
+        <header className="pc-head">
+          <Glyph name={TOOL_ICON.edit.icon} tone="var(--amber)" size={30} />
+          <div className="pc-titles">
+            <h3 className="pc-title">Edit warm.ts</h3>
+          </div>
+        </header>
+        <div className="pc-body">
+          <FadeScroll className="pc-scroll pc-diffs scroll">
+            <DiffView diff={WARM_DIFF} />
+          </FadeScroll>
+        </div>
+        <div className="pc-foot">
+          <button type="button" tabIndex={-1} className="btn btn-primary">
+            <span>Allow</span>
+            <KeyHint k="↵" />
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function Subject({ req, input }: { req: PermissionRequest; input: unknown }) {
   const d = req.detail;
   // Paths inside the session's folder read from there ("table.js"), as the step rows do.
@@ -42,11 +127,11 @@ function Subject({ req, input }: { req: PermissionRequest; input: unknown }) {
     case 'write':
       if (req.diff?.length)
         return (
-          <div className="pc-scroll pc-diffs scroll">
+          <FadeScroll className="pc-scroll pc-diffs scroll">
             {req.diff.map((f) => (
               <DiffView key={f.path} diff={{ ...f, path: rel(f.path)! }} />
             ))}
-          </div>
+          </FadeScroll>
         );
       if (d.content ?? d.newText) return <CodeBlock code={(d.content ?? d.newText)!} lang={langFromPath(d.path)} title={rel(d.path)} maxHeight={260} />;
       return <Field label="File" value={rel(d.path)} path />;

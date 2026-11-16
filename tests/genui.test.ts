@@ -190,3 +190,20 @@ describe('frame page', () => {
     expect(html).toContain('if (e.source !== HOST) return;');
   });
 });
+
+describe('fitDiagram', () => {
+  it('keeps a wide diagram at a legible size and centres it', async () => {
+    const { fitDiagram, MIN_DIAGRAM_SCALE } = await import('@/features/genui/mermaid');
+    const out = fitDiagram('<svg id="a" width="100%" style="max-width: 1300px;" viewBox="-8 -8 1300 240"><g/></svg>');
+    expect(out).toContain(`style="min-width:${Math.ceil(1300 * MIN_DIAGRAM_SCALE)}px;display:block;margin:0 auto;max-width: 1300px;"`);
+    expect(out.endsWith('<g/></svg>')).toBe(true);
+    // Labels drawn at 13px never go below 11.5px.
+    expect(13 * MIN_DIAGRAM_SCALE).toBeGreaterThanOrEqual(11.5);
+    // No style attribute or no viewBox: still centred, no width guessed.
+    expect(fitDiagram('<svg viewBox="0 0 200 100"></svg>')).toBe('<svg style="min-width:177px;display:block;margin:0 auto;" viewBox="0 0 200 100"></svg>');
+    expect(fitDiagram('<svg width="10"></svg>')).toBe('<svg style="display:block;margin:0 auto;" width="10"></svg>');
+    expect(fitDiagram('not a diagram')).toBe('not a diagram');
+    // A sequence diagram's smallest text is 14px: it may shrink further before it scrolls.
+    expect(fitDiagram('<svg aria-roledescription="sequence" viewBox="0 0 700 300"></svg>')).toContain(`min-width:${Math.ceil((700 * 11.5) / 14)}px`);
+  });
+});

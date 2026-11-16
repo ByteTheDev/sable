@@ -426,6 +426,11 @@ export interface ToolItem extends BaseItem {
   output?: string;
   result?: ToolResult;
   endedAt?: number;
+  /**
+   * Time between `ts` and `endedAt` the session spent waiting for the user (approvals, questions,
+   * this call's own or earlier calls' in the same batch): not part of the step's own running time.
+   */
+  waitedMs?: number;
 }
 
 export interface NoticeItem extends BaseItem {

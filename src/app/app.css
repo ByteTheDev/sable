@@ -140,7 +140,10 @@
   padding-left: 6px;
 }
 
+/* When space runs out the folder gives way first (its weight is far larger), down to its icon and
+   an ellipsis; only then does the title end with one. */
 .topbar-name {
+  flex-shrink: 1;
   font-weight: var(--w-medium);
   letter-spacing: -0.005em;
 }
@@ -149,9 +152,11 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-width: 34px;
+  overflow: hidden;
   color: var(--text-3);
   font-size: var(--t-small);
-  flex-shrink: 1;
+  flex-shrink: 1000;
 }
 
 .topbar-crumb svg {

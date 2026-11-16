@@ -151,6 +151,26 @@ function load(): Promise<Mermaid> {
   return loading;
 }
 
+/** Labels are drawn at 13px (themeVariables.fontSize); scaled further down than 11.5px they stop being legible. */
+export const MIN_DIAGRAM_SCALE = 11.5 / 13;
+
+/**
+ * A diagram shrinks to fit its column only down to MIN_DIAGRAM_SCALE; wider than that, it keeps
+ * that size and its block scrolls sideways. Sets a min-width (from the viewBox) on the root <svg>,
+ * which also becomes a centred block.
+ */
+export function fitDiagram(svg: string): string {
+  const open = /<svg\b[^>]*>/.exec(svg);
+  if (!open) return svg;
+  const vb = /\sviewBox="\s*[-\d.e]+[\s,]+[-\d.e]+[\s,]+([\d.e]+)[\s,]+[\d.e]+\s*"/.exec(open[0]);
+  const width = vb ? Number(vb[1]) : 0;
+  // Sequence diagrams draw their smallest text (actors) at Mermaid's own 14px, not at fontSize.
+  const scale = /aria-roledescription="sequence"/.test(open[0]) ? 11.5 / 14 : MIN_DIAGRAM_SCALE;
+  const add = `${width > 0 ? `min-width:${Math.ceil(width * scale)}px;` : ''}display:block;margin:0 auto;`;
+  const tag = /\sstyle="/.test(open[0]) ? open[0].replace(/\sstyle="/, ` style="${add}`) : open[0].replace(/^<svg\b/, `<svg style="${add}"`);
+  return svg.slice(0, open.index) + tag + svg.slice(open.index + open[0].length);
+}
+
 /** Renders one diagram to an SVG string. Calls run one at a time (Mermaid keeps global state). */
 export function renderMermaid(code: string): Promise<string> {
   const run = queue.then(async () => {
@@ -158,7 +178,7 @@ export function renderMermaid(code: string): Promise<string> {
     const id = `sable-mm-${++seq}`;
     try {
       const { svg } = await mm.render(id, code);
-      return svg;
+      return fitDiagram(svg);
     } finally {
       // Mermaid leaves its scratch element behind when a diagram fails.
       document.getElementById(id)?.remove();

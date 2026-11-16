@@ -69,4 +69,37 @@ describe('a slow agent start', () => {
     expect(rt.items.some((x) => x.type === 'turn')).toBe(false);
     await app.dispose();
   });
+
+  it('stops cleanly when the user stops while the agent is still starting', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'sable-slow-'));
+    homes.push(home);
+    const app = new App({ home, providers: [(ctx) => new SlowDemo(ctx, { speed: 0 })], quiet: true });
+    const statuses: string[] = [];
+    app.subscribe((e: BridgeEvent) => {
+      if (e.type === 'session.updated' && e.patch.status) statuses.push(e.patch.status);
+    });
+    const snap = await app.call('session.create', { provider: 'demo', cwd: home });
+    const rt = app.runtime(snap.session.id);
+    const sending = app.call('session.send', { sessionId: snap.session.id, text: 'hi' });
+    await sleep(50);
+    await app.call('session.interrupt', { sessionId: snap.session.id });
+    // Idle at once, the message where it was sent, stopped like any other turn.
+    expect(rt.meta.status).toBe('idle');
+    expect(rt.items.map((i) => i.type)).toEqual(['user', 'notice']);
+    expect(rt.items[1]).toMatchObject({ variant: 'interrupted' });
+    await sending;
+    await sleep(300);
+    // The agent is there now, and the stopped message never went out.
+    expect(rt.handle).toBeDefined();
+    expect(rt.meta.status).toBe('idle');
+    expect(rt.items.some((x) => x.type === 'turn' || x.type === 'text')).toBe(false);
+    expect(statuses.slice(statuses.indexOf('idle'))).not.toContain('running');
+
+    // A message sent after that goes out as usual.
+    await app.call('session.send', { sessionId: snap.session.id, text: 'hi again' });
+    for (let i = 0; i < 100 && !rt.items.some((x) => x.type === 'turn'); i++) await sleep(50);
+    expect(rt.items.some((x) => x.type === 'turn')).toBe(true);
+    expect(rt.items.filter((x) => x.type === 'user').map((u) => (u as { text: string }).text)).toEqual(['hi', 'hi again']);
+    await app.dispose();
+  });
 });

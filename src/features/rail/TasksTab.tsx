@@ -143,7 +143,8 @@ const AgentRow = memo(function AgentRow({ sessionId, id }: { sessionId: string; 
               : tools
                 ? `Finished after ${plural(tools, 'tool call')}`
                 : 'Finished';
-  const dur = (item.endedAt ?? (live ? now : item.ts)) - item.ts;
+  // Its own running time: waiting for approvals does not count.
+  const dur = (item.endedAt ?? (live ? now : item.ts)) - item.ts - (item.endedAt ? (item.waitedMs ?? 0) : 0);
 
   return (
     <li className="ag-item" data-open={open || undefined} data-status={item.status}>

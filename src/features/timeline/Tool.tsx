@@ -20,9 +20,12 @@ export function Elapsed({ since }: { since: number }) {
   return <span className="num">{shortDuration(ms)}</span>;
 }
 
+/** A finished call's own running time: time it spent waiting for the user (approvals) does not count. */
+export const ownMs = (item: ToolItem): number => (item.endedAt ? Math.max(0, item.endedAt - item.ts - (item.waitedMs ?? 0)) : 0);
+
 function duration(item: ToolItem, min = 1000): string | null {
   if (!item.endedAt) return null;
-  const ms = item.endedAt - item.ts;
+  const ms = ownMs(item);
   return ms >= min ? formatDuration(ms) : null;
 }
 
@@ -248,7 +251,7 @@ function AgentRow({ item }: { item: ToolItem }) {
           ) : item.status === 'cancelled' ? (
             <span>Interrupted</span>
           ) : item.endedAt ? (
-            <span className="num">{shortDuration(item.endedAt - item.ts)}</span>
+            <span className="num">{shortDuration(ownMs(item))}</span>
           ) : null}
         </span>
         <Icon name="caret-right" size={10} className="row-caret" />
