@@ -5,6 +5,7 @@
  * only answers with "drew a frame" (and, in dev, the frame cost).
  */
 import { FieldEngine, type DitherTexture, type FieldBeat, type Look, type Metrics } from './field';
+import { launchMessage, type LaunchReply } from './launch-light';
 
 export type FieldMessage =
   | { type: 'init'; id: number; canvas: OffscreenCanvas; texture: DitherTexture; look: Look }
@@ -32,9 +33,12 @@ export interface FieldReply {
 
 const scope = self as unknown as { onmessage: ((e: MessageEvent<FieldMessage>) => void) | null; postMessage: (msg: FieldReply) => void };
 const engines = new Map<number, FieldEngine>();
+const postLaunch = (r: LaunchReply) => (self as unknown as { postMessage: (msg: LaunchReply) => void }).postMessage(r);
 
 scope.onmessage = (e) => {
   const m = e.data;
+  // The launch piece draws here too (launch-light.ts): its own messages, its own canvas, nothing shared.
+  if (launchMessage(m, postLaunch)) return;
   if (m.type === 'init') {
     const engine = FieldEngine.create(m.canvas, m.texture, m.look, {
       frame: (first, ms) => scope.postMessage({ id: m.id, first, ms }),

@@ -3,11 +3,13 @@ import type { ProviderId } from '@shared/protocol';
 import { loadSessionView } from '@/app/views';
 import { Backdrop } from '@/art/Backdrop';
 import type { DitherPalette } from '@/art/DitherField';
+import { fieldBeat } from '@/art/events';
+import { launchArrival, resolveGlyphs } from '@/art/LaunchLayer';
 import { buildMark, LogoMark, markEcho } from '@/art/Logo';
 import { Composer } from '@/features/composer/Composer';
 import { ConnectBanner } from '@/features/connect/Connect';
 import { dissolve } from '@/lib/dissolve';
-import { EASE_OUT, play, reducedMotion, spring, uiZoom } from '@/lib/motion';
+import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
 import { usePrewarm } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { handoffPhase, subscribeHandoff } from './handoff';
@@ -15,44 +17,44 @@ import './home.css';
 
 export const PROVIDER_PALETTE: Record<ProviderId, DitherPalette> = { claude: 'ember', codex: 'iris', demo: 'forest' };
 
-/** The headline and composer rise in after the mark: a short rise and fade, opacity and transform only. */
+/** The composer rises in after the mark: a short rise and fade, opacity and transform only. */
 function rise(el: Element | null, delay: number) {
   play(el, [{ opacity: 0, transform: 'translateY(10px)' }, { opacity: 1, transform: 'translateY(0px)' }], { duration: 520, delay, easing: EASE_OUT, fill: 'backwards' });
 }
 
+const TITLE = 'What are we building?';
+
 /**
  * The arrival, one composed movement each time the home screen appears:
- * - straight after the launch intro, the intro's mark itself glides and shrinks into the home mark
- *   (the intro hides its own copy in the same frame), then the headline and the composer rise;
- * - otherwise (a fast start, or coming back from a session) the mark builds in dither order, as
- *   the intro's does, and the headline and composer rise behind it.
+ * - at launch the piece is the launch's (art/LaunchLayer.tsx): its mark recedes from the middle of the
+ *   window onto the home mark while the wave opens the ink, the headline resolves glyph by glyph
+ *   and the composer rises. It stages all of that itself;
+ * - otherwise (coming back from a session, after the welcome) the short form of the same idea, in
+ *   about half a second: the mark builds in dither order a little large and settles to its size,
+ *   a soft ring leaves it through the field, the headline resolves and the composer rises.
  * Under reduced motion everything is simply there.
  */
 function useArrival(mark: RefObject<HTMLDivElement | null>, title: RefObject<HTMLElement | null>, composer: RefObject<HTMLDivElement | null>) {
-  // Once per mount (a development double run would measure its own first frame and cancel the glide).
+  // Once per mount (a development double run would start it twice).
   const ran = useRef(false);
   useLayoutEffect(() => {
     if (ran.current || reducedMotion()) return;
     ran.current = true;
     const m = mark.current;
-    const intro = document.querySelector<HTMLElement>('.logo-intro .logo-mark');
-    const from = intro?.getBoundingClientRect();
-    const to = m?.getBoundingClientRect();
-    if (m && intro && from && to && from.width && to.width) {
-      intro.style.visibility = 'hidden';
-      const z = uiZoom();
-      const dx = (from.left + from.width / 2 - (to.left + to.width / 2)) / z;
-      const dy = (from.top + from.height / 2 - (to.top + to.height / 2)) / z;
-      const k = from.width / to.width;
-      const s = spring(300, 32);
-      play(m, [{ transform: `translate(${dx}px, ${dy}px) scale(${k})` }, { transform: 'translate(0px, 0px) scale(1)' }], { duration: s.duration, easing: s.easing });
-      rise(title.current, 150);
-      rise(composer.current, 230);
-      return;
+    if (launchArrival({ mark: m, title: title.current, composer: composer.current })) return;
+    // After the welcome its own mark travels onto ours (Onboarding.tsx measures and reveals it):
+    // ours stays as it is, and the rest arrives as that one lands.
+    const welcome = !!document.querySelector('.onb');
+    const at = welcome ? 160 : 0;
+    if (!welcome) {
+      buildMark(m, 40);
+      play(m, [{ transform: 'scale(1.5)' }, { transform: 'scale(1)' }], { duration: 480, delay: 40, easing: EASE_OUT, fill: 'backwards' });
     }
-    buildMark(m, 40);
-    rise(title.current, 110);
-    rise(composer.current, 190);
+    resolveGlyphs(title.current, at + 120, 9);
+    play(title.current, [{ transform: 'translateY(8px)' }, { transform: 'translateY(0px)' }], { duration: 460, delay: at + 120, easing: EASE_OUT, fill: 'backwards' });
+    rise(composer.current, at + 190);
+    // One timer, gone in a moment: the ring leaves the mark as it becomes whole.
+    window.setTimeout(() => fieldBeat('pulse', m, 0.55), welcome ? 420 : 180);
   }, [mark, title, composer]);
 }
 
@@ -103,9 +105,10 @@ export function Home() {
           <div ref={mark} className="home-mark">
             <LogoMark size={36} cells />
           </div>
-          <h1 className="display home-title">
-            <span ref={title} className="home-title-in">
-              What are we building?
+          {/* One span per glyph, so the headline can resolve glyph by glyph (opacity only: the line is set as one). */}
+          <h1 className="display home-title" aria-label={TITLE}>
+            <span ref={title} className="home-title-in" aria-hidden>
+              {Array.from(TITLE, (ch, i) => (ch === ' ' ? ' ' : <span key={i} data-g>{ch}</span>))}
             </span>
           </h1>
           <div ref={composer} className="home-composer">

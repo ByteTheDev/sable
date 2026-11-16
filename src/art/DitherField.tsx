@@ -75,6 +75,26 @@ function releaseWorker() {
   }, WORKER_LINGER);
 }
 
+/**
+ * The shared worker for another drawer (the launch piece, LaunchLayer.tsx): its own id and its own
+ * replies. Null when workers or OffscreenCanvas are missing; `onLost` runs if the worker dies.
+ */
+export function fieldWorkerPort(onReply: (data: unknown) => void, onLost: () => void) {
+  const w = acquireWorker();
+  if (!w) return null;
+  const id = ++nextId;
+  replies.set(id, onReply as (r: FieldReply) => void);
+  onBroken.add(onLost);
+  return {
+    id,
+    post: (m: object, transfer?: Transferable[]) => w.postMessage(m, transfer ?? []),
+    release: () => {
+      onBroken.delete(onLost);
+      if (replies.delete(id)) releaseWorker();
+    },
+  };
+}
+
 // ── main-thread load, shared by every animating field ──
 
 const loadListeners = new Set<(ms: number) => void>();
@@ -358,6 +378,7 @@ export function DitherField({
   hue,
   sat,
   imageColour,
+  overlay,
 }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   // A dialog over the app hides (and blurs) the page's fields: they hold still underneath it.
@@ -370,7 +391,7 @@ export function DitherField({
   const [ready, setReady] = useState(false);
   // Bumped when the worker fails, so every field rebuilds on the main thread.
   const [gen, setGen] = useState(0);
-  const look: Look = { variant, palette, focus, gain, speed, seed, full, spot, angle, hue, sat, imageColour, react: react ? reactGain : 0 };
+  const look: Look = { variant, palette, focus, gain, speed, seed, full, spot, angle, hue, sat, imageColour, overlay, react: react ? reactGain : 0 };
   const live = useRef(look);
   live.current = look;
   // What the running effect reads when it (re)lays out or decides whether to move.
@@ -684,7 +705,7 @@ export function DitherField({
 
   useEffect(() => {
     port.current?.look(live.current);
-  }, [variant, palette, focus[0], focus[1], gain, speed, seed, full, spot?.[0], spot?.[1], spot?.[2], angle, hue, sat, imageColour, react, reactGain]);
+  }, [variant, palette, focus[0], focus[1], gain, speed, seed, full, spot?.[0], spot?.[1], spot?.[2], angle, hue, sat, imageColour, overlay, react, reactGain]);
 
   useEffect(() => {
     syncRef.current();

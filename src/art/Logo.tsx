@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { useMemo, type CSSProperties } from 'react';
 import type { ProviderId } from '@shared/protocol';
 import './art.css';
 
@@ -29,7 +28,7 @@ const MARK_GAPS: readonly (readonly [number, number])[] = [
 const reducedMotionNow = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /**
- * Builds a cell-drawn mark (`<LogoMark cells>`) the way the launch intro does: cells switch on in
+ * Builds a cell-drawn mark (`<LogoMark cells>`) the way the launch does (LaunchLayer.tsx): cells switch on in
  * ordered-dither order, each with a short fade. Opacity only, about 300 ms after `delay`.
  */
 export function buildMark(root: Element | null, delay = 0) {
@@ -94,81 +93,6 @@ export function LogoMark({ size = 22, className, cells = false }: { size?: numbe
         <path d={MARK_PATH} transform={`translate(${at} ${at}) scale(${cell})`} fill="var(--text)" />
       </svg>
     </span>
-  );
-}
-
-const EASE_OUT = [0.16, 1, 0.3, 1] as const;
-
-/** How long the intro waits before it shows at all: a bridge that answers sooner skips it. */
-export const INTRO_DELAY = 120;
-/** Delay plus the fade-in: once shown, the intro stays at least this long so it never flickers. */
-export const INTRO_MIN = 420;
-
-/** Each cell's fade, and the gap between cells switching on: the block is whole about 0.35 s in. */
-const CELL_FADE = 0.12;
-const CELL_STEP = 0.016;
-
-/**
- * The launch intro: the mark develops once the way the backdrop is drawn, its cells switching on
- * in ordered-dither order (sparse, then a checker, then solid), each with a short fade so nothing
- * flashes. No loop, no glow. It then eases out as the app rises in (render it inside
- * AnimatePresence). It starts after a short delay, so a bridge that is ready at once never shows
- * it. With reduced motion the whole mark simply fades in.
- */
-export function LogoIntro({ ready, size = 52 }: { ready: boolean; size?: number }) {
-  const reduce = useReducedMotion();
-  const [slow, setSlow] = useState(false);
-  useEffect(() => {
-    if (ready) return;
-    const t = window.setTimeout(() => setSlow(true), 1500);
-    return () => window.clearTimeout(t);
-  }, [ready]);
-  const cell = useMemo(() => markCell(size), [size]);
-  const at = (size - cell * 4) / 2;
-  const delay = INTRO_DELAY / 1000;
-
-  return (
-    <motion.div
-      className="logo-intro"
-      role="status"
-      aria-label="Starting Sable"
-      initial={{ opacity: reduce ? 0 : 1, scale: reduce ? 1 : 0.97 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, transition: { duration: 0.2, ease: 'easeOut' } }}
-      transition={{ duration: reduce ? 0.2 : 0.5, delay, ease: EASE_OUT }}
-    >
-      <span className="logo-mark" style={{ width: size, height: size }}>
-        <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} shapeRendering="crispEdges" aria-hidden>
-          <g fill="var(--text)">
-            {MARK_CELLS.map(([c, r], i) => (
-              <motion.rect
-                key={i}
-                x={at + c * cell}
-                y={at + r * cell}
-                width={cell}
-                height={cell}
-                initial={reduce ? false : { opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: CELL_FADE, delay: delay + i * CELL_STEP, ease: 'easeOut' }}
-              />
-            ))}
-          </g>
-        </svg>
-      </span>
-      <AnimatePresence>
-        {slow && !ready && (
-          <motion.p
-            className="logo-intro-note"
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.4, ease: EASE_OUT }}
-          >
-            Starting the bridge
-          </motion.p>
-        )}
-      </AnimatePresence>
-    </motion.div>
   );
 }
 

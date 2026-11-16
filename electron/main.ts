@@ -29,7 +29,7 @@ const isWin = process.platform === 'win32';
 
 /** Preferred port: a stable origin keeps the page's local storage and zoom between runs. */
 const PREFERRED_PORT = 47_317;
-const BG = '#060607';
+const BG = '#070708';
 /** The panel browser's own persistent session: its cookies and storage never mix with the app's. */
 const BROWSER_PARTITION = 'persist:sable-browser';
 

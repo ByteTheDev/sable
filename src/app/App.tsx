@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { AnimatePresence, motion, type Variants } from 'motion/react';
-import { INTRO_DELAY, INTRO_MIN, LogoIntro, LogoMark, ProviderMark } from '@/art/Logo';
+import { Launch, launchPlays } from '@/art/LaunchLayer';
+import { LogoMark, ProviderMark } from '@/art/Logo';
 import { veil, VEIL_SWAP, VEIL_SWAP_AT } from '@/art/veil';
 import { reducedMotion, uiZoom } from '@/lib/motion';
 import { Home } from '@/features/home/Home';
@@ -83,7 +84,7 @@ function Deferred({ when, children }: { when: boolean; children: ReactNode }) {
  * - `handoff` (the first message sent from home): the composer flies to the dock (handoff.ts), the
  *   conversation fades in around it, and the home field lingers just long enough for the send's
  *   wave to cross it.
- * - `enter` (the first view after the launch intro): no fade here; Home composes its own arrival.
+ * - `enter` (the first view, under the launch): no fade here; the launch and Home compose the arrival.
  * - `fade` (reduced motion, in place of a swap): a short crossfade, nothing moves.
  */
 type ViewMode = 'swap' | 'handoff' | 'enter' | 'fade';
@@ -134,24 +135,6 @@ function useViewMode(key: string | null, body: RefObject<HTMLElement | null>): V
   return mode.current;
 }
 
-/**
- * True while the launch intro shows. A bridge that is ready before the intro would appear
- * skips it; otherwise it stays until its one fade-in has finished, so it never flickers.
- * Latched: once the app has shown, the intro never comes back.
- */
-function useIntro(ready: boolean): boolean {
-  const [start] = useState(() => performance.now());
-  const [done, setDone] = useState(false);
-  useEffect(() => {
-    if (!ready || done) return;
-    const elapsed = performance.now() - start;
-    const wait = elapsed < INTRO_DELAY ? 0 : Math.max(0, INTRO_MIN - elapsed);
-    const t = window.setTimeout(() => setDone(true), wait);
-    return () => window.clearTimeout(t);
-  }, [ready, done, start]);
-  return !done;
-}
-
 export function App() {
   const ready = useStore((s) => s.ready);
   const conn = useStore((s) => s.conn);
@@ -164,7 +147,11 @@ export function App() {
   const sessionId = useStore((s) => (activeId && s.sessions[activeId] ? activeId : null));
   const title = useStore((s) => (activeId ? s.sessions[activeId]?.title : undefined));
   const provider = useActiveProvider();
-  const booting = useIntro(ready);
+  // The launch (art/LaunchLayer.tsx) plays over the app from the window's first frame. The app itself
+  // mounts the moment the bridge is ready, under it: nothing waits for the piece.
+  const [launching, setLaunching] = useState(launchPlays);
+  const endLaunch = useCallback(() => setLaunching(false), []);
+  const booting = !ready;
   // First run: the welcome takes over the window; the app behind it waits, inert.
   const onboarding = useOnboarding(!booting);
   const stageBody = useRef<HTMLDivElement>(null);
@@ -232,7 +219,7 @@ export function App() {
         <main className="stage" inert={onboarding}>
           <Topbar />
           <div className="stage-body" ref={stageBody}>
-            <AnimatePresence>{booting && <LogoIntro key="intro" ready={ready} />}</AnimatePresence>
+            {launching && <Launch ready={ready} onDone={endLaunch} />}
             {/* The session's band of light, one field for every session (like the dock): a switch
                 changes its colour and pace, it is never built again. Under the conversation. */}
             <AnimatePresence initial={false} custom={viewMode}>
