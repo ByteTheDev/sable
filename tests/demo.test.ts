@@ -235,7 +235,9 @@ describe('flagship scenario', () => {
     expect(h.rt.meta.usage.outputTokens).toBeGreaterThan(0);
     expect(h.rt.meta.usage.contextTokens).toBeGreaterThan(20_000);
     expect(h.rt.suggestion).toBeTruthy();
-    expect(h.texts().at(-1)!.text).toContain('```ts');
+    // The closing summary leads with the outcome and stays short (see CONCISE_REPLIES_PROMPT).
+    expect(h.texts().at(-1)!.text).toMatch(/^Expiry now lives in/);
+    expect(h.texts().at(-1)!.text.split('\n').filter(Boolean).length).toBeLessThanOrEqual(3);
   });
 
   it('item.delta events concatenate exactly to the final items', async () => {

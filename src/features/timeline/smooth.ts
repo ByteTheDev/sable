@@ -1,26 +1,33 @@
 import { useEffect, useRef, useState } from 'react';
 import { reducedMotion } from '@/lib/motion';
 
-/** How far behind the stream the reveal aims to run (ms of backlog at the current pace). */
-const LAG_MS = 110;
-/** After the stream ends, the rest drains faster than that, but still flows. */
-const END_LAG_MS = 55;
-/** How quickly the pace follows a change in the backlog (ms): a burst speeds up, never jumps. */
-const ACCEL_MS = 70;
-/** Never slower than this (characters per ms), so the last words of a burst do not crawl. */
-const MIN_RATE = 0.06;
-/** Further behind than this (characters) and the reveal skips ahead: a reconnect, a huge paste. */
-const MAX_BACKLOG = 900;
+/** After the stream ends, the rest drains in about this long (ms), still flowing. */
+const END_LAG_MS = 90;
+/** How quickly the pace follows a change (ms): a burst speeds the flow up, never makes it jump. */
+const ACCEL_MS = 120;
+/** How quickly a backlog away from the target is worked off (ms). */
+const CORRECT_MS = 320;
+/** The buffer the reveal keeps, in arrival intervals: enough to bridge the gap to the next chunk. */
+const BUFFER_INTERVALS = 1.25;
+/** The buffer, whatever the network does (ms of text at the arrival rate). */
+const MIN_BUFFER_MS = 50;
+const MAX_BUFFER_MS = 420;
+/** Never slower than this (characters per ms) while there is text to show. */
+const MIN_RATE = 0.02;
+/** Further behind than this (ms of text, plus a margin) and the reveal skips ahead: a reconnect, a huge paste. */
+const MAX_BEHIND_MS = 1200;
+const MAX_BEHIND_MARGIN = 240;
 /** A word is shown whole if it ends within this many characters; longer runs grow in place. */
 const WORD_AHEAD = 24;
 
 /**
- * Evens out streamed text. Chunks arrive in bursts; this reveals them as a steady flow. The pace
- * is a velocity that eases toward "clear the backlog in about 110 ms", so a burst accelerates the
- * reveal smoothly instead of dumping its first part at once, and a pause lets it coast to a stop.
- * Whole words at a time. When the stream ends the remainder drains quickly rather than snapping
- * in; when the reader has scrolled away (`follow.current` false) it catches up at once.
- * Returns how many characters of `text` to show.
+ * Evens out streamed text. Chunks arrive in bursts at uneven intervals; this reveals them at the
+ * rate they arrive on average, so the words flow at an even cadence across the gaps instead of
+ * dumping a burst and pausing. The reveal keeps a small buffer that adapts to the arrival interval
+ * (about one interval, 50 to 420 ms) and works any difference from it off gently; it never falls
+ * more than about a second behind. Whole words at a time. When the stream ends the remainder
+ * drains quickly rather than snapping in; when the reader has scrolled away (`follow.current`
+ * false) it catches up at once. Returns how many characters of `text` to show.
  */
 export function useSmoothLength(text: string, streaming: boolean, follow: { current: boolean }): number {
   // Mounting mid-stream (opening a running session) shows what is there; only new text is paced.
@@ -34,6 +41,8 @@ export function useSmoothLength(text: string, streaming: boolean, follow: { curr
   const v = useRef(0);
   const raf = useRef(0);
   const last = useRef(0);
+  // Arrival statistics: the average rate (chars/ms) and interval (ms) of the chunks.
+  const arrival = useRef({ at: 0, size: text.length, rate: 0, interval: 120 });
 
   useEffect(() => {
     if (reducedMotion()) {
@@ -45,17 +54,31 @@ export function useSmoothLength(text: string, streaming: boolean, follow: { curr
     if (text.length < shown.current) {
       pos.current = shown.current = text.length;
       v.current = 0;
+      arrival.current = { at: 0, size: text.length, rate: 0, interval: 120 };
       setLen(text.length);
       return;
     }
+    const a = arrival.current;
+    const now = performance.now();
+    const added = text.length - a.size;
+    if (added > 0) {
+      if (a.at) {
+        const gap = Math.min(1500, Math.max(8, now - a.at));
+        a.interval += (gap - a.interval) * 0.25;
+        const sample = added / Math.max(gap, a.interval * 0.5);
+        a.rate = a.rate ? a.rate + (sample - a.rate) * 0.3 : sample;
+      }
+      a.at = now;
+      a.size = text.length;
+    }
     if (raf.current || pos.current >= text.length) return;
-    last.current = performance.now();
-    const tick = (now: number) => {
+    last.current = now;
+    const tick = (t: number) => {
       raf.current = 0;
-      const t = target.current;
-      const full = t.length;
-      const dt = Math.min(48, Math.max(1, now - last.current));
-      last.current = now;
+      const txt = target.current;
+      const full = txt.length;
+      const dt = Math.min(48, Math.max(1, t - last.current));
+      last.current = t;
       let backlog = full - pos.current;
       if (backlog <= 0) {
         v.current = 0;
@@ -67,17 +90,25 @@ export function useSmoothLength(text: string, streaming: boolean, follow: { curr
         setLen(full);
         return;
       }
-      if (backlog > MAX_BACKLOG) {
-        pos.current = full - MAX_BACKLOG;
-        backlog = MAX_BACKLOG;
+      const s = arrival.current;
+      const rate = s.rate || backlog / 200;
+      const behind = rate * MAX_BEHIND_MS + MAX_BEHIND_MARGIN;
+      if (backlog > behind) {
+        pos.current = full - behind;
+        backlog = behind;
       }
-      const want = backlog / (live.current ? LAG_MS : END_LAG_MS);
+      let want: number;
+      if (live.current) {
+        // Flow at the arrival rate, and drift toward a buffer of about one arrival interval.
+        const buffer = rate * Math.min(MAX_BUFFER_MS, Math.max(MIN_BUFFER_MS, s.interval * BUFFER_INTERVALS));
+        want = rate + (backlog - buffer) / CORRECT_MS;
+      } else want = Math.max(rate, backlog / END_LAG_MS);
       v.current += (want - v.current) * (1 - Math.exp(-dt / ACCEL_MS));
       pos.current = Math.min(full, pos.current + Math.max(v.current, MIN_RATE) * dt);
       // Show whole words: run on to the end of the word the position landed in.
       let n = Math.floor(pos.current);
       let e = n;
-      while (e < full && e - n < WORD_AHEAD && t.charCodeAt(e) > 32) e++;
+      while (e < full && e - n < WORD_AHEAD && txt.charCodeAt(e) > 32) e++;
       if (e - n < WORD_AHEAD) n = e;
       if (n > shown.current) {
         shown.current = n;
@@ -85,7 +116,7 @@ export function useSmoothLength(text: string, streaming: boolean, follow: { curr
         setLen(n);
       }
       // Dev builds expose the pacing so the lag behind the stream can be measured (scripts, console).
-      if (import.meta.env.DEV) (window as unknown as { __smooth?: object }).__smooth = { full, shown: shown.current };
+      if (import.meta.env.DEV) (window as unknown as { __smooth?: object }).__smooth = { full, shown: shown.current, rate: s.rate, interval: s.interval };
       if (pos.current < full) raf.current = requestAnimationFrame(tick);
       else v.current = 0;
     };
@@ -101,4 +132,33 @@ export function useSmoothLength(text: string, streaming: boolean, follow: { curr
   );
 
   return Math.min(len, text.length);
+}
+
+const MARKER_ONLY = /^ {0,3}(#{1,6}|[-*+]|\d{1,3}[.)]|>)\s*$/;
+
+/**
+ * The part of a streaming text that is safe to show: a last line that is only a list, heading or
+ * quote marker waits for its words (or the block would change type under the reader), and a table
+ * shows once its header and divider are in, then grows a whole row at a time.
+ */
+export function steadyTail(text: string): string {
+  const cut = text.lastIndexOf('\n') + 1;
+  const tail = text.slice(cut);
+  if (tail && MARKER_ONLY.test(tail)) return text.slice(0, cut);
+  const pipe = (line: string) => line.trimStart().startsWith('|');
+  const partialRow = pipe(tail);
+  if (tail && !partialRow) return text;
+  // The complete lines at the end that start with a pipe: a table in progress.
+  let start = cut;
+  let rows = 0;
+  while (start > 0) {
+    const prev = text.lastIndexOf('\n', start - 2) + 1;
+    if (!pipe(text.slice(prev, start - 1))) break;
+    start = prev;
+    rows++;
+  }
+  if (!rows && !partialRow) return text;
+  // Until the header and its divider are in, the table waits; then it grows a whole row at a time.
+  if (rows < 2) return text.slice(0, start);
+  return text.slice(0, cut);
 }

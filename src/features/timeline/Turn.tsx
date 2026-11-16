@@ -90,7 +90,12 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
             Try again
           </button>
         )}
-        {turn.state === 'interrupted' && <span className="turn-note">Interrupted</span>}
+        {turn.state === 'interrupted' && (
+          <span className="turn-note">
+            <Icon name="hand" size={12} />
+            Interrupted
+          </span>
+        )}
         <span className="turn-hover">
           {parts.length > 0 && (
             <LazyTip label={breakdown ?? parts.join(' · ')} side="top">

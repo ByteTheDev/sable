@@ -35,7 +35,8 @@ export function Collapse({ open, children, className }: { open: boolean; childre
       };
     }
     setShown(false);
-    const t = window.setTimeout(() => setMounted(false), 400);
+    // Fallback only (transitionend unmounts first): longer than the slowest close, the turn's gather.
+    const t = window.setTimeout(() => setMounted(false), 700);
     return () => window.clearTimeout(t);
   }, [open]);
 

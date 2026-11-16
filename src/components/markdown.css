@@ -440,22 +440,12 @@
   border: 0;
 }
 
-/* ── streaming: only words that mount on a later frame run this ── */
+/* ── streaming ── */
 
-/* Each new word fades up from nothing. A colour fade, not opacity or transform: hundreds of words
-   in flight would otherwise each become a compositor layer, and the frame rate pays for it. */
-.md-w {
-  animation: md-word 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
-}
-
-@keyframes md-word {
-  from {
-    color: transparent;
-  }
-}
-
-/* The write head: a small still light just past the newest word. It takes no room, so a line never
-   wraps for it; when the stream ends it fades out. */
+/* The write head: zero width, so a line never wraps for it. Over the newest words lies a short
+   feather in the stage colour: they are still wet and dry as the head moves on, so text eases in
+   with one element per answer rather than an animation per word. A small still light marks the
+   head; when the stream ends both fade. Opacity only, nothing reflows. */
 .md-caret {
   position: relative;
   display: inline-block;
@@ -464,28 +454,44 @@
   vertical-align: baseline;
 }
 
+.md-caret::before {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -0.3em;
+  width: 3.6em;
+  height: 1.6em;
+  background: linear-gradient(to right, rgb(12 12 14 / 0), rgb(12 12 14 / 0.88));
+  pointer-events: none;
+  transition: opacity 260ms var(--ease);
+}
+
 .md-caret::after {
   content: '';
   position: absolute;
   left: 5px;
   bottom: 0.32em;
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--text);
-  box-shadow: 0 0 9px 1px rgb(255 255 255 / 0.26);
+  opacity: 0.85;
   transition:
     opacity 220ms var(--ease),
     transform 220ms var(--ease);
 }
 
+.md[data-head='out'] .md-caret::before,
 .md[data-head='out'] .md-caret::after {
   opacity: 0;
+}
+
+.md[data-head='out'] .md-caret::after {
   transform: scale(0.3);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .md-w {
-    animation: none;
+  .md-caret::before {
+    display: none;
   }
 }

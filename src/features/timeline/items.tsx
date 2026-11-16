@@ -9,7 +9,7 @@ import { plural } from '@/lib/format';
 import { useStore } from '@/state/store';
 import { useFresh, useItem, useTimeline } from './ctx';
 import { Notice } from './Notice';
-import { useSmoothLength } from './smooth';
+import { steadyTail, useSmoothLength } from './smooth';
 import { Stamp } from './Stamp';
 import { Thinking } from './Thinking';
 import { ToolView } from './Tool';
@@ -20,17 +20,20 @@ type Row = { key: string; id: string; run?: undefined } | { key: string; run: st
 
 /**
  * Renders a list of steps in order (inside a turn's work, or a sub-agent's thread). Consecutive
- * look-only tools (read, search, glob, fetch) form a run; a run of three or more folds into a
- * single "Explored" row.
+ * look-only tools (read, search, glob, fetch) fold into one line ("Read 6 files") that opens.
+ * Task list updates repeat the same list: it keeps one row, where it first appeared, in its newest state.
  */
 export const ItemList = memo(function ItemList({ ids }: { ids: string[]; nested?: boolean }) {
   const { sessionId } = useTimeline();
-  // One character per item: whether it can join a run. Changes rarely, so the list re-renders rarely.
+  // One character per item: whether it can join a run, or is a task list. Changes rarely, so the list re-renders rarely.
   const shape = useStore((s) => {
     const items = s.data[sessionId]?.items;
     if (!items) return '';
     let out = '';
-    for (let i = 0; i < ids.length; i++) out += isExplore(items[ids[i]]) ? 'e' : '-';
+    for (let i = 0; i < ids.length; i++) {
+      const it = items[ids[i]];
+      out += isExplore(it) ? 'e' : it?.type === 'tool' && it.kind === 'todo' ? 'k' : '-';
+    }
     return out;
   });
   const cache = useRef(new Map<string, string[]>());
@@ -38,7 +41,15 @@ export const ItemList = memo(function ItemList({ ids }: { ids: string[]; nested?
   const rows = useMemo(() => {
     const out: Row[] = [];
     const next = new Map<string, string[]>();
+    // The task list keeps one row where it first appeared, showing its newest state: nothing moves.
+    const firstTasks = shape.indexOf('k');
+    const lastTasks = shape.lastIndexOf('k');
     for (let i = 0; i < ids.length; ) {
+      if (shape[i] === 'k') {
+        if (i === firstTasks) out.push({ key: ids[i], id: ids[lastTasks] });
+        i++;
+        continue;
+      }
       if (shape[i] !== 'e') {
         out.push({ key: ids[i], id: ids[i] });
         i++;
@@ -83,8 +94,9 @@ export function estimate(item: TimelineItem | undefined): number {
 }
 
 /**
- * Assistant prose. While it streams, the text is paced (see `useSmoothLength`) and a small
- * light sits at the write head; when the stream ends the light fades out.
+ * Assistant prose. While it streams, the text is paced (see `useSmoothLength`), a marker or a
+ * table row is shown only once it is whole (`steadyTail`), and the newest words ease in at the
+ * write head; when the stream ends the head fades out.
  */
 export const LiveText = memo(function LiveText({ text, streaming }: { text: string; streaming: boolean }) {
   const { stuck } = useTimeline();
@@ -101,7 +113,7 @@ export const LiveText = memo(function LiveText({ text, streaming }: { text: stri
     const t = window.setTimeout(() => setLeaving(false), 260);
     return () => window.clearTimeout(t);
   }, [live]);
-  return <Markdown text={live ? text.slice(0, len) : text} streaming={live} head={live ? 'live' : leaving ? 'out' : undefined} />;
+  return <Markdown text={live ? steadyTail(text.slice(0, len)) : text} streaming={live} head={live ? 'live' : leaving ? 'out' : undefined} />;
 });
 
 /** One item, subscribed to itself only. `answer`: the reply a turn segment ends with. */
@@ -183,32 +195,40 @@ function summarize(sessionId: string, ids: string[]) {
   };
 }
 
+/** "Read 6 files", "Searched 3 times", "Explored 4 files, 2 searches": one line for a run of looking. */
+function runLabel(files: number, searches: number, pages: number): string {
+  if (!searches && !pages) return `Read ${plural(files, 'file')}`;
+  if (!files && !pages) return `Searched ${searches === 1 ? 'once' : `${searches} times`}`;
+  if (!files && !searches) return `Fetched ${plural(pages, 'page')}`;
+  return `Explored ${[files && plural(files, 'file'), searches && plural(searches, 'search', 'searches'), pages && plural(pages, 'page')].filter(Boolean).join(', ')}`;
+}
+
 const ExploreRun = memo(function ExploreRun({ ids }: { ids: string[] }) {
   const { sessionId } = useTimeline();
-  const grouped = ids.length >= 3;
+  const grouped = ids.length >= 2;
   const [open, setOpen] = useState(false);
   const fresh = useFresh();
   const summary = useStore(useMemo(() => summarize(sessionId, ids), [sessionId, ids]));
   const [files, searches, pages, ...rest] = summary.split('|');
   const active = rest.join('|');
-  const parts = [Number(files) && plural(Number(files), 'file'), Number(searches) && plural(Number(searches), 'search', 'searches'), Number(pages) && plural(Number(pages), 'page')].filter(Boolean);
+  const label = runLabel(Number(files), Number(searches), Number(pages));
 
   return (
     <div className="tl-sub" data-t="tool" data-k="run" data-fresh={fresh || undefined}>
       <Collapse open={grouped}>
         <button type="button" className="row-btn tool-row" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           <span className="tool-icon">
-            <Icon name="search" size={14} />
+            <Icon name={Number(searches) || Number(pages) ? 'search' : 'file-text'} size={14} />
           </span>
           {active ? (
             <>
-              <span className="tool-title shimmer">Exploring</span>
+              <span className="tool-title shimmer">{Number(searches) && !Number(files) ? 'Searching' : 'Reading'}</span>
               <span className="tool-sub truncate">{active}</span>
             </>
           ) : (
-            <span className="tool-title truncate">Explored {parts.join(', ')}</span>
+            <span className="tool-title truncate">{label}</span>
           )}
-          <span className="tool-meta">{active ? parts.join(', ') : null}</span>
+          <span className="tool-meta">{active ? <span className="num">{label.replace(/^\w+ /, '')}</span> : null}</span>
           <Icon name="caret-right" size={10} className="row-caret" />
         </button>
       </Collapse>

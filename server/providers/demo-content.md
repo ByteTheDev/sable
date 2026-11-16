@@ -6,43 +6,14 @@
 -->
 
 @@ flagship-summary
-Expiry handling now lives in one place. `SessionStore.validate()` decides whether a token can be used, and `requireAuth` only maps the result to an HTTP response.
+Expiry now lives in `SessionStore.validate()`, and `requireAuth` only maps its result to a response. All 25 tests pass.
 
-**What changed**
-- `src/server/session.ts`: new `validate(id)` returns a `SessionCheck` union. Expiry and sliding renewal use the store's own `ttlMs` and an injectable `Clock` instead of `Date.now()` and a hard-coded 30 minutes.
-- `src/auth/middleware.ts`: the inline revoked/expired checks and the renewal are gone. The middleware calls `sessions.validate(token)`.
-- Public error codes are pinned in a `FAILURE_CODES` table. The first test run showed I had changed `invalid_session` to `session_missing`, which would have broken any client that branches on it.
-
-Tests: **25/25 passing**.
-
-Since the clock is injectable, expiry tests no longer need fake timers:
-
-```ts
-let now = 0;
-const store = new SessionStore({ ttlMs: 1_000, clock: { now: () => now } });
-const { id } = store.create('u_1');
-now += 1_001;
-expect(store.validate(id)).toEqual({ ok: false, reason: 'expired' });
-```
-
-One behaviour change: expired sessions are now evicted when they are looked up, so `/admin/sessions` stops counting dead sessions and its number will go down.
+One behaviour change: expired sessions are evicted on lookup, so the count on `/admin/sessions` will drop.
 
 @@ flagship-summary-careful
-Done. The work followed the approved plan, and the suite passed on the first run (**25/25**).
+Done as planned: `requireAuth` delegates to `sessions.validate()` and clients see the same error codes. All 25 tests pass on the first run.
 
-**What changed**
-- `src/server/session.ts`: `validate(id)` returns `{ ok: true, session }` or `{ ok: false, reason }`, evicts expired sessions and applies sliding renewal from `ttlMs`. Time comes from an injectable `Clock`.
-- `src/auth/middleware.ts`: one `sessions.validate(token)` call replaces the inline checks. Reasons map to the existing wire codes through `FAILURE_CODES`, so clients see no difference.
-
-Callers can now branch on the result type:
-
-```ts
-const check = sessions.validate(token);
-if (!check.ok) return deny(res, FAILURE_CODES[check.reason]);
-req.session = check.session;
-```
-
-`SessionStore.get()` is still public and bypasses expiry. Nothing in `src/` uses it anymore, only `tests/auth.test.ts`, so it could become test-only later.
+`SessionStore.get()` still bypasses expiry. Only a test uses it now, so it could become test-only.
 
 @@ plan-flagship
 ## Plan: move session expiry into `SessionStore`
@@ -90,26 +61,9 @@ Right now `requireAuth` decides expiry itself (`session.expiresAt < Date.now()`)
 - **Account lockout.** Lockout lets an attacker lock other people out, so the limiter only adds friction.
 
 @@ ratelimit-summary
-`POST /auth/login` is now rate-limited: **5 attempts per 15 minutes** per IP and email pair. Extra attempts get **429** with a `Retry-After` header.
+`POST /auth/login` now allows 5 attempts per 15 minutes per IP and email, then answers 429 with `Retry-After`. All 29 tests pass.
 
-**Changes**
-- `src/auth/rate-limit.ts` (new): fixed-window limiter with `middleware`, `reset` and `sweep`, driven by the injectable `Clock`.
-- `src/server/routes.ts`: limiter mounted on login only. A successful login calls `loginLimiter.reset(req)`, and an `unref()`'d interval sweeps expired windows.
-- `tests/rate-limit.test.ts` (new): 4 tests covering the limit, window rollover, email normalization and reset on success.
-
-Full suite: **29/29 passing**.
-
-What a blocked client sees:
-
-```http
-HTTP/1.1 429 Too Many Requests
-Retry-After: 847
-Content-Type: application/json
-
-{"error":"too_many_attempts"}
-```
-
-One thing to check before deploying: if the service sits behind a load balancer, `req.ip` is the balancer's address unless Express has `app.set('trust proxy', 1)`. Without that, every user would share one window.
+Before deploying behind a load balancer, set `app.set('trust proxy', 1)`, or every user shares one window.
 
 @@ agents-report-a
 Auth failures become HTTP responses in four places:
@@ -615,20 +569,9 @@ Created `CLAUDE.md` with the commands, layout and conventions I could confirm fr
 Edit it whenever something changes. Future sessions load it automatically.
 
 @@ error-summary
-Migrations are applied and the database is up to date.
+Migrations are applied. They failed at first because Postgres was not running, so I started it with `docker compose up -d postgres`.
 
-**What happened**
-1. The first `npm run migrate` failed with `ECONNREFUSED 127.0.0.1:5432`: nothing was listening on the Postgres port.
-2. `docker compose ps` showed no running containers, so the `postgres` service from `docker-compose.yml` had never been started.
-3. I started it with `docker compose up -d postgres` and re-ran the migrations.
-
-**Applied**
-| Migration | Change |
-|---|---|
-| `1731412800000_add-sessions-table` | `sessions` table with an index on `expires_at` |
-| `1731499200000_add-user-roles` | `users.roles text[]` with a GIN index |
-
-The container keeps running in the background. Stop it with `docker compose stop postgres` when you're done.
+The container keeps running. Stop it with `docker compose stop postgres` when you are done.
 
 @@ logging-summary
 Structured request logging is in place using **{{library}}**.

@@ -151,16 +151,19 @@
 
 /* ───────────── a one-line row (tools, thinking, groups) ───────────── */
 
+/* A step is one small line: a plain icon, the verb, its target, and the result at the right edge.
+   Finished steps sit one tone back; the running one carries the light. */
 .row-btn {
   display: flex;
   align-items: center;
   gap: 8px;
   width: calc(100% + 12px);
-  min-height: 26px;
+  min-height: 25px;
   margin: 0 -6px;
-  padding: 3px 8px 3px 6px;
+  padding: 2px 8px 2px 6px;
   border-radius: 7px;
   text-align: left;
+  font-size: 12.5px;
   color: var(--text-2);
   transition: background-color 90ms var(--ease);
 }
@@ -191,7 +194,8 @@
   color: var(--text-4);
   transition:
     transform 120ms var(--ease-out),
-    color 90ms var(--ease);
+    color 90ms var(--ease),
+    opacity 90ms var(--ease);
 }
 
 .row-btn:hover .row-caret,
@@ -201,6 +205,17 @@ button:hover > .row-caret {
 
 [aria-expanded='true'] > .row-caret {
   transform: rotate(90deg);
+}
+
+/* A step's caret is detail on demand: it shows on hover, focus, or while open. */
+.row-btn > .row-caret {
+  opacity: 0;
+}
+
+.row-btn:hover > .row-caret,
+.row-btn:focus-visible > .row-caret,
+.row-btn[aria-expanded='true'] > .row-caret {
+  opacity: 1;
 }
 
 /* ───────────── tools ───────────── */
@@ -219,51 +234,44 @@ button:hover > .row-caret {
 }
 
 .row-btn:not([data-static]):hover .tool-icon {
-  color: var(--text);
+  color: var(--text-2);
   transform: translateY(-1px);
-}
-
-.tool[data-status='error'] .tool-icon {
-  color: color-mix(in oklab, var(--red) 70%, var(--text-3));
-}
-
-.tool-icon[data-quiet] {
-  color: var(--text-4);
 }
 
 .tool-title {
   flex: 0 1 auto;
-  font-size: 12.5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: var(--w-regular);
   color: var(--text-2);
-  transition: color 90ms var(--ease);
+  transition: color 160ms var(--ease);
 }
 
-/* With a preview after it, the title keeps its full width (up to 60% of the row) and the preview gives way first. */
-.tool-title:has(+ .tool-sub) {
+/* The verb keeps its words; the target and the phrase after it give way first. */
+.tool-title:has(+ .tool-target, + .tool-sub) {
   flex-shrink: 0;
-  max-width: 60%;
-}
-
-.tool-title.shimmer {
-  color: transparent;
+  max-width: 55%;
 }
 
 .row-btn:not([data-static]):hover .tool-title:not(.shimmer) {
   color: var(--text);
 }
 
-.tool[data-status='error'] .tool-title {
-  color: color-mix(in oklab, var(--red) 58%, var(--text));
+/* The file a step works on: folder dim, name in the row's tone, never mono. */
+.tool-target {
+  flex: 0 1 auto;
+  color: var(--text-2);
 }
 
-.tool[data-status='denied'] .tool-title,
-.tool[data-status='cancelled'] .tool-title {
+.tool-target .path-dir {
   color: var(--text-3);
 }
 
 .tool-sub {
   flex: 0 1 auto;
+  min-width: 0;
   font-size: 12px;
   color: var(--text-3);
 }
@@ -273,15 +281,20 @@ button:hover > .row-caret {
   align-items: center;
   gap: 8px;
   margin-left: auto;
-  padding-left: 6px;
+  padding-left: 8px;
   flex-shrink: 0;
   font-size: 11.5px;
   color: var(--text-3);
   white-space: nowrap;
 }
 
+/* The two marks: amber waits on you (or was your no), red went wrong. Nothing else is coloured. */
 .tool-await {
   color: var(--amber);
+}
+
+.tool-fail {
+  color: var(--red);
 }
 
 .t-add {
@@ -292,47 +305,96 @@ button:hover > .row-caret {
   color: var(--del);
 }
 
+.tool[data-status='error'] .tool-icon,
+.agent[data-status='error'] .tool-icon {
+  color: var(--red);
+}
+
+.tool[data-status='denied'] .tool-icon,
+.tool[data-status='cancelled'] .tool-icon,
+.agent[data-status='denied'] .tool-icon,
+.agent[data-status='cancelled'] .tool-icon {
+  color: var(--text-4);
+}
+
+.tool[data-status='denied'] :is(.tool-title, .tool-target),
+.tool[data-status='cancelled'] :is(.tool-title, .tool-target) {
+  color: var(--text-3);
+}
+
+/* The running step: its icon steps up while the title carries the shimmer. */
+.tool:is([data-status='running'], [data-status='pending']) .tool-icon,
+.agent:is([data-status='running'], [data-status='pending']) .tool-icon {
+  color: var(--text);
+}
+
 .tool-exit {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 5px;
   font-family: var(--font-sans);
   font-size: 11.5px;
-  font-weight: var(--w-medium);
-  color: color-mix(in oklab, var(--red) 70%, var(--text));
-  background: var(--red-dim);
+  color: var(--red);
 }
 
 .tool-details {
   /* Aligned with the title, past the icon. 1px of room for the wells' rings. */
   padding: 3px 1px 8px 24px;
+  --code-size: 11.5px;
+  --code-lh: 17px;
 }
 
 .tool-error {
-  margin: 1px 0 6px 24px;
-  padding: 7px 10px;
-  border: 1px solid color-mix(in oklab, var(--red) 16%, transparent);
-  border-radius: var(--r-sm);
+  margin: 0 0 4px 24px;
+  padding: 1px 0 1px 10px;
+  border-left: 1px solid color-mix(in oklab, var(--red) 45%, transparent);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: color-mix(in oklab, var(--red) 55%, var(--text));
-  background-color: var(--red-dim);
+  color: color-mix(in oklab, var(--red) 40%, var(--text-2));
 }
 
 .tool-details .tool-error {
   margin: 8px 0 0;
 }
 
-/* Rows folded into an "Explored" group hang off a guide line. */
+/* Rows folded into a "Read 6 files" line hang off a guide line when opened. */
 .run-rows {
   margin: 1px 0 4px 7px;
   padding-left: 9px;
   border-left: 1px solid var(--line-2);
+}
+
+/* A running command's last lines: a fixed three-line window, older lines fading at the top. */
+.peek {
+  position: relative;
+  height: 52px;
+  margin: 1px 0 4px 24px;
+  padding: 0 0 0 10px;
+  border-left: 1px solid var(--line-2);
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+}
+
+.peek::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 26px;
+  background: linear-gradient(to bottom, var(--sheet), transparent);
+  pointer-events: none;
+}
+
+.peek pre {
+  margin: 0;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 17px;
+  color: var(--text-3);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── terminal ── */
@@ -731,65 +793,7 @@ button:hover > .row-caret {
 
 /* ───────────── thinking ───────────── */
 
-.think-row {
-  min-height: 26px;
-  color: var(--text-3);
-}
-
-.think-icon {
-  width: 16px;
-  height: 16px;
-  color: var(--text-3);
-}
-
-.think-label {
-  font-size: 12.5px;
-}
-
-.think-row:not([data-static]):hover .think-label:not(.shimmer) {
-  color: var(--text-2);
-}
-
-.think-row .row-caret {
-  opacity: 0;
-  transition:
-    opacity var(--d-1) var(--ease),
-    transform var(--d-2) var(--ease-out);
-}
-
-.think-row:hover .row-caret,
-.think-row:focus-visible .row-caret,
-.think-row[aria-expanded='true'] .row-caret {
-  opacity: 1;
-}
-
-/* A three-line window onto the newest thought; older lines fade out at the top (an overlay, not a mask). */
-.think-preview {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  height: 60px;
-  margin: 0 0 4px 24px;
-  overflow: hidden;
-  font-size: var(--t-small);
-  line-height: 20px;
-  color: var(--text-3);
-}
-
-.think-preview::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to bottom, var(--sheet) 0, transparent 72%);
-  pointer-events: none;
-}
-
-.think-preview p {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
+/* One line like any step; the thought opens under it on a hairline. */
 .think-body {
   margin: 2px 0 8px 7px;
   padding: 1px 0 1px 16px;
@@ -1018,12 +1022,11 @@ button:hover > .row-caret {
   margin-top: 12px;
 }
 
-/* ───────────── sub-agent card ───────────── */
+/* ───────────── sub-agent ───────────── */
 
-.agent {
-  border-radius: var(--r-md);
-  border: 1px solid var(--line);
-  background-color: var(--panel);
+/* One line like any step, with its own count; it opens to its own trail and its report. */
+.agent-now {
+  color: transparent;
 }
 
 .agent-icon {
@@ -1035,96 +1038,50 @@ button:hover > .row-caret {
   color: var(--text-2);
 }
 
-.agent[data-status='error'] .agent-icon {
-  color: color-mix(in oklab, var(--red) 70%, var(--text-3));
-}
-
-.agent-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 12px 8px 11px;
-  border-radius: var(--r-md);
-  text-align: left;
-  transition: background-color var(--d-1) var(--ease);
-}
-
-.agent-head:hover {
-  background-color: var(--fill-1);
-}
-
-.agent-head:focus-visible {
-  outline-offset: -2px;
-  border-radius: var(--r-md);
-}
-
-.agent-titles {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  flex: 1;
-  min-width: 0;
-}
-
-.agent-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  font-size: 12.5px;
-  font-weight: var(--w-regular);
-  color: var(--text);
-}
-
-.agent-line {
-  font-size: var(--t-small);
-  color: var(--text-3);
-}
-
 .agent-body {
-  padding: 2px 15px 14px;
+  margin: 2px 0 8px 7px;
+  padding: 2px 0 2px 16px;
+  border-left: 1px solid var(--line-2);
 }
 
 .agent-prompt {
-  margin: 0 0 10px;
+  margin: 2px 0 8px;
   font-size: var(--t-small);
   line-height: 1.55;
   color: var(--text-3);
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-/* The agent's own timeline hangs off a thin guide. */
 .agent-thread {
-  margin-left: 8px;
-  padding-left: 14px;
-  border-left: 1px solid var(--line-2);
+  display: flex;
+  flex-direction: column;
 }
 
 .tl-sub {
-  padding: 1px 0;
+  padding: 0;
 }
 
 .tl-sub[data-t='text'] {
-  padding: 7px 0;
+  padding: 6px 0;
 }
 
 .tl-sub .md {
+  --md-fg: var(--text-2);
   font-size: 13.5px;
   line-height: 1.6;
 }
 
 .agent-report {
-  margin-top: 12px;
-  padding-top: 13px;
+  margin-top: 10px;
+  padding-top: 10px;
   border-top: 1px solid var(--line);
 }
 
 .agent-report .md {
-  font-size: 14px;
+  font-size: 13.5px;
   line-height: 1.6;
 }
 
@@ -1214,13 +1171,14 @@ button:hover > .row-caret {
   text-wrap: balance;
 }
 
+/* An error reads at a glance by its mark alone: flat ink, a red icon, the words in the text tone. */
 .notice-error {
   display: flex;
   gap: 10px;
-  padding: 11px 14px 12px 12px;
-  border: 1px solid color-mix(in oklab, var(--red) 20%, transparent);
+  padding: 10px 14px 11px 12px;
+  border: 1px solid var(--line);
   border-radius: var(--r-md);
-  background-color: color-mix(in oklab, var(--red) 10%, transparent);
+  background-color: var(--panel);
 }
 
 .notice-error > svg {
@@ -1236,17 +1194,47 @@ button:hover > .row-caret {
 .notice-error-text {
   font-size: var(--t-ui);
   font-weight: var(--w-medium);
-  color: color-mix(in oklab, var(--red) 30%, var(--text));
+  color: var(--text);
 }
 
 .notice-error-detail {
   margin-top: 3px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.55;
-  color: color-mix(in oklab, var(--red) 38%, var(--text-2));
+  color: var(--text-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Inside a turn's trail a notice is one more quiet line, not a divider. */
+.story .notice-line {
+  gap: 8px;
+  min-height: 25px;
+}
+
+.story .notice-rule {
+  display: none;
+}
+
+.story .notice-label {
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.story .notice-label svg {
+  width: 16px;
+  color: var(--text-3);
+}
+
+.story .notice-detail {
+  margin: 0 0 4px 24px;
+  text-align: left;
+  max-width: none;
+}
+
+.story-text:has(> .tl-sub > .notice) {
+  padding: 0;
 }
 
 .notice-cmd {
@@ -1311,15 +1299,49 @@ button:hover > .row-caret {
   contain-intrinsic-size: auto 30px;
 }
 
+/* The running turn draws its trail in full: no skipping, and nothing clips the sticky line. */
+.tl-work[data-live] {
+  content-visibility: visible;
+}
+
 .work-head {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-height: 28px;
 }
 
-/* One quiet line: "Worked for 4m 12s · 23 steps". */
+/* The live line stays in view while the trail under it grows past the top of the window. An ink
+   band behind it hides what passes beneath; a short fade under it shows only while it is stuck. */
+.tl-work[data-live] > .work-head {
+  container-type: scroll-state;
+  position: sticky;
+  top: 30px;
+  z-index: 1;
+  background-color: var(--sheet);
+  box-shadow: 0 -14px 0 var(--sheet);
+}
+
+.work-fade {
+  position: absolute;
+  inset: 100% 0 auto;
+  height: 14px;
+  background: linear-gradient(to bottom, var(--sheet), transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--d-2) var(--ease);
+}
+
+@container scroll-state(stuck: top) {
+  .work-fade {
+    opacity: 1;
+  }
+}
+
+/* One quiet line: "Worked 4m 12s · 23 steps". */
 .work-line {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1368,26 +1390,24 @@ button:hover > .row-caret {
   color: var(--text-4);
 }
 
-/* The working indicator: a thin ring turning, ivory on a faint track. Its own class: `.ring` is
-   the status mark in art/ (an SVG), which this rule used to spin and outline everywhere. On its own
-   compositor layer, so the turn never repaints the window behind it. */
-.work-ring {
-  will-change: transform;
+/* The live line speaks in the running step's voice: brighter than the settled summary. */
+.work-live {
+  color: var(--text-2);
+}
+
+.work-live .work-time {
+  color: var(--text-3);
+}
+
+.work-ind {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 1.5px solid var(--line-2);
-  border-top-color: var(--text-2);
-  animation: spin 0.85s linear infinite;
 }
 
 .work-wait-icon {
-  display: inline-grid;
-  place-items: center;
-  width: 13px;
-  height: 13px;
-  flex-shrink: 0;
   color: var(--amber);
 }
 
@@ -1399,139 +1419,188 @@ button:hover > .row-caret {
   flex: 0 1 auto;
 }
 
-.work-esc,
-.work-all {
+.work-esc {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   margin-left: auto;
   flex-shrink: 0;
   font-size: 11.5px;
-  color: var(--text-3);
+  color: var(--text-4);
 }
 
-.work-all {
-  height: 24px;
-  padding: 0 8px;
-  margin-right: -8px;
+/* What the turn changed: a second, quiet control on the summary line that opens Changes. */
+.work-changes {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px 0 8px;
   border-radius: 7px;
   font-size: 12px;
+  color: var(--text-3);
   transition:
     background-color 90ms var(--ease),
     color 90ms var(--ease);
 }
 
-.work-all:hover {
-  color: var(--text);
+.work-changes > svg {
+  color: var(--text-4);
+  transition: color 90ms var(--ease);
+}
+
+.work-changes:hover {
+  color: var(--text-2);
   background-color: var(--fill-1);
+}
+
+.work-changes:hover > svg {
+  color: var(--text-2);
+}
+
+.work-changes:active {
+  background-color: var(--fill-2);
+}
+
+.work-changes:focus-visible {
+  outline-offset: -2px;
 }
 
 .work-fold {
   transition-duration: 200ms, 90ms;
 }
 
-/* ── the story: what was said on the way, steps folded between ── */
+/* ── the story: what was said on the way, and every step, one line each ── */
 
 .story {
-  position: relative;
-  margin: 2px 0 8px 5px;
-  padding: 2px 0 2px 17px;
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0 0;
 }
 
-/* The thread the story hangs from: a hairline that fades out at both ends. */
-.story::before {
-  content: '';
-  position: absolute;
-  inset: 6px auto 6px 0;
-  width: 1px;
-  background: linear-gradient(to bottom, transparent, var(--line-2) 14px, var(--line-2) calc(100% - 14px), transparent);
+.tl-work:not([data-live]) .story {
+  padding-bottom: 10px;
 }
 
+/* Prose along the way keeps the answer's size, so a text that stops being the newest never
+   reflows; only its tone steps back, eased over a moment as it settles. */
 .story-text {
   position: relative;
-  padding: 5px 0;
+  padding: 6px 0 8px;
 }
 
 .story-text .md {
   --md-fg: var(--text-2);
-  --md-gap: 0.65em;
-  font-size: 13.5px;
-  line-height: 1.6;
 }
 
-.story-text .md strong {
+.story-text .md strong,
+.story-text .md :is(h1, h2, h3, h4) {
   color: var(--text-2);
 }
 
-.story-text .md h1,
-.story-text .md h2,
-.story-text .md h3 {
-  font-size: 14px;
-  color: var(--text-2);
+.story-text[data-fresh] > .md {
+  animation: story-settle 700ms var(--ease) backwards;
 }
 
-.steps {
-  padding: 1px 0;
+@keyframes story-settle {
+  from {
+    color: var(--text);
+  }
 }
 
-.steps-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 24px;
-  margin-left: -7px;
-  padding: 0 8px 0 7px;
-  border-radius: 7px;
-  font-size: 12px;
-  color: var(--text-3);
+.story > .tl-sub:first-child,
+.story > .story-text + .tl-sub {
+  margin-top: 1px;
+}
+
+/* ── the end of a turn: the trail gathers into its summary line ──
+   The fold closes on a soft spring while the rows lift and fade toward the line; a seam of
+   dither rides the closing edge up and dissolves the rows it passes; when it lands, a narrow
+   band of the same dither crosses the summary once. Transform and opacity, about 600 ms, once. */
+
+.tl-work[data-gather] .work-fold {
   transition:
-    background-color 90ms var(--ease),
-    color 90ms var(--ease);
+    grid-template-rows 460ms cubic-bezier(0.6, 0, 0.2, 1),
+    opacity 260ms var(--ease) 200ms;
 }
 
-.steps-btn:hover {
-  color: var(--text-2);
-  background-color: var(--fill-1);
+.tl-work[data-gather] .story {
+  transform-origin: 50% 0;
+  animation: story-gather 460ms cubic-bezier(0.6, 0, 0.2, 1) both;
 }
 
-.steps-btn:active {
-  background-color: var(--fill-2);
+@keyframes story-gather {
+  to {
+    transform: translateY(-18px) scale(0.985);
+    opacity: 0.2;
+  }
 }
 
-.steps-btn:focus-visible {
-  outline-offset: -2px;
+.tl-work[data-gather]::after {
+  content: '';
+  position: absolute;
+  left: var(--gutter);
+  right: var(--gutter);
+  bottom: 0;
+  /* Never taller than the closing trail: it must not cover the line it lands on. */
+  height: min(46px, calc(100% - 30px));
+  background:
+    linear-gradient(to bottom, var(--sheet) 0%, rgb(12 12 14 / 0.7) 45%, rgb(12 12 14 / 0) 100%),
+    radial-gradient(circle at center, rgb(242 241 238 / 0.6) 0.75px, transparent 1px) 0 0 / 3px 3px;
+  pointer-events: none;
+  animation: gather-seam 460ms var(--ease) both;
 }
 
-/* A short dithered bar: the house texture, in place of a bullet. It brightens as the run opens. */
-.steps-rule {
-  width: 12px;
-  height: 6px;
-  flex-shrink: 0;
-  background-image: radial-gradient(circle at center, currentColor 0.7px, transparent 0.8px);
-  background-size: 3px 3px;
-  opacity: 0.55;
-  transition: opacity 90ms var(--ease);
+@keyframes gather-seam {
+  0% {
+    opacity: 0;
+  }
+  18%,
+  72% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
-.steps-btn:hover .steps-rule,
-.steps[data-open] .steps-rule {
-  opacity: 1;
+.work-head[data-landed] > * {
+  animation: land-in 260ms var(--ease-out) 260ms backwards;
 }
 
-.steps-fold {
-  transition-duration: 180ms, 90ms;
+@keyframes land-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
 }
 
-.steps-rows {
-  padding: 1px 0 6px;
+.work-head[data-landed]::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: -8px;
+  width: 120px;
+  background: radial-gradient(circle at center, rgb(242 241 238 / 0.5) 0.75px, transparent 1px) 0 0 / 3px 3px;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  animation: land-sweep 300ms cubic-bezier(0.45, 0, 0.2, 1) 300ms both;
 }
 
-.steps-rows .tl-sub {
-  padding: 0;
-}
-
-.steps-rows .tl-sub[data-t='text'] {
-  padding: 4px 0;
+@keyframes land-sweep {
+  0% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(260px);
+  }
 }
 
 /* ── time on hover ── */
@@ -1615,8 +1684,15 @@ button:hover > .row-caret {
 }
 
 .turn-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   color: var(--text-3);
+}
+
+.turn-note > svg {
+  color: var(--amber);
 }
 
 .turn-hover {
@@ -1748,14 +1824,6 @@ button:hover > .row-caret {
 
 .tail-wait {
   color: var(--amber);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .work-ring {
-    animation: none;
-    border-top-color: var(--line-2);
-    border-right-color: var(--text-2);
-  }
 }
 
 /* ───────────── jump to latest ───────────── */

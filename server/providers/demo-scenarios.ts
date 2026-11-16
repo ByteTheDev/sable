@@ -4,7 +4,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { Question, Todo, UserItem } from '../../shared/protocol';
+import type { Question, TextItem, Todo, ToolItem, UserItem } from '../../shared/protocol';
 import { makeFileDiff } from '../../shared/diff';
 import * as C from './demo-codebase';
 import { COMMANDS, SKILLS, contextBreakdown } from './demo-catalog';
@@ -746,6 +746,54 @@ const long: Scenario = async ({ s }) => {
   s.finish({ suggestion: 'Split the handbook into docs/ pages and link them from the README' });
 };
 
+// ─────────────────────────────── stress: many steps, a huge answer ───────────────────────────────
+
+/**
+ * 300 steps in quick succession (reads, searches, edits, commands, a note every 25), for checking
+ * that a long trail scrolls smoothly and memory stays flat. Fast on purpose: no streamed inputs.
+ */
+const marathon: Scenario = async ({ s }) => {
+  await s.say('Going through every module once, file by file.');
+  const files = C.FILES.filter((f) => f.endsWith('.ts'));
+  for (let i = 0; i < 300; i++) {
+    const rel = files[i % files.length];
+    const k = i % 6;
+    const kind: ToolItem['kind'] = k === 0 || k === 3 ? 'read' : k === 1 ? 'search' : k === 2 || k === 4 ? 'edit' : 'bash';
+    const src = C.SOURCES[rel] ?? `// ${rel}\n`;
+    const title = kind === 'read' ? `Read ${rel.split('/').pop()}` : kind === 'search' ? `Search for step${i}` : kind === 'edit' ? `Edit ${rel.split('/').pop()}` : 'Run the type checker';
+    const detail = kind === 'bash' ? { command: 'npx tsc --noEmit' } : kind === 'search' ? { pattern: `step${i}`, path: s.abs('src') } : { path: s.abs(rel) };
+    const id = s.rt.add<ToolItem>({ type: 'tool', name: kind, kind, title, status: 'running', detail, input: {} }).id;
+    await s.sleep(6);
+    if (kind === 'read') s.complete(id, { file: { path: s.abs(rel), content: src, numLines: src.split('\n').length } });
+    else if (kind === 'search') s.complete(id, { count: i % 4, files: files.slice(0, i % 4).map((f) => s.abs(f)) });
+    else if (kind === 'edit') s.complete(id, { diff: [makeFileDiff(rel, src, `${src}\n// step ${i}\n`)] });
+    else s.complete(id, { text: '', exitCode: 0 });
+    if (i % 25 === 24) s.rt.add<TextItem>({ type: 'text', text: `Done with ${i + 1} steps so far; nothing unexpected.`, streaming: false });
+    await s.sleep(10);
+  }
+  await s.say('All 300 steps are done and the type checker is clean.');
+  s.finish({});
+};
+
+/** A 4000-line answer streamed in quickly: long-transcript rendering, scrolling and memory. */
+const tome: Scenario = async ({ s }) => {
+  const parts: string[] = [];
+  for (let i = 1; parts.length < 4000; i++) {
+    parts.push(`## Section ${i}`, '');
+    for (let j = 0; j < 6; j++) parts.push(`Line ${parts.length + 1}: the session store keeps entries in a map keyed by token and evicts expired ones on lookup, so memory stays bounded.`);
+    parts.push('', '- one point about the module', '- another point, with `inline code`', '');
+    if (i % 5 === 0) parts.push('```ts', 'const store = new SessionStore({ ttlMs: 1_000 });', "store.create('u_1');", '```', '');
+  }
+  const text = parts.join('\n');
+  const item = s.rt.add<TextItem>({ type: 'text', text: '', streaming: true });
+  for (let i = 0; i < text.length; i += 900) {
+    s.rt.delta(item.id, 'text', text.slice(i, i + 900));
+    await s.sleep(16);
+  }
+  s.rt.patch<TextItem>(item.id, { streaming: false });
+  s.finish({});
+};
+
 // ─────────────────────────────────── 11. greeting ───────────────────────────────
 
 const greeting: Scenario = async ({ s }) => {
@@ -974,6 +1022,8 @@ export const SCENARIOS = {
   errors,
   mcp,
   long,
+  marathon,
+  tome,
   greeting,
   command,
   chart: W.chart,
@@ -1002,6 +1052,8 @@ const KEYWORDS: [RegExp, ScenarioId][] = [
   [/\b(mermaid|diagrams?)\b/i, 'diagram'],
   [/\btables?\b/i, 'table'],
   [/\b(widgets?|explainer|simulation)\b/i, 'fence'],
+  [/\bmarathon\b/i, 'marathon'],
+  [/\btome\b/i, 'tome'],
   [/\b(long|stress)\b/i, 'long'],
   [/\b(markdown|showcase)\b/i, 'markdown'],
   [/\bmcp\b/i, 'mcp'],

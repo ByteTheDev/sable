@@ -94,11 +94,30 @@ describe('groupTurns', () => {
     expect(t.segments[0]).toMatchObject({ lead: '1', steered: true, answer: '2' });
   });
 
-  it('shows the latest text while running', () => {
+  it('keeps the running story in order: a text is the answer only while nothing follows it', () => {
     const t = onlyTurn('U1 w2 t3 w4', true);
     expect(t.state).toBe('running');
-    expect(t.segments[0].answer).toBe('3');
-    expect(t.segments[0].work).toEqual(['2', '4']);
+    expect(t.segments[0].answer).toBeNull();
+    expect(t.segments[0].work).toEqual(['2', '3', '4']);
+    expect(t.segments[0].story.map((c) => c.kind)).toEqual(['steps', 'text', 'steps']);
+    const writing = onlyTurn('U1 w2 t3 w4 t5', true);
+    expect(writing.segments[0].answer).toBe('5');
+    // Settled, the last text is the answer again, wherever it stands.
+    expect(onlyTurn('U1 w2 t3 w4').segments[0].answer).toBe('3');
+  });
+
+  it('shows notices that are all a turn holds (a /compact) instead of folding them', () => {
+    const t = onlyTurn('U1 n2 T3');
+    expect(t.segments[0].work).toEqual([]);
+    expect(t.segments[0].errors).toEqual(['2']);
+    // Among steps, a notice is part of the story.
+    expect(onlyTurn('U1 w2 n3 t4 T5').segments[0].work).toEqual(['2', '3']);
+  });
+
+  it('does not count task list updates as steps', () => {
+    const t = onlyTurn('U1 w2 k3 w4 k5 t6 T7');
+    expect(t.segments[0].steps).toBe(2);
+    expect(t.segments[0].work).toEqual(['2', '3', '4', '5']);
   });
 
   it('closes an interrupted turn with its last message as the answer', () => {

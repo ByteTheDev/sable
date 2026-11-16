@@ -3,16 +3,17 @@ import type { TimelineItem, ToolItem } from '@shared/protocol';
 import { Collapse } from '@/components/Collapse';
 import { Markdown } from '@/components/Markdown';
 import { Icon, TOOL_ICON } from '@/icons';
-import { dirName, formatDuration, plural, relPath } from '@/lib/format';
+import { formatDuration, plural, relPath } from '@/lib/format';
 import { useNow } from '@/lib/view-hooks';
 import { useStore } from '@/state/store';
+import { PathLabel } from '@/ui';
 import { EMPTY, useTimeline } from './ctx';
 import { ItemList } from './items';
 import { ToolDetails, hasDetails } from './ToolDetails';
 import { isActive, partialJsonString, shortDuration } from './util';
 
 /** Live seconds for a running call. Hidden for the first two seconds: most calls are done by then. */
-function Elapsed({ since }: { since: number }) {
+export function Elapsed({ since }: { since: number }) {
   const now = useNow(true);
   const ms = now - since;
   if (ms < 2000) return null;
@@ -25,13 +26,13 @@ function duration(item: ToolItem, min = 1000): string | null {
   return ms >= min ? formatDuration(ms) : null;
 }
 
-/** The quiet facts on the right of a row. */
-function ToolMeta({ item, open }: { item: ToolItem; open: boolean }) {
+/** The result at the right edge of a row, in tabular figures. Only the two marks carry colour. */
+function ToolMeta({ item }: { item: ToolItem }) {
   const s = item.status;
   if (s === 'awaiting') return <span className="tool-await">{item.kind === 'question' ? 'Waiting for your answer' : 'Needs your approval'}</span>;
   if (s === 'pending' || s === 'running') return <Elapsed since={item.ts} />;
-  if (s === 'denied') return <span>Denied</span>;
-  if (s === 'cancelled') return <span>{item.result?.interrupted ? 'Interrupted' : 'Cancelled'}</span>;
+  if (s === 'denied') return <span className="tool-await">Denied</span>;
+  if (s === 'cancelled') return item.result?.interrupted ? <span className="tool-await">Interrupted</span> : <span>Cancelled</span>;
   const r = item.result;
   const parts: ReactNode[] = [];
   switch (item.kind) {
@@ -61,10 +62,10 @@ function ToolMeta({ item, open }: { item: ToolItem; open: boolean }) {
       break;
     }
     case 'bash':
-      // The open terminal shows its own exit badge.
-      if (r?.exitCode && !open) parts.push(<span className="tool-exit">exit {r.exitCode}</span>);
+      if (r?.exitCode) parts.push(<span className="tool-fail">exit {r.exitCode}</span>);
       break;
   }
+  if (s === 'error' && item.kind !== 'bash') parts.unshift(<span className="tool-fail">Failed</span>);
   const d = duration(item, item.kind === 'bash' ? 100 : 1000);
   if (d && item.kind !== 'todo' && item.kind !== 'question') parts.push(d);
   if (!parts.length) return null;
@@ -79,38 +80,43 @@ function ToolMeta({ item, open }: { item: ToolItem; open: boolean }) {
   );
 }
 
-/** A second, quieter phrase after the title: the command, the folder, the task in progress. */
-function subline(item: ToolItem, cwd: string, home: string): { text: string } | null {
+/**
+ * What the row says: the verb, then its target. A file is a path in the interface face (folder dim,
+ * name regular); a command or a folder follows as a quieter phrase.
+ */
+function rowText(item: ToolItem, cwd: string, home: string): { verb: string; path?: string; sub?: string } {
   const d = item.detail;
   switch (item.kind) {
-    case 'bash': {
-      if (!d.command) return null;
-      const text = d.command.split('\n')[0];
-      const norm = (s: string) => s.trim().replace(/\s+/g, ' ');
-      // Codex titles a command with the command itself: say it once.
-      return norm(text) && norm(text) !== norm(item.title) ? { text } : null;
-    }
     case 'read':
     case 'edit':
     case 'write': {
-      if (!d.path) return null;
-      const dir = dirName(relPath(d.path, cwd, home));
-      return dir && dir !== '.' ? { text: dir } : null;
+      if (!d.path) return { verb: item.title };
+      const rel = relPath(d.path, cwd, home);
+      const base = rel.slice(rel.lastIndexOf('/') + 1);
+      const verb = item.title.endsWith(base) ? item.title.slice(0, -base.length).trim() : '';
+      return verb ? { verb, path: rel } : { verb: item.title };
+    }
+    case 'bash': {
+      if (!d.command) return { verb: item.title };
+      const text = d.command.split('\n')[0];
+      const norm = (s: string) => s.trim().replace(/\s+/g, ' ');
+      // Codex titles a command with the command itself: say it once.
+      return norm(text) && norm(text) !== norm(item.title) ? { verb: item.title, sub: text } : { verb: item.title };
     }
     case 'search': {
       const where = d.glob ?? (d.path ? relPath(d.path, cwd, home) : '');
-      return where && where !== '.' ? { text: `in ${where}` } : null;
+      return { verb: item.title, sub: where && where !== '.' ? `in ${where}` : undefined };
     }
     case 'todo': {
       const cur = d.todos?.find((t) => t.status === 'in_progress');
-      return cur ? { text: cur.activeForm ?? cur.content } : null;
+      return { verb: 'Tasks', sub: cur ? (cur.activeForm ?? cur.content) : undefined };
     }
     case 'skill':
-      return d.description ? { text: d.description } : null;
+      return { verb: item.title, sub: d.description };
     case 'mcp':
-      return d.server && d.tool ? { text: `${d.server} · ${d.tool}` } : null;
+      return { verb: item.title, sub: d.server && d.tool && !item.title.includes(d.tool) ? `${d.server} · ${d.tool}` : undefined };
     default:
-      return null;
+      return { verb: item.title };
   }
 }
 
@@ -125,35 +131,49 @@ function errorText(item: ToolItem): string | null {
   const text = (item.result?.stderr || item.result?.text || '').trim();
   if (!text) return null;
   const lines = text.split('\n');
-  return lines.length > 4 ? lines.slice(0, 4).join('\n') + '\n…' : text;
+  return lines.length > 3 ? lines.slice(0, 3).join('\n') + '\n…' : text;
+}
+
+/** The last lines a running command printed, in a window of fixed height: the trail never jumps. */
+function Peek({ text }: { text: string }) {
+  const end = text.replace(/\s+$/, '');
+  const lines = end.slice(Math.max(0, end.length - 600)).split('\n').slice(-3);
+  return (
+    <div className="peek" aria-hidden>
+      <pre>{lines.join('\n')}</pre>
+    </div>
+  );
 }
 
 function ToolRow({ item }: { item: ToolItem }) {
   const { cwd, home } = useTimeline();
-  // null = follow the tool's own state (a command opens while it runs, closes when it passes).
   const [choice, setChoice] = useState<boolean | null>(null);
   const expandable = hasDetails(item);
   const open = expandable && (choice ?? autoOpen(item));
   const active = isActive(item);
-  const quiet = item.status === 'denied' || item.status === 'cancelled';
   const icon = TOOL_ICON[item.kind] ?? TOOL_ICON.other;
-  const sub = subline(item, cwd, home);
+  const t = rowText(item, cwd, home);
   const error = errorText(item);
+  const peek = item.kind === 'bash' && active && !open && !!item.output?.trim();
 
   return (
     <div className="tool" data-status={item.status} data-open={open || undefined}>
-      <button type="button" className="row-btn tool-row" aria-expanded={expandable ? open : undefined} data-static={!expandable || undefined} onClick={() => expandable && setChoice(!open)}>
-        <span className="tool-icon" data-quiet={quiet || undefined}>
+      <button type="button" className="row-btn tool-row" aria-expanded={expandable ? open : undefined} data-static={!expandable || undefined} tabIndex={expandable ? undefined : -1} onClick={() => expandable && setChoice(!open)}>
+        <span className="tool-icon">
           <Icon name={icon.icon} size={14} />
         </span>
-        <span className={active ? 'tool-title truncate shimmer' : 'tool-title truncate'}>{item.title}</span>
-        {sub && <span className="tool-sub truncate">{sub.text}</span>}
+        <span className={active ? 'tool-title shimmer' : 'tool-title'}>{t.verb}</span>
+        {t.path && <PathLabel path={t.path} className="tool-target truncate" />}
+        {t.sub && <span className="tool-sub truncate">{t.sub}</span>}
         <span className="tool-meta">
-          <ToolMeta item={item} open={open} />
+          <ToolMeta item={item} />
         </span>
         {expandable && <Icon name="caret-right" size={10} className="row-caret" />}
       </button>
       {error && !open && <pre className="tool-error">{error}</pre>}
+      <Collapse open={peek}>
+        <Peek text={item.output ?? ''} />
+      </Collapse>
       <Collapse open={open}>
         <div className="tool-details">
           <ToolDetails item={item} />
@@ -165,7 +185,7 @@ function ToolRow({ item }: { item: ToolItem }) {
 
 // ───────────────────────────────── sub-agent ─────────────────────────────────
 
-/** One line saying what a sub-agent is doing right now, and how many tools it has used. */
+/** What a sub-agent is doing right now, and how many steps it has taken: `${steps}|${line}`. */
 function agentSummary(sessionId: string, id: string) {
   return (s: ReturnType<typeof useStore.getState>): string => {
     const data = s.data[sessionId];
@@ -184,7 +204,8 @@ function agentSummary(sessionId: string, id: string) {
   };
 }
 
-function AgentCard({ item }: { item: ToolItem }) {
+/** A sub-agent: one line with its own count, opening to its trail and its report. */
+function AgentRow({ item }: { item: ToolItem }) {
   const { sessionId } = useTimeline();
   const [open, setOpen] = useState(false);
   const children = useStore((s) => s.data[sessionId]?.children[item.id]) ?? EMPTY;
@@ -194,7 +215,6 @@ function AgentCard({ item }: { item: ToolItem }) {
   const line = summary.slice(cut + 1);
   const active = isActive(item);
   const failed = item.status === 'error';
-  const quiet = item.status === 'denied' || item.status === 'cancelled';
   const report = item.result?.text?.trim();
   // The report usually repeats the agent's last message; show it once.
   const lastText = useStore((s) => {
@@ -203,34 +223,35 @@ function AgentCard({ item }: { item: ToolItem }) {
     return last?.type === 'text' ? last.text.trim() : '';
   });
   const showReport = !!report && report !== lastText;
+  const title = item.detail.description || item.title;
 
   return (
-    <div className="agent" data-status={item.status} data-open={open || undefined} data-spot>
-      <button type="button" className="agent-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <span className="agent-icon">
-          <Icon name="robot" size={16} />
+    <div className="agent" data-status={item.status} data-open={open || undefined}>
+      <button type="button" className="row-btn tool-row agent-row" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className="tool-icon">
+          <Icon name="robot" size={14} />
         </span>
-        <span className="agent-titles">
-          <span className="agent-title">
-            <span className="truncate">{item.detail.description || item.title}</span>
-            {item.detail.subagent && <span className="badge">{item.detail.subagent}</span>}
-          </span>
-          <span className={active ? 'agent-line truncate shimmer' : 'agent-line truncate'}>
-            {item.status === 'awaiting'
-              ? 'Needs your approval'
-              : active
-                ? line || 'Starting'
-                : failed
-                  ? 'Failed'
-                  : quiet
-                    ? item.status === 'denied'
-                      ? 'Denied'
-                      : 'Cancelled'
-                    : [tools ? plural(tools, 'tool call') : 'Finished', item.endedAt ? shortDuration(item.endedAt - item.ts) : null].filter(Boolean).join(' · ')}
-          </span>
+        <span className="tool-title truncate">{title}</span>
+        {active ? <span className="tool-sub agent-now shimmer truncate">{item.status === 'awaiting' ? '' : line || 'Starting'}</span> : tools > 0 && <span className="tool-sub num">{plural(tools, 'step')}</span>}
+        <span className="tool-meta">
+          {item.status === 'awaiting' ? (
+            <span className="tool-await">Needs your approval</span>
+          ) : active ? (
+            <>
+              {tools > 0 && <span className="num">{plural(tools, 'step')}</span>}
+              <Elapsed since={item.ts} />
+            </>
+          ) : failed ? (
+            <span className="tool-fail">Failed</span>
+          ) : item.status === 'denied' ? (
+            <span className="tool-await">Denied</span>
+          ) : item.status === 'cancelled' ? (
+            <span className="tool-await">Interrupted</span>
+          ) : item.endedAt ? (
+            <span className="num">{shortDuration(item.endedAt - item.ts)}</span>
+          ) : null}
         </span>
-        <span className="tool-meta">{active && <Elapsed since={item.ts} />}</span>
-        <Icon name="caret-right" size={11} className="row-caret" />
+        <Icon name="caret-right" size={10} className="row-caret" />
       </button>
       <Collapse open={open}>
         <div className="agent-body">
@@ -278,7 +299,7 @@ function PlanCard({ item }: { item: ToolItem }) {
           <Icon name="compass" size={15} />
         </span>
         <span className={typing ? 'plan-title shimmer' : 'plan-title'}>{typing ? 'Writing the plan' : 'Plan'}</span>
-        <span className="tool-meta">{state && <span className={item.status === 'awaiting' ? 'tool-await' : undefined}>{state}</span>}</span>
+        <span className="tool-meta">{state && <span className={item.status === 'awaiting' ? 'tool-await' : item.status === 'error' ? 'tool-fail' : undefined}>{state}</span>}</span>
         <Icon name="caret-right" size={11} className="row-caret" />
       </button>
       <Collapse open={open && !!plan}>
@@ -290,9 +311,9 @@ function PlanCard({ item }: { item: ToolItem }) {
   );
 }
 
-/** Any tool call. Sub-agents and plans are cards; everything else is one compact row. */
+/** Any tool call. Plans are cards; everything else, sub-agents included, is one compact row. */
 export const ToolView = memo(function ToolView({ item }: { item: ToolItem }) {
-  if (item.kind === 'agent') return <AgentCard item={item} />;
+  if (item.kind === 'agent') return <AgentRow item={item} />;
   if (item.kind === 'plan') return <PlanCard item={item} />;
   return <ToolRow item={item} />;
 });

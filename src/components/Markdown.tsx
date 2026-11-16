@@ -10,7 +10,7 @@ import './markdown.css';
 
 export interface MarkdownProps {
   text: string;
-  /** The text is still arriving: new words fade in and unfinished syntax is tolerated. */
+  /** The text is still arriving: the newest words ease in at the write head and unfinished syntax is tolerated. */
   streaming?: boolean;
   /** The write head: a small light after the newest word ('live'), fading away ('out'). */
   head?: 'live' | 'out';
@@ -18,8 +18,9 @@ export interface MarkdownProps {
 }
 
 /**
- * The write head. Zero width, so it never wraps a line by itself or moves the words around it;
- * the light is drawn just past the newest word.
+ * The write head. Zero width, so it never wraps a line by itself or moves the words around it.
+ * The newest words are still wet: a short feather in the stage colour lies over them and lifts as
+ * the head moves on, so text eases in with one element per answer instead of one per word.
  */
 const Caret = () => <span className="md-caret" aria-hidden />;
 
@@ -41,20 +42,6 @@ function decode(text: string): string {
 const SAFE_HREF = /^(https?:|mailto:|#|\/|\.\.?\/)/i;
 const SAFE_SRC = /^(https?:|data:image\/|blob:)/i;
 
-/** Words wrapped in spans, so the ones that mount on a later frame are the only ones that fade in. */
-function words(text: string, key: string): ReactNode {
-  const parts = text.split(/(\s+)/);
-  return parts.map((p, i) =>
-    p && i % 2 === 0 ? (
-      <span className="md-w" key={`${key}.${i}`}>
-        {p}
-      </span>
-    ) : (
-      p
-    ),
-  );
-}
-
 function inline(tokens: Token[] | undefined, live: boolean, path: string): ReactNode {
   if (!tokens) return null;
   return tokens.map((t, i) => {
@@ -63,11 +50,10 @@ function inline(tokens: Token[] | undefined, live: boolean, path: string): React
       case 'text': {
         const tt = t as Tokens.Text;
         if (tt.tokens?.length) return inline(tt.tokens, live, `${key}.`);
-        const text = decode(tt.text);
-        return live ? words(text, key) : text;
+        return decode(tt.text);
       }
       case 'escape':
-        return live ? words(decode((t as Tokens.Escape).text), key) : decode((t as Tokens.Escape).text);
+        return decode((t as Tokens.Escape).text);
       case 'strong':
         return <strong key={key}>{inline((t as Tokens.Strong).tokens, live, `${key}.`)}</strong>;
       case 'em':
@@ -76,7 +62,7 @@ function inline(tokens: Token[] | undefined, live: boolean, path: string): React
         return <del key={key}>{inline((t as Tokens.Del).tokens, live, `${key}.`)}</del>;
       case 'codespan':
         return (
-          <code key={key} className={live ? 'md-code md-w' : 'md-code'}>
+          <code key={key} className="md-code">
             {decode((t as Tokens.Codespan).text)}
           </code>
         );
@@ -278,16 +264,14 @@ function block(t: Token, live: boolean, key: string, tail = false): ReactNode {
 }
 
 /**
- * One top-level block. A settled block never re-renders: its raw text is its identity.
- * Code re-renders when it stops being the live tail (to pick up colours); prose re-renders
- * only to hand the write head on, and keeps the word spans it streamed in with, so nothing
- * snaps when the next block starts.
+ * One top-level block. A settled block never re-renders: its raw text is its identity. Only the
+ * newest block re-renders while text streams, and it holds plain text nodes (no element per word),
+ * so a frame of streaming touches one paragraph. Code re-renders when it stops being the live tail
+ * (to pick up colours).
  */
 const Block = memo(
   function Block({ token, live, tail }: { raw: string; token: Token; live: boolean; tail: boolean }) {
-    const streamed = useRef(live);
-    if (live) streamed.current = true;
-    return <>{block(token, token.type === 'code' ? live : streamed.current, 'b', tail)}</>;
+    return <>{block(token, live, 'b', tail)}</>;
   },
   (a, b) => a.raw === b.raw && a.tail === b.tail && (a.live === b.live || a.token.type !== 'code'),
 );

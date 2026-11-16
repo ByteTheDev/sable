@@ -10,6 +10,7 @@ import type { TimelineItem } from '@shared/protocol';
  *   S  a message steered into the running turn  t  assistant prose (an answer candidate)
  *   c  command output (an answer candidate)     p  a plan (an answer candidate)
  *   w  a step: a tool call or thinking          n  any other notice (mode, model, compaction, retry)
+ *   k  a task list update: kept in the work, not counted as a step (the dock shows the list)
  *   i  "Interrupted"                            e  an error notice
  *   T  turn end                                 F  turn end with an error
  *   g  a widget (generative UI): never folded, shown with the answer
@@ -36,7 +37,7 @@ export interface Segment {
    * was steered in, kept in view right under it (before the work line).
    */
   reply: string | null;
-  /** Error notices: never folded. */
+  /** Error notices, and notices that are all a segment holds: never folded. */
   errors: string[];
   /**
    * What shows under the work line, in order: the answer, every widget, and the text that leads
@@ -83,7 +84,7 @@ export function shapeOf(item: TimelineItem | undefined): string {
     case 'thinking':
       return 'w';
     case 'tool':
-      return item.kind === 'plan' ? 'p' : item.kind === 'widget' ? 'g' : 'w';
+      return item.kind === 'plan' ? 'p' : item.kind === 'widget' ? 'g' : item.kind === 'todo' ? 'k' : 'w';
     case 'notice':
       if (item.variant === 'interrupted') return 'i';
       if (item.variant === 'error') return 'e';
@@ -107,7 +108,7 @@ interface Open {
   failed: boolean;
 }
 
-function buildSegment(seg: Open['segs'][number], index: number, turnKey: string, failed: boolean): Segment {
+function buildSegment(seg: Open['segs'][number], index: number, turnKey: string, failed: boolean, live = false): Segment {
   const errors: string[] = [];
   let answerAt = -1;
   for (let i = seg.chars.length - 1; i >= 0; i--) {
@@ -115,9 +116,14 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
       answerAt = i;
       break;
     }
+    // While the segment runs, a text the agent has gone on from is part of the story, in order:
+    // it is the answer only while nothing has come after it.
+    if (live && seg.chars[i] !== '.' && seg.chars[i] !== 'i' && seg.chars[i] !== 'e') break;
   }
   // A failed segment answers with its error card; its last text becomes part of the story.
   if (failed) answerAt = -1;
+  // Nothing but notices (a /compact, a model change on its own): they are the turn, so they show.
+  const lone = !seg.chars.some((c) => c !== 'n' && c !== '.' && c !== 'i' && c !== 'e');
   let replyAt = -1;
   if (seg.steered) {
     const first = seg.chars.findIndex((c) => c === 't');
@@ -152,7 +158,7 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
       shown.push(id);
       continue;
     }
-    if (ch === 'e') {
+    if (ch === 'e' || (lone && ch === 'n')) {
       errors.push(id);
       continue;
     }
@@ -205,7 +211,7 @@ export function groupTurns(ids: readonly string[], shape: string, busy: boolean)
     const state: TurnState = atEnd && !end && busy && !o.interrupted ? 'running' : failed ? 'failed' : o.interrupted ? 'interrupted' : 'done';
     const key = o.ids[0];
     const last = o.segs.length - 1;
-    const segments = o.segs.map((s, i) => buildSegment(s, i, key, failed && i === last));
+    const segments = o.segs.map((s, i) => buildSegment(s, i, key, failed && i === last, state === 'running' && i === last));
     groups.push({ kind: 'turn', key, segments, end, state, ids: o.ids });
   };
 

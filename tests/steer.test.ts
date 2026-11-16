@@ -297,8 +297,19 @@ describe('short answers', () => {
   });
 
   it('the instruction stays short', () => {
-    expect(CONCISE_REPLIES_PROMPT.length).toBeLessThan(450);
+    // Appended to every session's prompt: a few lines, never a page.
+    expect(CONCISE_REPLIES_PROMPT.length).toBeLessThan(500);
     expect(CONCISE_REPLIES_PROMPT).toMatch(/http:\/\/localhost/);
+  });
+
+  it('asks for the outcome first and no recap of files or steps', () => {
+    expect(CONCISE_REPLIES_PROMPT).toMatch(/^Finish with a short reply: the outcome in one or two sentences/);
+    expect(CONCISE_REPLIES_PROMPT).toMatch(/do not list the files you changed or recap/);
+    expect(CONCISE_REPLIES_PROMPT).toMatch(/no closing offers/);
+  });
+
+  it('is on by default', () => {
+    expect(DEFAULT_SETTINGS.conciseReplies).toBe(true);
   });
 });
 

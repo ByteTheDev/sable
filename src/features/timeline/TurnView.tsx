@@ -1,16 +1,20 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { TimelineItem } from '@shared/protocol';
+import { Tiles } from '@/art/Logo';
 import { Collapse } from '@/components/Collapse';
 import { Icon } from '@/icons';
 import { plural } from '@/lib/format';
+import { reducedMotion } from '@/lib/motion';
 import { useNow } from '@/lib/view-hooks';
+import { showRailTab } from '@/state/actions';
 import { useStore, type Store } from '@/state/store';
 import { Kbd } from '@/ui';
 import { useItem, useTimeline } from './ctx';
-import { foldKey, setFold, useFold, useOpenCount } from './fold';
+import { foldKey, setFold, useFold } from './fold';
 import { ItemList, ItemRow, LiveText, estimate } from './items';
 import { REVEAL_EVENT, rootOf, type RevealDetail } from './reveal';
 import { Stamp } from './Stamp';
+import { changesOf } from './changes';
 import { Tail } from './Tail';
 import { TurnFoot } from './Turn';
 import { groupTurns, shapeOf, type Group, type Segment, type StoryChunk, type TurnGroup, type TurnLayout } from './turns';
@@ -228,22 +232,42 @@ function segmentSpan(items: Record<string, TimelineItem>, turn: TurnGroup, index
 
 const SegmentView = memo(function SegmentView({ seg, turn, index, live }: { seg: Segment; turn: TurnGroup; index: number; live: boolean }) {
   const { sessionId } = useTimeline();
-  const [open, setOpen] = useFold(foldKey(sessionId, seg.key));
   const hasWork = seg.work.length > 0;
+  // The trail is open while the agent works and folds away when it is done, unless the reader chose.
+  const [open, setOpen] = useFold(foldKey(sessionId, seg.key), live);
+
+  // The end of the turn: the trail gathers into its summary line, once.
+  const [gather, setGather] = useState(false);
+  const was = useRef(live);
+  const workEl = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const ended = was.current && !live;
+    was.current = live;
+    if (!ended || !hasWork) return;
+    // Reduced motion: no travel, the summary line simply fades in.
+    if (reducedMotion()) {
+      workEl.current?.querySelector('.work-head')?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
+      return;
+    }
+    setGather(true);
+    const t = window.setTimeout(() => setGather(false), 900);
+    return () => window.clearTimeout(t);
+  }, [live, hasWork]);
+
   return (
     <>
       {seg.lead && <ItemRow key={seg.lead} id={seg.lead} />}
       {seg.reply && <ItemRow key={seg.reply} id={seg.reply} answer />}
       {(hasWork || live) && (
-        <div key="work" className="tl-item tl-work" data-open={(open && hasWork) || undefined}>
+        <div key="work" ref={workEl} className="tl-item tl-work" data-live={live || undefined} data-open={(open && hasWork) || undefined} data-gather={gather || undefined}>
           {live ? (
-            <LiveLine seg={seg} open={open} onToggle={hasWork ? () => setOpen(!open) : undefined} />
+            <LiveLine seg={seg} open={open && hasWork} onToggle={hasWork ? () => setOpen(!open) : undefined} />
           ) : (
-            <WorkLine seg={seg} turn={turn} index={index} open={open} onToggle={() => setOpen(!open)} />
+            <WorkLine seg={seg} turn={turn} index={index} open={open} onToggle={() => setOpen(!open)} landed={gather} />
           )}
           {hasWork && (
             <Collapse open={open} className="work-fold">
-              <Story seg={seg} />
+              <Story seg={seg} live={live} />
             </Collapse>
           )}
         </div>
@@ -258,43 +282,32 @@ const SegmentView = memo(function SegmentView({ seg, turn, index, live }: { seg:
   );
 });
 
-/** "Worked for 4m 12s · 23 steps": the folded work of a settled segment. */
-function WorkLine({ seg, turn, index, open, onToggle }: { seg: Segment; turn: TurnGroup; index: number; open: boolean; onToggle: () => void }) {
+/** "Worked 4m 12s · 23 steps", and what changed: the folded work of a settled segment. */
+function WorkLine({ seg, turn, index, open, onToggle, landed }: { seg: Segment; turn: TurnGroup; index: number; open: boolean; onToggle: () => void; landed: boolean }) {
   const { sessionId } = useTimeline();
-  const span = useMemo(() => segmentSpan(useStore.getState().data[sessionId]?.items ?? {}, turn, index), [sessionId, turn, index]);
+  const { span, changes } = useMemo(() => {
+    const d = useStore.getState().data[sessionId];
+    const items = d?.items ?? {};
+    return { span: segmentSpan(items, turn, index), changes: changesOf(items, d?.children ?? {}, seg.work) };
+  }, [sessionId, turn, index, seg]);
   const texts = seg.story.reduce((n, c) => n + (c.kind === 'text' ? 1 : 0), 0);
-  const parts: string[] = [];
-  parts.push(span && span >= 1000 ? `Worked for ${shortDuration(span)}` : 'Worked');
-  if (seg.steps) parts.push(plural(seg.steps, 'step'));
-  else if (texts) parts.push(plural(texts, 'message'));
+  const count = seg.steps ? plural(seg.steps, 'step') : texts ? plural(texts, 'message') : '';
   return (
-    <div className="work-head">
+    <div className="work-head" data-landed={landed || undefined}>
       <button type="button" className="work-line" aria-expanded={open} onClick={onToggle}>
-        <span className="work-label num">{parts.join(' · ')}</span>
+        <span className="work-label num">{span && span >= 1000 ? `Worked ${shortDuration(span)}` : 'Worked'}</span>
+        {count && <span className="work-time num">{count}</span>}
         <Icon name="caret-right" size={10} className="row-caret" />
       </button>
-      {open && <AllSteps seg={seg} />}
+      {changes.files > 0 && (
+        <button type="button" className="work-changes num" onClick={() => showRailTab('changes')} aria-label={`${plural(changes.files, 'file')} changed. Open Changes`}>
+          <Icon name="diff" size={13} />
+          <span>{plural(changes.files, 'file')}</span>
+          {changes.add > 0 && <span className="t-add">+{changes.add}</span>}
+          {changes.del > 0 && <span className="t-del">−{changes.del}</span>}
+        </button>
+      )}
     </div>
-  );
-}
-
-/** Opens or closes every run of steps in the story at once: the second level, one click away. */
-function AllSteps({ seg }: { seg: Segment }) {
-  const { sessionId } = useTimeline();
-  const chunks = seg.story.filter((c): c is Extract<StoryChunk, { kind: 'steps' }> => c.kind === 'steps');
-  const keys = chunks.map((c) => foldKey(sessionId, c.key, 'steps'));
-  const allOpen = useOpenCount(keys) === keys.length;
-  if (!chunks.length) return null;
-  return (
-    <button
-      type="button"
-      className="work-all"
-      onClick={() => {
-        for (const k of keys) setFold(k, !allOpen);
-      }}
-    >
-      {allOpen ? 'Hide steps' : 'Show every step'}
-    </button>
   );
 }
 
@@ -325,7 +338,10 @@ function liveSelector(sessionId: string, seg: Segment) {
   };
 }
 
-/** The running segment's line: a turning ring, the current step, the time so far, and how to stop. */
+/**
+ * The running segment's line: the working indicator, what it is doing now, the time so far and
+ * how to stop. It stays in view (sticky) while the trail under it grows past the top.
+ */
 function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onToggle?: () => void }) {
   const { sessionId } = useTimeline();
   const info = useStore(useMemo(() => liveSelector(sessionId, seg), [sessionId, seg]));
@@ -338,11 +354,13 @@ function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onTogg
   const body = (
     <>
       {waiting ? (
-        <span className="work-wait-icon">
+        <span className="work-ind work-wait-icon">
           <Icon name="hourglass" size={13} />
         </span>
       ) : (
-        <span className="work-ring" aria-hidden />
+        <span className="work-ind">
+          <Tiles size={12} />
+        </span>
       )}
       <span className={waiting ? 'work-label work-waiting' : 'work-label work-live-title shimmer truncate'}>{waiting ? 'Waiting for you' : title}</span>
       {elapsed >= 1000 && <span className="work-time num">{shortDuration(elapsed)}</span>}
@@ -351,7 +369,7 @@ function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onTogg
     </>
   );
   return (
-    <div className="work-head" role="status" aria-live="off">
+    <div className="work-head" data-live role="status" aria-live="off">
       {onToggle ? (
         <button type="button" className="work-line work-live" aria-expanded={open} onClick={onToggle}>
           {body}
@@ -361,30 +379,33 @@ function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onTogg
           {body}
         </div>
       )}
-      {open && onToggle ? (
-        <AllSteps seg={seg} />
-      ) : (
-        <span className="work-esc">
-          <Kbd combo="esc" /> to stop
-        </span>
-      )}
+      <span className="work-esc">
+        <Kbd combo="esc" /> to stop
+      </span>
+      <span className="work-fade" aria-hidden />
     </div>
   );
 }
 
 // ─────────────────────────────────── the story ───────────────────────────────────
 
-/** The work opened: what was said along the way, and the steps between, one click each. */
-function Story({ seg }: { seg: Segment }) {
+/**
+ * The work: what was said along the way and the steps between, in order, one line per step.
+ * Texts keep the answer's size (only their tone steps back), so a text that stops being the
+ * newest moves into the story without a line of it reflowing.
+ */
+function Story({ seg, live }: { seg: Segment; live: boolean }) {
   return (
     <div className="story">
-      {seg.story.map((c) => (c.kind === 'text' ? <StoryText key={c.id} id={c.id} /> : <Steps key={c.key} chunk={c} />))}
+      {seg.story.map((c) => (c.kind === 'text' ? <StoryText key={c.id} id={c.id} live={live} /> : <ItemList key={c.key} ids={c.ids} />))}
     </div>
   );
 }
 
-const StoryText = memo(function StoryText({ id }: { id: string }) {
+const StoryText = memo(function StoryText({ id, live }: { id: string; live: boolean }) {
   const item = useItem(id);
+  // Mounting while the turn runs: this text just stopped being the newest and settles to the story's tone.
+  const [fresh] = useState(() => live);
   if (!item) return null;
   if (item.type === 'notice') {
     return (
@@ -395,28 +416,9 @@ const StoryText = memo(function StoryText({ id }: { id: string }) {
   }
   if (item.type !== 'text') return null;
   return (
-    <div className="story-text" data-item-id={id}>
+    <div className="story-text" data-item-id={id} data-fresh={fresh || undefined}>
       <LiveText text={item.text} streaming={item.streaming} />
       <Stamp ts={item.ts} />
-    </div>
-  );
-});
-
-const Steps = memo(function Steps({ chunk }: { chunk: Extract<StoryChunk, { kind: 'steps' }> }) {
-  const { sessionId } = useTimeline();
-  const [open, setOpen] = useFold(foldKey(sessionId, chunk.key, 'steps'));
-  return (
-    <div className="steps" data-open={open || undefined}>
-      <button type="button" className="steps-btn" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <span className="steps-rule" aria-hidden />
-        <span className="num">{plural(chunk.ids.length, 'step')}</span>
-        <Icon name="caret-right" size={9} className="row-caret" />
-      </button>
-      <Collapse open={open} className="steps-fold">
-        <div className="steps-rows">
-          <ItemList ids={chunk.ids} nested />
-        </div>
-      </Collapse>
     </div>
   );
 });
