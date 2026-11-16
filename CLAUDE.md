@@ -4,7 +4,7 @@ A desktop ADE (agentic development environment) for Claude Code and Codex. Vite 
 
 ## Commands
 
-- `pnpm dev` starts Vite with the bridge attached (WebSocket at `/__sable`). A dev server is usually already running on http://localhost:5173 (or 5174 when that port was taken) — reuse it, never start a second one. `scripts/shot.mjs` finds it by itself.
+- `pnpm dev` starts Vite with the bridge attached (WebSocket at `/__sable`). It runs on the real profile (`~/.sable`): every Demo session a test starts there lands in the owner's sidebar. For tests and screenshots start `node scripts/dev-test.mjs` instead (same server on a throwaway data folder, `%TEMP%/sable-dev-home`). A dev server is usually already running on http://localhost:5173 (or 5174 when that port was taken) — reuse it, never start a second one. `scripts/shot.mjs` finds it by itself.
 - `pnpm exec tsc --noEmit -p tsconfig.json` type-checks everything. `pnpm exec vitest run` runs tests.
 - Smoke scripts: `pnpm exec tsx scripts/claude-smoke.ts`, `scripts/codex-smoke.ts`. Real agent turns (these scripts, or any session with Claude or Codex) cost the owner's quota and need his say-so each time.
 - `http://localhost:5173/?gallery` (dev only, `src/dev/Gallery.tsx`) shows every control primitive in every state.

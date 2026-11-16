@@ -6,6 +6,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["dev"],
       "port": 5173
+    },
+    {
+      "name": "sable-test",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/dev-test.mjs"],
+      "port": 5173
     }
   ]
 }
