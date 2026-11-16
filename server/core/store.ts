@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { writeFile, rename } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { isBackdropImageId, migrateBackdrop, normalizeBackdrop } from '../../shared/backdrop';
+import { isBackdropImageId, migrateBackdrop, migrateQuietDefault, normalizeBackdrop } from '../../shared/backdrop';
 import { DEFAULT_SETTINGS, type AppSettings, type Project, type ProviderId, type QueuedMessage, type SessionMeta, type TimelineItem, type Todo } from '../../shared/protocol';
 
 /** An account in the registry. The built-in `default` account of each provider is stored too (for its label). */
@@ -54,6 +54,11 @@ export class Store {
     if (versioned.rev < 3) {
       versioned.backdropConfig = migrateBackdrop(versioned);
       versioned.rev = 3;
+    }
+    // The quieter default backdrop: fields still at the old default move to the new one.
+    if (versioned.rev < 4) {
+      versioned.backdropConfig = migrateQuietDefault(versioned.backdropConfig);
+      versioned.rev = 4;
     }
     versioned.backdropImages = (Array.isArray(versioned.backdropImages) ? versioned.backdropImages : []).filter((i) => isBackdropImageId(i?.id));
     versioned.backdropConfig = normalizeBackdrop(

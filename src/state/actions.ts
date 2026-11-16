@@ -1,5 +1,5 @@
 import { DEFAULT_ACCOUNT, type AccountInfo, type Attachment, type BackdropConfig, type BackdropImage, type BrowserAnswer, type Effort, type ProviderId, type QueuedMessage, type SessionMeta, type SessionOptions } from '@shared/protocol';
-import { normalizeBackdrop } from '@shared/backdrop';
+import { DEFAULT_BACKDROP, normalizeBackdrop } from '@shared/backdrop';
 import { bridge } from '@/lib/bridge';
 import { applySnapshot, capsKey, loadSession, useStore, type RailTab, type SettingsSection, type Store } from './store';
 
@@ -294,16 +294,24 @@ async function encodeImage(bitmap: ImageBitmap, w: number, h: number): Promise<B
   return jpeg;
 }
 
+/** Largest file the backdrop takes before decoding (a photo is a few MB; this only guards memory). */
+const BACKDROP_MAX_FILE = 80 * 1024 * 1024;
+
 /**
- * Uploads an image for the backdrop: decoded here, scaled to at most 2048 px on its long side
- * and re-encoded (WebP, else JPEG), then stored by the bridge. Shows it as the backdrop.
+ * Uploads an image for the backdrop: decoded here (EXIF rotation applied), scaled to at most
+ * 2048 px on its long side and re-encoded (WebP, else JPEG), then stored by the bridge. Shows it
+ * as the backdrop at once. Returns the image, or one plain line saying why not.
  */
-export async function addBackdropImage(file: Blob): Promise<BackdropImage | null> {
+export async function addBackdropImage(file: Blob): Promise<BackdropImage | { error: string }> {
   try {
-    if (file.type && !file.type.startsWith('image/')) throw new Error('Choose an image file');
-    const bitmap = await createImageBitmap(file).catch(() => {
-      throw new Error('Could not read the image');
-    });
+    if (file.type && !file.type.startsWith('image/')) return { error: 'This file is not an image.' };
+    if (file.size > BACKDROP_MAX_FILE) return { error: 'This image is larger than 80 MB.' };
+    let bitmap: ImageBitmap;
+    try {
+      bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    } catch {
+      return { error: file.type ? 'This image format cannot be read. Use PNG, JPEG, WebP or AVIF.' : 'This file is not an image.' };
+    }
     const k = Math.min(1, BACKDROP_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
     const w = Math.max(1, Math.round(bitmap.width * k));
     const h = Math.max(1, Math.round(bitmap.height * k));
@@ -311,11 +319,12 @@ export async function addBackdropImage(file: Blob): Promise<BackdropImage | null
     bitmap.close();
     const img = await bridge.call('backdrop.add', { data: await blobToBase64(blob), width: w, height: h });
     imageBlobs.set(img.id, Promise.resolve(blob));
-    setBackdrop({ source: 'image', image: img.id });
+    const cur = selectBackdrop(useStore.getState());
+    // A picture fills the stage: the default's low glow would show only its lower edge.
+    setBackdrop({ source: 'image', image: img.id, ...(cur.source !== 'image' && cur.reach === DEFAULT_BACKDROP.reach ? { reach: 100 } : {}) });
     return img;
   } catch (err) {
-    fail(err);
-    return null;
+    return { error: err instanceof Error && err.message ? err.message : 'The image could not be saved.' };
   }
 }
 

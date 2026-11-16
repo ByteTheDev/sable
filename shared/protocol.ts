@@ -717,29 +717,35 @@ export interface BackdropConfig {
   saturation: number;
   /** The light answers the pointer and swells when a message is sent. */
   react: boolean;
+  /** Image source: a moving pattern played as light over the still image ('none': the image alone). */
+  effect: BackdropPattern | 'none';
+  /** Strength of that moving light, 0–100. */
+  effectAmount: number;
 }
 
 /**
- * Subtle: low strength over the full stage, fine cells, slow drift (the Streaks and Vivid presets
- * are the louder steps). Lives here (not
- * in `shared/backdrop.ts`) so this module imports nothing at run time.
+ * Calm ink with a hint of light: a low glow rising from the lower edge, fine cells, slow drift,
+ * most of the stage plain ground (the presets are the louder steps). Lives here (not in
+ * `shared/backdrop.ts`) so this module imports nothing at run time.
  */
 export const DEFAULT_BACKDROP: BackdropConfig = {
   source: 'pattern',
   pattern: 'streaks',
   image: null,
   style: 'dither',
-  amount: 14,
-  sessionAmount: 30,
-  focus: { x: 0.72, y: 0.78 },
-  reach: 100,
-  detail: 90,
+  amount: 8,
+  sessionAmount: 16,
+  focus: { x: 0.62, y: 1 },
+  reach: 72,
+  detail: 94,
   speed: 30,
   angle: 35,
   colour: 'agent',
   hue: 28,
   saturation: 70,
   react: true,
+  effect: 'none',
+  effectAmount: 40,
 };
 
 /** An image uploaded for the backdrop. Ids come from the bridge only. */

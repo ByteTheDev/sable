@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { BACKDROP_PRESETS, DEFAULT_BACKDROP, backdropCell, migrateBackdrop, normalizeBackdrop, sameBackdrop } from '@shared/backdrop';
+import { BACKDROP_PRESETS, DEFAULT_BACKDROP, backdropCell, migrateBackdrop, migrateQuietDefault, normalizeBackdrop, sameBackdrop } from '@shared/backdrop';
 import { DEFAULT_SETTINGS } from '@shared/protocol';
 import { App } from '../server/app';
 import { Store } from '../server/core/store';
@@ -107,7 +107,7 @@ describe('migrateBackdrop', () => {
     new Store(dir); // creates the folder
     writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ projects: [], sessions: [], accounts: [], settings }));
     const s = new Store(dir).state.settings as typeof DEFAULT_SETTINGS & { rev: number };
-    expect(s.rev).toBe(3);
+    expect(s.rev).toBe(4);
     expect(s.backdropConfig).toMatchObject({ pattern: 'aurora', speed: 0 });
     expect(s.backdropImages).toEqual([]);
 
@@ -116,6 +116,49 @@ describe('migrateBackdrop', () => {
     const again = new Store(dir).state.settings;
     expect(again.backdropConfig.source).toBe('pattern');
     expect(again.backdropConfig.amount).toBe(100);
+  });
+});
+
+describe('migrateQuietDefault (rev 4)', () => {
+  const OLD = { ...DEFAULT_BACKDROP, amount: 14, sessionAmount: 30, focus: { x: 0.72, y: 0.78 }, reach: 100, detail: 90 };
+  const load = (name: string, config: unknown, rev = 3) => {
+    const dir = path.join(base, name);
+    new Store(dir);
+    writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ projects: [], sessions: [], accounts: [], settings: { ...DEFAULT_SETTINGS, rev, backdropConfig: config } }));
+    return new Store(dir).state.settings as typeof DEFAULT_SETTINGS & { rev: number };
+  };
+
+  it('moves an untouched old default to the new default', () => {
+    const s = load('untouched', OLD);
+    expect(s.rev).toBe(4);
+    expect(s.backdropConfig).toEqual(DEFAULT_BACKDROP);
+  });
+
+  it('keeps tubes and takes the new amount (the owner profile)', () => {
+    const s = load('tubes', { ...OLD, pattern: 'tubes' });
+    expect(s.backdropConfig.pattern).toBe('tubes');
+    expect(s.backdropConfig.amount).toBe(DEFAULT_BACKDROP.amount);
+    expect(s.backdropConfig.sessionAmount).toBe(DEFAULT_BACKDROP.sessionAmount);
+  });
+
+  it('leaves every field the user changed alone', () => {
+    const custom = { ...OLD, source: 'image', image: 'abcdef123456', pattern: 'aurora', style: 'ascii', amount: 40, sessionAmount: 22, focus: { x: 0.1, y: 0.2 }, reach: 50, detail: 60, speed: 70, angle: 90, colour: 'custom', hue: 200, saturation: 30, react: false };
+    const s = load('custom', custom);
+    expect(s.backdropConfig).toEqual({ ...custom, image: null, effect: 'none', effectAmount: DEFAULT_BACKDROP.effectAmount });
+    // Only the fields at the old value move; the rest of a partly changed config stays.
+    expect(migrateQuietDefault({ ...OLD, amount: 30 })).toMatchObject({ amount: 30, sessionAmount: DEFAULT_BACKDROP.sessionAmount, reach: DEFAULT_BACKDROP.reach });
+  });
+
+  it('runs once: a rev 4 profile keeps the old values if it holds them', () => {
+    expect(load('rev4', OLD, 4).backdropConfig.amount).toBe(14);
+  });
+
+  it('keeps the presets apart and Vivid as the old full look', () => {
+    const amounts = BACKDROP_PRESETS.map((p) => p.config.amount);
+    expect(Math.min(...amounts)).toBeLessThan(DEFAULT_BACKDROP.amount);
+    const vivid = BACKDROP_PRESETS.find((p) => p.id === 'vivid')!.config;
+    expect(vivid).toMatchObject({ reach: 100, amount: 60 });
+    expect(DEFAULT_BACKDROP.sessionAmount).toBeLessThan(30);
   });
 });
 

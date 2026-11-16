@@ -44,10 +44,12 @@ function loadBitmap(id: string) {
   if (!p) {
     p = backdropImageBlob(id).then(async (blob) => {
       const probe = await createImageBitmap(blob);
-      const k = Math.min(1, IMAGE_MAX_SIDE / Math.max(probe.width, probe.height));
+      // Read the size before closing: a closed bitmap reports 0 x 0, and a resize to 0 throws.
+      const { width, height } = probe;
+      const k = Math.min(1, IMAGE_MAX_SIDE / Math.max(width, height));
       if (k === 1) return probe;
       probe.close();
-      return createImageBitmap(blob, { resizeWidth: Math.round(probe.width * k), resizeHeight: Math.round(probe.height * k), resizeQuality: 'high' });
+      return createImageBitmap(blob, { resizeWidth: Math.max(1, Math.round(width * k)), resizeHeight: Math.max(1, Math.round(height * k)), resizeQuality: 'high' });
     });
     p.catch(() => bitmaps.delete(id));
     bitmaps.set(id, p);
@@ -121,7 +123,7 @@ export function Backdrop({ surface, view = 'home', config, provider, status = 'i
   const session = surface === 'session' || (surface === 'preview' && view === 'session');
   const lit = useLinger(status === 'running' || status === 'starting', 620);
   // A swatch is tiny: it shows its preset a little louder so a spot or a low amount still reads.
-  const amount = session ? cfg.sessionAmount : surface === 'swatch' ? Math.min(100, cfg.amount * 1.5) : cfg.amount;
+  const amount = session ? cfg.sessionAmount : surface === 'swatch' ? Math.min(100, Math.max(cfg.amount * 1.5, cfg.amount + 12)) : cfg.amount;
   const wantsImage = cfg.source === 'image' && !session;
   const bitmap = useBackdropBitmap(wantsImage ? cfg.image : null);
   if (cfg.source === 'off' || amount <= 0) return null;
@@ -173,24 +175,37 @@ export function Backdrop({ surface, view = 'home', config, provider, status = 'i
 
   const palette: DitherPalette =
     cfg.colour === 'mono' ? 'mono' : custom ? 'custom' : surface === 'onboarding' && cfg.colour === 'agent' ? 'mono' : HOME_PALETTE[agent];
-  const { gain, opacity } = strength(amount);
+  const { gain, opacity } = wantsImage ? imageStrength(amount) : strength(amount);
   const live = surface === 'home' || surface === 'onboarding';
+  // An image is still unless an effect plays over it: drawn once, then the field rests until the
+  // pointer or a beat moves it (beats and the pointer's light act on it like on a pattern).
+  const effect = wantsImage && cfg.effect !== 'none' ? cfg.effect : null;
+  const variant = wantsImage ? (effect ?? cfg.pattern) : cfg.pattern;
+  const moving = !wantsImage || effect != null;
   return (
     <DitherField
       {...common}
-      variant={cfg.pattern}
+      still={swatch || (cfg.speed === 0 && !wantsImage)}
+      variant={variant}
       palette={palette}
       full
       gain={gain}
       opacity={opacity}
       // A dim stage lifts its beats, so a sent message still reads at a quiet strength.
-      reactGain={Math.min(1.9, Math.max(1, 0.62 / opacity))}
+      reactGain={Math.min(2.4, Math.max(1, 0.62 / opacity))}
       awake={live && anyWorking}
-      speed={(cfg.speed / 50) * (live && anyWorking ? 1.45 : 1)}
+      speed={moving ? (cfg.speed / 50) * (live && anyWorking ? 1.45 : 1) : 0}
       spot={[cfg.focus.x, cfg.focus.y, cfg.reach / 100]}
-      angle={DIRECTIONAL.includes(cfg.pattern) ? cfg.angle : undefined}
+      angle={DIRECTIONAL.includes(variant) ? cfg.angle : undefined}
       image={wantsImage ? bitmap : null}
       imageColour={wantsImage && cfg.colour === 'image'}
+      overlay={effect ? cfg.effectAmount / 100 : 0}
     />
   );
+}
+
+/** An image's strength: it shows from the first step (a picture at a few percent is just a stain), up to as it is at 100. */
+function imageStrength(a: number) {
+  const k = a / 100;
+  return { gain: 0.72 + 0.5 * k, opacity: Math.min(1, 0.42 + 0.58 * k) };
 }

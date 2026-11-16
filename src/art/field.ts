@@ -38,6 +38,8 @@ export interface Look {
   sat?: number;
   /** With an image: its own colours instead of the palette. */
   imageColour?: boolean;
+  /** With an image: the variant's moving pattern played as light over it, 0..1 (0 or absent: the image alone). */
+  overlay?: number;
   variant: DitherVariant;
   palette: DitherPalette;
   focus: [number, number];
@@ -454,6 +456,8 @@ export class Field {
   private imageSrc: (CanvasImageSource & { width: number; height: number }) | null = null;
   private px: ImagePixels | null = null;
   private imgColour = false;
+  /** Strength of the moving pattern over an image (Look.overlay). */
+  private overlay = 0;
   /** The image colour at the point just shaded (image colours only). */
   private ir = 0;
   private ig = 0;
@@ -581,6 +585,8 @@ export class Field {
     this.sc = ang == null ? STREAKS_COS : Math.cos(ang);
     this.ss = ang == null ? STREAKS_SIN : Math.sin(ang);
     this.imgColour = !!s.imageColour;
+    this.overlay = s.overlay && s.overlay > 0 ? Math.min(1, s.overlay) : 0;
+    this.ogFrame = (this.ogFrame + 1) >>> 0 || 1;
     if (this.imageSrc && (!this.px || Math.abs(this.px.aspect - aspect) > 0.01)) this.px = rasterize(this.imageSrc, aspect);
 
     const lut = this.lut;
@@ -848,7 +854,9 @@ export class Field {
         return;
       }
     }
-    const v = this.flat
+    const v = this.overlay > 0 && (this.flat || this.px)
+      ? this.overlaid(this.flat ? 0.62 : this.image(px, py), px, py)
+      : this.flat
       ? 0.62
       : this.px
         ? this.image(px, py)
@@ -873,6 +881,69 @@ export class Field {
     const f = q * q;
     return f + (1 - f) * this.spEven;
   }
+
+  /**
+   * The moving pattern as light over an image's brightness `v`: the image steps back a little and
+   * the pattern lifts it where it passes, brightest over the image's own light.
+   */
+  private overlaid(v: number, px: number, py: number): number {
+    // The pattern is read from a grid at half the cell rows, each node worked out once per frame
+    // and interpolated between (as the soft variants draw themselves), so the light over an image
+    // costs about what the pattern alone does.
+    const rows = this.cellRows > 0 ? Math.max(8, Math.ceil(this.cellRows / 2)) : 96;
+    const cols = Math.ceil(this.aspect * rows) + 3;
+    const n = (rows + 3) * cols;
+    if (this.ogRows !== rows || this.ogCols !== cols) {
+      this.ogRows = rows;
+      this.ogCols = cols;
+      if (this.og.length < n) {
+        this.og = new Float32Array(n);
+        this.ogStamp = new Uint32Array(n);
+      } else this.ogStamp.fill(0);
+    }
+    let gx = px * rows;
+    let gy = py * rows;
+    gx = gx < 0 ? 0 : gx > cols - 2 ? cols - 2 : gx;
+    gy = gy < 0 ? 0 : gy > rows + 1 ? rows + 1 : gy;
+    const i = gx | 0;
+    const j = gy | 0;
+    const tx = gx - i;
+    const ty = gy - j;
+    const a = this.ogAt(i, j, rows, cols);
+    const b = this.ogAt(i + 1, j, rows, cols);
+    const c = this.ogAt(i, j + 1, rows, cols);
+    const d = this.ogAt(i + 1, j + 1, rows, cols);
+    const top = a + (b - a) * tx;
+    const p = top + (c + (d - c) * tx - top) * ty;
+    const k = this.overlay;
+    return v * (1 - 0.35 * k) + k * (p > 0 ? p : 0) * (0.3 + 0.7 * v);
+  }
+
+  /** The pattern at grid node (i, j) this frame (see `overlaid`). */
+  private ogAt(i: number, j: number, rows: number, cols: number): number {
+    const idx = j * cols + i;
+    if (this.ogStamp[idx] === this.ogFrame) return this.og[idx];
+    const x = i / rows;
+    const y = j / rows;
+    const mode = this.mode;
+    const p = mode === 'streaks' ? this.streaks(x, y) : mode === 'tubes' ? this.tubes(x, y) : mode === 'tiles' ? this.tiles(x, y) : this.broad(x, y);
+    this.og[idx] = p;
+    this.ogStamp[idx] = this.ogFrame;
+    return p;
+  }
+
+  /** An image with a moving effect over it. */
+  get overlaying() {
+    return this.overlay > 0 && this.imageSrc != null;
+  }
+
+  /** Rows of cells the renderer draws this frame (sets the overlay grid's spacing; 0 unknown). */
+  cellRows = 0;
+  private og = new Float32Array(0);
+  private ogStamp = new Uint32Array(0);
+  private ogFrame = 1;
+  private ogRows = 0;
+  private ogCols = 0;
 
   /** An image's brightness, with a slow drift of the threshold so a moving field is never quite still. */
   private image(px: number, py: number): number {
@@ -1428,7 +1499,10 @@ function ditherRenderer(el: Surface, soft = false): Renderer | null {
       // a quarter of the work, and nothing they draw is finer than two cells. Tubes and tiles
       // have crisp edges and are evaluated per cell (they cache per tube or tile).
       // An image is sampled per cell: its detail is the point.
-      const smooth = look.variant !== 'tubes' && look.variant !== 'tiles' && !field.hasImage;
+      // With a moving effect over an image, the image is read like the soft variants too: the frame
+      // then costs what the pattern alone does.
+      const smooth = look.variant !== 'tubes' && look.variant !== 'tiles' && (!field.hasImage || field.overlaying);
+      field.cellRows = h;
       // A full-bleed backdrop gets a couple more levels: its dim reaches read as soft light, not scattered dots.
       const levels = look.full ? LEVELS + 2 : LEVELS;
       if (smooth) {
@@ -1650,7 +1724,8 @@ function asciiRenderer(el: Surface, kind: 'ascii' | 'halftone' = 'ascii'): Rende
       const H = rows * gh;
 
       // The broad variants are evaluated on every other glyph and interpolated (see the dither renderer).
-      const smooth = !tubes && !field.hasImage;
+      const smooth = !tubes && (!field.hasImage || field.overlaying);
+      field.cellRows = rows;
       if (smooth) coarse.fill(field, cols, rows, aspect, c);
 
       // 1. Glyph masks: only cells whose glyph changed since the last frame are touched.
@@ -1810,6 +1885,7 @@ function softImageRenderer(el: Surface): Renderer | null {
       // gain, hollow and spot leave), dithered so its gradient does not band.
       const d = mimg.data;
       let o = 0;
+      field.cellRows = mh;
       for (let y = 0; y < mh; y++) {
         const py = (y + 0.5) / mh;
         const brow = (y & 7) * 8;
@@ -2113,7 +2189,9 @@ export class FieldEngine {
     const cost = performance.now() - t0;
     // A slow drift needs fewer frames to look just as smooth (beats still draw at their own rate below).
     const slow = this.look.speed < 0.75 ? 1.35 : 1;
-    const base = this.interval * QUALITY_INTERVAL[this.quality] * slow;
+    // Light moving over a still image: the picture holds the eye, so fewer frames read as smooth
+    // and the frame budget stays that of the pattern alone.
+    const base = this.interval * QUALITY_INTERVAL[this.quality] * slow * (this.field.overlaying ? 1.5 : 1);
     this.judge(late, cost, base);
     if (!this.running) return;
     // Nothing moves any more (rest, or a waiting field that has stilled): stop until something changes.

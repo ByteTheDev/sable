@@ -19,7 +19,17 @@ export function Background() {
   const images = useStore((s) => s.settings.backdropImages);
   const [view, setView] = useState<'home' | 'session'>('home');
   const off = cfg.source === 'off';
-  const softImage = cfg.source === 'image' && cfg.style === 'soft';
+  const isImage = cfg.source === 'image';
+  const softImage = isImage && cfg.style === 'soft';
+  // What moves: the pattern, or the effect over an image (an image alone is still).
+  const moving: BackdropPattern | null = isImage ? (cfg.effect === 'none' ? null : cfg.effect) : cfg.pattern;
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const upload = async (file: File | undefined) => {
+    if (!file) return;
+    setUploadError(null);
+    const r = await addBackdropImage(file);
+    if ('error' in r) setUploadError(r.error);
+  };
 
   return (
     <>
@@ -31,13 +41,20 @@ export function Background() {
           </button>
         }
       >
-        <Preview cfg={cfg} view={view} onView={setView} />
+        <Preview cfg={cfg} view={view} onView={setView} onFile={upload} onReject={setUploadError} />
         <Presets cfg={cfg} />
         <Row label="Source">
           <Segmented<BackdropSource>
             id="bg-source"
             value={cfg.source}
-            onChange={(source) => setBackdrop({ source, image: source === 'image' && !cfg.image ? (images[images.length - 1]?.id ?? null) : cfg.image })}
+            onChange={(source) =>
+              setBackdrop({
+                source,
+                image: source === 'image' && !cfg.image ? (images[images.length - 1]?.id ?? null) : cfg.image,
+                // A picture fills the stage: the default's low glow would show only its lower edge.
+                ...(source === 'image' && cfg.reach === DEFAULT_BACKDROP.reach ? { reach: 100 } : {}),
+              })
+            }
             options={[
               { value: 'pattern', label: 'Pattern' },
               { value: 'image', label: 'Image' },
@@ -60,7 +77,29 @@ export function Background() {
             />
           </Row>
         )}
-        {cfg.source === 'image' && <Images cfg={cfg} />}
+        {isImage && <Images cfg={cfg} onFile={upload} />}
+        {uploadError && (
+          <div className="bg-error" role="alert">
+            {uploadError}
+          </div>
+        )}
+        {isImage && (
+          <Row label="Effect">
+            <Segmented<BackdropPattern | 'none'>
+              id="bg-effect"
+              value={cfg.effect}
+              onChange={(effect) => setBackdrop({ effect })}
+              options={[
+                { value: 'none', label: 'None' },
+                { value: 'streaks', label: 'Streaks' },
+                { value: 'tubes', label: 'Tubes' },
+                { value: 'tiles', label: 'Tiles' },
+                { value: 'aurora', label: 'Aurora' },
+              ]}
+            />
+          </Row>
+        )}
+        {isImage && cfg.effect !== 'none' && <SliderRow label="Effect strength" value={cfg.effectAmount} onChange={(effectAmount) => setBackdrop({ effectAmount })} />}
         {!off && (
           <Row label="Style">
             <Segmented<BackdropStyle>
@@ -84,8 +123,8 @@ export function Background() {
           <SliderRow label="Sessions" value={cfg.sessionAmount} onChange={(sessionAmount) => setBackdrop({ sessionAmount })} />
           <SliderRow label="Reach" value={cfg.reach} onChange={(reach) => setBackdrop({ reach })} />
           {!softImage && <SliderRow label="Detail" value={cfg.detail} onChange={(detail) => setBackdrop({ detail })} />}
-          <SliderRow label="Speed" value={cfg.speed} onChange={(speed) => setBackdrop({ speed })} />
-          {cfg.source === 'pattern' && DIRECTIONAL.includes(cfg.pattern) && (
+          {moving && <SliderRow label="Speed" value={cfg.speed} onChange={(speed) => setBackdrop({ speed })} />}
+          {moving && DIRECTIONAL.includes(moving) && (
             <SliderRow label="Angle" value={cfg.angle} max={180} unit="°" onChange={(angle) => setBackdrop({ angle })} />
           )}
         </Card>
@@ -130,7 +169,19 @@ const NUDGE = 0.02;
  * press on the stage), arrow keys move it, Enter or a double-click recentres it. A dropped image
  * becomes the background.
  */
-function Preview({ cfg, view, onView }: { cfg: BackdropConfig; view: 'home' | 'session'; onView: (v: 'home' | 'session') => void }) {
+function Preview({
+  cfg,
+  view,
+  onView,
+  onFile,
+  onReject,
+}: {
+  cfg: BackdropConfig;
+  view: 'home' | 'session';
+  onView: (v: 'home' | 'session') => void;
+  onFile: (f: File) => void;
+  onReject: (message: string) => void;
+}) {
   const stage = useRef<HTMLDivElement>(null);
   const handle = useRef<HTMLButtonElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -170,9 +221,13 @@ function Preview({ cfg, view, onView }: { cfg: BackdropConfig; view: 'home' | 's
   const onDrop = (e: DragEvent) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
+    // Ours alone: the stage's own drop (attachments for the composer) must not take it too.
+    e.stopPropagation();
     setDropping(false);
-    const file = [...e.dataTransfer.files].find((f) => f.type.startsWith('image/'));
-    if (file) void addBackdropImage(file);
+    const files = [...e.dataTransfer.files];
+    const file = files.find((f) => f.type.startsWith('image/')) ?? files[0];
+    if (file) onFile(file);
+    else onReject('Drop an image file.');
   };
 
   return (
@@ -284,7 +339,7 @@ function Presets({ cfg }: { cfg: BackdropConfig }) {
 
 // ── images ──
 
-function Images({ cfg }: { cfg: BackdropConfig }) {
+function Images({ cfg, onFile }: { cfg: BackdropConfig; onFile: (f: File) => Promise<void> }) {
   const images = useStore((s) => s.settings.backdropImages);
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -292,7 +347,7 @@ function Images({ cfg }: { cfg: BackdropConfig }) {
   const choose = async (file: File | undefined) => {
     if (!file) return;
     setBusy(true);
-    await addBackdropImage(file);
+    await onFile(file);
     setBusy(false);
   };
 

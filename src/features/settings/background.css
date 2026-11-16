@@ -409,6 +409,14 @@
   box-shadow: inset 0 0 0 1px var(--line), 0 0 0 2px var(--focus);
 }
 
+/* Why an image was not taken: one plain line, right-aligned under the images like a control's own text. */
+.bg-error {
+  padding: 0 16px 12px;
+  text-align: right;
+  font-size: var(--t-small);
+  color: var(--red);
+}
+
 /* ── slider rows ── */
 
 .bg-slider {
