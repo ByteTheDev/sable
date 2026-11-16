@@ -817,22 +817,12 @@ textarea.field {
 /* ───────────── material: reactive hairlines ─────────────
    Give a card, panel, menu or dialog `data-spot` and its hairline brightens within --spot-r of
    the pointer. ui/spot.ts (one rAF-throttled listener on the document) adds one leaf
-   <span class="spot-ring"> to the surface under the pointer the first time it is hovered and
-   moves the light by writing --mx/--my on that span only, so the surface itself never restyles.
+   <span class="spot-ring"><i></i></span> to the surface under the pointer the first time it is
+   hovered. The ring is a static 1px band (a mask that never changes); the light is a small disc
+   inside it, moved by transform. While a surface is lit the disc is its own layer, so a pointer
+   move restyles one element and repaints nothing: no panel-sized re-raster per move.
    The ring sits just inside the border, so overflow: hidden does not clip it. Elements without a
    position become relative. */
-
-@property --mx {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: -1000px;
-}
-
-@property --my {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: -1000px;
-}
 
 :where([data-spot]) {
   position: relative;
@@ -844,7 +834,7 @@ textarea.field {
   z-index: 2;
   padding: 1px;
   border-radius: inherit;
-  background: radial-gradient(var(--spot-r) circle at var(--mx) var(--my), var(--spot), transparent 100%);
+  overflow: hidden;
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -857,8 +847,23 @@ textarea.field {
   pointer-events: none;
 }
 
+/* The light: a --spot-r disc centred on the pointer (spot.ts sets its transform). */
+.spot-ring > i {
+  position: absolute;
+  left: calc(var(--spot-r) * -1);
+  top: calc(var(--spot-r) * -1);
+  width: calc(var(--spot-r) * 2);
+  height: calc(var(--spot-r) * 2);
+  background: radial-gradient(circle closest-side, var(--spot), transparent);
+  transform: translate(-9999px, -9999px);
+}
+
 [data-spot-on] > .spot-ring {
   opacity: 1;
+}
+
+[data-spot-on] > .spot-ring > i {
+  will-change: transform;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -4,26 +4,32 @@
  *
  * One passive pointermove listener on the document, throttled to one rAF. Each frame it finds
  * the closest [data-spot] ancestor of the element under the pointer and moves the light on that
- * surface's ring: a single leaf <span class="spot-ring"> added the first time the surface is
- * hovered (and again if a re-render drops it). Only that leaf's --mx/--my change, so a move
- * restyles one childless element and never the surface's subtree. Nothing runs while the pointer
+ * surface's ring: a <span class="spot-ring"><i></i></span> added the first time the surface is
+ * hovered (and again if a re-render drops it). Only the disc's transform changes, so a move
+ * restyles one childless element and repaints nothing (the disc is its own layer while lit; the
+ * ring's mask never changes). Nothing runs while the pointer
  * is still, and nothing at all for touch or when the user prefers reduced motion. Features only
  * add the attribute; they never listen themselves.
  */
 
 let started = false;
 
-function ringOf(el: HTMLElement): HTMLElement {
+/** The surface's light (the disc inside its ring), created the first time it is needed. */
+function lightOf(el: HTMLElement): HTMLElement {
   const last = el.lastElementChild;
-  if (last instanceof HTMLElement && last.classList.contains('spot-ring')) return last;
-  let ring = el.querySelector<HTMLElement>(':scope > .spot-ring');
+  let ring = last instanceof HTMLElement && last.classList.contains('spot-ring') ? last : el.querySelector<HTMLElement>(':scope > .spot-ring');
   if (!ring) {
     ring = document.createElement('span');
     ring.className = 'spot-ring';
     ring.setAttribute('aria-hidden', 'true');
     el.append(ring);
   }
-  return ring;
+  let light = ring.firstElementChild as HTMLElement | null;
+  if (!light) {
+    light = document.createElement('i');
+    ring.append(light);
+  }
+  return light;
 }
 
 export function startSpot() {
@@ -58,13 +64,12 @@ export function startSpot() {
     const k = r.width ? el.offsetWidth / r.width : 1;
     const mx = Math.round((x - r.left) * k);
     const my = Math.round((y - r.top) * k);
-    const ring = ringOf(el);
+    const light = lightOf(el);
     set(el);
     if (mx === lastX && my === lastY) return;
     lastX = mx;
     lastY = my;
-    ring.style.setProperty('--mx', `${mx}px`);
-    ring.style.setProperty('--my', `${my}px`);
+    light.style.transform = `translate(${mx}px, ${my}px)`;
   };
 
   const schedule = () => {

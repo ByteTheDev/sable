@@ -19,7 +19,8 @@ export type { DitherPalette, DitherTexture, DitherVariant } from './field';
  * Adaptive quality: each engine steps itself down when the machine is busy (see FieldEngine in
  * field.ts). The main thread's share of that judgement comes from here: one shared observer of
  * long animation frames (long tasks where unsupported), summed per second and sent to every
- * running field as "pressure"; its 1 s timer runs only while some field is animating. When a
+ * running field as "pressure"; its 1 s timer runs only while some field is animating and there
+ * is load to report or someone is using the app. When a
  * field reports a new level, the stage is re-sized with coarser cells (QUALITY_CELL) and the
  * level is mirrored on <html data-quality> so CSS can shed costly effects too.
  */
@@ -82,6 +83,41 @@ let eventObserver: PerformanceObserver | null = null;
 let loadTimer = 0;
 let loadMs = 0;
 let loadSent = 0;
+/** When the user last pointed, typed or scrolled: the frame probe below runs only shortly after. */
+let lastInput = 0;
+const INPUTS = ['pointermove', 'pointerdown', 'keydown', 'wheel'] as const;
+const inUse = () => performance.now() - lastInput < 1500;
+const markInput = () => {
+  lastInput = performance.now();
+  armLoad();
+};
+
+/**
+ * The once-a-second judgement runs only while there is something to judge: load was reported, or
+ * someone is using the app. A window left alone has no timer and requests no frames.
+ */
+function armLoad() {
+  if (!loadTimer && loadListeners.size) loadTimer = window.setTimeout(judgeLoad, 1000);
+}
+
+function judgeLoad() {
+  loadTimer = 0;
+  const ms = Math.round(loadMs);
+  loadMs = 0;
+  const using = inUse();
+  if (using) probeFrames();
+  // A quiet second is sent once, then nothing until there is load again.
+  if (ms !== 0 || loadSent !== 0) {
+    loadSent = ms;
+    for (const l of loadListeners) l(ms);
+  }
+  if (ms !== 0 || loadSent !== 0 || using) armLoad();
+}
+
+function addLoad(ms: number) {
+  loadMs += ms;
+  armLoad();
+}
 
 function watchLoad(fn: (ms: number) => void) {
   loadListeners.add(fn);
@@ -90,7 +126,7 @@ function watchLoad(fn: (ms: number) => void) {
     const type = types.includes('long-animation-frame') ? 'long-animation-frame' : types.includes('longtask') ? 'longtask' : '';
     if (type) {
       loadObserver = new PerformanceObserver((list) => {
-        for (const e of list.getEntries()) loadMs += e.duration;
+        for (const e of list.getEntries()) addLoad(e.duration);
       });
       try {
         loadObserver.observe({ type, buffered: false });
@@ -100,7 +136,7 @@ function watchLoad(fn: (ms: number) => void) {
     }
     if (types.includes('event')) {
       eventObserver = new PerformanceObserver((list) => {
-        for (const e of list.getEntries()) loadMs += e.duration;
+        for (const e of list.getEntries()) addLoad(e.duration);
       });
       try {
         eventObserver.observe({ type: 'event', durationThreshold: 104, buffered: false } as PerformanceObserverInit);
@@ -108,15 +144,8 @@ function watchLoad(fn: (ms: number) => void) {
         eventObserver = null;
       }
     }
-    loadTimer = window.setInterval(() => {
-      const ms = Math.round(loadMs);
-      loadMs = 0;
-      probeFrames();
-      // A quiet second is sent once, then nothing until there is load again.
-      if (ms === 0 && loadSent === 0) return;
-      loadSent = ms;
-      for (const l of loadListeners) l(ms);
-    }, 1000);
+    for (const t of INPUTS) window.addEventListener(t, markInput, { passive: true, capture: true });
+    armLoad();
   }
   return () => {
     loadListeners.delete(fn);
@@ -125,7 +154,9 @@ function watchLoad(fn: (ms: number) => void) {
     loadObserver = null;
     eventObserver?.disconnect();
     eventObserver = null;
-    clearInterval(loadTimer);
+    for (const t of INPUTS) window.removeEventListener(t, markInput, { capture: true });
+    clearTimeout(loadTimer);
+    loadTimer = 0;
     loadMs = loadSent = 0;
   };
 }
@@ -133,7 +164,8 @@ function watchLoad(fn: (ms: number) => void) {
 /**
  * A late compositor (a busy GPU, or a page that takes long to draw) does not show up as long
  * animation frames, so once a second a few frames are timed with rAF: every gap well past a
- * frame counts as load. Eight frames a second, nothing in between.
+ * frame counts as load. Eight frames a second, nothing in between, and only while the app is in
+ * use (input within the last 1.5 s), so a window nobody touches asks for no frames at all.
  */
 let probing = false;
 function probeFrames() {
@@ -142,7 +174,7 @@ function probeFrames() {
   let last = 0;
   let n = 0;
   const step = (t: number) => {
-    if (last && t - last > 50) loadMs += t - last - 16.7;
+    if (last && t - last > 50) addLoad(t - last - 16.7);
     last = t;
     if (++n < 8 && loadListeners.size) requestAnimationFrame(step);
     else probing = false;
