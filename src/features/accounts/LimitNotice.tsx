@@ -8,6 +8,7 @@ import { switchSessionAccount } from '@/state/actions';
 import { accountName, useLimitLevel } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { Spinner } from '@/ui';
+import { DATE_LOCALE, timeOf } from '@/features/usage/format';
 
 /** "5-hour limit" stays as it is; any weekly window reads "weekly limit". */
 function windowName(window?: string) {
@@ -20,10 +21,10 @@ export function resetLine(resetsAt: number | undefined, now: number): string | u
   if (!resetsAt || resetsAt <= now) return undefined;
   const d = new Date(resetsAt);
   const today = new Date(now);
-  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const time = timeOf(resetsAt);
   const sameDay = d.toDateString() === today.toDateString();
   const tomorrow = new Date(now + 86_400_000).toDateString() === d.toDateString();
-  const day = sameDay ? '' : tomorrow ? 'tomorrow ' : `${d.toLocaleDateString(undefined, { weekday: 'long' })} `;
+  const day = sameDay ? '' : tomorrow ? 'tomorrow ' : `${d.toLocaleDateString(DATE_LOCALE, { weekday: 'long' })} `;
   const left = resetIn(resetsAt, now);
   return `Resets ${day}at ${time}${left ? `, in ${left}` : ''}`;
 }

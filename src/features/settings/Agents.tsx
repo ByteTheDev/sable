@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { PROVIDER_NAME } from '@/art/Logo';
-import { baseName } from '@/lib/format';
-import { Card, Empty, SearchField, Skeleton, useContextTarget, useProviderCaps } from './parts';
+import { Card, Empty, SearchField, Skeleton, useContextTarget, useProviderCaps, Scope } from './parts';
 import { rank, UseList, type UseItem } from './UseList';
 
 export function Agents() {
@@ -26,10 +25,8 @@ export function Agents() {
   return (
     <div className="set-stack">
       <div className="set-toolbar">
-        <span className="set-context">
-          {PROVIDER_NAME[provider]}
-          {cwd && <span className="faint"> in {baseName(cwd)}</span>}
-        </span>
+        <span className="grow" />
+        <Scope provider={provider} cwd={cwd} />
       </div>
       {agents.length > 5 && <SearchField value={query} onChange={setQuery} placeholder="Search agents" count={shown.length} />}
       {!caps ? (

@@ -6,7 +6,7 @@ import { openSettings, readLimitsNow, refreshLimits } from '@/state/actions';
 import { accountName, useLimitsReport } from '@/state/hooks';
 import { accountKey, useStore } from '@/state/store';
 import { cx, IconButton, Tip } from '@/ui';
-import { clock, duration, exactTime, isApiKey, planText, STALE_MS, windowLevel } from './format';
+import { clock, duration, exactTime, isApiKey, NUMBER_LOCALE, planText, STALE_MS, windowLevel } from './format';
 
 const NO_SAMPLES: [number, number][] = [];
 
@@ -242,7 +242,7 @@ export function AccountLimits({ refs, pending }: { refs: AccountRef; pending: bo
 function Extra({ report }: { report: LimitsReport | undefined }) {
   const ex = report?.extra;
   if (ex?.enabled && (ex.limit || ex.used)) {
-    const money = (v?: number) => (v === undefined ? '' : new Intl.NumberFormat([], { style: 'currency', currency: ex.currency || 'USD' }).format(v / 100));
+    const money = (v?: number) => (v === undefined ? '' : new Intl.NumberFormat(NUMBER_LOCALE, { style: 'currency', currency: ex.currency || 'USD' }).format(v / 100));
     const pct = ex.percent ?? (ex.limit && ex.used !== undefined ? Math.round((ex.used / ex.limit) * 100) : undefined);
     return (
       <div className="ul-row ul-extra">
@@ -274,7 +274,7 @@ function Extra({ report }: { report: LimitsReport | undefined }) {
 /** A credits balance as the agent sends it ("43106.95142") reads as a number with at most two decimals. */
 function balance(raw?: string) {
   const n = Number(raw);
-  return raw && Number.isFinite(n) ? n.toLocaleString([], { maximumFractionDigits: 2 }) : raw;
+  return raw && Number.isFinite(n) ? n.toLocaleString(NUMBER_LOCALE, { maximumFractionDigits: 2 }) : raw;
 }
 
 /** The Limits part of the Usage page: one block per account, one refresh for all. */

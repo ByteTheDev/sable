@@ -86,29 +86,8 @@ function Account() {
 
   return (
     <div className="account">
-      <div className="account-switch" onPointerDownCapture={peekCurrent} onKeyDownCapture={peekCurrent}>
-        <AccountSwitcher />
-      </div>
+      <AccountSwitcher />
       <IconButton icon="settings" label="Settings" keys="mod+," tipSide="top" onClick={() => openSettings()} />
     </div>
-  );
-}
-
-const OPEN_KEYS = new Set(['Enter', ' ', 'ArrowDown', 'ArrowUp']);
-
-/**
- * The limits left the footer for the account menu: as it opens, the account in use takes the
- * focus, so its limits show beside the menu at once instead of after pointing at a row.
- * (Belongs in the switcher itself; until it does this there, the footer does it from outside.)
- */
-function peekCurrent(e: { type: string; key?: string; currentTarget: HTMLElement }) {
-  if (e.type === 'keydown' && !OPEN_KEYS.has(e.key ?? '')) return;
-  if (e.currentTarget.querySelector('.acs-trigger[data-state="open"]')) return;
-  requestAnimationFrame(() =>
-    requestAnimationFrame(() => {
-      const pop = document.querySelector('.acs-pop');
-      if (!pop || (pop.contains(document.activeElement) && document.activeElement?.matches('[data-current]'))) return;
-      (pop.querySelector<HTMLElement>('.acs-row[data-current]') ?? pop.querySelector<HTMLElement>('.acs-row'))?.focus();
-    }),
   );
 }

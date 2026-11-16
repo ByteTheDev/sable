@@ -259,7 +259,7 @@ if (import.meta.env.DEV) (window as unknown as { __sableResting?: () => boolean 
 
 // ── glyph atlas (needs the page's fonts, so it is drawn here and handed to the engine) ──
 
-const atlases = new Map<string, Promise<ImageBitmap | HTMLCanvasElement>>();
+const atlases = new Map<string, Promise<HTMLCanvasElement>>();
 
 /** White glyphs on transparent, one device-pixel cell each, side by side. */
 function glyphAtlas(gw: number, gh: number, dpr: number, font: number) {
@@ -281,7 +281,7 @@ function glyphAtlas(gw: number, gh: number, dpr: number, font: number) {
           ctx.textBaseline = 'middle';
           for (let i = 1; i < RAMP.length; i++) ctx.fillText(RAMP[i], i * gw + gw / 2, gh / 2 + dpr * 0.5);
         }
-        return typeof createImageBitmap === 'function' ? createImageBitmap(c).catch(() => c) : c;
+        return c;
       });
     atlases.set(key, p);
   }
@@ -437,7 +437,9 @@ export function DitherField({
       if (imageRef.current) post({ type: 'image', id, image: imageRef.current });
       host.dataset.thread = 'worker';
       p = {
-        resize: (metrics, atlas) => post({ type: 'resize', id, metrics, atlas: atlas as ImageBitmap | undefined }),
+        // The atlas is a fresh bitmap per field and is handed over, not copied: a copied bitmap is
+        // read back from the GPU in the posting task (tens of milliseconds for the Settings swatches).
+        resize: (metrics, atlas) => post({ type: 'resize', id, metrics, atlas: atlas as ImageBitmap | undefined }, atlas instanceof ImageBitmap ? [atlas] : undefined),
         look: (l) => post({ type: 'look', id, look: l }),
         pointer: (pt) => post({ type: 'pointer', id, pointer: pt }),
         beat: (kind, x, y, strength) => post({ type: 'beat', id, kind, x, y, strength }),
@@ -506,8 +508,11 @@ export function DitherField({
       const k = `${A.gw}x${A.gh}@${A.dpr}/${A.font}`;
       if (k === atlasKey) return;
       atlasKey = k;
-      void glyphAtlas(A.gw, A.gh, A.dpr, A.font).then((atlas) => {
-        if (!disposed && atlasKey === k) p.resize(metrics, atlas);
+      void glyphAtlas(A.gw, A.gh, A.dpr, A.font).then(async (canvas) => {
+        if (disposed || atlasKey !== k) return;
+        // A worker takes its own bitmap (a canvas element cannot cross); the main thread draws from the canvas.
+        const atlas = w ? (typeof createImageBitmap === 'function' ? await createImageBitmap(canvas).catch(() => null) : null) : canvas;
+        if (atlas && !disposed && atlasKey === k) p.resize(metrics, atlas);
       });
     }
     relayout.current = resize;

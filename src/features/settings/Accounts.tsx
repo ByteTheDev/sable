@@ -40,7 +40,7 @@ export function Accounts() {
       </label>
       <p className="set-foot-note">
         <Icon name="lock" size={14} />
-        <span>Sign-in happens in your browser through each agent's own CLI, so Sable never sees your password or tokens. Every account you add is a separate profile with its own settings and history.</span>
+        <span>You sign in through each agent's own CLI in your browser: Sable never sees passwords or tokens. Each account keeps its own settings and history.</span>
       </p>
     </div>
   );

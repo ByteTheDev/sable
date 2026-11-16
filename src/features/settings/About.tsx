@@ -27,7 +27,7 @@ export function About() {
         <LogoMark size={48} />
         <Wordmark className="about-word" />
         <span className="about-ver num">Version {version || 'unknown'}</span>
-        <p className="about-line">One calm place to run Claude Code and Codex: every session, tool call and change in a single timeline.</p>
+        <p className="about-line">Claude Code and Codex in one place: every session, step and change in one timeline.</p>
       </div>
 
       <Card title="Agents">

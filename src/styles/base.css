@@ -107,10 +107,15 @@ kbd {
   outline: none;
 }
 
-/* Keyboard focus: one neutral ring at reduced strength that reads on any surface. */
+/* Keyboard focus: one neutral ring at reduced strength that reads on any surface. The ring follows
+   the element's own shape; only bare elements (links in text, summaries) get a rounded one, so
+   focusing a control never changes its radius. */
 :focus-visible {
   outline: 1.5px solid var(--focus);
   outline-offset: 2px;
+}
+
+:where(a, summary, label, [tabindex]:not([class])):focus-visible {
   border-radius: var(--r-sm);
 }
 
@@ -216,6 +221,13 @@ kbd {
 }
 
 /* ── scrollbars: thin, appear on hover ── */
+
+/* scrollbar-color is inherited: the scroller's direct children hold a value of their own, so the
+   hover change below restyles the scroller and its children, never the whole subtree. Scrollers
+   nested inside keep their own rules (.scroll, .hscroll, .vscroll); others show the hover tone. */
+.scroll > * {
+  scrollbar-color: var(--scrollbar) transparent;
+}
 
 .scroll {
   overflow: auto;

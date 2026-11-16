@@ -3,6 +3,7 @@ import { DEFAULT_ACCOUNT, type Capabilities, type ModeInfo, type ProviderId } fr
 import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
 import { CopyButton } from '@/components/CopyButton';
 import { Icon, MODE_ICON } from '@/icons';
+import { baseName } from '@/lib/format';
 import { homeAccountId } from '@/state/actions';
 import { capsKey, ensureProviderCaps, useStore } from '@/state/store';
 import { cx, PathLabel, Segmented } from '@/ui';
@@ -131,6 +132,25 @@ export function ProviderLabel({ provider }: { provider: ProviderId }) {
     <span className="prov-label">
       <ProviderMark provider={provider} size={13} />
       {PROVIDER_NAME[provider]}
+    </span>
+  );
+}
+
+/**
+ * Where a page's settings come from, at the right end of its toolbar: the agent (when the page has
+ * no picker for it) and the project folder. One look on every page that has a scope.
+ */
+export function Scope({ provider, cwd }: { provider?: ProviderId; cwd?: string | null }) {
+  if (!provider && !cwd) return null;
+  return (
+    <span className="set-scope">
+      {provider && <ProviderLabel provider={provider} />}
+      {cwd && (
+        <span className="set-scope-dir" title={cwd}>
+          <Icon name="folder" size={13} />
+          <span className="truncate">{baseName(cwd)}</span>
+        </span>
+      )}
     </span>
   );
 }

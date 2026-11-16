@@ -78,7 +78,7 @@ export function timeAgo(ts: number, now = Date.now()): string {
   const d = Math.round(h / 24);
   if (d < 7) return `${d}d`;
   if (d < 35) return `${Math.round(d / 7)}w`;
-  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return new Date(ts).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
 }
 
 /** "Today", "Yesterday", "This week", "Earlier" buckets for lists. */

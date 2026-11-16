@@ -1,20 +1,37 @@
 import type { AuthState, RateLimit } from '@shared/protocol';
 import { planLabel } from '@/features/connect/plan';
 
+/**
+ * Dates read in the interface's language (English day and month names), with the computer's own
+ * clock style (24-hour or not): a German system must not put "Sa" or "Do., 12. Nov." into English copy.
+ */
+export const DATE_LOCALE = 'en-GB';
+const HOUR12 = (() => {
+  try {
+    return new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hour12 ?? false;
+  } catch {
+    return false;
+  }
+})();
+const TIME: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', hour12: HOUR12 };
+export const timeOf = (ts: number) => new Date(ts).toLocaleTimeString(DATE_LOCALE, TIME);
+/** Numbers in the interface's language: "43,106.95". */
+export const NUMBER_LOCALE = 'en-US';
+
 const sameDay = (a: number, b: number) => new Date(a).toDateString() === new Date(b).toDateString();
 
 /** "03:40" today, "Tue 03:40" on another day this week, "17 Nov, 09:00" later. */
 export function clock(ts: number, now = Date.now()): string {
-  const time = new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const time = timeOf(ts);
   if (sameDay(ts, now)) return time;
-  if (Math.abs(ts - now) < 6 * 86_400_000) return `${new Date(ts).toLocaleDateString([], { weekday: 'short' })} ${time}`;
-  return `${new Date(ts).toLocaleDateString([], { day: 'numeric', month: 'short' })}, ${time}`;
+  if (Math.abs(ts - now) < 6 * 86_400_000) return `${new Date(ts).toLocaleDateString(DATE_LOCALE, { weekday: 'short' })} ${time}`;
+  return `${new Date(ts).toLocaleDateString(DATE_LOCALE, { day: 'numeric', month: 'short' })}, ${time}`;
 }
 
 /** The full date and time, for tooltips: "Monday 17 November, 09:00". */
 export function exactTime(ts: number): string {
   const d = new Date(ts);
-  return `${d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })}, ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  return `${d.toLocaleDateString(DATE_LOCALE, { weekday: 'long', day: 'numeric', month: 'long' })}, ${timeOf(ts)}`;
 }
 
 /** "2h 14m", "38m", "3d 4h", "under a minute". */
@@ -28,14 +45,14 @@ export function duration(ms: number): string {
   return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
 }
 
-/** Day labels for the chart: "Mon", "Nov 3", "Today". */
+/** Day labels for the chart: "Mon", "3 Nov", "Today". */
 export function dayLabel(day: string, style: 'weekday' | 'date' | 'long', today: string): string {
   if (day === today && style !== 'long') return 'Today';
   const [y, m, d] = day.split('-').map(Number);
   const date = new Date(y, m - 1, d, 12);
-  if (style === 'weekday') return date.toLocaleDateString([], { weekday: 'short' });
-  if (style === 'date') return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  if (style === 'weekday') return date.toLocaleDateString(DATE_LOCALE, { weekday: 'short' });
+  if (style === 'date') return date.toLocaleDateString(DATE_LOCALE, { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(DATE_LOCALE, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 /** Amber near a cap, red at it; nothing otherwise (the only colours a limit may use). */

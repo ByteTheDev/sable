@@ -17,6 +17,8 @@ import { NO_DATA, WindowRow, WindowSkeleton } from './Limits';
  */
 export function LimitsGlance({ provider, accountId = DEFAULT_ACCOUNT, header = true, onOpenUsage }: { provider: ProviderId; accountId?: string; header?: boolean; onOpenUsage?: () => void }) {
   const account = useStore((s) => s.providers[provider]?.accounts?.find((a) => a.id === accountId));
+  // An agent's only account goes by the agent's name (as in the switcher); several go by their own.
+  const several = useStore((s) => (s.providers[provider]?.accounts?.length ?? 0) > 1);
   const signedIn = useStore((s) => {
     const p = s.providers[provider];
     const a = p?.accounts?.find((x) => x.id === accountId);
@@ -58,7 +60,7 @@ export function LimitsGlance({ provider, accountId = DEFAULT_ACCOUNT, header = t
       {header && (
         <div className="ul-glance-head">
           <ProviderMark provider={provider} size={14} />
-          <span className="ul-account-name truncate">{account ? accountName(account) : PROVIDER_NAME[provider]}</span>
+          <span className="ul-account-name truncate">{account && several ? accountName(account) : PROVIDER_NAME[provider]}</span>
           {planText(account?.auth) && <span className="ul-account-plan">{planText(account?.auth)}</span>}
           {stale && (
             <span className="ul-asof num" title={`Read ${exactTime(stale)}`}>

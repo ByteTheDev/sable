@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import type { ProviderId } from '@shared/protocol';
 import { PROVIDER_NAME } from '@/art/Logo';
-import { baseName } from '@/lib/format';
 import { setSettings } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { Kbd } from '@/ui';
 import { RuleFile, TomlFile, useAgentConfig } from './AgentConfig';
 import { useInitialProvider } from './Models';
-import { Card, CodeChip, Empty, ModeList, ProviderPicker, Skeleton, useContextTarget, useProviderCaps } from './parts';
+import { Card, CodeChip, Empty, ModeList, ProviderPicker, Skeleton, useContextTarget, useProviderCaps, Scope } from './parts';
 
 export function Permissions() {
   const [provider, setProvider] = useState<ProviderId>(useInitialProvider());
@@ -48,7 +47,7 @@ export function Permissions() {
 
 function Rules({ provider, cwd }: { provider: ProviderId; cwd: string | null }) {
   const { files, error } = useAgentConfig(provider, cwd);
-  const aside = cwd && provider !== 'codex' ? <span className="set-context faint">{baseName(cwd)}</span> : undefined;
+  const aside = provider !== 'codex' ? <Scope cwd={cwd} /> : undefined;
 
   return (
     <>

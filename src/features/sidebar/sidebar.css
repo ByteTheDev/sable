@@ -415,8 +415,9 @@
   opacity: 0;
 }
 
+/* A new row waits until the rows below have mostly made room (Flip), so its text never lands on theirs. */
 .srow[data-enter] {
-  animation: srow-in var(--d-3) var(--ease-out) both;
+  animation: srow-in var(--d-3) var(--ease-out) 120ms both;
 }
 
 @keyframes srow-in {

@@ -6,7 +6,7 @@ import { bridge } from '@/lib/bridge';
 import { baseName, relPath } from '@/lib/format';
 import { useStore } from '@/state/store';
 import { Kbd, Segmented, Spinner } from '@/ui';
-import { CodeChip, Empty, Skeleton, useContextTarget } from './parts';
+import { CodeChip, Empty, Skeleton, useContextTarget, Scope } from './parts';
 
 /** Unsaved edits by file path. Module level, so they survive switching sections or closing Settings. */
 const drafts = new Map<string, string>();
@@ -173,9 +173,7 @@ function MemoryEditor({ provider, cwd }: { provider: ProviderId; cwd: string }) 
           }))}
         />
         <span className="grow" />
-        <span className="set-context faint">
-          {PROVIDER_NAME[provider]} in {baseName(cwd)}
-        </span>
+        <Scope provider={provider} cwd={cwd} />
       </div>
 
       <div className="mem-info">

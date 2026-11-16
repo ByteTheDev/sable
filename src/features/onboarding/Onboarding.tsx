@@ -424,7 +424,7 @@ function Agents({ reduce, onNext }: { reduce: boolean; onNext: (from?: Element |
     <>
       {/* Once everything is connected the headline rolls on to the next line of the story. */}
       <RollText key={ready ? 'ready' : 'connect'} as="h2" text={ready ? 'Your agents are ready' : 'Connect your agents'} className="onb-title" reduce={reduce} />
-      <RollText text={anyIn ? 'Each runs on its own subscription. Switch or sign out here, or later in Settings.' : 'Sign in with the subscription you already have. You can do this later in Settings.'} className="onb-sub" reduce={reduce} stagger={0.007} />
+      <RollText text={anyIn ? 'Each runs on its own subscription. Add more accounts any time from the sidebar.' : 'Sign in with the subscription you already have. You can do this later in Settings.'} className="onb-sub" reduce={reduce} stagger={0.007} />
       <Unfold reduce={reduce} className="onb-card onb-agents">
         {agents.map((id) => (
           <Item key={id} reduce={reduce} className="onb-agent">

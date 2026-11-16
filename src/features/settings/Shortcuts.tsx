@@ -40,7 +40,19 @@ export function Shortcuts() {
     },
     {
       title: 'Session',
-      items: [{ label: 'Stop the agent', keys: k('esc') }],
+      items: [
+        { label: 'Stop the agent', keys: k('esc') },
+        {
+          label: 'Panel tabs',
+          keys: (
+            <span className="kbd-range">
+              {k('alt+1')}
+              <span className="faint">to</span>
+              {k('6')}
+            </span>
+          ),
+        },
+      ],
     },
     {
       title: 'Prompts from the agent',
@@ -77,11 +89,11 @@ export function Shortcuts() {
     </section>
   );
 
-  // Two balanced columns: the composer's long list on its own side.
+  // Two balanced columns: the composer's long list with the session's two keys under it.
   return (
     <div className="keys-grid">
-      <div className="set-stack">{[groups[0], groups[2], groups[3]].map(render)}</div>
-      <div className="set-stack">{render(groups[1])}</div>
+      <div className="set-stack">{[groups[0], groups[3]].map(render)}</div>
+      <div className="set-stack">{[groups[1], groups[2]].map(render)}</div>
     </div>
   );
 }

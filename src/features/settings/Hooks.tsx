@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react';
 import type { AgentConfigFile, ConfigHook, ProviderId } from '@shared/protocol';
-import { baseName } from '@/lib/format';
 import { Icon, type IconName } from '@/icons';
 import { FileHead, useAgentConfig } from './AgentConfig';
 import { useInitialProvider } from './Models';
-import { Card, CodeChip, Empty, ProviderPicker, Skeleton, useContextTarget } from './parts';
+import { Card, CodeChip, Empty, ProviderPicker, Skeleton, useContextTarget, Scope } from './parts';
 
 /** What each Claude Code hook event means, in plain words. */
 const EVENTS: Record<string, { label: string; icon: IconName }> = {
@@ -28,7 +27,7 @@ export function Hooks() {
       <div className="set-toolbar">
         <ProviderPicker id="set-hooks-provider" value={provider} onChange={setProvider} />
         <span className="grow" />
-        {cwd && provider !== 'codex' && <span className="set-context faint">{baseName(cwd)}</span>}
+        {provider !== 'codex' && <Scope cwd={cwd} />}
       </div>
       {provider === 'codex' ? (
         <div className="card set-card">

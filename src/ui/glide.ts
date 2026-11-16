@@ -3,12 +3,16 @@
  *
  * Radix highlights a menu row by focusing it (pointer and keyboard alike). Instead of each row
  * lighting up on its own, every `.pop` gets one `.menu-glide` element under its rows; on each
- * focus it moves to the focused row with a short transform transition (ui.css). Rows keep their
- * own colour change; only the fill travels. Positions are read (two rects, converted to the pop's
- * CSS pixels) before anything is written, inside the menu only:
- * a move restyles one element and repaints nothing outside the menu. Nothing here knows about a
- * specific menu; a popover without menu rows never gets a glide.
+ * focus it moves to the focused row. A move made with the keys travels with a short transform
+ * transition (ui.css); a move made by the pointer lands on the row in the same frame, so the
+ * highlight never trails the pointer. Rows keep their own colour change; only the fill travels.
+ * Positions are read (two rects, converted to the pop's CSS pixels) before anything is written,
+ * inside the menu only: a move restyles one element and repaints nothing outside the menu.
+ * Nothing here knows about a specific menu; a popover without menu rows never gets a glide.
  */
+
+/** Which input moved the focus last: only key presses glide. */
+let byKeys = false;
 
 const ROW = '.menu-item[role^="menuitem"], .menu-item[role="option"]';
 
@@ -62,6 +66,10 @@ function hide(pop: HTMLElement) {
 const current = new WeakMap<HTMLElement, HTMLElement>();
 
 if (typeof document !== 'undefined') {
+  document.addEventListener('keydown', () => (byKeys = true), { capture: true, passive: true });
+  document.addEventListener('pointermove', () => (byKeys = false), { capture: true, passive: true });
+  document.addEventListener('pointerdown', () => (byKeys = false), { capture: true, passive: true });
+
   document.addEventListener(
     'focusin',
     (e) => {
@@ -69,7 +77,7 @@ if (typeof document !== 'undefined') {
       if (!(t instanceof HTMLElement)) return;
       const pop = t.closest<HTMLElement>('.pop');
       if (!pop) return;
-      if (t.matches(ROW) && !t.hasAttribute('data-disabled')) place(pop, t, true);
+      if (t.matches(ROW) && !t.hasAttribute('data-disabled')) place(pop, t, byKeys);
       // Radix moves focus to the menu itself when the pointer leaves the rows.
       else if (t === pop || t.matches('[role="menu"]')) hide(pop);
     },

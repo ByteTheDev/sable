@@ -2,7 +2,7 @@
 
 .mset-list {
   margin: 0;
-  padding: 4px 0;
+  padding: 0;
   list-style: none;
 }
 
@@ -10,8 +10,8 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  min-height: 46px;
-  padding: 6px 18px;
+  min-height: 48px;
+  padding: 6px 16px;
 }
 
 .mset-row + .mset-row {

@@ -12,10 +12,6 @@
   height: 36px;
 }
 
-.account-switch {
-  display: contents;
-}
-
 .account-main {
   flex: 1;
   min-width: 0;
@@ -43,24 +39,15 @@
   outline-offset: var(--focus-inset);
 }
 
-/* The agents signed in: small discs, the first on the icon column. */
-.account-marks {
-  display: flex;
-  flex-shrink: 0;
-}
-
+/* The agent in focus: a small disc on the icon column. */
 .account-mark {
   display: grid;
   place-items: center;
+  flex-shrink: 0;
   width: 18px;
   height: 18px;
   border-radius: 50%;
   background-color: var(--panel-2);
-  box-shadow: 0 0 0 2px var(--side-bg, var(--sheet));
-}
-
-.account-mark + .account-mark {
-  margin-left: -4px;
 }
 
 .account-who {

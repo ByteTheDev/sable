@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DropdownMenu as RM } from 'radix-ui';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import type { AccountInfo, ProviderId } from '@shared/protocol';
@@ -22,6 +22,22 @@ export function AccountSwitcher() {
   const [open, setOpen] = useState(false);
   const [peek, setPeek] = useState<{ provider: ProviderId; accountId: string } | null>(null);
   const reduce = useReducedMotion();
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // As the menu opens, the account in use takes the focus (pointer or keys alike), so its limits
+  // show beside the menu at once. After Radix's own focus on open, at the start of a frame (a focus
+  // move forces a style pass, and the menu's styles were just invalidated).
+  useEffect(() => {
+    if (!open) return;
+    let r = requestAnimationFrame(() => {
+      r = requestAnimationFrame(() => {
+        const pop = contentRef.current;
+        if (!pop || pop.dataset.state === 'closed' || document.activeElement?.matches('.acs-row[data-in-use]')) return;
+        (pop.querySelector<HTMLElement>('.acs-row[data-in-use]') ?? pop.querySelector<HTMLElement>('.acs-row'))?.focus({ preventScroll: true });
+      });
+    });
+    return () => cancelAnimationFrame(r);
+  }, [open]);
 
   const agents = accountAgents(providers);
   const signedIn = agents.filter((id) => accountsOf(providers[id]).some((a) => a.auth.loggedIn));
@@ -30,7 +46,6 @@ export function AccountSwitcher() {
   const current = (focus === active ? list.find((a) => a.id === accountId) : undefined) ?? list.find((a) => a.isDefault) ?? list[0];
   const plan = planWord(current);
   const several = list.length > 1;
-  const marks = signedIn.length ? signedIn : [focus];
 
   const name = current ? accountName(current) : PROVIDER_NAME[focus];
   const headline = current?.auth.loggedIn ? (plan ? `${plan} plan` : PROVIDER_NAME[focus]) : 'Not signed in';
@@ -47,12 +62,9 @@ export function AccountSwitcher() {
     >
       <RM.Trigger asChild>
         <button type="button" className="account-main acs-trigger" aria-label={`${described}. Accounts`}>
-          <span className="account-marks" aria-hidden>
-            {marks.map((id) => (
-              <span key={id} className="account-mark" data-focus={id === focus || undefined}>
-                <ProviderMark provider={id} size={12} />
-              </span>
-            ))}
+          {/* The agent in focus only: the menu lists the others. One mark keeps the plan on the text column. */}
+          <span className="account-mark" aria-hidden>
+            <ProviderMark provider={focus} size={12} />
           </span>
           <span className="account-who">
             <span className="account-plan">{headline}</span>
@@ -63,7 +75,17 @@ export function AccountSwitcher() {
         </button>
       </RM.Trigger>
       <RM.Portal>
-        <RM.Content className="pop acs-pop" data-spot side="top" align="start" sideOffset={8} collisionPadding={10} style={{ width: 252 }} loop>
+        <RM.Content
+          ref={contentRef}
+          className="pop acs-pop"
+          data-spot
+          side="top"
+          align="start"
+          sideOffset={8}
+          collisionPadding={10}
+          style={{ width: 252 }}
+          loop
+        >
           {agents.map((id, i) => (
             <RM.Group key={id} className="acs-group">
               {i > 0 && <RM.Separator className="menu-sep" />}
@@ -73,6 +95,7 @@ export function AccountSwitcher() {
                   provider={id}
                   account={a}
                   single={all.length === 1}
+                  inUse={id === focus && a.id === current?.id}
                   onPeek={() => setPeek({ provider: id, accountId: a.id })}
                   onSelect={() => {
                     if (!a.auth.loggedIn) return openSettings('accounts');
@@ -113,7 +136,7 @@ export function AccountSwitcher() {
   );
 }
 
-function Row({ provider, account, single, onPeek, onSelect }: { provider: ProviderId; account: AccountInfo; single: boolean; onPeek: () => void; onSelect: () => void }) {
+function Row({ provider, account, single, inUse, onPeek, onSelect }: { provider: ProviderId; account: AccountInfo; single: boolean; inUse: boolean; onPeek: () => void; onSelect: () => void }) {
   const plan = account.auth.loggedIn ? planWord(account) : undefined;
   // An agent's only account goes by the agent's name, and there is no choice to check.
   const label = single ? PROVIDER_NAME[provider] : accountName(account);
@@ -121,6 +144,7 @@ function Row({ provider, account, single, onPeek, onSelect }: { provider: Provid
     <RM.Item
       className="menu-item acs-row"
       data-current={account.isDefault || undefined}
+      data-in-use={inUse || undefined}
       onFocus={onPeek}
       onSelect={onSelect}
       aria-label={`${PROVIDER_NAME[provider]}, ${label}${plan ? `, ${plan}` : ''}${account.auth.loggedIn ? '' : ', not signed in'}${account.isDefault ? ', default' : ''}`}

@@ -4,11 +4,11 @@ import { PROVIDER_NAME } from '@/art/Logo';
 import { Collapse } from '@/components/Collapse';
 import { Icon } from '@/icons';
 import { bridge } from '@/lib/bridge';
-import { baseName, plural } from '@/lib/format';
+import { plural } from '@/lib/format';
 import { fuzzy } from '@/lib/fuzzy';
 import { useStore } from '@/state/store';
 import { IconButton } from '@/ui';
-import { Card, CodeChip, Empty, SearchField, Skeleton, useContextTarget, useProviderCaps } from './parts';
+import { Card, CodeChip, Empty, SearchField, Skeleton, useContextTarget, useProviderCaps, Scope } from './parts';
 
 const STATUS: Record<McpServerInfo['status'], { word: string; tone: string }> = {
   connected: { word: 'Connected', tone: 'green' },
@@ -52,12 +52,13 @@ export function Mcp() {
   return (
     <div className="set-stack">
       <div className="set-toolbar">
-        <span className="set-context">
-          {PROVIDER_NAME[provider]}
-          {cwd && <span className="faint"> in {baseName(cwd)}</span>}
-          {caps && servers.length > 0 && <span className="faint">, {connected} of {plural(servers.length, 'server')} connected</span>}
-        </span>
+        {caps && servers.length > 0 && (
+          <span className="set-context num">
+            {connected} of {plural(servers.length, 'server')} connected
+          </span>
+        )}
         <span className="grow" />
+        <Scope provider={provider} cwd={cwd} />
         {sessionId && <IconButton icon="refresh" label="Check servers again" className={loading ? 'cc-spin' : undefined} disabled={loading} onClick={() => void refresh()} />}
       </div>
 
