@@ -61,7 +61,7 @@
   caret-color: var(--text);
   overflow-y: hidden;
   scrollbar-width: thin;
-  scrollbar-color: rgb(255 255 255 / 0.16) transparent;
+  scrollbar-color: var(--scrollbar) transparent;
 }
 
 .cmp-input[data-ready] {
@@ -216,7 +216,7 @@
   transition:
     background-color var(--d-1) var(--ease),
     color var(--d-1) var(--ease),
-    scale 80ms var(--ease-out);
+    scale var(--d-2) var(--spring);
 }
 
 .cmp-attach {
@@ -231,7 +231,9 @@
 }
 
 .cmp-attach:active {
-  scale: 0.94;
+  background-color: var(--fill-4);
+  scale: var(--press-icon);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .cmp-attach[aria-expanded='true'] {
@@ -245,7 +247,7 @@
   stroke: currentColor;
   stroke-width: 1.6;
   stroke-linecap: round;
-  transition: rotate 140ms var(--ease-out);
+  transition: rotate var(--d-2) var(--ease-out);
 }
 
 .cmp-attach:hover .cmp-plus,
@@ -271,7 +273,8 @@
   color: var(--text-2);
   transition:
     background-color var(--d-1) var(--ease),
-    color var(--d-1) var(--ease);
+    color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
 }
 
 .tb-chip:hover,
@@ -282,6 +285,8 @@
 
 .tb-chip:active {
   background-color: var(--fill-3);
+  scale: var(--press);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .tb-chip svg {
@@ -309,6 +314,10 @@
 .cm-mode:hover,
 .cm-mode[aria-expanded='true'] {
   background-color: var(--fill-3);
+}
+
+.cm-mode:active {
+  background-color: var(--fill-4);
 }
 
 .cm-mode svg,

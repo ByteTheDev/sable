@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState, type ComponentType, type KeyboardEvent } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { startTransition, useDeferredValue, useEffect, useRef, useState, type ComponentType, type KeyboardEvent } from 'react';
 import { Icon } from '@/icons';
 import { useStore, type SettingsSection } from '@/state/store';
-import { IconButton, Modal } from '@/ui';
+import { IconButton, Modal, useSlidePill } from '@/ui';
 import { About } from './About';
 import { Accounts } from './Accounts';
 import { Agents } from './Agents';
@@ -44,18 +43,39 @@ export function Settings() {
   const last = useRef<SettingsSection>('general');
   if (section) last.current = section;
   const current = section ?? last.current;
+  // The dialog and its nav draw in the first frame; the section's content mounts in the next task,
+  // under the dialog's own entrance, so opening Settings is never one long task.
+  const body = useAfterOpen(!!section);
+  // A section switch renders the nav (its pill starts to slide) first and the new section after,
+  // in a background render that yields to the frame instead of one long task.
+  const shown = useDeferredValue(current);
 
   return (
     <Modal open={!!section} onOpenChange={(open) => !open && setUi({ settings: null })} title="Settings" className="settings-dialog" bare onCloseAutoFocus={takeComposerFocus}>
       <Nav current={current} open={!!section} />
       <div className="set-main">
         <IconButton icon="x" label="Close" keys="esc" className="set-close" tipSide="left" onClick={() => setUi({ settings: null })} />
-        <AnimatePresence mode="wait" initial={false}>
-          <Section key={current} id={current} />
-        </AnimatePresence>
+        {body && <Section key={shown} id={shown} />}
       </div>
     </Modal>
   );
+}
+
+/** True one frame after `open` turns true; false again once the dialog has finished closing. */
+function useAfterOpen(open: boolean) {
+  const [after, setAfter] = useState(false);
+  useEffect(() => {
+    let t = 0;
+    let r = 0;
+    // Closing: the content stays while the dialog animates out.
+    if (!open) t = window.setTimeout(() => setAfter(false), 240);
+    else r = requestAnimationFrame(() => (t = window.setTimeout(() => startTransition(() => setAfter(true)))));
+    return () => {
+      cancelAnimationFrame(r);
+      clearTimeout(t);
+    };
+  }, [open]);
+  return after;
 }
 
 const FOCUSABLE = 'button:not(:disabled), [href], input:not(:disabled), select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -66,6 +86,8 @@ function Nav({ current, open }: { current: SettingsSection; open: boolean }) {
   const filterRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const shown = matchSections(query);
+  // The selection pill slides between rows without layout projection (nothing measured on mount).
+  const pill = useSlidePill(current, 8);
 
   // A fresh filter every time the dialog opens.
   useEffect(() => {
@@ -174,8 +196,7 @@ function Nav({ current, open }: { current: SettingsSection; open: boolean }) {
               className="set-nav-row"
               onClick={() => go(s.id)}
             >
-              {active && <motion.span layoutId="set-nav-pill" className="set-nav-pill dither-sel" transition=
-{{ type: 'spring', stiffness: 480, damping: 38 }} />}
+              {active && <span ref={pill} className="set-nav-pill dither-sel" />}
               <Icon name={s.icon} size={16} className="set-nav-icon" />
               <span className="truncate">{s.label}</span>
             </button>
@@ -190,18 +211,10 @@ function Nav({ current, open }: { current: SettingsSection; open: boolean }) {
 function Section({ id }: { id: SettingsSection }) {
   const meta = SECTIONS.find((s) => s.id === id)!;
   const View = VIEWS[id];
-  const reduce = useReducedMotion();
+  // A plain element with a CSS entrance (settings.css): a motion element here would make motion
+  // measure the page's layout every time a section mounts.
   return (
-    <motion.div
-      className="set-section"
-      id="set-panel"
-      role="tabpanel"
-      aria-labelledby={`set-tab-${id}`}
-      initial={{ opacity: 0, y: reduce ? 0 : 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, transition: { duration: 0.08 } }}
-      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-    >
+    <div className="set-section" id="set-panel" role="tabpanel" aria-labelledby={`set-tab-${id}`}>
       <header className="set-head">
         <h2 className="set-title">{meta.label}</h2>
       </header>
@@ -210,6 +223,6 @@ function Section({ id }: { id: SettingsSection }) {
           <View />
         </div>
       </div>
-    </motion.div>
+    </div>
   );
 }

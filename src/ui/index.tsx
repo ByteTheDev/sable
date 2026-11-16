@@ -1,11 +1,13 @@
-import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { forwardRef, useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog as RD, DropdownMenu as RM, Popover as RP, Slider as RSl, Switch as RS, Tooltip as RT } from 'radix-ui';
 import { motion } from 'motion/react';
 import { Icon, type IconName } from '@/icons';
-import { shortcutKeys } from '@/lib/format';
+import { isMac, shortcutKeys } from '@/lib/format';
+import { play, spring } from '@/lib/motion';
 import { useStore } from '@/state/store';
 import './grow';
+import './glide';
 
 /** React wrappers around the primitives in styles/ui.css. Keep this file small and boring. */
 
@@ -15,7 +17,7 @@ export const cx = (...parts: (string | false | null | undefined)[]) => parts.fil
 
 export function Kbd({ combo, className }: { combo: string; className?: string }) {
   return (
-    <span className={cx('kbds', className)}>
+    <span className={cx('kbds', className)} data-mac={isMac || undefined}>
       {shortcutKeys(combo).map((k, i) => (
         <kbd className="kbd" key={i}>
           {k}
@@ -78,20 +80,57 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: number;
   active?: boolean;
   tipSide?: 'top' | 'bottom' | 'left' | 'right';
+  /**
+   * Why the button cannot be used right now, when that is not obvious. The button stays focusable
+   * and hoverable (aria-disabled, clicks ignored) so its tooltip can say so.
+   */
+  disabledReason?: string;
 }
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { icon, label, keys, size = 16, active, tipSide, className, ...rest },
+  { icon, label, keys, size = 16, active, tipSide, className, disabled, disabledReason, onClick, ...rest },
   ref,
 ) {
+  const explain = !!disabled && !!disabledReason;
   return (
-    <Tip label={label} keys={keys} side={tipSide}>
-      <button ref={ref} type="button" aria-label={label} data-active={active || undefined} className={cx('icon-btn', className)} {...rest}>
+    <Tip label={explain ? disabledReason : label} keys={explain ? undefined : keys} side={tipSide}>
+      <button
+        ref={ref}
+        type="button"
+        aria-label={label}
+        data-active={active || undefined}
+        className={cx('icon-btn', className)}
+        disabled={disabled && !explain}
+        aria-disabled={explain || undefined}
+        onClick={explain ? (e) => e.preventDefault() : onClick}
+        {...rest}
+      >
         <Icon name={icon} size={size} />
       </button>
     </Tip>
   );
 });
+
+/**
+ * Text that ends in an ellipsis when it does not fit, with the whole of it as a tooltip only when
+ * it was actually cut. The check runs when the pointer arrives, so nothing measures at rest.
+ */
+export function Truncate({ children, className, title }: { children: ReactNode; className?: string; title?: string }) {
+  return (
+    <span className={cx('truncate', className)} onPointerEnter={titleIfCut} data-title={title}>
+      {children}
+    </span>
+  );
+}
+
+/** Pointer-enter handler: sets `title` to the full text when the element is cut off, clears it otherwise. */
+export function titleIfCut(e: { currentTarget: HTMLElement }) {
+  const el = e.currentTarget;
+  const cut = el.scrollWidth > el.clientWidth + 1 || [...el.children].some((c) => c instanceof HTMLElement && c.scrollWidth > c.clientWidth + 1);
+  const full = el.dataset.title || el.textContent || '';
+  if (cut) el.title = full;
+  else el.removeAttribute('title');
+}
 
 // ── menus ──
 
@@ -144,7 +183,9 @@ export function MenuItem({
   return (
     <RM.Item className="menu-item" data-tone={tone} disabled={disabled} onSelect={onSelect}>
       {icon && <Icon name={icon} size={16} />}
-      <span className="grow truncate">{children}</span>
+      <span className="grow truncate" onPointerEnter={titleIfCut}>
+        {children}
+      </span>
       {hint && <span className="hint">{hint}</span>}
       {keys && <Kbd combo={keys} />}
       {checked && <Icon name="check" size={14} />}
@@ -330,17 +371,56 @@ export function Segmented<T extends string>({
   id: string;
   className?: string;
 }) {
+  void id;
+  const pill = useSlidePill(value, 6);
   return (
     <div className={cx('seg', className)} role="tablist">
       {options.map((o) => (
         <button key={o.value} type="button" role="tab" aria-selected={o.value === value} data-active={o.value === value} className="seg-item" onClick={() => onChange(o.value)}>
-          {o.value === value && <motion.span layoutId={`seg-${id}`} className="seg-pill" transition={{ type: 'spring', stiffness: 520, damping: 38 }} />}
+          {o.value === value && <span ref={pill} className="seg-pill" />}
           {o.icon && <Icon name={o.icon} size={14} />}
           {o.label}
         </button>
       ))}
     </div>
   );
+}
+
+const PILL = spring(520, 38);
+
+/**
+ * A selection pill that slides from the option that had it to the one that has it now. The pill is
+ * rendered inside the selected option (so at rest nothing is measured: mounting a view with many
+ * of these costs no layout); when the selection changes, the two options (siblings under one
+ * offset parent) are measured once and the
+ * pill plays a transform from the old box to the new one, its radius corrected for the scale.
+ * Returns the ref for the pill element. `radius` is the pill's border radius in CSS pixels.
+ */
+export function useSlidePill(key: unknown, radius: number) {
+  const ref = useRef<HTMLElement | null>(null);
+  const prev = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const pill = ref.current;
+    const host = pill?.parentElement ?? null;
+    const from = prev.current;
+    prev.current = host;
+    if (!pill || !host || !from || from === host || !from.isConnected || from.offsetParent !== host.offsetParent) return;
+    // Layout boxes, not rects: a pressed option is scaled for a moment and must not skew the slide.
+    const sx = from.offsetWidth / host.offsetWidth;
+    const sy = from.offsetHeight / host.offsetHeight;
+    const dx = from.offsetLeft - host.offsetLeft;
+    const dy = from.offsetTop - host.offsetTop;
+    if (!Number.isFinite(sx) || !Number.isFinite(sy) || !sx || !sy) return;
+    play(
+      pill,
+      [
+        { transformOrigin: '0 0', transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`, borderRadius: `${radius / sx}px / ${radius / sy}px` },
+        { transformOrigin: '0 0', transform: 'none', borderRadius: `${radius}px` },
+      ],
+      { duration: PILL.duration, easing: PILL.easing },
+    );
+  }, [key, radius]);
+  return ref as RefObject<HTMLSpanElement>;
 }
 
 // ── toasts ──
@@ -384,8 +464,9 @@ export function PathLabel({ path, className, title }: { path: string; className?
   const i = norm.lastIndexOf('/');
   const dir = i >= 0 ? norm.slice(0, i + 1) : '';
   const name = i >= 0 ? norm.slice(i + 1) : norm;
+  // The full path shows as a tooltip only when part of it was cut (or when a different title was asked for).
   return (
-    <span className={cx('path', className)} title={title ?? path}>
+    <span className={cx('path', className)} title={title && title !== path ? title : undefined} data-title={path} onPointerEnter={title && title !== path ? undefined : titleIfCut}>
       {dir && <span className="path-dir">{dir}</span>}
       <span className="path-name">{name || norm}</span>
     </span>

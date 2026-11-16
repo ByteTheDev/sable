@@ -39,8 +39,8 @@
 }
 
 .account-main:focus-visible {
-  outline: 1.5px solid var(--focus);
-  outline-offset: -1.5px;
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
 }
 
 /* The agents signed in: small discs, the first on the icon column. */
@@ -129,8 +129,8 @@
 }
 
 .connect:focus-visible {
-  outline: 1.5px solid var(--focus);
-  outline-offset: -1.5px;
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
 }
 
 .connect-marks {

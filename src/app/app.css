@@ -83,6 +83,8 @@
 }
 
 .app-rail-inner {
+  /* Positioned: the dither veil that resolves the panel's contents fills this box (App.tsx). */
+  position: relative;
   width: var(--rail-w);
   height: 100%;
   padding-left: var(--gap);
@@ -106,12 +108,20 @@
   place-items: center;
   width: 28px;
   height: 28px;
-  border-radius: 7px;
-  transition: background-color var(--d-1) var(--ease);
+  border-radius: var(--r-ctl);
+  transition:
+    background-color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
 }
 
 .topbar-home:hover {
-  background-color: var(--fill-2);
+  background-color: var(--ctl-hover);
+}
+
+.topbar-home:active {
+  background-color: var(--ctl-press);
+  scale: var(--press-icon);
+  transition-duration: var(--d-1), 70ms;
 }
 
 .topbar-title {
@@ -175,14 +185,14 @@
   gap: 6px;
   height: 28px;
   padding: 0 9px 0 6px;
-  border-radius: 8px;
+  border-radius: var(--r-ctl);
   font-size: var(--t-small);
   font-weight: var(--w-medium);
   color: var(--text-3);
   transition:
     background-color var(--d-1) var(--ease),
     color var(--d-1) var(--ease),
-    scale 80ms var(--ease-out);
+    scale var(--d-2) var(--spring);
 }
 
 .ctx-meter svg {
@@ -196,7 +206,8 @@
 
 .ctx-meter:active {
   background-color: var(--fill-3);
-  scale: 0.97;
+  scale: var(--press);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .ctx-meter[data-warn] {
@@ -314,8 +325,8 @@
 }
 
 .caps-copy {
-  width: 26px;
-  height: 26px;
+  --ib: var(--ctl-h-sm);
+  border-radius: var(--r-ctl-sm);
 }
 
 .offline {
@@ -434,13 +445,13 @@ body:has(.onb) .wc-sep {
   place-items: center;
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--r-ctl);
   color: var(--text-3);
   transition:
     background-color var(--d-1) var(--ease),
     color var(--d-1) var(--ease),
     opacity var(--d-2) var(--ease),
-    scale 80ms var(--ease-out);
+    scale var(--d-2) var(--spring);
 }
 
 .wc-btn:hover .wc-pill {
@@ -450,11 +461,12 @@ body:has(.onb) .wc-sep {
 
 .wc-btn:active .wc-pill {
   background-color: var(--fill-3);
-  scale: 0.94;
+  scale: var(--press-icon);
+  transition-duration: var(--d-1), var(--d-1), var(--d-2), 70ms;
 }
 
 .wc-btn:focus-visible .wc-pill {
-  outline: 1.5px solid var(--focus);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: 0;
 }
 
@@ -542,6 +554,16 @@ html[data-desktop='darwin'] .app[data-sidebar='false'] .topbar {
   color: var(--text);
   background: var(--grain) 0 0 / var(--grain-size), var(--panel-2);
   box-shadow: var(--shadow-pop);
+  transition: background-color var(--d-1) var(--ease);
+}
+
+/* A toast dismisses on click: it answers like any button, quietly. */
+.toast:hover {
+  background-color: var(--panel-3);
+}
+
+.toast:active {
+  scale: 0.98;
 }
 
 .toast svg {

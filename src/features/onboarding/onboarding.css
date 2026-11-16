@@ -282,7 +282,8 @@ html[data-handover] .home .logo-mark {
 }
 
 .onb-place:focus-visible {
-  outline: none;
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-offset);
   background-color: var(--fill-3);
 }
 

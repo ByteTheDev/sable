@@ -115,12 +115,13 @@
   height: 22px;
   margin-left: 2px;
   padding: 0 6px;
-  border-radius: 6px;
+  border-radius: var(--r-ctl-xs);
   font-size: var(--t-small);
   color: var(--text-3);
   transition:
     background-color var(--d-1) var(--ease),
-    color var(--d-1) var(--ease);
+    color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
 }
 
 .sa-trigger:hover,
@@ -131,10 +132,12 @@
 
 .sa-trigger:active {
   background-color: var(--fill-3);
+  scale: var(--press);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .sa-trigger:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: 1px;
 }
 
@@ -202,8 +205,8 @@
 }
 
 .aa-option:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-offset);
 }
 
 .aa-option:disabled {

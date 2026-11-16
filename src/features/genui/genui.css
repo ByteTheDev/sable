@@ -60,7 +60,7 @@
 }
 
 .gw-iframe:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: -2px;
   border-radius: var(--r-lg);
 }
@@ -316,7 +316,7 @@
 }
 
 .gw-flag:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: var(--focus-w) solid var(--focus);
 }
 
 .gw-btn {

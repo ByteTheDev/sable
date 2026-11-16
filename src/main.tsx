@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles/base.css';
 import './styles/ui.css';
@@ -45,8 +45,17 @@ if (import.meta.env.DEV || desktop?.debug) {
   };
 }
 
+// Dev only: `?gallery` shows every control in every state (src/dev). Dropped from production builds.
+const Gallery = import.meta.env.DEV && new URLSearchParams(location.search).has('gallery') ? lazy(() => import('./dev/Gallery')) : null;
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    {Gallery ? (
+      <Suspense>
+        <Gallery />
+      </Suspense>
+    ) : (
+      <App />
+    )}
   </StrictMode>,
 );

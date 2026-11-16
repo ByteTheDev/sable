@@ -84,12 +84,12 @@
 }
 
 .set-nav-row:hover {
-  background: var(--fill-1);
+  background-color: var(--fill-1);
   color: var(--text);
 }
 
 .set-nav-row:active {
-  background: var(--fill-2);
+  background-color: var(--fill-2);
 }
 
 .set-nav-row[data-active] {
@@ -98,7 +98,7 @@
 }
 
 .set-nav-row:focus-visible {
-  outline-offset: -1px;
+  outline-offset: var(--focus-inset);
 }
 
 .set-nav-icon {
@@ -148,6 +148,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  animation: rise-in var(--d-3) var(--ease-out) backwards;
 }
 
 .set-head {
@@ -397,9 +398,8 @@
 }
 
 .code-chip .code-chip-copy {
-  width: 20px;
-  height: 20px;
-  border-radius: 5px;
+  --ib: 20px;
+  border-radius: var(--r-ctl-xs);
 }
 
 /* Search */
@@ -520,7 +520,7 @@
 }
 
 .pick:focus-visible {
-  outline-offset: -1px;
+  outline-offset: var(--focus-inset);
 }
 
 .pick-text {
@@ -592,11 +592,11 @@
   min-height: 36px;
   padding: 6px 12px 6px 14px;
   text-align: left;
-  transition: background var(--d-1) var(--ease);
+  transition: background-color var(--d-1) var(--ease);
 }
 
 button.xrow-head:hover {
-  background: var(--fill-1);
+  background-color: var(--fill-1);
 }
 
 button.xrow-head:disabled {
@@ -608,7 +608,7 @@ button.xrow-head:disabled:hover {
 }
 
 .xrow-head:focus-visible {
-  outline-offset: -2px;
+  outline-offset: var(--focus-inset);
 }
 
 .xrow-text {
@@ -817,9 +817,6 @@ button.xrow-head:disabled:hover {
   flex-shrink: 0;
   margin-right: 8px;
   opacity: 0;
-  transition:
-    opacity var(--d-1) var(--ease),
-    background var(--d-1) var(--ease);
 }
 
 .use-row:hover .use-btn,
@@ -1127,11 +1124,7 @@ button.xrow-head:disabled:hover {
   flex-shrink: 0;
 }
 
-.btn-primary .mem-save-kbd .kbd {
-  color: rgb(0 0 0 / 0.5);
-  background: rgb(0 0 0 / 0.07);
-  box-shadow: none;
-}
+/* .mem-save-kbd sits in the primary button: the primitive's ink keys (.btn-primary .kbd) apply. */
 
 .mem-missing {
   display: flex;

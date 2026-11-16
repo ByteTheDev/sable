@@ -181,3 +181,40 @@
     --d-4: 1ms;
   }
 }
+
+/* ── controls: one family (ui.css) ──
+   Every control steps through the same tones: rest, hover one fill step lighter, press one more,
+   and "on" (selected, open) at the press tone. A surface that is itself lit (a hovered row, a
+   card) shifts the scale up one step by redefining --ctl-hover / --ctl-press for what sits on it. */
+:root {
+  --ctl-h: 30px;
+  --ctl-h-sm: 26px;
+  --ctl-h-xs: 22px;
+  /* Radii by height, concentric with the 8px of a 30px control. */
+  --r-ctl: var(--r-sm);
+  --r-ctl-sm: 7px;
+  --r-ctl-xs: 6px;
+
+  --ctl-hover: var(--fill-2);
+  --ctl-press: var(--fill-3);
+  /* Press: a small give inside one frame; small square controls give a little more. */
+  --press: 0.97;
+  --press-icon: 0.94;
+  --ctl-disabled: 0.4;
+
+  /* Fields: a darker well. */
+  --well: rgb(0 0 0 / 0.22);
+  --well-strong: rgb(0 0 0 / 0.3);
+
+  /* Danger words (a red that reads as text on ink) and the faint red under a hovered danger control. */
+  --red-text: oklch(0.8 0.13 24);
+
+  /* Keyboard focus: the ring itself, and where it sits. Rows that fill their container draw it inside. */
+  --focus-w: 1.5px;
+  --focus-offset: 2px;
+  --focus-inset: -1.5px;
+
+  /* Scrollbars: thin, one quiet thumb tone everywhere (base.css .scroll uses the same value). */
+  --scrollbar: rgb(255 255 255 / 0.16);
+  --scrollbar-hover: rgb(255 255 255 / 0.3);
+}

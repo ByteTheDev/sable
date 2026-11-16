@@ -54,8 +54,8 @@
 }
 
 .brand:focus-visible {
-  outline: 1.5px solid var(--focus);
-  outline-offset: -1px;
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
 }
 
 .brand .wordmark {
@@ -110,8 +110,8 @@
 }
 
 .side-new:focus-visible {
-  outline: 1.5px solid var(--focus);
-  outline-offset: -1px;
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
 }
 
 /* 28 px like every icon button; their glyphs share a centre line with the footer's Settings. */
@@ -245,8 +245,8 @@
 }
 
 .sgroup-toggle:focus-visible {
-  outline: 1.5px solid var(--focus);
-  outline-offset: -1px;
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
 }
 
 .sgroup-head-static {
@@ -319,28 +319,41 @@
   opacity: 1;
 }
 
-.sgroup-tool {
+/* Row tools are .icon-btn-xs sitting on a lit row: the row shifts the tone scale up one step
+   (--ctl-hover / --ctl-press), the size, radius, timing and press are the family's. */
+.sgroup-head,
+.srow {
+  --ctl-hover: var(--fill-3);
+  --ctl-press: var(--fill-4);
+}
+
+.sgroup-tool,
+.srow-act {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  width: var(--ctl-h-xs);
+  height: var(--ctl-h-xs);
+  border-radius: var(--r-ctl-xs);
   color: var(--text-3);
   transition:
     background-color var(--d-1) var(--ease),
     color var(--d-1) var(--ease),
-    scale 80ms var(--ease-out);
+    scale var(--d-2) var(--spring);
 }
 
 .sgroup-tool:hover,
-.sgroup-tool[data-state='open'] {
-  background-color: var(--fill-3);
+.sgroup-tool[data-state='open'],
+.srow-act:hover,
+.srow-act[data-state='open'] {
+  background-color: var(--ctl-hover);
   color: var(--text);
 }
 
-.sgroup-tool:active {
-  background-color: var(--fill-4);
-  scale: 0.94;
+.sgroup-tool:active,
+.srow-act:active {
+  background-color: var(--ctl-press);
+  scale: var(--press-icon);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 /* Disabled but still readable: its hint says why. */
@@ -484,8 +497,8 @@
 }
 
 .srow-main:focus-visible {
-  outline: 1.5px solid var(--focus);
-  outline-offset: -1.5px;
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
 }
 
 .srow-title {
@@ -558,29 +571,6 @@
   opacity: 0;
 }
 
-.srow-act {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  color: var(--text-3);
-  transition:
-    background-color var(--d-1) var(--ease),
-    color var(--d-1) var(--ease),
-    scale 80ms var(--ease-out);
-}
-
-.srow-act:hover,
-.srow-act[data-state='open'] {
-  background-color: var(--fill-3);
-  color: var(--text);
-}
-
-.srow-act:active {
-  background-color: var(--fill-4);
-  scale: 0.94;
-}
 
 .srow-rename {
   flex: 1;
@@ -589,10 +579,10 @@
   margin: 0 4px 0 30px;
   padding: 0 6px;
   border: 1px solid var(--focus-field);
-  border-radius: 6px;
+  border-radius: var(--r-ctl-xs);
   font-size: var(--t-ui);
   color: var(--text);
-  background-color: rgb(0 0 0 / 0.3);
+  background-color: var(--well-strong);
   user-select: text;
 }
 
@@ -628,9 +618,13 @@
   color: var(--text-2);
 }
 
+.sarchived:active {
+  background-color: var(--fill-2);
+}
+
 .sarchived:focus-visible {
-  outline: 1.5px solid var(--focus);
-  outline-offset: -1.5px;
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
 }
 
 .sarchived-count {

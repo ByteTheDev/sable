@@ -58,7 +58,15 @@ function setOrigin(pop: HTMLElement, opening: boolean) {
       pop.style.setProperty('--o-x', `${dx / z}px`);
       pop.style.setProperty('--o-y', `${dy / z}px`);
       C = new DOMRect(C.left + dx, C.top + dy, C.width, C.height);
-      row.focus({ preventScroll: true });
+      // Focus lands on the row at the start of the next frame, not inside the task that opens the
+      // menu: a focus move forces a style pass, and here the menu's styles were just invalidated.
+      // (Focus may still be outside: a select-like menu skips Radix's own focus on open.)
+      requestAnimationFrame(() => {
+        // Leave focus alone only if something inside the menu (its search field) already took it.
+        const at = document.activeElement;
+        const taken = !!at && at !== pop && pop.contains(at);
+        if (row.isConnected && pop.dataset.state !== 'closed' && !taken) row.focus({ preventScroll: true });
+      });
     }
   }
 

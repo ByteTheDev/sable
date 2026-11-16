@@ -101,19 +101,23 @@ const RULES = `
 :where(.num){font-variant-numeric:tabular-nums}
 :where(button,.btn){display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 12px;border:0;border-radius:var(--r-sm);font:inherit;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;color:var(--text);background-color:var(--fill-2);box-shadow:inset 0 0 0 1px var(--line);cursor:default;transition:background-color 100ms var(--ease),color 100ms var(--ease),scale 80ms var(--ease-out);-webkit-tap-highlight-color:transparent}
 :where(button:hover,.btn:hover){background-color:var(--fill-3)}
-:where(button:active,.btn:active){scale:.97}
+:where(button:active,.btn:active){background-color:var(--fill-4);scale:.97;transition-duration:100ms,100ms,70ms}
 :where(button.primary,.btn.primary){background-color:var(--text);color:var(--text-inverse);font-weight:580;box-shadow:none}
 :where(button.primary:hover,.btn.primary:hover){background-color:#fff}
+:where(button.primary:active,.btn.primary:active){background-color:#e4e2dd}
 :where(button.ghost,.btn.ghost){background-color:transparent;box-shadow:none;color:var(--text-2)}
 :where(button.ghost:hover,.btn.ghost:hover){background-color:var(--fill-2);color:var(--text)}
+:where(button.ghost:active,.btn.ghost:active){background-color:var(--fill-3)}
 :where(button[aria-pressed=true],button[aria-selected=true],button.selected){background-color:var(--fill-4);color:var(--text)}
-:where(button:disabled){opacity:.42;pointer-events:none}
+:where(button:disabled){opacity:.4;pointer-events:none}
 :where(input:not([type=checkbox],[type=radio],[type=range],[type=color],[type=file],[type=submit],[type=button]),select,textarea){height:30px;padding:0 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background-color:rgb(0 0 0/.28);color:var(--text);font:inherit;font-size:13px;outline:none;min-width:0}
 :where(textarea){height:auto;min-height:72px;padding:8px 10px;resize:vertical;line-height:1.5}
 :where(select){appearance:none;padding-right:28px;background-image:${CARET};background-repeat:no-repeat;background-position:right 8px center;background-size:14px}
 :where(input,textarea)::placeholder{color:var(--text-4)}
+:where(input:hover,select:hover,textarea:hover){border-color:var(--line-3)}
 :where(input:focus,select:focus,textarea:focus){border-color:var(--focus-field)}
-:where(:focus-visible){outline:2px solid var(--focus);outline-offset:2px}
+:where([aria-invalid=true]){border-color:color-mix(in oklab,var(--red) 55%,transparent)}
+:where(:focus-visible){outline:1.5px solid var(--focus);outline-offset:2px}
 :where(input:focus-visible,select:focus-visible,textarea:focus-visible){outline:none}
 :where(input[type=checkbox],input[type=radio]){appearance:none;flex-shrink:0;display:inline-grid;place-content:center;width:16px;height:16px;margin:0;border:1px solid var(--line-3);border-radius:5px;background:transparent;vertical-align:-3px}
 :where(input[type=radio]){border-radius:50%}

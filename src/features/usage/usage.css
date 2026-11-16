@@ -57,8 +57,8 @@
 
 .ul-asof:focus-visible,
 .ul-reset:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--focus);
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-offset);
 }
 
 .ul-rows {
@@ -347,8 +347,8 @@
 }
 
 .ul-glance-open:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--focus);
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
 }
 
 .ul-glance-caret {
@@ -425,7 +425,7 @@
 }
 
 .ua-plot:focus-visible {
-  outline: 1px solid var(--focus);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: 6px;
 }
 
@@ -685,8 +685,8 @@
 }
 
 .ua-session.is-link:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--focus);
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
 }
 
 .ua-session-mark {
@@ -714,17 +714,26 @@
   border-radius: var(--r-sm);
   font-size: var(--t-small);
   color: var(--text-3);
-  transition: background-color var(--d-1) var(--ease), color var(--d-1) var(--ease);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
 }
 
 .ua-more:hover {
   background-color: var(--fill-2);
-  color: var(--text-2);
+  color: var(--text);
+}
+
+.ua-more:active {
+  background-color: var(--fill-3);
+  scale: var(--press);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .ua-more:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--focus);
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-offset);
 }
 
 .ul-empty {

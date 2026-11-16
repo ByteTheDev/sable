@@ -56,6 +56,14 @@ function useReleaseGuard(open: boolean) {
   };
 }
 
+/**
+ * The mode and model menus open over their trigger and put focus on the current row themselves
+ * (ui/grow.ts, at the next frame). Radix's own focus on the menu first would be a second focus
+ * move, and a second forced style pass, inside the task that opens the menu.
+ */
+// DropdownMenu.Content passes this through to the menu's focus scope; its types leave it out.
+const SKIP_OPEN_FOCUS = { onOpenAutoFocus: (e: Event) => e.preventDefault() } as object;
+
 interface MenuProps {
   choice: Choice;
   side: 'top' | 'bottom';
@@ -112,6 +120,7 @@ export const ModeMenu = memo(function ModeMenu({ choice, side, onClosed }: MenuP
           sideOffset={8}
           collisionPadding={10}
           style={{ width: MENU_W - 24 }}
+          {...SKIP_OPEN_FOCUS}
           onCloseAutoFocus={(e) => {
             e.preventDefault();
             onClosed();
@@ -229,6 +238,7 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
           loop
           style={{ width: MENU_W }}
           aria-label="Model"
+          {...SKIP_OPEN_FOCUS}
           onKeyDown={onKeyDown}
           onEscapeKeyDown={(e) => {
             if (!query) return;

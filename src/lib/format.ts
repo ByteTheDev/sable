@@ -194,7 +194,7 @@ export function shortcutKeys(combo: string): string[] {
       case 'down':
         return '↓';
       default:
-        return k.length === 1 ? k.toUpperCase() : k;
+        return k.length === 1 || /^f\d{1,2}$/i.test(k) ? k.toUpperCase() : k;
     }
   });
 }

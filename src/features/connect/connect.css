@@ -120,7 +120,7 @@
   max-width: 240px;
   margin: 0 -4px;
   padding: 0 4px;
-  border-radius: 5px;
+  border-radius: var(--r-xs);
   font-size: 13.5px;
   font-weight: var(--w-medium);
   color: var(--text);
@@ -134,7 +134,7 @@
 }
 
 .acc-label:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: 1px;
 }
 
@@ -410,7 +410,8 @@
   color: var(--text-3);
   transition:
     color var(--d-1) var(--ease),
-    background-color var(--d-1) var(--ease);
+    background-color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
 }
 
 .acc-add:hover {
@@ -420,11 +421,13 @@
 
 .acc-add:active {
   background-color: var(--fill-3);
+  scale: var(--press);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .acc-add:focus-visible {
-  outline: 2px solid var(--line-3);
-  outline-offset: 1px;
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-offset);
 }
 
 .acc-add:disabled {

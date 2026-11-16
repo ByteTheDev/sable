@@ -32,25 +32,28 @@
   top: 50%;
   left: 2.5px;
   width: 3px;
-  height: 40px;
+  height: 72px;
   translate: 0 -50%;
   border-radius: 3px;
-  background: rgb(255 255 255 / 0.22);
+  background-color: var(--line-3);
   opacity: 0;
+  /* Grows by scale, not height: the handle never lays out while it answers. */
+  scale: 1 0.56;
   transition:
     opacity var(--d-1) var(--ease),
-    height var(--d-3) var(--ease-out);
+    background-color var(--d-1) var(--ease),
+    scale var(--d-3) var(--ease-out);
 }
 
 .rail-resize:hover::after,
 .rail-resize:focus-visible::after,
 .rail-resize[data-dragging]::after {
   opacity: 1;
-  height: 72px;
+  scale: 1;
 }
 
 .rail-resize[data-dragging]::after {
-  background: rgb(255 255 255 / 0.5);
+  background-color: rgb(255 255 255 / 0.5);
 }
 
 .rail-resize:focus-visible {
@@ -101,7 +104,7 @@
   height: 28px;
   min-width: 28px;
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: var(--r-ctl);
   font-size: var(--t-ui);
   font-weight: var(--w-medium);
   white-space: nowrap;
@@ -109,7 +112,7 @@
   transition:
     background-color var(--d-1) var(--ease),
     color var(--d-1) var(--ease),
-    scale 80ms var(--ease-out);
+    scale var(--d-2) var(--spring);
 }
 
 .rail-tab svg {
@@ -122,7 +125,9 @@
 }
 
 .rail-tab:active {
-  scale: 0.96;
+  background-color: var(--fill-3);
+  scale: var(--press-icon);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .rail-tab[data-on] {
@@ -174,7 +179,7 @@
 }
 
 .rail-tab:focus-visible {
-  outline-offset: -1px;
+  outline-offset: var(--focus-inset);
 }
 
 .rail-close {
@@ -273,11 +278,11 @@
   flex-shrink: 0;
 }
 
+/* Pane bars and row actions use the 26px icon button (.icon-btn-sm). */
 .rail-bar .icon-btn,
 .rail-row-acts .icon-btn {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
+  --ib: var(--ctl-h-sm);
+  border-radius: var(--r-ctl-sm);
 }
 
 .rail-row-host {
@@ -353,8 +358,8 @@
 
 .rail-h-btn {
   margin-left: auto;
-  width: 26px;
-  height: 26px;
+  --ib: var(--ctl-h-sm);
+  border-radius: var(--r-ctl-sm);
 }
 
 /* Empty and loading states: one calm sentence at the same height in every pane, with or without a bar. */
@@ -519,21 +524,21 @@ textarea.field.ch-commit-field {
   width: 100%;
   height: var(--rail-row-h);
   padding: 0 8px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   text-align: left;
-  transition: background var(--d-1) var(--ease);
+  transition: background-color var(--d-1) var(--ease);
 }
 
 .ch-row:hover {
-  background: var(--fill-2);
+  background-color: var(--fill-2);
 }
 
 .ch-row:active {
-  background: var(--fill-3);
+  background-color: var(--fill-3);
 }
 
 .ch-row:focus-visible {
-  outline-offset: -2px;
+  outline-offset: var(--focus-inset);
 }
 
 /* A path is a label: the UI face, the directory dim, the name regular. */
@@ -660,8 +665,9 @@ textarea.field.ch-commit-field {
   padding: 0 6px 0 9px;
   border: 1px solid var(--line-2);
   border-radius: var(--r-sm);
-  background-color: rgb(0 0 0 / 0.22);
+  background-color: var(--well);
   color: var(--text-3);
+  cursor: text;
 }
 
 .fl-filter:hover {
@@ -700,14 +706,25 @@ textarea.field.ch-commit-field {
   place-items: center;
   width: 18px;
   height: 18px;
-  border-radius: 5px;
+  border-radius: 50%;
   color: var(--text-3);
-  background: var(--fill-2);
+  background-color: var(--fill-2);
+  cursor: default;
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
 }
 
 .fl-clear:hover {
   color: var(--text);
-  background: var(--fill-3);
+  background-color: var(--fill-3);
+}
+
+.fl-clear:active {
+  background-color: var(--fill-4);
+  scale: var(--press-icon);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .fl-tree {
@@ -722,12 +739,12 @@ textarea.field.ch-commit-field {
   gap: 6px;
   height: var(--rail-row-h);
   padding: 0 8px 0 calc(4px + var(--indent));
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   font-size: var(--t-ui);
   color: var(--text-2);
   user-select: none;
   transition:
-    background var(--d-1) var(--ease),
+    background-color var(--d-1) var(--ease),
     color var(--d-1) var(--ease);
 }
 
@@ -744,17 +761,17 @@ textarea.field.ch-commit-field {
 }
 
 .fl-row:hover {
-  background: var(--fill-2);
+  background-color: var(--fill-2);
   color: var(--text);
 }
 
 .fl-row:active {
-  background: var(--fill-3);
+  background-color: var(--fill-3);
 }
 
 .fl-row:focus-visible {
-  outline-offset: -2px;
-  background: var(--fill-2);
+  outline-offset: var(--focus-inset);
+  background-color: var(--fill-2);
   color: var(--text);
 }
 
@@ -1020,13 +1037,14 @@ textarea.field.ch-commit-field {
   width: 22px;
   height: 22px;
   margin-top: -1px;
-  border-radius: 6px;
+  border-radius: var(--r-ctl-xs);
   color: var(--text-2);
   background-color: var(--fill-2);
   flex-shrink: 0;
   transition:
     color var(--d-1) var(--ease),
-    background-color var(--d-1) var(--ease);
+    background-color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
 }
 
 .tm-stop:hover {
@@ -1036,10 +1054,13 @@ textarea.field.ch-commit-field {
 
 .tm-stop:active {
   background-color: var(--fill-4);
+  scale: var(--press-icon);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .tm-stop:disabled {
-  opacity: 0.4;
+  opacity: var(--ctl-disabled);
+  pointer-events: none;
 }
 
 .tm-trim {
@@ -1140,7 +1161,7 @@ textarea.field.ch-commit-field {
   padding: 0 8px 0 12px;
   border: 1px solid var(--line-2);
   border-radius: var(--r-md);
-  background-color: rgb(0 0 0 / 0.26);
+  background-color: var(--well);
   cursor: text;
 }
 
@@ -1272,15 +1293,19 @@ textarea.field.ch-commit-field {
   padding: 8px 10px 8px 10px;
   border-radius: var(--r-md);
   text-align: left;
-  transition: background var(--d-1) var(--ease);
+  transition: background-color var(--d-1) var(--ease);
 }
 
 .ag-row:hover {
-  background: var(--fill-1);
+  background-color: var(--fill-1);
+}
+
+.ag-row:active {
+  background-color: var(--fill-2);
 }
 
 .ag-row:focus-visible {
-  outline-offset: -2px;
+  outline-offset: var(--focus-inset);
 }
 
 .ag-titles {

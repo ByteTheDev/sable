@@ -32,7 +32,7 @@
 
 .hscroll:hover,
 .hscroll:focus-within {
-  scrollbar-color: rgb(255 255 255 / 0.16) transparent;
+  scrollbar-color: var(--scrollbar) transparent;
 }
 
 .hscroll::-webkit-scrollbar {
@@ -48,7 +48,7 @@
 }
 
 .hscroll:hover::-webkit-scrollbar-thumb {
-  background-color: rgb(255 255 255 / 0.16);
+  background-color: var(--scrollbar);
 }
 
 .hscroll::-webkit-scrollbar-corner {
@@ -94,18 +94,25 @@
 .cb-toggle {
   height: 22px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: var(--r-ctl-xs);
   font-size: var(--t-micro);
   font-weight: var(--w-medium);
   color: var(--text-3);
   transition:
     background-color var(--d-1) var(--ease),
-    color var(--d-1) var(--ease);
+    color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
 }
 
 .cb-toggle:hover {
   color: var(--text);
   background-color: var(--fill-2);
+}
+
+.cb-toggle:active {
+  background-color: var(--fill-3);
+  scale: var(--press);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .cb-toggle[aria-pressed='true'] {
@@ -130,7 +137,7 @@
 .cb-btn {
   width: 24px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: var(--r-ctl-xs);
 }
 
 .copy-btn[data-copied] {
