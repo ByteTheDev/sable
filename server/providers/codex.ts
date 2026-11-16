@@ -1220,6 +1220,11 @@ class CodexSession implements ProviderSession {
     }
     const d = draftItem(item, { streaming: false });
     if (!d) return;
+    // An empty reply (Codex often ends a turn with one right after a widget): nothing to show.
+    if (d.type === 'text' && !d.text.trim() && !(existing as TextItem | undefined)?.text?.trim()) {
+      if (existing) rt.remove(id);
+      return;
+    }
     if (!existing) {
       if (d.type === 'thinking' && !d.text) return;
       rt.add({ ...d, id, ts: item.startedAtMs ?? Date.now() } as TimelineItem);

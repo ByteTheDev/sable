@@ -631,7 +631,7 @@ export function transcript(turns: Turn[]): TimelineItem[] {
       }
       const d = draftItem(item, { streaming: false });
       if (!d) continue;
-      if (d.type === 'thinking' && !d.text) continue;
+      if ((d.type === 'thinking' || d.type === 'text') && !d.text.trim()) continue;
       if (d.type === 'tool' && (d.status === 'running' || d.status === 'pending') && turn.status !== 'inProgress') {
         (d as ToolItem).status = 'cancelled';
       }

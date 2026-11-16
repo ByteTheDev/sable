@@ -536,10 +536,13 @@ export class ClaudeProvider implements Provider {
    */
   onRateLimit(info: Obj | undefined): { resetsAt?: number; window?: string } | undefined {
     if (!info) return undefined;
-    const rows = new Map(this.limitsCache.map((l) => [l.id, l]));
-    let changed = false;
+    // A remembered window whose reset has passed says nothing true any more (the CLI may not
+    // report that window again: real turns sent only the weekly one).
+    const now = Date.now();
+    const rows = new Map(this.limitsCache.filter((l) => !l.resetsAt || l.resetsAt > now).map((l) => [l.id, l]));
+    let changed = rows.size !== this.limitsCache.length;
     const put = (id: string, utilization: unknown, resetsAt: unknown, full = false) => {
-      const known = LIMIT_WINDOWS[id];
+      const known = LIMIT_WINDOWS[id] ?? unnamedWindow(id);
       if (!known) return;
       const prev = rows.get(id);
       const pct = full ? 100 : typeof utilization === 'number' ? Math.round(Math.max(0, Math.min(1, utilization)) * 100) : prev?.percent;
@@ -554,7 +557,7 @@ export class ClaudeProvider implements Provider {
     const rejected = info.status === 'rejected';
     if (type) put(type, info.utilization, info.resetsAt, rejected);
     if (changed) {
-      const rank = (id: string) => LIMIT_ORDER.indexOf(id) + 1 || 99;
+      const rank = (id: string) => LIMIT_ORDER.indexOf(id) + 1 || (id.startsWith('five_hour') ? 10 : 20);
       this.limitsCache = [...rows.values()].sort((a, b) => rank(a.id) - rank(b.id));
       this.limitsAt = Date.now();
       this.ctx.emit({ type: 'limits.updated', provider: 'claude', limits: this.limitsCache, meta: { planLimits: true } });
@@ -648,6 +651,17 @@ const LIMIT_WINDOWS: Record<string, { label: string; mins: number }> = {
   seven_day_sonnet: { label: 'Weekly · Sonnet', mins: 10_080 },
 };
 const LIMIT_ORDER = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'];
+/** A window the table does not name (a newer plan, a model of its own): labelled by its length. */
+function unnamedWindow(id: string): { label: string; mins: number } | undefined {
+  const m = /^(five_hour|seven_day)_(\w+)$/.exec(id);
+  if (!m) return undefined;
+  const name = m[2]
+    .split('_')
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(' ');
+  return m[1] === 'five_hour' ? { label: `5-hour limit · ${name}`, mins: 300 } : { label: `Weekly · ${name}`, mins: 10_080 };
+}
 /** Epoch seconds or milliseconds to milliseconds. */
 const epochMs = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? (v < 1e12 ? v * 1000 : v) : undefined);
 const CHROME_SERVER = 'claude-in-chrome';
