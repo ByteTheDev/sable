@@ -37,6 +37,7 @@ const ProjectPicker = lazy(() => loadPicker().then((m) => ({ default: m.ProjectP
 const Rail = lazy(() => loadRail().then((m) => ({ default: m.Rail })));
 const SessionView = lazy(() => loadSessionView().then((m) => ({ default: m.SessionView })));
 const SessionDock = lazy(() => loadSessionView().then((m) => ({ default: m.SessionDock })));
+const SessionLight = lazy(() => loadSessionView().then((m) => ({ default: m.SessionLight })));
 const Onboarding = lazy(() => import('@/features/onboarding/Onboarding').then((m) => ({ default: m.Onboarding })));
 
 /**
@@ -232,6 +233,17 @@ export function App() {
           <Topbar />
           <div className="stage-body" ref={stageBody}>
             <AnimatePresence>{booting && <LogoIntro key="intro" ready={ready} />}</AnimatePresence>
+            {/* The session's band of light, one field for every session (like the dock): a switch
+                changes its colour and pace, it is never built again. Under the conversation. */}
+            <AnimatePresence initial={false} custom={viewMode}>
+              {viewKey != null && sessionId && (
+                <motion.div key="light" className="stage-view stage-light" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
+                  <Suspense fallback={null}>
+                    <SessionLight sessionId={sessionId} />
+                  </Suspense>
+                </motion.div>
+              )}
+            </AnimatePresence>
             {/* After a send from home the conversation fades in around the docked composer, which must not move. */}
             <AnimatePresence mode="popLayout" initial={false} custom={viewMode}>
               {viewKey == null ? null : (

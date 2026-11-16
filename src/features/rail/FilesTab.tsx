@@ -14,6 +14,9 @@ import { isAbsolute, isImagePath, joinPath } from './util';
 
 type DirState = { entries?: DirEntry[]; loading?: boolean; error?: string };
 
+/** A version control system's own folder is never something to open from here. */
+const VCS = new Set(['.git', '.hg', '.svn']);
+
 interface Row {
   entry: DirEntry;
   depth: number;
@@ -53,7 +56,7 @@ export function FilesTab({ sessionId, cwd }: { sessionId: string; cwd: string })
     setDirs((d) => ({ ...d, [k]: { ...d[k], loading: true, error: undefined } }));
     bridge
       .call('fs.list', { path })
-      .then((r) => setDirs((d) => ({ ...d, [k]: { entries: r.entries } })))
+      .then((r) => setDirs((d) => ({ ...d, [k]: { entries: r.entries.filter((e) => !VCS.has(e.name)) } })))
       .catch((err: Error) => setDirs((d) => ({ ...d, [k]: { error: err.message || String(err) } })));
   }, []);
 

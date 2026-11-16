@@ -504,6 +504,11 @@
   padding: 12px 8px 24px;
 }
 
+/* The start view's empty sentence sits where every other pane's does. */
+.bw-start > .rail-empty:only-child {
+  margin: -12px -8px 0;
+}
+
 .bw-sec {
   animation: bw-rise var(--d-3) var(--ease-out);
 }

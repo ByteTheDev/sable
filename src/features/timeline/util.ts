@@ -10,9 +10,19 @@ export function shortDuration(ms: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-const TIME = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
-const DAY = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-const DAY_YEAR = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+// English day and month names with the computer's own clock style, as the shell writes dates
+// (features/usage/format.ts, lib/format.ts): a German system must not put "Nov." or "Sa" into English copy.
+const DATE_LOCALE = 'en-GB';
+const HOUR12 = (() => {
+  try {
+    return new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hour12 ?? false;
+  } catch {
+    return false;
+  }
+})();
+const TIME = new Intl.DateTimeFormat(DATE_LOCALE, { hour: '2-digit', minute: '2-digit', hour12: HOUR12 });
+const DAY = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', day: 'numeric' });
+const DAY_YEAR = new Intl.DateTimeFormat(DATE_LOCALE, { year: 'numeric', month: 'short', day: 'numeric' });
 
 /** When something was said: the time for today, a date and the time for earlier days. */
 export function stampParts(ts: number, now = Date.now()): { day: string; time: string } {

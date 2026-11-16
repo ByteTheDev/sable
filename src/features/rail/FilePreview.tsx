@@ -115,7 +115,8 @@ export function FilePreview({ path, cwd, status, onBack }: { path: string; cwd: 
                 <Markdown text={data.content} />
               </div>
             ) : (
-              <CodeBlock code={data.content} lang={lang} title={segments[segments.length - 1]} maxHeight={Infinity} startLine={1} className="fp-code" />
+              // The name is already in the path above: the block's header names the language instead.
+              <CodeBlock code={data.content} lang={lang} maxHeight={Infinity} startLine={1} className="fp-code" />
             )}
           </>
         )}

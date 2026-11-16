@@ -63,7 +63,20 @@
 .tl-empty {
   color: var(--text-3);
   font-size: var(--t-body);
-  animation: fade-in var(--d-4) var(--ease);
+  /* Late on purpose: a session started from home has its first message on the way, and this
+     sentence must not flash before it lands. */
+  animation: fade-in var(--d-4) var(--ease) 900ms backwards;
+}
+
+/* A widget that arrives whole opens from nothing to its height. An answer that follows it within a
+   moment waits out of the flow until the widget has drawn, then fades in once it has opened, at its
+   final place: nothing slides down under the reader. Fresh items only (history never hides). */
+.tl-item[data-k='widget'][data-fresh]:has(.gw-box[data-phase='wait']) + .tl-item[data-t='text'] {
+  display: none;
+}
+
+.tl-item[data-k='widget'][data-fresh] + .tl-item[data-t='text'][data-fresh] {
+  animation: fade-in var(--d-2) var(--ease) var(--d-3) backwards;
 }
 
 /* ───────────── rows & rhythm ───────────── */

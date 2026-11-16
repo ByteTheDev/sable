@@ -248,17 +248,9 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
     return () => window.clearTimeout(t);
   }, [look]);
 
-  // The chip's slot changes width only with the model or the ultracode mark; the pill inside
-  // follows the name. Both changes are eased (one short WAAPI resize, nothing re-renders).
-  const lastW = useRef(0);
-  useLayoutEffect(() => {
-    const el = chip.current;
-    if (!el) return;
-    const w = el.offsetWidth;
-    const was = lastW.current;
-    lastW.current = w;
-    if (was && Math.abs(w - was) > 1) play(el, [{ width: `${was}px` }, { width: `${w}px` }], { duration: 160, easing: EASE_OUT });
-  }, [ucOn, efforts]);
+  // The chip hugs the current name, so the toolbar's gaps stay equal; a change of name eases the
+  // width (one short WAAPI resize, nothing re-renders). The chip's right edge sits against the send
+  // key and never moves, so the popover (aligned to it) stays put; only the model chip slides.
   const pill = useRef<HTMLSpanElement>(null);
   const lastPill = useRef(0);
   useLayoutEffect(() => {
@@ -275,9 +267,6 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
   const name = shown ? effortName(shown) : 'Default';
   const aria = efforts.length ? `Effort: ${name}${ucOn ? ', ultracode on' : ''}` : `Ultracode ${ucOn ? 'on' : 'off'}`;
   const tip = efforts.length ? (ucOn ? `Effort and ultracode` : 'Effort') : 'Ultracode';
-  // Every name the model offers sits in one grid cell, so the chip is as wide as the longest.
-  const names = shown ? efforts : [...efforts, undefined];
-
   return (
     <RP.Root open={open} onOpenChange={setOpen}>
       <Tip label={tip} side="top">
@@ -285,18 +274,6 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
           <button ref={chip} type="button" className="tb-chip th-chip" data-ultra={look || undefined} data-burst={burst || undefined} data-bare={!efforts.length || undefined} aria-label={aria}>
             {efforts.length > 0 ? (
               <>
-                {/* Holds the toolbar width: the longest name the model offers. Never seen. */}
-                <span className="th-sizer" aria-hidden>
-                  <span className="th-names">
-                    {names.map((e) => (
-                      <span key={e ?? 'default'} className="th-nm">
-                        <LevelName effort={e} mark={ucOn} />
-                      </span>
-                    ))}
-                  </span>
-                  <span className="th-meter-slot" style={{ width: efforts.length * 5 - 2 }} />
-                </span>
-                {/* What is seen: hugs the current name, so its fill never shows dead space. */}
                 <span ref={pill} className="th-pill" aria-hidden>
                   {look && <UltraMark className="th-uc-narrow" />}
                   <span className="th-nm th-cur">

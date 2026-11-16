@@ -7,17 +7,31 @@ import { useStore } from '@/state/store';
 import './session.css';
 
 /**
- * One conversation: the timeline, with a low band of light under it that breathes with the agent
- * (a little brighter and faster while it works, amber while it waits on you). The dock (prompts and
- * composer) floats over it but is not part of it: it lives one level up (`SessionDock`), so moving
- * between sessions dissolves the conversation while the composer stays where it is.
+ * One conversation: the timeline. The band of light under it lives one level up (`SessionLight`),
+ * like the dock (`SessionDock`): moving between sessions dissolves the conversation while the
+ * light and the composer stay where they are.
  */
 export function SessionView({ sessionId }: { sessionId: string }) {
-  // Only what the light needs: usage ticks while streaming must not re-render the whole view.
+  // Only what the view needs: usage ticks while streaming must not re-render the whole view.
+  const status = useStore((s) => s.sessions[sessionId]?.status);
+  if (!status) return null;
+  return (
+    <div className="session" data-status={status}>
+      <Timeline sessionId={sessionId} />
+    </div>
+  );
+}
+
+/**
+ * A low band of light under the conversation that breathes with the agent (a little brighter and
+ * faster while it works, amber while it waits on you). One instance for every session (App keeps
+ * it mounted across switches): a switch changes its colour and pace, the field is never rebuilt.
+ */
+export function SessionLight({ sessionId }: { sessionId: string }) {
   const provider = useStore((s) => s.sessions[sessionId]?.provider);
   const status = useStore((s) => s.sessions[sessionId]?.status);
 
-  // The band of light is not needed for the first paint: it starts in idle time and fades in.
+  // The band is not needed for the first paint: it starts in idle time and fades in.
   const [light, setLight] = useState(false);
   useEffect(() => {
     if (typeof requestIdleCallback !== 'function') {
@@ -29,15 +43,7 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   }, []);
 
   if (!provider || !status) return null;
-
-  return (
-    <div className="session" data-status={status}>
-      <div className="session-light" data-status={status}>
-        {light && <Backdrop surface="session" provider={provider} status={status} />}
-      </div>
-      <Timeline sessionId={sessionId} />
-    </div>
-  );
+  return <div className="session-light" data-status={status}>{light && <Backdrop surface="session" provider={provider} status={status} />}</div>;
 }
 
 /**

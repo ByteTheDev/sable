@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { PermissionRequest, QuestionRequest, Todo } from '@shared/protocol';
 import { useStore } from '@/state/store';
@@ -17,6 +18,29 @@ const rise = {
   transition: { type: 'spring' as const, stiffness: 440, damping: 36 },
 };
 
+/** How long "All tasks done" stays after the last task is checked off. */
+const DONE_HOLD = 1600;
+
+/**
+ * The strip shows while a task is open. When the last one is checked off it stays a moment, full,
+ * then leaves; a finished list never comes back with the next turn.
+ */
+function useTaskStrip(todos: Todo[]): boolean {
+  const open = todos.some((t) => t.status !== 'completed');
+  const [held, setHeld] = useState(false);
+  const was = useRef(open);
+  useEffect(() => {
+    const before = was.current;
+    was.current = open;
+    if (open) return setHeld(false);
+    if (!before || !todos.length) return;
+    setHeld(true);
+    const t = window.setTimeout(() => setHeld(false), DONE_HOLD);
+    return () => window.clearTimeout(t);
+  }, [open, todos.length]);
+  return todos.length > 0 && (open || held);
+}
+
 /**
  * What waits above the composer: the task strip, then the oldest question or
  * permission request (one at a time). Rendered as direct children of the dock column.
@@ -34,7 +58,7 @@ export function PromptDock({ sessionId }: { sessionId: string }) {
   ].sort((a, b) => a.req.createdAt - b.req.createdAt);
   const head = queue[0];
   const more = queue.length - 1;
-  const showTasks = todos.length > 0 && (running || todos.some((t) => t.status !== 'completed'));
+  const showTasks = useTaskStrip(todos);
 
   return (
     <>

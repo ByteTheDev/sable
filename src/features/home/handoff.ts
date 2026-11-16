@@ -111,7 +111,8 @@ export function beginHandoff(card: HTMLElement | null) {
   const field = copy.querySelector<HTMLTextAreaElement>('textarea.cmp-input:not(.cmp-mirror)');
   if (field) {
     field.value = '';
-    field.placeholder = 'Queue a follow-up';
+    // Blank on the way down: the message just left, and the docked card brings its own placeholder.
+    field.placeholder = '';
     field.style.transition = 'height 260ms cubic-bezier(0.16, 1, 0.3, 1)';
   }
   copy.querySelector('.cmp-roll')?.remove();

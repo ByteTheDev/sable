@@ -239,7 +239,7 @@ const sstep = (a: number, b: number, x: number) => {
 const TAU = 6.28318;
 
 /** How long each beat lasts, ms. */
-const BEAT_MS: Record<FieldBeat, number> = { send: 1800, pulse: 1400, done: 860, fail: 1100 };
+const BEAT_MS: Record<FieldBeat, number> = { send: 1800, pulse: 1400, done: 1250, fail: 1100 };
 const MAX_BEATS = 3;
 /** Fronts drawn per frame: a beat draws up to three (its crest, an echo, a flash or settle at its origin). */
 const MAX_FRONTS = 9;
@@ -699,16 +699,23 @@ export class Field {
           this.front(cx, cy, 0.015 + 0.06 * (u / 0.2), 0.07, 0, s * 1.15 * f * f, 0, true, false, 0);
         }
       } else if (b.kind === 'done') {
-        // A soft ring closes in on the point (ease in and out, so it gathers rather than falls), and
-        // the light there swells once and settles as it arrives.
-        const e = u < 0.5 ? 2 * u * u : 1 - (2 - 2 * u) ** 2 / 2;
-        const r = 0.02 + (1 - e) * far * 0.9;
-        const amp = (s * 0.95 * Math.sin(Math.PI * Math.min(1, u * 1.12)) ** 1.2) / (1 + 0.4 * r);
-        this.front(cx, cy, r, 0.06, 0.09, amp, -0.03, false, false, 0);
-        lift += amp * 0.6;
-        if (u > 0.68) {
-          const q = Math.sin((Math.PI * (u - 0.68)) / 0.32);
-          this.front(cx, cy, 0.05 + 0.05 * q, 0.16, 0, s * 0.42 * q, 0, true, false, 0);
+        // The turn settles: one wide, nearly flat crest of light comes down through the band from
+        // above its top and lands on the point (the composer's top edge), across the whole width,
+        // so it is seen beside and above the composer rather than behind it. It is the top of a
+        // very large ring centred far below the point, so it bows gently, its ends a little ahead.
+        // It decelerates as it lands, and the light there swells once and fades.
+        const R = Math.max(3, aspect * 1.6);
+        const travel = cy + 0.2;
+        const e = 1 - (1 - u) ** 2.4;
+        const r = R + travel * (1 - e);
+        const env = (u < 0.08 ? u / 0.08 : 1) * (1 - sstep(0.62, 1, u));
+        const amp = s * 1.25 * env;
+        // The soft side trails above, the crisp side leads below.
+        this.front(cx, cy + R, r, 0.26, 0.06, amp, -0.02, false, false, 0.22);
+        lift += amp * 0.5;
+        if (u > 0.55) {
+          const q = Math.sin((Math.PI * (u - 0.55)) / 0.45);
+          this.front(cx, cy, 0.08 + 0.1 * q, 0.22, 0, s * 0.32 * q, 0, true, false, 0);
         }
       } else {
         // fail: the light dips, the dimming spreading from the point within a third of the beat,

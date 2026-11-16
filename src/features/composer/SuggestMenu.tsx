@@ -76,7 +76,8 @@ export function SuggestMenu({
       const width = Math.min(r.width, 560);
       // Upward it overlaps the card's top edge by 11px, so it reads as part of the composer.
       if (placement === 'up') setStyle({ left: r.left, width, bottom: vh - r.top - 11, maxHeight: Math.max(160, r.top + 11 - 16) });
-      else setStyle({ left: r.left, width, top: r.bottom + 6, maxHeight: Math.max(160, vh - r.bottom - 14) });
+      // Downward it ends inside the stage (which sits 10px in from the window), never on its edge.
+      else setStyle({ left: r.left, width, top: r.bottom + 6, maxHeight: Math.max(160, vh - r.bottom - 26) });
     };
     place();
     const ro = new ResizeObserver(place);
@@ -159,10 +160,12 @@ export function SuggestMenu({
                 <span className="sg-main">
                   <span className="sg-label">
                     <Lit text={r.label} indices={r.indices} />
+                    {r.kind === 'dir' && <span className="sg-slash">/</span>}
                   </span>
                   {r.hint && <span className="sg-hint">{r.hint}</span>}
                 </span>
-                {r.detail && <span className={r.kind === 'file' || r.kind === 'dir' ? 'sg-detail sg-path' : 'sg-detail'}>{r.detail}</span>}
+                {/* A folder says where a file is; a command's description shows on the active row only. */}
+                {r.detail && (r.kind === 'file' || r.kind === 'dir' ? <span className="sg-detail sg-path">{r.detail}</span> : <span className="sg-detail" data-desc>{r.detail}</span>)}
               </div>
             </Fragment>
           );

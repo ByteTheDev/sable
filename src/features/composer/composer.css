@@ -48,6 +48,19 @@
   position: relative;
 }
 
+/* Long text scrolls inside the field: its lower edge fades into the card (an overlay in the card's
+   colour, clear of the scrollbar), so no line is cut hard against the toolbar. */
+.cmp-field[data-scrolls]::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 12px;
+  bottom: 0;
+  height: 14px;
+  background: linear-gradient(to bottom, rgb(8 8 10 / 0), var(--cmp-fill));
+  pointer-events: none;
+}
+
 .cmp-input {
   display: block;
   width: 100%;
@@ -400,6 +413,26 @@
   margin: 0 6px;
 }
 
+/* A shell command goes to the terminal, not the agent: its model and effort step out of the way
+   (their room is kept, so nothing moves). */
+.cmp-agent {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  transition:
+    opacity var(--d-1) var(--ease),
+    visibility 0s;
+}
+
+.cmp-card[data-shell] .cmp-agent {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--d-1) var(--ease),
+    visibility 0s var(--d-1);
+}
+
 /* Shell mode badge. */
 .cmp-shell {
   display: inline-flex;
@@ -417,9 +450,8 @@
 
 /* ── thinking: the level at rest, the stepped track in a popover ── */
 
-/* At rest: the level's name and a step meter. The button's slot is as wide as the longest name
-   the model offers (a hidden sizer), so the toolbar never moves when the level changes; the
-   visible pill hugs the current name at the slot's right end and eases to its new width. */
+/* At rest: the level's name and a step meter. The button hugs the current name, so the toolbar's
+   gaps stay equal; a new name eases the pill's width (its right edge, against the send key, holds). */
 .th-chip {
   display: inline-grid;
   justify-items: end;
@@ -437,7 +469,6 @@
   opacity: 1;
 }
 
-.th-sizer,
 .th-pill {
   grid-area: 1 / 1;
   display: inline-flex;
@@ -446,10 +477,6 @@
   height: 28px;
   padding: 0 10px 0 11px;
   white-space: nowrap;
-}
-
-.th-sizer {
-  visibility: hidden;
 }
 
 .th-pill {
@@ -480,20 +507,6 @@
   width: 28px;
   padding: 0;
   justify-content: center;
-}
-
-.th-names {
-  display: inline-grid;
-  min-width: 0;
-}
-
-.th-names > .th-nm {
-  grid-area: 1 / 1;
-}
-
-.th-meter-slot {
-  height: 1px;
-  flex-shrink: 0;
 }
 
 .th-pill > .th-uc-narrow {
@@ -633,14 +646,12 @@
 
 /* Narrow composer: the names fold away first; the meter and mark stay. */
 @container cmp (max-width: 470px) {
-  .th-names,
   .th-cur {
     display: none;
   }
   .th-pill > .th-uc-narrow {
     display: block;
   }
-  .th-sizer,
   .th-pill {
     padding: 0 9px;
   }
@@ -1366,6 +1377,21 @@
   text-overflow: ellipsis;
 }
 
+/* No descriptions in a quiet list: the active row explains itself (opacity only, nothing moves). */
+.sg-detail[data-desc] {
+  opacity: 0;
+  transition: opacity 80ms var(--ease-out);
+}
+
+.sg-row[data-active] .sg-detail[data-desc] {
+  opacity: 1;
+}
+
+.sg-slash {
+  color: var(--text-4);
+  font-weight: var(--w-regular);
+}
+
 /* Folders as labels: UI font, elided from the start so the nearest folders stay readable. */
 .sg-path {
   direction: rtl;
@@ -1853,8 +1879,11 @@
   --pill: rgb(255 255 255 / 0.1);
 }
 
+/* The "!" is one narrow mono glyph: a ring around it crowded the command. A soft fill, no ring. */
 .cmp-pill[data-kind='shell'] {
-  --pill: rgb(255 255 255 / 0.16);
+  --pill-bg: #232328;
+  --pill: transparent;
+  border-radius: 4px;
 }
 
 .cmp-field > textarea.cmp-input:not(.cmp-mirror) {

@@ -251,6 +251,8 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
     const h = Math.min(max, Math.max(LINE * minLines + PAD_Y, content));
     ta.style.height = `${h}px`;
     ta.style.overflowY = content > max ? 'auto' : 'hidden';
+    // A field that scrolls fades out at its lower edge instead of cutting a line in half.
+    ta.parentElement?.toggleAttribute('data-scrolls', content > max);
   }, [measured, minLines]);
 
   // The pill layer scrolls (and reserves a scrollbar) exactly like the field above it.
@@ -491,12 +493,13 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
     last.finished.then(done, done);
   };
 
-  // The backdrop answers the turn's end (a gather into the composer, or a dip on an error); the
-  // steer hint has had its turn once the first one ends.
+  // The backdrop answers the turn's end (light settling onto the composer, or a dip on an error);
+  // the steer hint has had its turn once the first one ends.
   const wasBusy = useRef(busy);
   useEffect(() => {
     if (wasBusy.current && !busy && variant === 'session') {
-      fieldBeat(status === 'error' ? 'fail' : 'done', card.current, 1);
+      if (status === 'error') fieldBeat('fail', card.current, 1);
+      else fieldBeat('done', card.current, 1, 'top');
       if (sessionId) hinted.add(sessionId);
     }
     wasBusy.current = busy;
@@ -821,8 +824,10 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
           </div>
           <SendHint on={queueing && canSend} steerable={steerable} sendWithEnter={sendWithEnter} />
           <div className="cmp-side cmp-right">
-            <ModelPopover choice={choice} side={popSide} onClosed={focus} />
-            <ModelEffort choice={choice} side={popSide} onClosed={focus} ultraOffered={ultraOffered} ultracode={ultra} onUltracode={toggleUltra} />
+            <div className="cmp-agent" inert={shell || undefined}>
+              <ModelPopover choice={choice} side={popSide} onClosed={focus} />
+              <ModelEffort choice={choice} side={popSide} onClosed={focus} ultraOffered={ultraOffered} ultracode={ultra} onUltracode={toggleUltra} />
+            </div>
             <SendKey
               canSend={canSend}
               busy={busy}

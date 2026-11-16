@@ -37,20 +37,87 @@ export const SidebarRowContext = createContext<RowCtx>({ setRenaming, askDelete:
 const SHOWN = ['id', 'title', 'status', 'unread', 'pinned', 'archived', 'updatedAt', 'activity', 'lastError', 'provider', 'accountId'] as const;
 const sameShown = (a: SessionMeta, b: SessionMeta) => SHOWN.every((k) => a[k] === b[k]);
 
-/** The session as the row shows it: the same object while only unshown fields change. */
-function useRowSession(id: string): SessionMeta | undefined {
-  const last = useRef<SessionMeta | undefined>(undefined);
-  const select = useCallback(
-    (s: { sessions: Record<string, SessionMeta> }) => {
-      const next = s.sessions[id];
-      const prev = last.current;
-      if (prev && next && sameShown(prev, next)) return prev;
-      last.current = next;
-      return next;
+// ── what each row shows, from one store subscription for the whole list ──
+
+/**
+ * Every store update (a streamed token is one) would otherwise run two selectors per row: a few
+ * hundred rows made the sidebar the largest script cost while text streamed. Instead one listener
+ * looks at the two things rows read, the sessions map and the open session; when neither changed
+ * (the usual case while streaming) it returns at once. When one did, only rows whose shown fields
+ * or active state changed are told.
+ */
+interface RowView {
+  session: SessionMeta | undefined;
+  active: boolean;
+}
+
+type StoreState = ReturnType<typeof useStore.getState>;
+
+const rowListeners = new Map<string, Set<() => void>>();
+const rowViews = new Map<string, RowView>();
+let hubOff: (() => void) | null = null;
+
+function viewOf(id: string, s: StoreState, prev: RowView | undefined): RowView {
+  const session = s.sessions[id];
+  const active = s.ui.activeSessionId === id;
+  if (prev && prev.active === active && (prev.session === session || (prev.session && session && sameShown(prev.session, session)))) return prev;
+  return { session, active };
+}
+
+function startHub() {
+  if (hubOff) return;
+  hubOff = useStore.subscribe((s, p) => {
+    const activeMoved = s.ui.activeSessionId !== p.ui.activeSessionId;
+    if (s.sessions === p.sessions && !activeMoved) return;
+    for (const [id, subs] of rowListeners) {
+      if (s.sessions[id] === p.sessions[id] && (!activeMoved || (id !== s.ui.activeSessionId && id !== p.ui.activeSessionId))) continue;
+      const prev = rowViews.get(id);
+      const next = viewOf(id, s, prev);
+      if (next === prev) continue;
+      rowViews.set(id, next);
+      for (const fn of subs) fn();
+    }
+  });
+}
+
+function rowView(id: string): RowView {
+  let v = rowViews.get(id);
+  if (!v) {
+    v = viewOf(id, useStore.getState(), undefined);
+    rowViews.set(id, v);
+  }
+  return v;
+}
+
+/** The session as the row shows it (the same object while only unshown fields change) and whether it is open. */
+function useRowView(id: string): RowView {
+  const subscribe = useCallback(
+    (fn: () => void) => {
+      startHub();
+      let subs = rowListeners.get(id);
+      if (!subs) rowListeners.set(id, (subs = new Set()));
+      subs.add(fn);
+      // A change between the first render and this subscription is caught up here.
+      const fresh = viewOf(id, useStore.getState(), rowViews.get(id));
+      if (fresh !== rowViews.get(id)) {
+        rowViews.set(id, fresh);
+        fn();
+      }
+      return () => {
+        subs.delete(fn);
+        if (!subs.size) {
+          rowListeners.delete(id);
+          rowViews.delete(id);
+        }
+        if (!rowListeners.size && hubOff) {
+          hubOff();
+          hubOff = null;
+        }
+      };
     },
     [id],
   );
-  return useStore(select);
+  return useSyncExternalStore(subscribe, () => rowView(id));
 }
 
 // ── relative time: one minute clock; a row's time re-renders only when its label changes ──
@@ -275,8 +342,7 @@ function whoLabel(s: SessionMeta, mix: RowMix): string | null {
  * the list first drew rise in (plain CSS), the first paint does not animate.
  */
 export const SessionRow = memo(function SessionRow({ id, enter, mix, major }: { id: string; enter?: boolean; mix?: RowMix; major?: ProviderId }) {
-  const session = useRowSession(id);
-  const active = useStore((s) => s.ui.activeSessionId === id);
+  const { session, active } = useRowView(id);
   const renaming = useRenaming(id);
   const ctx = useContext(SidebarRowContext);
   const [menuOpen, setMenuOpen] = useState(false);

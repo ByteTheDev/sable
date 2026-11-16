@@ -108,10 +108,9 @@ function rowText(item: ToolItem, cwd: string, home: string): { verb: string; pat
       const where = d.glob ?? (d.path ? relPath(d.path, cwd, home) : '');
       return { verb: item.title, sub: where && where !== '.' ? `in ${where}` : undefined };
     }
-    case 'todo': {
-      const cur = d.todos?.find((t) => t.status === 'in_progress');
-      return { verb: 'Tasks', sub: cur ? (cur.activeForm ?? cur.content) : undefined };
-    }
+    // The task strip over the composer carries the live task; the trail only records the list's count.
+    case 'todo':
+      return { verb: 'Tasks' };
     case 'skill':
       return { verb: item.title, sub: d.description };
     case 'mcp':

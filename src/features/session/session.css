@@ -19,6 +19,11 @@
   pointer-events: none;
 }
 
+/* Its layer in the stage (App.tsx): a stage view under the conversation, kept across switches. */
+.stage-light {
+  pointer-events: none;
+}
+
 /* The upward fade is an overlay in the stage colour, not a mask over the animated field. */
 .session-light::after {
   content: '';
