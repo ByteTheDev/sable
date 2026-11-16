@@ -1183,7 +1183,7 @@ textarea.field {
 :root[data-quality] .dialog {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  background-color: var(--glass-strong);
+  background-color: var(--glass-solid);
 }
 
 :root[data-quality] .shimmer {
