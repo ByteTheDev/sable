@@ -29,9 +29,9 @@ export const WIDGET_DESCRIPTION = `Show a visual inline in the conversation: a c
 
 Use it when seeing or trying beats reading: numbers with a shape (trends, distributions, comparisons), structure (architecture, flows, states), a choice for the user to make, a concept easier to explore than to explain. Not for plain answers, short lists, code to copy, or anything a sentence or a markdown table says as well. Keep the explanation in your text.
 
-\`code\` is an HTML fragment or one <svg>, not a full page. It lands in a body with 16px padding, a transparent background over dark ink, ivory text in Inter, and styled defaults for headings, text, tables, buttons (class "primary" for the one main action), inputs, selects, checkboxes, radios, ranges and code. Plain HTML already looks right: add CSS for layout only. Stay monochrome and dark: text tones var(--text), var(--text-2), var(--text-3); panels var(--surface), var(--surface-2); hairlines var(--line), var(--line-2); chart tones var(--series-1) to var(--series-4); var(--good), var(--bad), var(--warn) only for meaning; var(--font-mono), var(--r-md). Helpers: .card, .row, .stack, .grid, .stat (.stat-value, .stat-label), .meter (style="--p:.4", one <span> inside), .num for aligned figures, .muted.
+\`code\` is an HTML fragment or one <svg>, not a full page. It lands in a body with 16px padding, a transparent background over dark ink, ivory text in Inter, and styled defaults for headings, text, tables, buttons (class "primary" for the one main action), inputs, selects, checkboxes, radios, ranges and code. Plain HTML already looks right: add CSS for layout only. Stay monochrome and dark: text tones var(--text), var(--text-2), var(--text-3); panels var(--surface), var(--surface-2); hairlines var(--line), var(--line-2); chart tones var(--series-1) to var(--series-4); var(--good), var(--bad), var(--warn) only for meaning; var(--font-mono), var(--r-md). Helpers: .card (inner groups only), .row, .stack, .grid, .stat (.stat-value, .stat-label), .meter (style="--p:.4", one <span> inside), .num for aligned figures, .muted.
 
-About 720px wide, sometimes much narrower, so keep layouts fluid; the height follows the content. Aim for under 600px (taller is clipped behind "Show all"); never size anything with vh.
+It already sits in a framed block: no outer card, border or background around the whole thing. About 720px wide, sometimes much narrower: keep layouts fluid and use the full width, never a small drawing in one corner (an <svg> gets a viewBox and width="100%"). The height follows the content. Aim for under 600px (taller is clipped behind "Show all"); never size anything with vh.
 
 Inline <script> runs once the code is complete: put the markup first and scripts last. No network at all: no CDN libraries, web fonts, remote images or fetch (draw with SVG or canvas, use data: URIs). No storage, popups, alerts or navigation. sendPrompt(text) sends a message to the chat as the user, for example the option they chose; it works only from a click inside the widget.`;
 
@@ -53,13 +53,17 @@ export const WIDGET_INPUT_SCHEMA = {
 export const WIDGET_FENCE_HINT =
   'Sable can show visuals inline: when a chart, diagram or small interactive explainer beats text, call the show_widget tool. If that tool is not available, put the same HTML or SVG in a fenced code block with the info string widget (```widget) and it will be rendered.';
 
+/** The tool's answer to a widget that was shown (both agents). Real turns restated the values without it. */
+export const WIDGET_SHOWN =
+  'The user now sees the widget above your reply. Do not describe it or repeat its values; at most add one short sentence on what it means or what to do next.';
+
 /** What the tool answers the agent: short, so it does not repeat the widget in its reply. */
 export function widgetResult(input: unknown): { ok: boolean; text: string } {
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
   const code = typeof o.code === 'string' ? o.code : '';
   if (!code.trim()) return { ok: false, text: 'Nothing to show: `code` was empty.' };
   if (code.length > WIDGET_MAX) return { ok: false, text: `The widget is too large (${code.length} characters, at most ${WIDGET_MAX}). Make it smaller.` };
-  return { ok: true, text: 'The widget is shown to the user above your next words. Do not describe what it looks like; add only what it does not say.' };
+  return { ok: true, text: WIDGET_SHOWN };
 }
 
 /** Codex's `item/tool/call` answer for a client-defined tool (DynamicToolCallResponse). */

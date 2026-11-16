@@ -8,6 +8,7 @@ import { SessionRuntime } from '../server/core/runtime';
 import { ClaudeProvider } from '../server/providers/claude';
 import { CodexProvider } from '../server/providers/codex';
 import { transcript } from '../server/providers/codex-map';
+import { WIDGET_DESCRIPTION, WIDGET_SHOWN, dynamicToolAnswer, widgetResult } from '../server/providers/widget-tool';
 
 const ctx = (events: BridgeEvent[] = []) => ({ emit: (e: BridgeEvent) => events.push(e), log: () => {}, settings: () => DEFAULT_SETTINGS });
 
@@ -66,6 +67,46 @@ describe('Codex: an empty final reply leaves nothing behind', () => {
       },
     ] as never);
     expect(items.map((i: TimelineItem) => i.type)).toEqual(['tool', 'turn']);
+  });
+});
+
+describe('Codex: a resumed session takes a title', () => {
+  async function resumed(thread: Record<string, unknown>, turns: unknown[], title = 'New session') {
+    const p = new CodexProvider(ctx());
+    const rpc = {
+      request: async (method: string) =>
+        method === 'thread/resume' ? { thread: { id: 'th9', model: 'm', ...thread }, model: 'm' } : method === 'thread/turns/list' ? { data: turns, nextCursor: null } : {},
+    };
+    const anyP = p as unknown as { client: () => Promise<unknown>; caps: () => Promise<unknown> };
+    anyP.client = async () => rpc;
+    anyP.caps = async () => ({ models: [{ id: 'm', name: 'M', isDefault: true }], modes: [], commands: [], skills: [], agents: [], mcpServers: [], tools: [], skillTrigger: '$', features: {} });
+    const rt = runtime('codex');
+    rt.update({ providerSessionId: 'th9', title });
+    await p.open(rt, { loadTranscript: true });
+    return rt.meta.title;
+  }
+  const turn = { id: 't1', status: 'completed', startedAt: 1, completedAt: 2, items: [{ type: 'userMessage', id: 'u1', content: [{ type: 'text', text: 'Show a bar chart\nof three numbers' }] }] };
+
+  it('uses the first prompt when the thread has no name', async () => {
+    expect(await resumed({ name: null, preview: '' }, [turn])).toBe('Show a bar chart');
+  });
+  it('prefers the thread name, and keeps a title it was given', async () => {
+    expect(await resumed({ name: 'Charts', preview: '' }, [turn])).toBe('Charts');
+    expect(await resumed({ name: null, preview: '' }, [turn], 'From history')).toBe('From history');
+  });
+});
+
+describe('the show_widget wording', () => {
+  it('tells the agent the frame is there and to fill the width', () => {
+    expect(WIDGET_DESCRIPTION).toContain('no outer card, border or background');
+    expect(WIDGET_DESCRIPTION).toContain('use the full width');
+    expect(WIDGET_DESCRIPTION).toContain('width="100%"');
+  });
+  it('answers both agents the same: shown, do not describe or repeat it', () => {
+    expect(widgetResult({ title: 'T', code: '<svg/>' }).text).toBe(WIDGET_SHOWN);
+    expect(dynamicToolAnswer({ tool: 'show_widget', arguments: { title: 'T', code: '<svg/>' } }).contentItems[0].text).toBe(WIDGET_SHOWN);
+    expect(WIDGET_SHOWN).toMatch(/now sees the widget/);
+    expect(WIDGET_SHOWN).toMatch(/not describe it or repeat its values/);
   });
 });
 

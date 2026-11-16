@@ -11,7 +11,7 @@ import { describeTool, peekPartialInput } from '../server/providers/claude-tools
 import { draftItem } from '../server/providers/codex-map';
 import { CodexProvider } from '../server/providers/codex';
 import { DemoProvider } from '../server/providers/demo';
-import { WIDGET_DESCRIPTION, WIDGET_FENCE_HINT, WIDGET_SERVER, WIDGET_TOOL, WIDGET_TOOL_ID, dynamicToolAnswer, isWidgetTool, widgetResult } from '../server/providers/widget-tool';
+import { WIDGET_DESCRIPTION, WIDGET_FENCE_HINT, WIDGET_SERVER, WIDGET_SHOWN, WIDGET_TOOL, WIDGET_TOOL_ID, dynamicToolAnswer, isWidgetTool, widgetResult } from '../server/providers/widget-tool';
 
 const ctx = (settings: Partial<AppSettings>) => ({ emit: () => {}, log: () => {}, settings: () => ({ ...DEFAULT_SETTINGS, ...settings }) });
 const meta = { cwd: process.cwd(), model: '', mode: 'default' };
@@ -59,7 +59,7 @@ describe('Codex: the show_widget dynamic tool', () => {
   });
 
   it('answers item/tool/call for the widget, and refuses other names', () => {
-    expect(dynamicToolAnswer({ tool: 'show_widget', arguments: { title: 'T', code: '<p>x</p>' } })).toEqual({ contentItems: [{ type: 'inputText', text: expect.stringContaining('shown to the user') }], success: true });
+    expect(dynamicToolAnswer({ tool: 'show_widget', arguments: { title: 'T', code: '<p>x</p>' } })).toEqual({ contentItems: [{ type: 'inputText', text: WIDGET_SHOWN }], success: true });
     expect(dynamicToolAnswer({ tool: 'show_widget', arguments: { title: 'T', code: '' } }).success).toBe(false);
     expect(dynamicToolAnswer({ tool: 'rm_rf', arguments: {} }).success).toBe(false);
     expect(widgetResult({ code: 'x'.repeat(200_001) }).ok).toBe(false);

@@ -706,6 +706,12 @@ class CodexSession implements ProviderSession {
     const rt = this.rt;
     const { resp, resumed } = await this.resumeOrStart(rt.meta.providerSessionId);
     if (resumed && loadTranscript) rt.reset(transcript(await this.loadTurns(resp.thread.id)));
+    // A resumed thread opened without a title: its name, else the first prompt (as Claude sessions do).
+    if (resumed && rt.meta.titleSource === 'auto' && rt.meta.title === 'New session') {
+      const first = rt.items.find((i): i is UserItem => i.type === 'user')?.text || resp.thread.preview || '';
+      const title = (resp.thread.name?.trim() || first.trim()).split('\n')[0].slice(0, 56);
+      if (title) rt.update({ title });
+    }
     rt.update({
       providerSessionId: this.threadId,
       model: rt.meta.model || resp.model || resp.thread.model || '',

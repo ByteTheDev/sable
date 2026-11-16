@@ -25,7 +25,7 @@ import type {
   UserItem,
 } from '../../shared/protocol';
 import { makeFileDiff } from '../../shared/diff';
-import { WIDGET_TOOL_ID } from './widget-tool';
+import { WIDGET_SHOWN, WIDGET_TOOL_ID } from './widget-tool';
 
 // ───────────────────────────── control-flow signals ─────────────────────────────
 
@@ -414,7 +414,7 @@ export class Script {
     this.check();
     this.rt.patch<ToolItem>(item.id, { input, status: 'running' });
     await this.pause(60, 140);
-    this.complete(item.id, { text: 'The widget is shown to the user.' });
+    this.complete(item.id, { text: WIDGET_SHOWN });
     return item.id;
   }
 
