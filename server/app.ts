@@ -29,6 +29,8 @@ import { speedFor, startSpeedFor } from '../shared/speed';
 import type { Provider, ProviderContext, ProviderSession } from './providers/types';
 import { findAccountFolders, folderLabel, labelFromAuth, pickNextAccount } from './accounts/folders';
 import { handoverText } from './accounts/handover';
+import { cutAt } from './core/fork';
+import { orderAccounts } from './accounts/order';
 import { withBrowserLine } from './providers/browser-tool';
 import { VERSION } from './version';
 
@@ -227,11 +229,11 @@ export class App {
     return this.accountList(provider).find((a) => a.id === accountId);
   }
 
-  /** The provider's accounts, the built-in default first. */
+  /** The provider's accounts in the order the person set (`settings.accountOrder`), else the built-in default first. */
   accountList(provider: ProviderId): StoredAccount[] {
     const mine = this.store.state.accounts.filter((a) => a.provider === provider);
     const def = mine.find((a) => a.id === DEFAULT_ACCOUNT) ?? { id: DEFAULT_ACCOUNT, provider, label: DEFAULT_ACCOUNT_LABEL, createdAt: 0 };
-    return [def, ...mine.filter((a) => a.id !== DEFAULT_ACCOUNT)];
+    return orderAccounts([def, ...mine.filter((a) => a.id !== DEFAULT_ACCOUNT)], this.store.state.settings.accountOrder?.[provider]);
   }
 
   /** The account new sessions with this provider use. */
@@ -907,6 +909,14 @@ export class App {
       }
       return this.emitProvider(provider);
     });
+    this.register('account.reorder', ({ provider, ids }) => {
+      const known = new Set(this.accountList(provider).map((a) => a.id));
+      const order = [...new Set(ids)].filter((id) => known.has(id));
+      const s = this.store.state.settings;
+      s.accountOrder = { ...s.accountOrder, [provider]: order };
+      this.store.saveState();
+      return this.emitProvider(provider);
+    });
     this.register('account.remove', async ({ provider, accountId }) => {
       if (accountId === DEFAULT_ACCOUNT) throw new Error('The default account cannot be removed');
       const stored = this.findAccount(provider, accountId);
@@ -1197,6 +1207,48 @@ export class App {
       const handle = await this.ensureHandle(rt);
       if (!handle.rewind) return { ok: false, message: 'This provider cannot rewind.' };
       return handle.rewind(itemId, restoreFiles);
+    });
+    // Fork at an answer: a new session with the same agent and settings that continues from the
+    // end of that turn. The agent's own fork carries the real transcript; without one (or when it
+    // fails) the new session starts from a summary up to there. The source is never changed.
+    this.register('session.fork', async ({ sessionId, itemId }) => {
+      const src = this.runtime(sessionId);
+      this.hydrate(src);
+      const cut = cutAt(src.items, itemId);
+      if (!cut) throw new Error('That point is no longer in the conversation.');
+      const m = src.meta;
+      let resume: string | null = null;
+      if (m.providerSessionId) {
+        try {
+          const handle = await this.ensureHandle(src);
+          resume = (await handle.fork?.(itemId)) ?? null;
+        } catch {
+          resume = null;
+        }
+      }
+      const snap = await this.call('session.create', {
+        provider: m.provider,
+        cwd: m.cwd,
+        model: m.model || undefined,
+        effort: m.effort,
+        mode: m.mode,
+        accountId: m.accountId,
+        options: m.options,
+        ultracode: m.ultracode,
+        speed: m.speed,
+        title: `${m.title} (fork)`,
+        ...(resume ? { resume } : {}),
+      });
+      const rt = this.runtime(snap.session.id);
+      if (resume) rt.notice('info', `Forked from ${m.title}`);
+      else {
+        const summary = handoverText(cut.kept, { from: this.provider(m.provider, m.accountId ?? DEFAULT_ACCOUNT).name });
+        if (summary) {
+          this.handovers.set(rt.id, summary);
+          rt.notice('info', `Forked from ${m.title}`, 'It starts with a summary of the conversation up to there');
+        }
+      }
+      return this.call('session.snapshot', { sessionId: rt.id });
     });
     this.register('session.switchAccount', ({ sessionId, accountId, retry }) => this.switchAccount(this.runtime(sessionId), accountId, { retry }));
     this.register('session.context', async ({ sessionId }) => (await this.runtime(sessionId).handle?.context?.()) ?? null);

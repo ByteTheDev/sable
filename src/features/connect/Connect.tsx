@@ -8,7 +8,7 @@ import { resetIn } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
 import { tildePath } from '@/lib/format';
 import { openAddAccount } from '@/features/accounts/model';
-import { cancelLogin, login, logout, openSettings, refreshLimits, refreshProvider, removeAccount, renameAccount, setDefaultAccount } from '@/state/actions';
+import { cancelLogin, login, logout, moveAccount, openSettings, refreshLimits, refreshProvider, removeAccount, renameAccount, setDefaultAccount } from '@/state/actions';
 import { useAccounts } from '@/state/hooks';
 import { accountKey, useStore, type AuthFlow } from '@/state/store';
 import { cx, IconButton, Menu, MenuContent, MenuItem, MenuSep, MenuTrigger, Spinner } from '@/ui';
@@ -53,9 +53,9 @@ export function ConnectCard({ provider, primary = false, compact = false }: { pr
           </header>
           <ul className="acc-list" aria-label={`${name} accounts`}>
             <AnimatePresence initial={false}>
-              {accounts.map((a) => (
+              {accounts.map((a, i) => (
                 <motion.li key={a.id} layout="position" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4, transition: { duration: 0.12 } }} transition={{ duration: 0.24, ease }}>
-                  <AccountRow provider={provider} account={a} multi primary={a.id === firstOut} compact={compact} />
+                  <AccountRow provider={provider} account={a} multi primary={a.id === firstOut} compact={compact} canUp={i > 0} canDown={i < accounts.length - 1} />
                 </motion.li>
               ))}
             </AnimatePresence>
@@ -135,6 +135,8 @@ function AccountRow({
   compact,
   mark,
   heading,
+  canUp = false,
+  canDown = false,
 }: {
   provider: ProviderId;
   account: AccountInfo;
@@ -143,6 +145,9 @@ function AccountRow({
   compact: boolean;
   mark?: ReactNode;
   heading?: string;
+  /** Its place in the agent's list can move up or down (the order every account list uses). */
+  canUp?: boolean;
+  canDown?: boolean;
 }) {
   const key = accountKey(provider, account.id);
   const flow = useStore((s) => s.auth[key]);
@@ -357,6 +362,16 @@ function AccountRow({
               {multi && !account.isDefault && (
                 <MenuItem icon="star" onSelect={() => void setDefaultAccount(provider, account.id)}>
                   Make default
+                </MenuItem>
+              )}
+              {canUp && (
+                <MenuItem icon="arrow-up" onSelect={() => void moveAccount(provider, account.id, -1)}>
+                  Move up
+                </MenuItem>
+              )}
+              {canDown && (
+                <MenuItem icon="arrow-down" onSelect={() => void moveAccount(provider, account.id, 1)}>
+                  Move down
                 </MenuItem>
               )}
               {!own && (

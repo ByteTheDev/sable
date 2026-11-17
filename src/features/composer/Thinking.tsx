@@ -28,7 +28,7 @@ export function UltraMark({ className }: { className?: string }) {
   );
 }
 
-/** The level as a row of rising ticks, lit up to the level. An Ultra level's tick is dithered. */
+/** The level as a row of rising ticks, lit up to the level. An Ultra level's tick stands apart (composer.css). */
 function Meter({ efforts, level }: { efforts: Effort[]; level: number }) {
   const n = efforts.length;
   // The wave runs from where the ticks were last drawn.
@@ -44,7 +44,7 @@ function Meter({ efforts, level }: { efforts: Effort[]; level: number }) {
           key={e}
           data-on={i <= level || undefined}
           data-ultra={isUltraEffort(e) || undefined}
-          style={{ height: Math.round(5 + (i * 7) / Math.max(1, n - 1)), transitionDelay: `${Math.max(0, Math.abs(i - from) - 1) * 22}ms` }}
+          style={{ height: Math.round(4 + (i * 8) / Math.max(1, n - 1)), transitionDelay: `${Math.max(0, Math.abs(i - from) - 1) * 22}ms`, ['--k' as string]: i }}
         />
       ))}
     </span>
@@ -74,12 +74,9 @@ interface TrackProps {
   burst: boolean;
 }
 
-/** A bar's height in the popover: the chip's rising ticks, drawn large. */
-const barHeight = (i: number, n: number) => Math.round(8 + (i * 24) / Math.max(1, n - 1));
-
 /**
- * The effort steps: one column per level, a bar rising with it, lit up to the level (an Ultra level
- * in dither). Click a column, drag across them, or use the arrows, Home, End and number keys: all
+ * The effort steps: one row of cells, one per level, lit up to the level (the current one ivory, an
+ * Ultra level outlined until reached). Click a cell, drag across them, or use the arrows, Home, End and number keys: all
  * go through `step()` (effort-track.ts), so what the header names is what lands and is sent.
  */
 function Track({ efforts, level, onPreview, onCommit, onDone, trackRef, burst }: TrackProps) {
@@ -196,7 +193,7 @@ function Track({ efforts, level, onPreview, onCommit, onDone, trackRef, burst }:
               >
                 <i
                   data-settle={(cur && settle && !still) || undefined}
-                  style={{ height: barHeight(i, n), transitionDelay: still ? undefined : `${Math.max(0, Math.abs(i - from) - 1) * 24}ms` }}
+                  style={{ transitionDelay: still ? undefined : `${Math.max(0, Math.abs(i - from) - 1) * 24}ms` }}
                 />
               </span>
             );

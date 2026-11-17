@@ -596,14 +596,14 @@
   gap: 2px;
   height: 12px;
   flex-shrink: 0;
-  /* The ticks' feet sit on the text's optical baseline, not the box bottom. */
-  translate: 0 -0.5px;
 }
 
+/* Whole-pixel bars (3 px wide, heights in 2 px steps, Thinking.tsx), square-cut so they stay crisp
+   at 1x: lit is ivory, unlit one clear step above the pill. */
 .th-meter i {
   width: 3px;
-  border-radius: 1px;
-  background-color: rgb(255 255 255 / 0.14);
+  border-radius: 0.5px;
+  background-color: rgb(255 255 255 / 0.2);
   transition: background-color 120ms var(--ease);
 }
 
@@ -615,14 +615,17 @@
   background-color: var(--text);
 }
 
-/* An Ultra level's tick: lit in dither, the material "ultra" is drawn in. */
+/* The Ultra level stands apart: a step of air before it, an outline until it is reached, then
+   solid ivory like the rest, so it reads at a glance as the level beyond. */
 .th-meter i[data-ultra] {
-  background: var(--dither-50) 0 0 / 2px 2px, rgb(255 255 255 / 0.1);
-  image-rendering: pixelated;
+  margin-left: 2px;
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.3);
 }
 
 .th-meter i[data-ultra][data-on] {
-  background: var(--dither-50) 0 0 / 2px 2px, rgb(242 241 238 / 0.55);
+  background-color: var(--text);
+  box-shadow: none;
 }
 
 /* "Ultra" at rest (ultracode on, or the Ultra level): one fill step, like an engaged control, and the mark. */
@@ -658,37 +661,41 @@
   opacity: 0.55;
 }
 
-/* The moment it turns on: the second head rises into place under the first, the name lights once. */
-.th-chip[data-burst] .ux-m1 {
-  animation: ux-lift 520ms var(--ease-out) both;
+/* The moment Ultra turns on, one beat: a charge runs up the meter, bar after bar (each lifts a
+   pixel and lands), into the Ultra bar, which rises from its foot; as it lands the composer's edge
+   takes the light (Ultracode.tsx). Under 450 ms, transform only. */
+.th-chip[data-burst] .th-meter i {
+  animation: th-charge 170ms var(--ease-out) calc(var(--k) * 30ms) both;
 }
 
+.th-chip[data-burst] .th-meter i[data-ultra] {
+  transform-origin: 50% 100%;
+  animation: th-charge-top 260ms cubic-bezier(0.2, 0.9, 0.3, 1.2) calc(var(--k) * 30ms) both;
+}
+
+/* The mark's second head arrives with the charge. */
 .th-chip[data-burst] .ux-m2 {
-  animation: ux-stack 620ms var(--ease-out) both;
+  animation: ux-stack 260ms var(--ease-out) 150ms both;
 }
 
-.th-chip[data-burst] .th-cur {
-  animation: th-light 900ms var(--ease) both;
-}
-
-@keyframes ux-lift {
-  0% {
-    translate: 0 2.5px;
+@keyframes th-charge {
+  50% {
+    transform: translateY(-2px);
   }
-  45% {
-    translate: 0 -1.2px;
+}
+
+@keyframes th-charge-top {
+  0% {
+    transform: scaleY(0.2);
   }
   100% {
-    translate: 0 0;
+    transform: scaleY(1);
   }
 }
 
 @keyframes ux-stack {
   0% {
-    translate: 0 4px;
-    opacity: 0;
-  }
-  35% {
+    translate: 0 3px;
     opacity: 0;
   }
   100% {
@@ -697,12 +704,9 @@
   }
 }
 
-@keyframes th-light {
-  0% {
-    opacity: 0.35;
-  }
-  30% {
-    opacity: 1;
+@media (prefers-reduced-motion: reduce) {
+  .th-chip[data-burst] :is(.th-meter i, .ux-m2) {
+    animation: none;
   }
 }
 
@@ -722,7 +726,7 @@
 /* ── the popover ── */
 
 .th-pop {
-  width: 244px;
+  width: 216px;
   padding: 4px;
 }
 
@@ -792,99 +796,96 @@
   box-shadow: 0 0 0 1.5px var(--focus);
 }
 
+/* The steps: one row of cells (each column a full-height target), lit up to the level. */
 .th-steps {
   display: flex;
   align-items: stretch;
-  gap: 3px;
-  height: 44px;
+  gap: 0;
+  height: 28px;
 }
 
 .th-col {
   flex: 1 1 0;
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding-bottom: 7px;
+  align-items: center;
+  padding: 0 2px;
   border-radius: var(--r-sm);
-  transition: background-color 100ms var(--ease);
-}
-
-/* Each column is the stop's target: it lights one step under the pointer. */
-.th-col[data-hover] {
-  background-color: var(--fill-1);
 }
 
 .th-col > i {
   display: block;
-  width: 6px;
+  width: 100%;
+  height: 10px;
   border-radius: 3px;
-  background-color: rgb(255 255 255 / 0.07);
-  transform-origin: 50% 100%;
+  background-color: rgb(255 255 255 / 0.09);
+  transform-origin: 0 50%;
   transition:
     background-color 120ms var(--ease),
     scale 120ms var(--ease-out);
 }
 
+/* Under the pointer a cell lights one step. */
 .th-col[data-hover]:not([data-on]) > i {
-  background-color: rgb(255 255 255 / 0.15);
+  background-color: rgb(255 255 255 / 0.18);
 }
 
 .th-col[data-on] > i {
-  background-color: var(--text-2);
+  background-color: var(--text-3);
 }
 
 .th-col[data-cur] > i {
   background-color: var(--text);
 }
 
-/* Pressed: the bar under the pointer gives a little. */
+/* Pressed: the cell under the pointer gives a little. */
 .th-track[data-pressed] .th-col[data-cur] > i {
-  scale: 1 0.9;
+  scale: 1 0.8;
 }
 
-/* Landing on a stop: the bar sets with one short detent. */
+/* Landing on a stop: the cell sets with one short detent. */
 .th-col > i[data-settle] {
-  animation: th-settle 220ms var(--ease-out);
+  animation: th-settle 200ms var(--ease-out);
 }
 
 @keyframes th-settle {
   0% {
-    scale: 1 0.9;
+    scale: 1 0.8;
   }
   55% {
-    scale: 1 1.05;
+    scale: 1 1.15;
   }
   100% {
     scale: 1 1;
   }
 }
 
-/* Ultra: the top level, drawn in dither (faint until reached). */
-.th-col[data-ultra] > i {
-  background: var(--dither-50) 0 0 / 2px 2px, rgb(255 255 255 / 0.05);
-  image-rendering: pixelated;
-  opacity: 0.6;
-  transition:
-    opacity 140ms var(--ease),
-    scale 120ms var(--ease-out);
+/* Ultra: the level beyond, a step of air before it and an outline until it is reached (as on the chip). */
+.th-col[data-ultra] {
+  margin-left: 4px;
 }
 
-.th-col[data-ultra][data-hover] > i {
-  opacity: 0.85;
+.th-col[data-ultra] > i {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.28);
+}
+
+.th-col[data-ultra][data-hover]:not([data-on]) > i {
+  background-color: rgb(255 255 255 / 0.08);
 }
 
 .th-col[data-ultra][data-on] > i {
-  background: var(--dither-50) 0 0 / 2px 2px, rgb(242 241 238 / 0.5);
-  opacity: 1;
+  background-color: var(--text);
+  box-shadow: none;
 }
 
+/* Reached by hand: the cell fills from its left edge as the charge arrives. */
 .th-col[data-ultra][data-burst] > i {
-  animation: th-ultra-in 520ms var(--ease-out) both;
+  animation: th-ultra-in 240ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
 }
 
 @keyframes th-ultra-in {
   0% {
-    scale: 1 0.15;
+    scale: 0.08 1;
   }
   100% {
     scale: 1 1;
@@ -939,44 +940,14 @@
   color: var(--text);
 }
 
-/* Switching on: one band of dithered light crosses the row, then it is still. */
-.th-uc-row[data-burst]::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  width: 60%;
-  background: var(--dither-fade) right top / var(--dither-fade-size) repeat-y;
-  image-rendering: pixelated;
-  opacity: 0;
-  pointer-events: none;
-  animation: th-sweep 640ms var(--ease-out) both;
-}
-
-.th-uc-row[data-burst] .ux-m1 {
-  animation: ux-lift 520ms var(--ease-out) both;
-}
-
+/* Switching on: the mark's second head arrives, as on the chip. */
 .th-uc-row[data-burst] .ux-m2 {
-  animation: ux-stack 620ms var(--ease-out) both;
-}
-
-@keyframes th-sweep {
-  0% {
-    translate: -100% 0;
-    opacity: 0;
-  }
-  20% {
-    opacity: 0.16;
-  }
-  100% {
-    translate: 175% 0;
-    opacity: 0;
-  }
+  animation: ux-stack 260ms var(--ease-out) 60ms both;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .th-uc-row[data-burst]::after {
-    display: none;
+  .th-uc-row[data-burst] .ux-m2 {
+    animation: none;
   }
 }
 
@@ -1004,54 +975,30 @@
   transition: opacity 360ms var(--ease);
 }
 
-.uc-charge {
+/* The charge lands: the whole edge takes the light at once and settles into the hairline (opacity only). */
+.uc-flash {
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgb(242 241 238 / 0.42);
+  opacity: 0;
+  animation: uc-flash 320ms var(--ease-out) 190ms both;
 }
 
-/* The head is solid light, the tail breaks into dither and fades. */
-.uc-charge i {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 12px;
-  height: 2px;
-  border-radius: 1px;
-  offset-path: inset(0 round 20px);
-  offset-anchor: 50% 50%;
-  offset-rotate: auto;
-  background-color: var(--text);
-  opacity: calc(1 - var(--i) * 0.042);
-  will-change: offset-distance;
-  animation: uc-travel 720ms cubic-bezier(0.45, 0, 0.2, 1) 1 both;
-  animation-delay: calc(var(--i) * 3ms);
-}
-
-.uc-charge i:nth-child(n + 7) {
-  background: var(--dither-edge) 0 0 / 8px 4px;
-  image-rendering: pixelated;
-}
-
-@keyframes uc-travel {
-  from {
-    offset-distance: 0%;
+@keyframes uc-flash {
+  0% {
     opacity: 0;
   }
-  8% {
-    opacity: calc(1 - var(--i) * 0.042);
+  22% {
+    opacity: 1;
   }
-  85% {
-    opacity: calc(1 - var(--i) * 0.042);
-  }
-  to {
-    offset-distance: 100%;
+  100% {
     opacity: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .uc i {
+  .uc-flash {
     display: none;
   }
 }
@@ -1148,10 +1095,6 @@
   transform-origin: 8px 3.6px;
 }
 
-.sk-head2 {
-  opacity: 0;
-}
-
 .sk-line {
   opacity: 0;
   transform-origin: 8px 12px;
@@ -1173,15 +1116,6 @@
 
 .sk-glyph[data-glyph='steer'] .sk-arrow {
   transform: rotate(45deg);
-}
-
-.sk-glyph[data-double] .sk-head {
-  transform: translateY(-1.25px);
-}
-
-.sk-glyph[data-double] .sk-head2 {
-  opacity: 1;
-  transform: translateY(3.4px);
 }
 
 .cmp-send[data-ready]:is(:hover, :focus-visible) .sk-glyph[data-glyph='send'] .sk-arrow {

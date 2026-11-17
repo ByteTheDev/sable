@@ -1,12 +1,13 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import type { TimelineItem, TurnItem, UserItem } from '@shared/protocol';
 import { CopyButton } from '@/components/CopyButton';
 import { LazyTip } from '@/components/LazyTip';
 import { Icon } from '@/icons';
 import { formatCost, formatTokens, isMac } from '@/lib/format';
 import { openPreview, previewTargets } from '@/lib/links';
-import { sendMessage } from '@/state/actions';
+import { forkAt, sendMessage } from '@/state/actions';
 import { useStore } from '@/state/store';
+import { IconButton } from '@/ui';
 import { useItem, useTimeline } from './ctx';
 import type { TurnGroup } from './turns';
 
@@ -41,7 +42,16 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
   const end = useItem<TurnItem>(turn.end ?? '');
   const settled = turn.state !== 'running';
   const previews = useMemo(() => (settled ? previewsOf(useStore.getState().data[sessionId]?.items ?? {}, turn) : []), [settled, sessionId, turn]);
+  const [forking, setForking] = useState(false);
   if (!settled) return null;
+
+  const fork = async () => {
+    const last = turn.ids[turn.ids.length - 1];
+    if (!last || forking) return;
+    setForking(true);
+    await forkAt(sessionId, last);
+    setForking(false);
+  };
 
   const items = () => useStore.getState().data[sessionId]?.items ?? {};
   const failed = turn.state === 'failed';
@@ -96,13 +106,19 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
             Interrupted
           </span>
         )}
+        {hasAnswer && (
+          // Always there under an answer: quiet at rest, brighter on hover.
+          <span className="turn-acts">
+            <CopyButton text={() => responseText(items(), turn)} label="Copy response" size={13} className="turn-copy" />
+            <IconButton icon="fork" label="Fork from here" size={13} tipSide="top" className="turn-fork" disabled={forking} onClick={fork} />
+          </span>
+        )}
         <span className="turn-hover">
           {parts.length > 0 && (
             <LazyTip label={breakdown ?? parts.join(' · ')} side="top">
               <span className="turn-meta num">{parts.join(' · ')}</span>
             </LazyTip>
           )}
-          {hasAnswer && <CopyButton text={() => responseText(items(), turn)} label="Copy response" size={13} className="turn-copy" />}
         </span>
       </div>
     </div>

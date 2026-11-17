@@ -53,6 +53,11 @@ export interface ProviderSession {
   /** Claude Code ultracode on or off (`rt.meta.ultracode` already holds it). */
   setUltracode?(on: boolean): Promise<void>;
   rewind?(itemId: string, restoreFiles: boolean): Promise<{ ok: boolean; message?: string }>;
+  /**
+   * The agent's own fork at the end of the turn holding `itemId`: the new provider session id
+   * (resumable), or null when it cannot (Sable then starts from a summary). The source stays as it is.
+   */
+  fork?(itemId: string): Promise<string | null>;
   context?(): Promise<ContextBreakdown | null>;
   mcp?(): Promise<McpServerInfo[]>;
   /**

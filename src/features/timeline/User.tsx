@@ -16,7 +16,7 @@ import { Stamp } from './Stamp';
 const LONG_CHARS = 1400;
 const LONG_LINES = 18;
 
-/** The person's message: an ink card on the right, with its time, copy and rewind on hover. */
+/** The person's message: their words in the reading column behind a hairline rule, with its time, copy and rewind on hover. */
 export const UserMessage = memo(function UserMessage({ item }: { item: UserItem }) {
   const { sessionId } = useTimeline();
   const canRewind = useStore((s) => !!s.data[sessionId]?.caps?.features.rewind);
@@ -52,7 +52,8 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
       if (wire && !reducedMotion()) {
         const light = document.createElement('b');
         wire.appendChild(light);
-        const run = play(light, [{ transform: 'translateX(0px)', opacity: 0 }, { opacity: 0.9, offset: 0.2 }, { opacity: 0.9, offset: 0.7 }, { transform: `translateX(${-wire.offsetWidth}px)`, opacity: 0 }], { duration: 460, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'both' });
+        // Down the rule from the message into the turn.
+        const run = play(light, [{ transform: 'translateY(-8px)', opacity: 0 }, { opacity: 0.9, offset: 0.2 }, { opacity: 0.9, offset: 0.7 }, { transform: `translateY(${wire.offsetHeight}px)`, opacity: 0 }], { duration: 420, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'both' });
         const gone = () => light.remove();
         if (run) run.finished.then(gone, gone);
         else gone();
@@ -111,21 +112,21 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
           </Popover>
         )}
       </div>
-      {item.steered ? (
-        // Steered into a running turn: marked in place, answered right below.
-        <span className="user-mark" data-waiting={queued || undefined}>
-          <Icon name="enter" size={11} />
-          {queued ? 'Steered, not taken yet' : 'Steered'}
-        </span>
-      ) : (
-        queued && (
-          <span className="user-mark" data-waiting>
-            <Icon name="queue" size={11} />
-            Queued
+      <div className="user-card">
+        {item.steered ? (
+          // Steered into a running turn: marked in place, answered right below.
+          <span className="user-mark" data-waiting={queued || undefined}>
+            <Icon name="enter" size={11} />
+            {queued ? 'Steered, not taken yet' : 'Steered'}
           </span>
-        )
-      )}
-      <div className="user-card" data-spot>
+        ) : (
+          queued && (
+            <span className="user-mark" data-waiting>
+              <Icon name="queue" size={11} />
+              Queued
+            </span>
+          )
+        )}
         {images.length > 0 && (
           <div className="user-images">
             {images.map((a) => (

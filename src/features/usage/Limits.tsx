@@ -30,7 +30,8 @@ export const WindowRow = memo(function WindowRow({ limit, pace, now, compact }: 
   const past = !!limit.resetsAt && limit.resetsAt <= now;
   const level = windowLevel(limit, now);
   const p = paceText(limit, pace, now, compact);
-  const reset = limit.resetsAt ? (past ? `Reset at ${clock(limit.resetsAt, now)}` : `Resets in ${duration(limit.resetsAt - now)}`) : undefined;
+  // No reset yet: the window has not started (it starts, and its clock runs, with the next message).
+  const reset = limit.resetsAt ? (past ? `Reset at ${clock(limit.resetsAt, now)}` : `Resets in ${duration(limit.resetsAt - now)}`) : pct === 0 ? 'Starts with your next message' : undefined;
   return (
     <div className="ul-row" data-compact={compact || undefined} data-level={level} data-past={past || undefined}>
       <div className="ul-top">
@@ -52,6 +53,7 @@ export const WindowRow = memo(function WindowRow({ limit, pace, now, compact }: 
               </span>
             </Tip>
           )}
+          {reset && !limit.resetsAt && <span className="ul-reset">{reset}</span>}
           {p && (
             <span className="ul-pace" data-warn={p.warn || undefined} data-short={compact || undefined}>
               {p.warn && <span className="ul-pace-mark" aria-hidden />}

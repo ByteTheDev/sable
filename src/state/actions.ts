@@ -228,6 +228,19 @@ export async function rewindTo(sessionId: string, itemId: string, restoreFiles: 
   }
 }
 
+/** Fork at an answer: a new session that continues from the end of that turn, opened at once. The original stays as it is. */
+export async function forkAt(sessionId: string, itemId: string): Promise<SessionMeta | null> {
+  try {
+    const snap = await bridge.call('session.fork', { sessionId, itemId });
+    applySnapshot(snap);
+    useStore.getState().setUi({ activeSessionId: snap.session.id });
+    return snap.session;
+  } catch (err) {
+    fail(err);
+    return null;
+  }
+}
+
 export async function addProject(path: string) {
   try {
     const project = await bridge.call('project.add', { path });
@@ -400,6 +413,24 @@ export async function addAccount(provider: ProviderId, opts: { label?: string; s
 
 export const renameAccount = (provider: ProviderId, accountId: string, label: string) =>
   bridge.call('account.rename', { provider, accountId, label }).catch(fail);
+
+/** Moves an account `by` places in its agent's list (the order used everywhere accounts are listed). */
+export async function moveAccount(provider: ProviderId, accountId: string, by: number) {
+  const info = useStore.getState().providers[provider];
+  const list = info?.accounts ?? [];
+  const from = list.findIndex((a) => a.id === accountId);
+  const to = from + by;
+  if (!info || from < 0 || to < 0 || to >= list.length) return;
+  const next = [...list];
+  next.splice(to, 0, next.splice(from, 1)[0]);
+  useStore.setState((s) => ({ providers: { ...s.providers, [provider]: { ...info, accounts: next } } }));
+  try {
+    const fresh = await bridge.call('account.reorder', { provider, ids: next.map((a) => a.id) });
+    useStore.setState((s) => ({ providers: { ...s.providers, [provider]: fresh } }));
+  } catch (err) {
+    fail(err);
+  }
+}
 
 /** Removes an extra account and its folder. Resolves false when the bridge refused (a session is still working). */
 export async function removeAccount(provider: ProviderId, accountId: string): Promise<boolean> {

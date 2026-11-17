@@ -1,5 +1,4 @@
-import { veil } from '@/art/veil';
-import { play, reducedMotion, spring, uiZoom } from '@/lib/motion';
+import { play, reducedMotion, uiZoom } from '@/lib/motion';
 
 /**
  * The sent words are thrown. On send the text lifts out of the field as a clone (a fixed layer
@@ -83,49 +82,84 @@ const matches = (flightKey: string, text: string) => {
 /** Lines a long message flies with; the rest is already in the bubble when it lands. */
 const MAX_LINES = 4;
 const NO_CLAIM_MS = 1400;
-
-let measure: CanvasRenderingContext2D | null = null;
+const MAX_LIFE_MS = 2600;
 
 /**
  * Where a message will sit, guessed from the geometry before it exists, so the words are on their
- * way at once (the real place corrects the aim when it appears): its right edge at the card's
- * right padding in the column (timeline.css `.user-card`), and its top just above the dock once
+ * way at once (the real place corrects the aim when it appears): its left edge at the text's
+ * inset in the column (timeline.css `.user-card`), and its top just above the dock once
  * the conversation has followed it, or right under the last row when the conversation is short.
  * The first message of a new session sits near the top of the stage.
  */
 function guessLanding(clone: HTMLElement, left: number, top: number, from: HTMLElement, first: boolean): { x: number; y: number } | null {
   const z = uiZoom();
-  const root = getComputedStyle(document.documentElement);
-  const gutter = parseFloat(root.getPropertyValue('--gutter')) || 24;
-  const content = first ? null : document.querySelector('.tl-content');
-  let colRight: number;
+  const column = columnToken();
+  const contents = document.querySelectorAll<HTMLElement>('.tl-content');
+  // Two conversations on stage (a session switch is fading one out): which one the message lands
+  // in is not certain, so the words wait for the real row instead of flying toward a guess.
+  if (contents.length > 1 || (!first && contents.length !== 1)) return null;
+  const content = first ? null : contents[0];
+  let colLeft: number;
   let y: number;
+  let lo = -Infinity;
+  let hi = Infinity;
   if (content) {
     const c = content.getBoundingClientRect();
-    colRight = c.right / z;
+    // The message starts at the reading column's left edge (the row's side padding centres it).
+    colLeft = columnEdges(c.left / z, c.width / z, column).left;
     const card = from.closest('.cmp-card')?.getBoundingClientRect();
     const last = [...content.children].reverse().find((n) => !n.classList.contains('tail'));
     const after = last ? last.getBoundingClientRect().bottom / z + 36 : c.top / z + 16;
     y = Math.min(card ? card.top / z - 72 - clone.offsetHeight : after, after);
+    const sc = content.parentElement?.getBoundingClientRect();
+    if (sc) {
+      lo = sc.top / z;
+      hi = (card ? card.top : sc.bottom) / z;
+    }
   } else {
     const sb = document.querySelector('.stage-body');
     if (!sb) return null;
     const r = sb.getBoundingClientRect();
-    const col = parseFloat(root.getPropertyValue('--column')) || 760;
-    const w0 = r.width / z;
-    const width = Math.min(col, w0 - 48);
-    colRight = r.left / z + (w0 + width) / 2;
-    y = r.top / z + 46;
+    colLeft = columnEdges(r.left / z, r.width / z, column).left;
+    y = r.top / z + 56;
   }
-  measure ??= document.createElement('canvas').getContext('2d');
-  const cs = clone.style;
-  let textW = clone.getBoundingClientRect().width / z;
-  if (measure) {
-    measure.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-    const m = measure;
-    textW = Math.min(textW, Math.max(...(clone.textContent ?? '').split(/\n/).map((l) => m.measureText(l).width)));
-  }
-  return { x: colRight - gutter - 15 - textW - left, y: y - top };
+  // Only a place inside the visible conversation is certain enough to fly to.
+  if (!(y >= lo && y + clone.offsetHeight <= hi + 1)) return null;
+  return { x: colLeft + TEXT_INSET - left, y: y - top };
+}
+
+/** A message's text inset from the column's left edge (timeline.css `.user-card`: the rule and its padding). */
+const TEXT_INSET = 18;
+/** The narrowest side padding of a conversation row (timeline.css `.tl-content --gutter`). */
+const MIN_GUTTER = 24;
+
+function columnToken(): number {
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--column')) || 760;
+}
+
+/**
+ * The reading column inside a conversation of the given left edge and width, the way timeline.css
+ * lays it out (`--gutter: max(24px, (100% - var(--column)) / 2)` on each side of every row).
+ */
+export function columnEdges(left: number, width: number, column: number): { left: number; right: number; width: number } {
+  const gutter = Math.max(MIN_GUTTER, (width - column) / 2);
+  return { left: left + gutter, right: left + width - gutter, width: Math.max(0, width - gutter * 2) };
+}
+
+/**
+ * Whether a landing box is certain enough to fly to: it has a size, it sits inside the reading
+ * column (a pixel of slack), and it is within a viewport's reach of the visible conversation (it
+ * may still be rising from behind the composer while the view follows it).
+ */
+export function landingCertain(
+  box: { left: number; right: number; top: number; bottom: number; width: number; height: number },
+  col: { left: number; right: number },
+  view: { top: number; bottom: number },
+): boolean {
+  if (!(box.width > 0 && box.height > 0)) return false;
+  if (box.left < col.left - 1 || box.right > col.right + 1) return false;
+  const reach = view.bottom - view.top;
+  return box.bottom > view.top - reach * 0.25 && box.top < view.bottom + reach;
 }
 
 interface Source {
@@ -164,18 +198,11 @@ function makeClone({ el, text, oneLine }: Source): { clone: HTMLDivElement; left
  */
 function bubbleTextWidth(): number | null {
   const z = uiZoom();
-  const root = getComputedStyle(document.documentElement);
-  const gutter = parseFloat(root.getPropertyValue('--gutter')) || 24;
-  const content = document.querySelector('.tl-content');
-  let col: number;
-  if (content) col = content.getBoundingClientRect().width / z;
-  else {
-    const sb = document.querySelector('.stage-body');
-    if (!sb) return null;
-    const w0 = sb.getBoundingClientRect().width / z;
-    col = Math.min(parseFloat(root.getPropertyValue('--column')) || 760, w0 - 48);
-  }
-  return Math.floor((col - gutter * 2) * 0.78 - 30);
+  const contents = document.querySelectorAll('.tl-content');
+  const box = contents.length === 1 ? contents[0] : contents.length ? null : document.querySelector('.stage-body');
+  if (!box) return null;
+  const col = columnEdges(0, box.getBoundingClientRect().width / z, columnToken()).width;
+  return Math.floor(col - TEXT_INSET);
 }
 
 /**
@@ -228,6 +255,8 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
   // On its way at once: toward the guess, or a short lift until the landing is known.
   run(f, fly(f, { t: 0, x: 0, y: 0, vx: 0, vy: 0 }, f.guess?.x ?? 0, f.guess?.y ?? -14, 0));
   f.timer = window.setTimeout(() => !f.target && abort(f), NO_CLAIM_MS);
+  // Whatever happens on the way, no clone outlives this: the real message always shows.
+  window.setTimeout(() => abort(f), MAX_LIFE_MS);
   // A conversation row that mounted first (the bridge answered before this row left the tray).
   if (opts.dest === 'timeline') {
     const i = unclaimed.findIndex((u) => now - u.at < 400 && u.root.isConnected && matches(f.key, u.key));
@@ -343,7 +372,7 @@ function whereNow(f: Flight): Sample {
  */
 function arrive(f: Flight) {
   const target = f.target;
-  if (!target?.isConnected) return abort(f);
+  if (!target?.isConnected || (f.dest === 'timeline' && !certainTarget(target))) return abort(f);
   const end = f.path[f.path.length - 1];
   const z = uiZoom();
   const r = target.getBoundingClientRect();
@@ -417,6 +446,20 @@ function claim(dest: FlightDest, text: string): Flight | null {
   return i >= 0 ? pending[i] : null;
 }
 
+/** Whether `target` (a message's text in the conversation) is a place the words may fly to. */
+function certainTarget(target: HTMLElement): boolean {
+  const content = target.closest<HTMLElement>('.tl-content');
+  const scroller = content?.parentElement;
+  if (!content || !scroller) return false;
+  const z = uiZoom();
+  const c = content.getBoundingClientRect();
+  const s = scroller.getBoundingClientRect();
+  const r = target.getBoundingClientRect();
+  const col = columnEdges(c.left / z, c.width / z, columnToken());
+  const box = { left: r.left / z, right: r.right / z, top: r.top / z, bottom: r.bottom / z, width: r.width / z, height: r.height / z };
+  return landingCertain(box, col, { top: s.top / z, bottom: s.bottom / z });
+}
+
 function aim(f: Flight, target: HTMLElement, oneLineTarget: boolean) {
   const z = uiZoom();
   const r = target.getBoundingClientRect();
@@ -479,6 +522,12 @@ export function landInTimeline(root: HTMLElement, text: string, opts: { steer?: 
   const textEl = root.querySelector<HTMLElement>('.user-text');
   const card = root.querySelector<HTMLElement>('.user-card');
   if (!textEl || !card) return false;
+  // A row that is not where a message belongs (off the column, out of reach, not laid out): the
+  // words fade where they are, near the composer, and the row makes its own entrance.
+  if (!certainTarget(textEl)) {
+    abort(f);
+    return false;
+  }
   root.setAttribute('data-flight', '');
   for (const a of root.getAnimations()) a.cancel();
   f.rider = root;
@@ -490,15 +539,14 @@ export function landInTimeline(root: HTMLElement, text: string, opts: { steer?: 
   for (const el of side) el.style.visibility = 'hidden';
   f.onCatch = () => {
     card.style.visibility = '';
-    card.style.transformOrigin = '100% 50%';
     if (row) {
       row.style.contentVisibility = 'visible';
       window.setTimeout(() => (row.style.contentVisibility = ''), FORM + 80);
     }
-    void veil(card, 'reveal', { duration: 210, cell: 3 });
-    const settle = spring(520, 27);
-    // A small, even swell: the words inside are the real ones by now and must stay crisp.
-    play(card, [{ transform: 'scale(0.95)' }, { transform: 'scale(1)' }], { duration: settle.duration, easing: settle.easing });
+    // The words come to rest and the rule writes itself down their left edge: a short ivory
+    // stroke that cools into the hairline (timeline.css `.user-card[data-draw]`).
+    card.setAttribute('data-draw', '');
+    window.setTimeout(() => card.removeAttribute('data-draw'), 700);
     for (const el of side) {
       el.style.visibility = '';
       // The mark follows the bubble; the wire of a steer draws itself (timeline.css).

@@ -3,7 +3,6 @@ import { Tiles } from '@/art/Logo';
 import { Icon } from '@/icons';
 import { useNow } from '@/lib/view-hooks';
 import { useStore, type SessionData } from '@/state/store';
-import { Kbd } from '@/ui';
 import { useTimeline } from './ctx';
 import { shortDuration } from './util';
 
@@ -26,8 +25,8 @@ function tailInfo(data: SessionData | undefined): string {
 }
 
 /**
- * The line under the transcript while the agent works: what it is doing, for how long,
- * and how to stop it. It steps back while prose is streaming, since the words are the signal.
+ * The line under the transcript while the agent works: what it is doing and for how long (the
+ * stop button and Esc stop it). It steps back while prose is streaming, since the words are the signal.
  */
 export const Tail = memo(function Tail() {
   const { sessionId } = useTimeline();
@@ -60,9 +59,6 @@ export const Tail = memo(function Tail() {
       </span>
       <span className="tail-label shimmer truncate">{status === 'starting' ? 'Starting' : activity || 'Working'}</span>
       {elapsed >= 1000 && <span className="tail-time num">{shortDuration(elapsed)}</span>}
-      <span className="tail-esc">
-        <Kbd combo="esc" /> to stop
-      </span>
     </div>
   );
 });

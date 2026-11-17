@@ -29,6 +29,7 @@ import type {
   UserItem,
 } from '../../shared/protocol';
 import type { SessionRuntime } from '../core/runtime';
+import { codexForkTurn, cutAt } from '../core/fork';
 import type { Provider, ProviderContext, ProviderSession } from './types';
 import { codexPlan } from './plans';
 import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
@@ -935,6 +936,20 @@ class CodexSession implements ProviderSession {
     const m = this.rt.caps?.models.find((x) => x.id === this.rt.meta.model);
     if (m?.efforts && !m.efforts.includes(e)) return undefined;
     return e;
+  }
+
+  /**
+   * Fork at the end of the turn that holds `itemId`: the app-server copies the thread through
+   * that turn into a new thread (this one is left as it is). Null when the turn is not known.
+   */
+  async fork(itemId: string): Promise<string | null> {
+    const threadId = this.threadId ?? this.rt.meta.providerSessionId;
+    const cut = cutAt(this.rt.items, itemId);
+    const lastTurnId = cut && codexForkTurn(cut.kept);
+    if (!threadId || !lastTurnId) return null;
+    const rpc = await this.provider.client();
+    const r = await rpc.request<{ thread?: { id?: string } }>('thread/fork', { threadId, lastTurnId, excludeTurns: true }, THREAD_TIMEOUT);
+    return r.thread?.id ?? null;
   }
 
   async context(): Promise<ContextBreakdown | null> {

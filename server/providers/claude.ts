@@ -8,6 +8,7 @@ import {
   query,
   listSessions,
   getSessionMessages,
+  forkSession,
   type Options,
   type PermissionMode,
   type PermissionResult,
@@ -43,6 +44,7 @@ import type {
   UserItem,
 } from '../../shared/protocol';
 import type { SessionRuntime } from '../core/runtime';
+import { claudeForkPoint, cutAt } from '../core/fork';
 import { killTree, runCli, spawnCli } from '../util/proc';
 import { baseName, describeTool, flattenContent, mapResult, normalizeTodos, peekPartialInput, previewDiff } from './claude-tools';
 import type { Provider, ProviderContext, ProviderSession, WarmChoice } from './types';
@@ -565,11 +567,12 @@ export class ClaudeProvider implements Provider {
    */
   onRateLimit(info: Obj | undefined): { resetsAt?: number; window?: string } | undefined {
     if (!info) return undefined;
-    // A remembered window whose reset has passed says nothing true any more (the CLI may not
-    // report that window again: real turns sent only the weekly one).
+    // A remembered window whose reset has passed has rolled over: it is empty until the next
+    // message starts it again. Kept as such (not dropped), since the CLI may not report that
+    // window again (real turns often send only the weekly one) and the 5-hour row must not vanish.
     const now = Date.now();
-    const rows = new Map(this.limitsCache.filter((l) => !l.resetsAt || l.resetsAt > now).map((l) => [l.id, l]));
-    let changed = rows.size !== this.limitsCache.length;
+    const rows = new Map(this.limitsCache.map((l) => [l.id, rolledOver(l, now)]));
+    let changed = this.limitsCache.some((l) => l !== rows.get(l.id));
     const put = (id: string, utilization: unknown, resetsAt: unknown, full = false) => {
       const known = LIMIT_WINDOWS[id] ?? unnamedWindow(id);
       if (!known) return;
@@ -690,6 +693,11 @@ const LIMIT_WINDOWS: Record<string, { label: string; mins: number }> = {
   seven_day_sonnet: { label: 'Weekly · Sonnet', mins: 10_080 },
 };
 const LIMIT_ORDER = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'];
+
+/** A window whose reset has passed: empty, with no reset until the next message starts it. */
+export function rolledOver(l: RateLimit, now: number): RateLimit {
+  return l.resetsAt && l.resetsAt <= now ? { ...l, percent: 0, resetsAt: undefined } : l;
+}
 /** A window the table does not name (a newer plan, a model of its own): labelled by its length. */
 function unnamedWindow(id: string): { label: string; mins: number } | undefined {
   const m = /^(five_hour|seven_day)_(\w+)$/.exec(id);
@@ -1137,6 +1145,21 @@ class ClaudeSession implements ProviderSession {
     if (idx >= 0) this.rt.reset(this.rt.items.slice(0, idx));
     this.rt.notice('rewind', 'Rewound the conversation', note || undefined);
     return { ok: true, message: note || undefined };
+  }
+
+  /**
+   * Fork at the end of the turn that holds `itemId`: the SDK copies the transcript up to that
+   * message into a new session (this one is left as it is). Null when the point is not known.
+   */
+  async fork(itemId: string): Promise<string | null> {
+    const id = this.rt.meta.providerSessionId;
+    const cut = cutAt(this.rt.items, itemId);
+    if (!id || !cut) return null;
+    // A rewound session that has not resumed yet ends at its rewind point.
+    const upTo = cut.next ? claudeForkPoint(this.chain, cut.next) : this.resumeAt;
+    if (upTo === null) return null;
+    const r = await this.provider.withHistory(() => forkSession(id, { dir: this.rt.meta.cwd, ...(upTo ? { upToMessageId: upTo } : {}) }));
+    return r.sessionId || null;
   }
 
   // ── permission prompts ──

@@ -867,6 +867,8 @@ export interface AppSettings {
   onboarded: boolean;
   /** Which account new sessions use per agent; absent means `default`. */
   defaultAccounts?: Partial<Record<ProviderId, string>>;
+  /** The order accounts are listed in, per agent (account ids; any not named follow in their own order). Set with `account.reorder`. */
+  accountOrder?: Partial<Record<ProviderId, string[]>>;
   /**
    * Models shown or hidden in the model menu, keyed `${provider}:${modelId}`. Absent means
    * the default: only the current generation (see `src/lib/models.ts`).
@@ -1024,6 +1026,8 @@ export interface RpcMethods {
   /** Adds an account with its own empty config folder; the result carries the new `account`. Sign in next with `auth.login`. */
   'account.add': { params: { provider: ProviderId; label?: string }; result: ProviderInfo & { account: AccountInfo } };
   'account.rename': { params: { provider: ProviderId; accountId: string; label: string }; result: ProviderInfo };
+  /** The order this agent's accounts are listed in everywhere (`AppSettings.accountOrder`). */
+  'account.reorder': { params: { provider: ProviderId; ids: string[] }; result: ProviderInfo };
   /** Never the default. Refuses while one of its sessions is busy; deletes the account's folder. */
   'account.remove': { params: { provider: ProviderId; accountId: string }; result: ProviderInfo };
   /** Registers a config folder the user already has as an account (nothing is copied; removing it only forgets it). */
@@ -1092,6 +1096,8 @@ export interface RpcMethods {
   'session.update': { params: { sessionId: string; patch: Pick<Partial<SessionMeta>, 'pinned' | 'archived' | 'unread'> }; result: { ok: boolean } };
   'session.close': { params: { sessionId: string; remove?: boolean }; result: { ok: boolean } };
   'session.rewind': { params: { sessionId: string; itemId: string; restoreFiles: boolean }; result: { ok: boolean; message?: string } };
+  /** Fork: a new session (same agent, account and settings) that continues from the end of the turn holding `itemId`, with the conversation up to there: the agent's own fork where it has one, otherwise a summary. The original is left as it is. */
+  'session.fork': { params: { sessionId: string; itemId: string }; result: SessionSnapshot };
   'session.context': { params: { sessionId: string }; result: ContextBreakdown | null };
   'session.mcp': { params: { sessionId: string }; result: McpServerInfo[] };
   /** Switches capabilities; an idle agent process restarts to apply them, a running turn finishes first. */

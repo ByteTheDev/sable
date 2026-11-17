@@ -8,7 +8,6 @@ import { reducedMotion } from '@/lib/motion';
 import { useNow } from '@/lib/view-hooks';
 import { showRailTab } from '@/state/actions';
 import { useStore, type Store } from '@/state/store';
-import { Kbd } from '@/ui';
 import { useFresh, useItem, useTimeline } from './ctx';
 import { foldKey, setFold, useFold } from './fold';
 import { ItemList, ItemRow, LiveText, estimate } from './items';
@@ -352,8 +351,8 @@ function liveSelector(sessionId: string, seg: Segment) {
 }
 
 /**
- * The running segment's line: the working indicator, what it is doing now, the time so far and
- * how to stop. It stays in view (sticky) while the trail under it grows past the top.
+ * The running segment's line: the working indicator, what it is doing now and the time so far (the
+ * stop button and Esc stop it, with no hint here). It stays in view (sticky) while the trail under it grows past the top.
  */
 function LiveLine({ seg, open, onToggle, quiet }: { seg: Segment; open: boolean; onToggle?: () => void; quiet?: boolean }) {
   const { sessionId } = useTimeline();
@@ -392,9 +391,6 @@ function LiveLine({ seg, open, onToggle, quiet }: { seg: Segment; open: boolean;
           {body}
         </div>
       )}
-      <span className="work-esc">
-        <Kbd combo="esc" /> to stop
-      </span>
       <span className="work-band" aria-hidden />
       <span className="work-fade" aria-hidden />
     </div>

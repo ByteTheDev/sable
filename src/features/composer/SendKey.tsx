@@ -41,15 +41,14 @@ export function useModHeld(on: boolean): boolean {
  * - send: an arrow straight up.
  * - queue: the shaft retracts into two lines below the head: "onto the list".
  * - steer: the lines drop away and the arrow leans into the turn, up and to the right.
- * With `double` (ultracode) a second head rides under the first.
+ * One arrow in every state: Ultra and ultracode are shown by the effort chip, never by the key.
  */
-export function SendGlyphSvg({ glyph, double }: { glyph: SendGlyph; double?: boolean }) {
+export function SendGlyphSvg({ glyph }: { glyph: SendGlyph }) {
   return (
-    <svg className="sk-glyph" data-glyph={glyph} data-double={double || undefined} width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+    <svg className="sk-glyph" data-glyph={glyph} width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
       <g className="sk-arrow">
-        <path className="sk-shaft" d="M8 13.25V3.6" />
-        <path className="sk-head" d="M3.9 7.6 8 3.5l4.1 4.1" />
-        <path className="sk-head2" d="M3.9 7.6 8 3.5l4.1 4.1" />
+        <path className="sk-shaft" d="M8 12.75V3.75" />
+        <path className="sk-head" d="M4.25 7.5 8 3.75l3.75 3.75" />
       </g>
       <path className="sk-line sk-line-1" d="M4.4 10.4h7.2" />
       <path className="sk-line sk-line-2" d="M5.6 13.4h4.8" />
@@ -65,7 +64,8 @@ export interface SendKeyProps {
   showStop: boolean;
   /** The agent takes messages mid-turn. */
   steerable: boolean;
-  ultracode: boolean;
+  /** Shown by the effort chip; the key's arrow stays the same. */
+  ultracode?: boolean;
   sendWithEnter: boolean;
   shell: boolean;
   /** Only the session composer has a stop key. */
@@ -78,7 +78,7 @@ export interface SendKeyProps {
  * The send and stop keys, sharing one 28 px slot.
  * Send is a solid ivory disc with a dark glyph; stop an ivory disc with a dark square, static.
  */
-export const SendKey = memo(function SendKey({ canSend, busy, showStop, steerable, ultracode, sendWithEnter, shell, stoppable, onSend, onStop }: SendKeyProps) {
+export const SendKey = memo(function SendKey({ canSend, busy, showStop, steerable, sendWithEnter, shell, stoppable, onSend, onStop }: SendKeyProps) {
   const queueing = busy && !shell;
   const held = useModHeld(queueing && steerable);
   const steer = queueing && steerable && held;
@@ -100,7 +100,7 @@ export const SendKey = memo(function SendKey({ canSend, busy, showStop, steerabl
           onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => canSend && onSend(queueing && steerable && (MAC ? e.metaKey : e.ctrlKey))}
         >
-          <SendGlyphSvg glyph={glyph} double={ultracode} />
+          <SendGlyphSvg glyph={glyph} />
         </button>
       </Tip>
       {stoppable && (

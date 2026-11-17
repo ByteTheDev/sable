@@ -135,13 +135,14 @@ describe('Claude: plan limits from rate_limit_event', () => {
     ]);
   });
 
-  it('drops a remembered window whose reset has passed when newer windows arrive', () => {
+  it('keeps a remembered window whose reset has passed as rolled over (empty, no reset) when newer windows arrive', () => {
     const events: BridgeEvent[] = [];
     const p = new ClaudeProvider(ctx(events));
     const stale: RateLimit = { id: 'five_hour', label: '5-hour limit', percent: 80, resetsAt: Date.now() - 60_000, windowMins: 300 };
     (p as unknown as { limitsCache: RateLimit[] }).limitsCache = [stale];
     p.onRateLimit(live);
     const up = events.at(-1) as Extract<BridgeEvent, { type: 'limits.updated' }>;
-    expect(up.limits.map((l) => l.id)).toEqual(['seven_day']);
+    expect(up.limits.map((l) => l.id)).toEqual(['five_hour', 'seven_day']);
+    expect(up.limits[0]).toMatchObject({ percent: 0, resetsAt: undefined });
   });
 });
