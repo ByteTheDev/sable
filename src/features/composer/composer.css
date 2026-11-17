@@ -1,5 +1,7 @@
-/* The composer: a near-black slab, a step darker than the stage, no border at rest. Its hairline
-   lights near the pointer (data-spot); focus is a soft ivory ring. Monochrome throughout. */
+/* The composer: a solid object over the stage, two steps lighter than it, with an almost invisible
+   hairline that lights near the pointer (data-spot). Focus draws no ring: the surface lifts one
+   step lighter and rises on a deeper shadow, slowly; the placeholder steps back, and the
+   backdrop's light under the composer brightens a little while it holds focus. Monochrome. */
 
 .composer {
   position: relative;
@@ -7,39 +9,57 @@
 }
 
 .cmp-card {
-  --cmp-fill: #08080a;
+  --cmp-fill: #151518;
+  --cmp-lift: #1d1d21;
   position: relative;
   z-index: 1;
   container: cmp / inline-size;
-  padding: 9px 11px 10px;
+  padding: 10px 11px 10px;
   border-radius: 20px;
   background-color: var(--cmp-fill);
-  /* An antialias fringe so the slab keeps its edge on the near-black stage (not a border). */
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.045);
+  /* An inner fringe so the object keeps its edge on any ground (not a border), and a soft shadow. */
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.06),
+    0 12px 32px -16px rgb(0 0 0 / 0.7);
+  transition: background-color 360ms var(--ease-out);
 }
 
-/* Home: the slab floats over the backdrop. Nearly opaque ink and no backdrop blur: a blur here
-   was re-computed on every backdrop frame and every hover repaint, the largest single cost on
-   the home screen (measured in Electron), for a difference the near-opaque fill hides anyway. */
+/* Home: the object floats over the field in the floating glass's frosted ink (nearly opaque, with
+   its grain, no backdrop blur: a blur here was re-computed on every backdrop frame, the largest
+   single cost on the home screen, for a difference the near-opaque fill hides anyway). */
 .composer[data-variant='home'] .cmp-card {
-  background-color: rgb(8 8 10 / 0.94);
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.05), var(--shadow-composer);
+  --cmp-fill: rgb(22 22 25 / 0.93);
+  --cmp-lift: rgb(30 30 34 / 0.95);
+  background-image: var(--grain);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.07),
+    var(--shadow-composer);
 }
 
-/* The focus ring lives on its own layer so it can fade in (opacity only) without animating a shadow. */
+.cmp-card:has(> .cmp-field > textarea.cmp-input:focus) {
+  background-color: var(--cmp-lift);
+}
+
+/* The lift: a deeper shadow on its own layer, so it fades in (opacity only, never an animated shadow). */
 .cmp-card::after {
   content: '';
   position: absolute;
-  inset: -1px;
-  border-radius: 21px;
-  box-shadow: 0 0 0 1.5px rgb(242 241 238 / 0.2);
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 22px 50px -22px rgb(0 0 0 / 0.9), 0 3px 10px -4px rgb(0 0 0 / 0.5);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 90ms var(--ease-out);
+  transition: opacity 360ms var(--ease-out);
 }
 
 .cmp-card:has(> .cmp-field > textarea.cmp-input:focus)::after {
   opacity: 1;
+}
+
+/* The field's light under the composer brightens while it holds focus: the band's own opacity,
+   eased by the field's slow fade (art.css). Nothing draws a new frame for it. */
+:root:has(textarea.cmp-input:focus) :is(.session-light .dither, .home > .dither)[data-ready='true'] {
+  opacity: min(1, calc(var(--dither-opacity, 1) * 1.3));
 }
 
 /* ── text ── */
@@ -57,7 +77,7 @@
   right: 12px;
   bottom: 0;
   height: 14px;
-  background: linear-gradient(to bottom, rgb(8 8 10 / 0), var(--cmp-fill));
+  background: linear-gradient(to bottom, transparent, var(--cmp-fill));
   pointer-events: none;
 }
 
@@ -84,6 +104,16 @@
 .cmp-input::placeholder {
   color: var(--text-3);
   opacity: 1;
+  transition: color 360ms var(--ease-out);
+}
+
+/* With focus the placeholder steps back, so the caret leads. */
+.cmp-input:focus::placeholder {
+  color: rgb(122 121 117 / 0.72);
+}
+
+.cmp-card:has(> .cmp-field > textarea.cmp-input:focus) .cmp-field[data-scrolls]::after {
+  background: linear-gradient(to bottom, transparent, var(--cmp-lift));
 }
 
 .cmp-input:focus,
@@ -537,7 +567,7 @@
   align-items: center;
   gap: 7px;
   height: 28px;
-  padding: 0 10px 0 11px;
+  padding: 0 10px;
   white-space: nowrap;
 }
 
@@ -571,10 +601,6 @@
   justify-content: center;
 }
 
-.th-pill > .th-uc-narrow {
-  display: none;
-}
-
 .th-chip[data-bare]:not([data-ultra]) .ux-mark {
   color: var(--text-3);
 }
@@ -588,44 +614,6 @@
   align-items: center;
   gap: 4px;
   color: var(--text);
-}
-
-.th-meter {
-  display: inline-flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 12px;
-  flex-shrink: 0;
-}
-
-/* Whole-pixel bars (3 px wide, heights in 2 px steps, Thinking.tsx), square-cut so they stay crisp
-   at 1x: lit is ivory, unlit one clear step above the pill. */
-.th-meter i {
-  width: 3px;
-  border-radius: 0.5px;
-  background-color: rgb(255 255 255 / 0.2);
-  transition: background-color 120ms var(--ease);
-}
-
-.th-meter i[data-on] {
-  background-color: var(--text-2);
-}
-
-.th-chip:is(:hover, [aria-expanded='true'], :focus-visible) .th-meter i[data-on] {
-  background-color: var(--text);
-}
-
-/* The Ultra level stands apart: a step of air before it, an outline until it is reached, then
-   solid ivory like the rest, so it reads at a glance as the level beyond. */
-.th-meter i[data-ultra] {
-  margin-left: 2px;
-  background-color: transparent;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.3);
-}
-
-.th-meter i[data-ultra][data-on] {
-  background-color: var(--text);
-  box-shadow: none;
 }
 
 /* "Ultra" at rest (ultracode on, or the Ultra level): one fill step, like an engaged control, and the mark. */
@@ -661,36 +649,10 @@
   opacity: 0.55;
 }
 
-/* The moment Ultra turns on, one beat: a charge runs up the meter, bar after bar (each lifts a
-   pixel and lands), into the Ultra bar, which rises from its foot; as it lands the composer's edge
-   takes the light (Ultracode.tsx). Under 450 ms, transform only. */
-.th-chip[data-burst] .th-meter i {
-  animation: th-charge 170ms var(--ease-out) calc(var(--k) * 30ms) both;
-}
-
-.th-chip[data-burst] .th-meter i[data-ultra] {
-  transform-origin: 50% 100%;
-  animation: th-charge-top 260ms cubic-bezier(0.2, 0.9, 0.3, 1.2) calc(var(--k) * 30ms) both;
-}
-
-/* The mark's second head arrives with the charge. */
+/* The moment Ultra turns on, one beat: the mark's second head rides in under the first, as the
+   composer's edge takes the light (Ultracode.tsx). Under 450 ms, transform and opacity only. */
 .th-chip[data-burst] .ux-m2 {
-  animation: ux-stack 260ms var(--ease-out) 150ms both;
-}
-
-@keyframes th-charge {
-  50% {
-    transform: translateY(-2px);
-  }
-}
-
-@keyframes th-charge-top {
-  0% {
-    transform: scaleY(0.2);
-  }
-  100% {
-    transform: scaleY(1);
-  }
+  animation: ux-stack 260ms var(--ease-out) 60ms both;
 }
 
 @keyframes ux-stack {
@@ -705,19 +667,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .th-chip[data-burst] :is(.th-meter i, .ux-m2) {
+  .th-chip[data-burst] .ux-m2 {
     animation: none;
   }
 }
 
-/* Narrow composer: the names fold away first; the meter and mark stay. */
+/* Narrow composer: the chip tightens; its name stays (the mode label folds first). */
 @container cmp (max-width: 470px) {
-  .th-cur {
-    display: none;
-  }
-  .th-pill > .th-uc-narrow {
-    display: block;
-  }
   .th-pill {
     padding: 0 9px;
   }
@@ -1017,7 +973,8 @@
   grid-area: 1 / 1;
 }
 
-/* Send: a solid ivory disc with a dark glyph. With nothing to send it is just a dim glyph in a faint ring. */
+/* Send: a solid ivory disc with a dark glyph. With nothing to send it is a dim glyph on one fill
+   step, the same disc as the attach button at the other end of the bar. */
 .cmp-send,
 .cmp-stop {
   display: grid;
@@ -1044,9 +1001,8 @@
 }
 
 .cmp-send[data-on]:not([data-ready]) {
-  color: var(--text-4);
-  background-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--text-3);
+  background-color: var(--fill-2);
   pointer-events: none;
 }
 

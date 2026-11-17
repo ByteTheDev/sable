@@ -28,29 +28,6 @@ export function UltraMark({ className }: { className?: string }) {
   );
 }
 
-/** The level as a row of rising ticks, lit up to the level. An Ultra level's tick stands apart (composer.css). */
-function Meter({ efforts, level }: { efforts: Effort[]; level: number }) {
-  const n = efforts.length;
-  // The wave runs from where the ticks were last drawn.
-  const prev = useRef(level);
-  const from = prev.current;
-  useEffect(() => {
-    prev.current = level;
-  }, [level]);
-  return (
-    <span className="th-meter" aria-hidden>
-      {efforts.map((e, i) => (
-        <i
-          key={e}
-          data-on={i <= level || undefined}
-          data-ultra={isUltraEffort(e) || undefined}
-          style={{ height: Math.round(4 + (i * 8) / Math.max(1, n - 1)), transitionDelay: `${Math.max(0, Math.abs(i - from) - 1) * 22}ms`, ['--k' as string]: i }}
-        />
-      ))}
-    </span>
-  );
-}
-
 /** A level's name, with the ultra mark in front of an Ultra level (or of any level while ultracode is on). */
 function LevelName({ effort, mark }: { effort: Effort | undefined; mark?: boolean }) {
   return (
@@ -287,7 +264,7 @@ function SpeedRow({ speeds, speed, onSpeed, sessionId, ask, onAsk }: { speeds: S
 }
 
 /**
- * The thinking control: the level's name and a step meter at rest; a small popover with the
+ * The thinking control: the level's name at rest; a small popover with the
  * stepped track and, where the agent has it, the ultracode switch. Choices apply live.
  */
 export const Thinking = memo(function Thinking({ efforts, value, onChange, ultraOffered, ultracode, onUltracode, speeds = NO_SPEEDS, speed = STANDARD_SPEED, onSpeed, sessionId = null, side, onClosed }: ThinkingProps) {
@@ -299,7 +276,6 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
   const committedLevel = committed ? efforts.indexOf(committed) : -1;
   // The chip names what the track stands for: the dragged stop while a drag runs.
   const shown = preview !== null && efforts[preview] ? efforts[preview] : committed;
-  const level = shown ? efforts.indexOf(shown) : -1;
   const ucOn = ultraOffered && ultracode;
   const look = ucOn || isUltraEffort(shown);
   // A paid speed waiting on its question (from a click in the row or from `/fast`).
@@ -385,11 +361,9 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
               <>
                 <span ref={pill} className="th-pill" aria-hidden>
                   {fast && <Icon name="bolt" size={13} className="th-bolt" />}
-                  {look && <UltraMark className="th-uc-narrow" />}
                   <span className="th-nm th-cur">
                     <LevelName effort={shown} mark={ucOn} />
                   </span>
-                  <Meter efforts={efforts} level={level} />
                 </span>
               </>
             ) : (
