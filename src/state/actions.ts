@@ -159,6 +159,9 @@ export const setModel = (sessionId: string, model: string) => bridge.call('sessi
 /** Claude Code ultracode on or off for a session (where `caps.features.ultracode`). */
 export const setUltracode = (sessionId: string, on: boolean) => bridge.call('session.setUltracode', { sessionId, on }).catch(fail);
 
+/** The session's speed; the bridge falls back to standard when the model does not offer it. */
+export const setSpeed = (sessionId: string, speed: string) => bridge.call('session.setSpeed', { sessionId, speed }).catch(fail);
+
 export const setEffort = (sessionId: string, effort: Effort) => bridge.call('session.setEffort', { sessionId, effort }).catch(fail);
 
 export const setMode = (sessionId: string, mode: string) => bridge.call('session.setMode', { sessionId, mode }).catch(fail);

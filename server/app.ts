@@ -12,7 +12,9 @@ import {
   type Project,
   type ProviderId,
   type ProviderInfo,
+  type LimitsMeta,
   type RateLimit,
+  STANDARD_SPEED,
   type RpcMethods,
   type RpcName,
   type SessionMeta,
@@ -22,6 +24,8 @@ import { normalizeBackdrop } from '../shared/backdrop';
 import { SessionRuntime, autoTitle } from './core/runtime';
 import { Store, type StoredAccount } from './core/store';
 import { DiskCache } from './core/cache';
+import { creditsKey, decideAtLimit, dueResets, nextResetAlert, runningOnCredits } from './core/limit-policy';
+import { speedFor } from '../shared/speed';
 import type { Provider, ProviderContext, ProviderSession } from './providers/types';
 import { findAccountFolders, folderLabel, labelFromAuth, pickNextAccount } from './accounts/folders';
 import { handoverText } from './accounts/handover';
@@ -63,6 +67,14 @@ export class App {
   /** Last known sign-in per extra account (the default account asks its provider every time, as before). */
   private infoCache = new Map<string, Promise<ProviderInfo>>();
   private limitsCache = new Map<string, RateLimit[]>();
+  /** What each account's agent last said beside its windows (credits, extra usage), merged. */
+  private limitsMeta = new Map<string, LimitsMeta>();
+  /** Per agent: the limit handover moved sessions off the preferred account; new sessions use `to` until `until`. */
+  private fallbacks = new Map<ProviderId, { from: string; to: string; until?: number }>();
+  private resetTimer?: NodeJS.Timeout;
+  private resetCheckedAt = Date.now();
+  /** Sessions told once that they run on credits Sable was not allowed to use (per account and window). */
+  private creditsWarned = new Set<string>();
   /** Counts `limits.updated` events from each account's provider (so `provider.limits` does not repeat one). */
   private limitsSeq = new Map<string, number>();
   readonly sessions = new Map<string, SessionRuntime>();
@@ -185,7 +197,9 @@ export class App {
       case 'limits.updated': {
         const key = accountKey(e.provider, accountId);
         this.limitsCache.set(key, e.limits);
+        if (e.meta) this.limitsMeta.set(key, { ...this.limitsMeta.get(key), ...e.meta });
         this.limitsSeq.set(key, (this.limitsSeq.get(key) ?? 0) + 1);
+        this.scheduleResetAlert();
         return this.emit({ ...e, accountId });
       }
       case 'provider.updated':
@@ -223,7 +237,51 @@ export class App {
   /** The account new sessions with this provider use. */
   defaultAccountId(provider: ProviderId): string {
     const chosen = this.store.state.settings.defaultAccounts?.[provider];
-    return chosen && this.findAccount(provider, chosen) ? chosen : DEFAULT_ACCOUNT;
+    const preferred = chosen && this.findAccount(provider, chosen) ? chosen : DEFAULT_ACCOUNT;
+    // After a limit handover new sessions start where the sessions went, until the preferred
+    // account's limit resets (with "Return to the preferred account" on) or for good (off).
+    const fb = this.fallbacks.get(provider);
+    if (!fb || fb.from !== preferred || !this.findAccount(provider, fb.to)) return preferred;
+    if (this.store.state.settings.returnToPreferred && (!fb.until || Date.now() >= fb.until)) {
+      this.fallbacks.delete(provider);
+      return preferred;
+    }
+    return fb.to;
+  }
+
+  // ── limit resets ──
+
+  private capped() {
+    return [...this.limitsCache.entries()].map(([key, limits]) => {
+      const [provider, ...rest] = key.split(':');
+      return { provider: provider as ProviderId, accountId: rest.join(':') || DEFAULT_ACCOUNT, limits };
+    });
+  }
+
+  /** One timer for the next reset of a full window: announced (when wanted), and the fallback account ends. */
+  private scheduleResetAlert() {
+    clearTimeout(this.resetTimer);
+    this.resetTimer = undefined;
+    if (this.disposed) return;
+    const settings = this.store.state.settings;
+    const fallbackEnds = [...this.fallbacks.values()].map((f) => f.until ?? 0).filter((t) => t > Date.now());
+    if (!settings.notifyLimitReset && !fallbackEnds.length) return;
+    const next = settings.notifyLimitReset ? nextResetAlert(this.capped(), Date.now())?.at : undefined;
+    const at = Math.min(next ?? Infinity, ...fallbackEnds);
+    if (!Number.isFinite(at)) return;
+    // Long waits are re-armed in steps (a laptop may sleep through one).
+    this.resetTimer = setTimeout(() => this.onResetDue(), Math.min(Math.max(0, at - Date.now()) + 500, 6 * 3600_000));
+    this.resetTimer.unref?.();
+  }
+
+  private onResetDue() {
+    const now = Date.now();
+    const due = dueResets(this.capped(), this.resetCheckedAt, now);
+    this.resetCheckedAt = now;
+    if (this.store.state.settings.notifyLimitReset)
+      for (const r of due) this.emit({ type: 'limit.reset', provider: r.provider, accountId: r.accountId === DEFAULT_ACCOUNT ? undefined : r.accountId, window: r.window, at: r.at });
+    for (const [provider, fb] of this.fallbacks) if (fb.until && fb.until <= now) void this.emitProvider(provider).catch(() => {});
+    this.scheduleResetAlert();
   }
 
   private accountAuth(provider: ProviderId, accountId: string, force: boolean): Promise<ProviderInfo> {
@@ -314,7 +372,28 @@ export class App {
    * Capabilities for the home composer: the cached answer at once when there is one, the fresh
    * one pushed as `caps.updated` when it differs. A stale cache never blocks anything.
    */
-  private async capsFast(provider: ProviderId, cwd: string | undefined, accountId = DEFAULT_ACCOUNT): Promise<Capabilities> {
+  /** A model the session's agent lists, from the live caps or the last known ones. */
+  private modelInfo(rt: SessionRuntime, model: string) {
+    const caps = rt.caps ?? this.cache.get<Capabilities>(capsCacheKey(rt.meta.provider, rt.meta.accountId ?? DEFAULT_ACCOUNT, rt.meta.cwd));
+    return caps?.models.find((m) => m.id === model);
+  }
+
+  private async applySpeed(rt: SessionRuntime, speed: string) {
+    await rt.handle?.setSpeed?.(speed);
+    rt.update({ speed, fast: speed !== STANDARD_SPEED });
+  }
+
+  /** The speed a new session starts with: the one asked for when its model offers it (as far as is known). */
+  private startSpeed(provider: ProviderId, accountId: string, cwd: string, model: string | undefined, speed: string | undefined): Partial<SessionMeta> {
+    if (!speed || speed === STANDARD_SPEED) return {};
+    const caps = this.cache.get<Capabilities>(capsCacheKey(provider, accountId, path.resolve(cwd))) ?? this.cache.get<Capabilities>(capsCacheKey(provider, accountId, cwd));
+    const info = caps?.models.find((m) => m.id === model) ?? caps?.models.find((m) => m.isDefault);
+    // Unknown caps: keep the choice; the agent's adapter checks it against the model again.
+    const chosen = caps ? speedFor(info, speed) : speed;
+    return chosen === STANDARD_SPEED ? {} : { speed: chosen, fast: true };
+  }
+
+  private async capsFast(provider: ProviderId, cwd: string | undefined, accountId = DEFAULT_ACCOUNT, refresh = false): Promise<Capabilities> {
     const p = this.provider(provider, accountId);
     const key = capsCacheKey(provider, accountId, cwd);
     const fresh = () =>
@@ -329,7 +408,7 @@ export class App {
         if (this.cache.set(key, caps)) this.emit({ type: 'caps.updated', provider, accountId: accountId === DEFAULT_ACCOUNT ? undefined : accountId, cwd, caps });
         return caps;
       });
-    const cached = provider === 'demo' ? undefined : this.cache.get<Capabilities>(key);
+    const cached = provider === 'demo' || refresh ? undefined : this.cache.get<Capabilities>(key);
     if (!cached) return fresh();
     // Check it a moment later, off the start-up path (the probe starts a CLI process).
     const t = setTimeout(() => !this.disposed && void fresh().catch(() => {}), this.delays.caps ?? CAPS_REFRESH_DELAY_MS);
@@ -508,14 +587,53 @@ export class App {
     const next = await this.nextAccount(provider, accountId).catch(() => undefined);
     const limit = { ...notice.limit, provider, accountId, resetsAt: notice.limit?.resetsAt ?? full?.resetsAt, window: notice.limit?.window ?? full?.label, ...(next ? { next } : {}) };
     rt.patch<NoticeItem>(notice.id, { limit });
-    if (!next || !this.store.state.settings.continueAtLimit || rt.turnActive) return;
+    // A refused turn was not carried by credits, so only the next account or the notice remain.
+    const settings = this.store.state.settings;
+    if (decideAtLimit({ creditsAllowed: false, creditsAvailable: false, continueAtLimit: !!settings.continueAtLimit, next }) !== 'next' || !next || rt.turnActive) return;
     const refused = this.refusedMessage(rt);
     const done = this.autoContinued.get(rt.id) ?? new Set<string>();
     const key = `${refused?.id ?? ''}:${next}`;
     if (done.has(key)) return;
     done.add(key);
     this.autoContinued.set(rt.id, done);
+    this.movedByLimit(rt, accountId, next, full?.resetsAt ?? limit.resetsAt);
     await this.switchAccount(rt, next, { retry: true });
+  }
+
+  /** Remembers a limit handover: the session's preferred account, and where new sessions go meanwhile. */
+  private movedByLimit(rt: SessionRuntime, from: string, to: string, until?: number) {
+    rt.update({ movedFrom: rt.meta.movedFrom ?? from });
+    if (from === this.defaultAccountId(rt.meta.provider)) {
+      this.fallbacks.set(rt.meta.provider, { from, to, until });
+      void this.emitProvider(rt.meta.provider).catch(() => {});
+      this.scheduleResetAlert();
+    }
+  }
+
+  /**
+   * A turn ended while the agent carried the account past its limit on credits or extra usage.
+   * Allowed for this account: it carries on (the limit area says so). Otherwise the next account
+   * takes over when that setting is on, or the session says once what is happening.
+   */
+  private async onCredits(rt: SessionRuntime) {
+    const provider = rt.meta.provider;
+    const accountId = rt.meta.accountId ?? DEFAULT_ACCOUNT;
+    const meta = this.limitsMeta.get(accountKey(provider, accountId));
+    if (!runningOnCredits(meta)) return;
+    const settings = this.store.state.settings;
+    const next = settings.continueAtLimit ? await this.nextAccount(provider, accountId).catch(() => undefined) : undefined;
+    const decision = decideAtLimit({ creditsAllowed: !!settings.creditsAtLimit?.[creditsKey(provider, accountId)], creditsAvailable: true, continueAtLimit: !!settings.continueAtLimit, next });
+    if (decision === 'credits' || rt.turnActive) return;
+    const until = meta?.extra?.resetsAt ?? meta?.credits?.resetsAt;
+    if (decision === 'next' && next) {
+      this.movedByLimit(rt, accountId, next, until);
+      await this.switchAccount(rt, next);
+      return;
+    }
+    const key = `${rt.id}:${accountId}:${until ?? ''}`;
+    if (this.creditsWarned.has(key)) return;
+    this.creditsWarned.add(key);
+    rt.notice('info', meta?.extra?.inUse ? 'Running on extra usage' : 'Running on credits', 'This account is past its limit. Its setting with the provider decides whether credits are spent.');
   }
 
   /** The message the last limit notice refused: the user message just before it. */
@@ -595,6 +713,7 @@ export class App {
   private afterTurn(rt: SessionRuntime, error?: string) {
     const hit = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.provider);
     if (hit) void this.onLimitHit(rt, hit).catch((err) => this.log('limit follow-up failed', (err as Error).message));
+    else if (!error) void this.onCredits(rt).catch((err) => this.log('credits follow-up failed', (err as Error).message));
     if (error || rt.stopRequested) {
       // Steered messages the agent never took go back to the queue, to send or edit again.
       const untaken = rt.items.filter((i): i is UserItem => i.type === 'user' && !!i.steered && i.state === 'queued' && !i.parentId);
@@ -679,8 +798,9 @@ export class App {
       this.store.state.settings = { ...this.store.state.settings, ...patch };
       this.store.saveState();
       this.emit({ type: 'settings.updated', settings: this.store.state.settings });
+      if ('notifyLimitReset' in patch || 'returnToPreferred' in patch) this.scheduleResetAlert();
       // Which account is the default shows on every account.
-      if (patch.defaultAccounts) for (const id of this.providers.keys()) void this.emitProvider(id).catch(() => {});
+      if (patch.defaultAccounts || 'returnToPreferred' in patch) for (const id of this.providers.keys()) void this.emitProvider(id).catch(() => {});
       return this.store.state.settings;
     });
 
@@ -821,7 +941,7 @@ export class App {
       return this.emitProvider(provider);
     });
 
-    this.register('provider.caps', ({ provider, cwd, accountId }) => this.capsFast(provider, cwd, accountId));
+    this.register('provider.caps', ({ provider, cwd, accountId, refresh }) => this.capsFast(provider, cwd, accountId, refresh));
     this.register('provider.prewarm', (p) => this.prewarm(p));
     this.register('provider.limits', async ({ provider, accountId = DEFAULT_ACCOUNT, force }) => {
       const key = accountKey(provider, accountId);
@@ -869,6 +989,7 @@ export class App {
         effort: p.effort ?? settings.defaultEfforts[p.provider],
         mode: p.mode ?? settings.defaultModes[p.provider] ?? 'default',
         ...(p.ultracode ? { ultracode: true } : {}),
+        ...this.startSpeed(p.provider, accountId, p.cwd, p.model ?? settings.defaultModels[p.provider], p.speed ?? settings.defaultSpeeds?.[p.provider]),
         status: 'starting',
         createdAt: now,
         updatedAt: now,
@@ -980,7 +1101,15 @@ export class App {
       const rt = this.runtime(sessionId);
       await rt.handle?.setModel(model);
       rt.update({ model });
+      // A speed the new model does not offer falls back to standard.
+      if (rt.meta.speed && rt.meta.speed !== STANDARD_SPEED && speedFor(this.modelInfo(rt, model), rt.meta.speed) === STANDARD_SPEED) await this.applySpeed(rt, STANDARD_SPEED);
       return { ok: true };
+    });
+    this.register('session.setSpeed', async ({ sessionId, speed }) => {
+      const rt = this.runtime(sessionId);
+      const next = speedFor(this.modelInfo(rt, rt.meta.model), speed);
+      await this.applySpeed(rt, next);
+      return { ok: true, speed: next };
     });
     this.register('session.setEffort', async ({ sessionId, effort }) => {
       const rt = this.runtime(sessionId);
@@ -1097,6 +1226,7 @@ export class App {
 
   async dispose() {
     this.disposed = true;
+    clearTimeout(this.resetTimer);
     for (const fn of this.disposers.splice(0)) await Promise.resolve(fn()).catch(() => {});
     for (const rt of this.sessions.values()) {
       rt.cancelPrompts();

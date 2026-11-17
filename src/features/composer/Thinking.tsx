@@ -1,9 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { Popover as RP } from 'radix-ui';
-import type { Effort } from '@shared/protocol';
+import { STANDARD_SPEED, type Effort, type SpeedInfo } from '@shared/protocol';
 import { effortName, isUltraEffort } from '@/lib/models';
 import { EASE_OUT, play, reducedMotion, spring } from '@/lib/motion';
-import { Switch, Tip } from '@/ui';
+import { Segmented, Switch, Tip } from '@/ui';
+import { Icon } from '@/icons';
 import { type Choice } from './choice';
 import { ChipSkeleton, MENU_EVENT } from './Controls';
 
@@ -188,15 +189,41 @@ export interface ThinkingProps {
   ultraOffered: boolean;
   ultracode: boolean;
   onUltracode: (on: boolean) => void;
+  /** Speeds beyond standard the model offers; none hides the Speed row. */
+  speeds?: SpeedInfo[];
+  speed?: string;
+  onSpeed?: (id: string) => void;
   side: 'top' | 'bottom';
   onClosed: () => void;
+}
+
+/** Standard and the model's faster speeds, one segmented row; a speed that costs more says so in its tooltip. */
+function SpeedRow({ speeds, speed, onSpeed }: { speeds: SpeedInfo[]; speed: string; onSpeed: (id: string) => void }) {
+  const options = [{ id: STANDARD_SPEED, name: 'Standard' } as SpeedInfo, ...speeds].map((s) => ({
+    value: s.id,
+    label: s.note ? (
+      <Tip label={s.note} side="bottom">
+        <span>{s.name}</span>
+      </Tip>
+    ) : (
+      s.name
+    ),
+  }));
+  return (
+    <div className="th-speed">
+      <div className="th-head">
+        <span className="th-title">Speed</span>
+      </div>
+      <Segmented id="th-speed" className="th-speed-seg" value={speed} onChange={onSpeed} options={options} />
+    </div>
+  );
 }
 
 /**
  * The thinking control: the level's name and a step meter at rest; a small popover with the
  * stepped track and, where the agent has it, the ultracode switch. Choices apply live.
  */
-export const Thinking = memo(function Thinking({ efforts, value, onChange, ultraOffered, ultracode, onUltracode, side, onClosed }: ThinkingProps) {
+export const Thinking = memo(function Thinking({ efforts, value, onChange, ultraOffered, ultracode, onUltracode, speeds = NO_SPEEDS, speed = STANDARD_SPEED, onSpeed, side, onClosed }: ThinkingProps) {
   const [open, setOpen] = useState(false);
   // What the control shows before the agent confirms a change, so the thumb never waits on a round trip.
   const [local, setLocal] = useState<Effort | undefined>();
@@ -262,11 +289,14 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
     if (was && Math.abs(w - was) > 1) play(el, [{ width: `${was}px` }, { width: `${w}px` }], { duration: 140, easing: EASE_OUT });
   }, [shown, ucOn, efforts]);
 
-  if (!efforts.length && !ultraOffered) return null;
+  const hasSpeed = speeds.length > 0 && !!onSpeed;
+  if (!efforts.length && !ultraOffered && !hasSpeed) return null;
 
+  const fast = hasSpeed && speed !== STANDARD_SPEED;
+  const speedName = speeds.find((s) => s.id === speed)?.name;
   const name = shown ? effortName(shown) : 'Default';
-  const aria = efforts.length ? `Effort: ${name}${ucOn ? ', ultracode on' : ''}` : `Ultracode ${ucOn ? 'on' : 'off'}`;
-  const tip = efforts.length ? (ucOn ? `Effort and ultracode` : 'Effort') : 'Ultracode';
+  const aria = (efforts.length ? `Effort: ${name}${ucOn ? ', ultracode on' : ''}` : ultraOffered ? `Ultracode ${ucOn ? 'on' : 'off'}` : 'Speed') + (fast ? `, ${speedName ?? 'fast'} speed` : '');
+  const tip = efforts.length ? (ucOn ? `Effort and ultracode` : 'Effort') : ultraOffered ? 'Ultracode' : 'Speed';
   return (
     <RP.Root open={open} onOpenChange={setOpen}>
       <Tip label={tip} side="top">
@@ -275,6 +305,7 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
             {efforts.length > 0 ? (
               <>
                 <span ref={pill} className="th-pill" aria-hidden>
+                  {fast && <Icon name="bolt" size={13} className="th-bolt" />}
                   {look && <UltraMark className="th-uc-narrow" />}
                   <span className="th-nm th-cur">
                     <LevelName effort={shown} mark={ucOn} />
@@ -284,7 +315,7 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
               </>
             ) : (
               <span ref={pill} className="th-pill" aria-hidden>
-                <UltraMark className="th-uc" />
+                {ultraOffered ? <UltraMark className="th-uc" /> : <Icon name="bolt" size={13} className="th-bolt" />}
               </span>
             )}
           </button>
@@ -317,6 +348,8 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
               <Switch checked={ucOn} onChange={onUltracode} label="Ultracode" />
             </label>
           )}
+          {hasSpeed && (efforts.length > 0 || ultraOffered) && <div className="menu-sep th-sep" role="separator" />}
+          {hasSpeed && <SpeedRow speeds={speeds} speed={speed} onSpeed={onSpeed!} />}
         </RP.Content>
       </RP.Portal>
     </RP.Root>
@@ -341,7 +374,22 @@ export const ModelEffort = memo(function ModelEffort({
 }) {
   if (!choice.caps) return choice.capsPending ? <ChipSkeleton w={74} /> : null;
   const efforts = choice.model?.efforts ?? NO_EFFORTS;
-  return <Thinking efforts={efforts} value={choice.effort} onChange={choice.setEffort} ultraOffered={ultraOffered} ultracode={ultracode} onUltracode={onUltracode} side={side} onClosed={onClosed} />;
+  return (
+    <Thinking
+      efforts={efforts}
+      value={choice.effort}
+      onChange={choice.setEffort}
+      ultraOffered={ultraOffered}
+      ultracode={ultracode}
+      onUltracode={onUltracode}
+      speeds={choice.speeds}
+      speed={choice.speed}
+      onSpeed={choice.setSpeed}
+      side={side}
+      onClosed={onClosed}
+    />
+  );
 });
 
 const NO_EFFORTS: Effort[] = [];
+const NO_SPEEDS: SpeedInfo[] = [];

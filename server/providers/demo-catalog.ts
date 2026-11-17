@@ -22,6 +22,11 @@ export const MODELS: ModelInfo[] = [
     efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     defaultEffort: 'high',
     isDefault: true,
+    // Two speeds beyond standard, so the Speed row can be built against the demo.
+    speeds: [
+      { id: 'fast', name: 'Fast' },
+      { id: 'ultrafast', name: 'Ultrafast', note: 'Uses credits faster' },
+    ],
   },
   {
     // A model whose top level is Ultra (as Codex's are), so the composer's Ultra stop can be built against the demo.
@@ -30,6 +35,7 @@ export const MODELS: ModelInfo[] = [
     description: 'Longest reasoning, may split work across sub-agents',
     efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
     defaultEffort: 'medium',
+    speeds: [{ id: 'fast', name: 'Fast', note: 'Billed as extra usage' }],
   },
   {
     id: 'demo-fast',
@@ -186,7 +192,7 @@ export function capabilities(): Capabilities {
     mcpServers: MCP_SERVERS.map((s) => ({ ...s, tools: s.tools?.map((t) => ({ ...t })) })),
     tools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task', 'TodoWrite', 'AskUserQuestion', 'ExitPlanMode', 'Skill', ...mcpTools],
     skillTrigger: '/',
-    features: { images: true, thinking: true, rewind: true, steer: true, compact: true, fast: false, browser: true, computerUse: true, remoteControl: true, ultracode: true },
+    features: { images: true, thinking: true, rewind: true, steer: true, compact: true, fast: true, browser: true, computerUse: true, remoteControl: true, ultracode: true },
   };
 }
 

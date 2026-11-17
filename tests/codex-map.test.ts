@@ -52,7 +52,7 @@ describe('modes and models', () => {
           isDefault: true,
         }),
       ),
-    ).toEqual({ id: 'gpt-5.5-codex', name: 'GPT-5.5 Codex', description: undefined, efforts: ['low', 'high'], defaultEffort: 'high', supportsFast: false, isDefault: true });
+    ).toEqual({ id: 'gpt-5.5-codex', name: 'GPT-5.5 Codex', description: undefined, efforts: ['low', 'high'], defaultEffort: 'high', supportsFast: false, isDefault: true, picker: true });
     expect(mapModel(X({ id: 'bare', model: '', displayName: '', supportedReasoningEfforts: [] }))).toMatchObject({ id: 'bare', name: 'bare', efforts: undefined });
   });
 

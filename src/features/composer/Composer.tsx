@@ -7,7 +7,7 @@ import { Icon } from '@/icons';
 import { pathForFile } from '@/lib/desktop';
 import { baseName, dirName } from '@/lib/format';
 import { fuzzy } from '@/lib/fuzzy';
-import { isUltraEffort } from '@/lib/models';
+import { isUltraEffort, toggledSpeed } from '@/lib/models';
 import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
 import { launchFlight, RELEASE } from './flight';
 import { launchKey } from './launch';
@@ -415,9 +415,16 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
     setOriginX(caretLeft(ta, trigger.start) + inset);
   }, [menuOpen, trigKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const { model: speedModel, speed, speeds, setSpeed } = choice;
   const ctx: CommandCtx = useMemo(
-    () => ({ sessionId, openModel: () => openComposerMenu('model'), openMode: () => openComposerMenu('mode'), openEffort: () => openComposerMenu('effort') }),
-    [sessionId],
+    () => ({
+      sessionId,
+      openModel: () => openComposerMenu('model'),
+      openMode: () => openComposerMenu('mode'),
+      openEffort: () => openComposerMenu('effort'),
+      toggleSpeed: speeds.length ? () => setSpeed(toggledSpeed(speedModel, speed)) : undefined,
+    }),
+    [sessionId, speedModel, speed, speeds, setSpeed],
   );
 
   const accept = (row: SuggestRow | undefined) => {

@@ -7,7 +7,7 @@ import { aliasTarget, currentGeneration, effortName, modelName, visibilityKey, v
 import { setSettings } from '@/state/actions';
 import { useActiveProvider } from '@/state/hooks';
 import { useStore } from '@/state/store';
-import { Segmented, Switch } from '@/ui';
+import { Segmented, Switch, Tip } from '@/ui';
 import { Card, Empty, ProviderPicker, Row, Skeleton, useInstalled, useProviderCaps } from './parts';
 import './models.css';
 
@@ -64,7 +64,10 @@ export function Models() {
   // Nothing chosen and no model default: the agent decides, so nothing is selected.
   const effortValue = effort && efforts.includes(effort) ? effort : (model?.defaultEffort ?? null);
   const modeId = settings.defaultModes[provider] ?? caps?.modes[0]?.id;
-  const customised = !!(settings.defaultModels[provider] || settings.defaultEfforts[provider] || settings.defaultModes[provider]);
+  const speeds = model?.speeds ?? [];
+  const speed = settings.defaultSpeeds?.[provider];
+  const speedValue = speed && speeds.some((s) => s.id === speed) ? speed : 'standard';
+  const customised = !!(settings.defaultModels[provider] || settings.defaultEfforts[provider] || settings.defaultModes[provider] || speed);
 
   const setShown = (id: string, on: boolean) => {
     const next = { ...overrides };
@@ -81,7 +84,7 @@ export function Models() {
     void setSettings({ modelVisibility: next });
   };
 
-  const patch = <K extends 'defaultModels' | 'defaultEfforts' | 'defaultModes'>(key: K, value: string | undefined) => {
+  const patch = <K extends 'defaultModels' | 'defaultEfforts' | 'defaultModes' | 'defaultSpeeds'>(key: K, value: string | undefined) => {
     const next = { ...settings[key] } as Record<string, string | undefined>;
     if (value === undefined) delete next[provider];
     else next[provider] = value;
@@ -94,7 +97,7 @@ export function Models() {
       delete n[provider];
       return n as T;
     };
-    void setSettings({ defaultModels: strip(settings.defaultModels), defaultEfforts: strip(settings.defaultEfforts), defaultModes: strip(settings.defaultModes) });
+    void setSettings({ defaultModels: strip(settings.defaultModels), defaultEfforts: strip(settings.defaultEfforts), defaultModes: strip(settings.defaultModes), defaultSpeeds: strip(settings.defaultSpeeds ?? {}) });
   };
 
   return (
@@ -159,6 +162,16 @@ export function Models() {
             {model && efforts.length > 0 && (
               <Row label="Effort">
                 <Segmented<Effort> id="set-effort" value={effortValue} onChange={(e) => patch('defaultEfforts', e)} options={efforts.map((e) => ({ value: e, label: effortName(e) }))} />
+              </Row>
+            )}
+            {speeds.length > 0 && (
+              <Row label="Speed">
+                <Segmented
+                  id="set-speed"
+                  value={speedValue}
+                  onChange={(id) => patch('defaultSpeeds', id === 'standard' ? undefined : id)}
+                  options={[{ value: 'standard', label: 'Standard' }, ...speeds.map((s) => ({ value: s.id, label: s.note ? <Tip label={s.note}><span>{s.name}</span></Tip> : s.name }))]}
+                />
               </Row>
             )}
             {caps.modes.length > 0 && (

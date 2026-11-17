@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react';
-import type { Capabilities, Effort, ModeInfo, ModelInfo, ProviderId } from '@shared/protocol';
-import { modelNameById, visibleModels } from '@/lib/models';
-import { homeAccountId, setEffort as setSessionEffort, setMode as setSessionMode, setModel as setSessionModel } from '@/state/actions';
+import { STANDARD_SPEED, type Capabilities, type Effort, type ModeInfo, type ModelInfo, type ProviderId, type SpeedInfo } from '@shared/protocol';
+import { modelNameById, modelSpeeds, speedFor, visibleModels } from '@/lib/models';
+import { homeAccountId, setEffort as setSessionEffort, setMode as setSessionMode, setModel as setSessionModel, setSettings, setSpeed as setSessionSpeed } from '@/state/actions';
 import { useShallow } from 'zustand/react/shallow';
 import { useCapsState } from '@/state/hooks';
 import { useStore } from '@/state/store';
@@ -59,6 +59,11 @@ export interface Choice {
   /** Home only: back to the model's default effort. */
   clearEffort?: () => void;
   setMode: (id: string) => void;
+  /** Speeds the model offers beyond standard (empty: no Speed row). */
+  speeds: SpeedInfo[];
+  /** The speed in use (`standard` when none beyond it is on). */
+  speed: string;
+  setSpeed: (id: string) => void;
 }
 
 const NO_MODELS: ModelInfo[] = [];
@@ -74,7 +79,7 @@ export function useChoice(sessionId: string | null): Choice {
   const meta = useStore(
     useShallow((s) => {
       const m = sessionId ? s.sessions[sessionId] : undefined;
-      return m ? { provider: m.provider, accountId: m.accountId, model: m.model, effort: m.effort, mode: m.mode } : undefined;
+      return m ? { provider: m.provider, accountId: m.accountId, model: m.model, effort: m.effort, mode: m.mode, speed: m.speed } : undefined;
     }),
   );
   const homeProvider = useStore((s) => s.ui.homeProvider);
@@ -84,6 +89,8 @@ export function useChoice(sessionId: string | null): Choice {
   const homeMode = useStore((s) => s.ui.homeMode[provider] ?? s.settings.defaultModes[provider]);
   const homeEffort = useStore((s) => s.ui.homeEffort[provider] ?? s.settings.defaultEfforts[provider]);
   const visibility = useStore((s) => s.settings.modelVisibility);
+  // Home: the speed new sessions start with (the agent's default in settings).
+  const homeSpeed = useStore((s) => s.settings.defaultSpeeds?.[provider]);
 
   const all = caps?.models ?? NO_MODELS;
   const modelId = meta ? meta.model : (homeModel ?? all.find((m) => m.isDefault)?.id ?? all[0]?.id);
@@ -150,10 +157,20 @@ export function useChoice(sessionId: string | null): Choice {
     s.setUi({ homeEffort: next });
   }, [provider]);
 
+  const speeds = modelSpeeds(model);
+  const speed = speedFor(model, meta ? meta.speed : homeSpeed);
+  const setSpeed = useCallback(
+    (id: string) => {
+      if (sessionId) void setSessionSpeed(sessionId, id);
+      else void setSettings({ defaultSpeeds: { ...useStore.getState().settings.defaultSpeeds, [provider]: id === STANDARD_SPEED ? undefined : id } });
+    },
+    [sessionId, provider],
+  );
+
   const modelLabel = modelNameById(modelId, all);
   // One object per distinct choice, so memoized controls skip renders when only the draft changed.
   return useMemo(
-    () => ({ provider, accountId, caps, capsPending, models, model, modelId, modelLabel, effort, effortChosen, mode, pickModel, setEffort, clearEffort: sessionId ? undefined : clearEffort, setMode }),
-    [provider, accountId, caps, capsPending, models, model, modelId, modelLabel, effort, effortChosen, mode, pickModel, setEffort, clearEffort, sessionId, setMode],
+    () => ({ provider, accountId, caps, capsPending, models, model, modelId, modelLabel, effort, effortChosen, mode, pickModel, setEffort, clearEffort: sessionId ? undefined : clearEffort, setMode, speeds, speed, setSpeed }),
+    [provider, accountId, caps, capsPending, models, model, modelId, modelLabel, effort, effortChosen, mode, pickModel, setEffort, clearEffort, sessionId, setMode, speeds, speed, setSpeed],
   );
 }

@@ -47,6 +47,8 @@ export interface ProviderSession {
   setEffort(effort: Effort): Promise<void>;
   setMode(mode: string): Promise<void>;
   setFast?(fast: boolean): Promise<void>;
+  /** The session's speed (`rt.meta.speed` already holds it): `standard` or a `SpeedInfo` id of its model. */
+  setSpeed?(speed: string): Promise<void>;
   /** Claude Code ultracode on or off (`rt.meta.ultracode` already holds it). */
   setUltracode?(on: boolean): Promise<void>;
   rewind?(itemId: string, restoreFiles: boolean): Promise<{ ok: boolean; message?: string }>;

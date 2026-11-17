@@ -19,6 +19,7 @@ import type {
   McpServerInfo,
   NoticeItem,
   ProviderInfo,
+  LimitsMeta,
   RateLimit,
   TextItem,
   TimelineItem,
@@ -158,8 +159,9 @@ export class DemoProvider implements Provider {
   async limits(): Promise<RateLimit[]> {
     const profile = this.limitProfile();
     if (!profile) return [];
-    const limits = rateLimits(Date.now(), profile);
-    this.ctx.emit({ type: 'limits.updated', provider: 'demo', limits, meta: { planLimits: profile !== 'none' } });
+    const now = Date.now();
+    const limits = rateLimits(now, profile);
+    this.ctx.emit({ type: 'limits.updated', provider: 'demo', limits, meta: { planLimits: profile !== 'none', ...demoCredits(profile, limits) } });
     return limits;
   }
 
@@ -244,6 +246,7 @@ class DemoSession implements ProviderSession {
   /** The running turn's script (steered messages go to it). */
   private script?: Script;
   private ultracode = false;
+  private speedChoice = 'standard';
   private allowed = new Set<string>();
   private rotation = 0;
   private model: string;
@@ -376,6 +379,11 @@ class DemoSession implements ProviderSession {
     this.mode = mode;
   }
 
+  /** Pretend speed: remembered, so the UI can be built against it. */
+  async setSpeed(speed: string): Promise<void> {
+    this.speedChoice = speed;
+  }
+
   /** Pretend ultracode: remembered, so the UI can be built against it. */
   async setUltracode(on: boolean): Promise<void> {
     this.ultracode = on;
@@ -425,4 +433,17 @@ class DemoSession implements ProviderSession {
     this.current = undefined;
     ctrl.abort();
   }
+}
+
+/**
+ * Made-up credits, so the credit settings and lines can be seen: the default account has extra
+ * usage (some spent), an account at its cap carries on with a credits balance.
+ */
+function demoCredits(profile: DemoLimitProfile, limits: RateLimit[]): Pick<LimitsMeta, 'extra' | 'credits'> {
+  if (profile === 'calm') return { extra: { enabled: true, used: 1240, limit: 5000, currency: 'USD' } };
+  if (profile === 'cap') {
+    const full = limits.filter((l) => l.percent >= 100 && l.resetsAt).map((l) => l.resetsAt!);
+    return { credits: { balance: '1250.5', has: true, inUse: true, ...(full.length ? { resetsAt: Math.max(...full) } : {}) } };
+  }
+  return {};
 }

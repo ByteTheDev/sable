@@ -2,12 +2,13 @@ import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from '
 import { DEFAULT_ACCOUNT, type AccountInfo, type LimitPace, type LimitsReport, type ProviderId, type ProviderInfo, type RateLimit } from '@shared/protocol';
 import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
 import { useNow } from '@/lib/useNow';
-import { openSettings, readLimitsNow, refreshLimits } from '@/state/actions';
+import { openSettings, readLimitsNow, refreshLimits, setSettings } from '@/state/actions';
 import { accountName, useLimitsReport } from '@/state/hooks';
 import { accountKey, useStore } from '@/state/store';
-import { cx, IconButton, Tip } from '@/ui';
+import { cx, IconButton, Switch, Tip } from '@/ui';
 import { clock, duration, exactTime, isApiKey, NUMBER_LOCALE, planText, STALE_MS, windowLevel } from './format';
 import { LimitsOverview } from './Overview';
+import './usage.css';
 
 /** From this many accounts on, the Usage page lists them as an overview instead of one block each. */
 const OVERVIEW_FROM = 3;
@@ -178,7 +179,8 @@ export function AccountLimits({ refs, pending }: { refs: AccountRef; pending: bo
         {limits.map((l) => (
           <WindowRow key={l.id} limit={l} samples={report?.history[l.id]} pace={report?.pace[l.id]} now={now} />
         ))}
-        <Extra report={report} />
+        <Extra report={report} now={now} />
+        <CreditsSetting provider={provider} accountId={account.id} />
       </div>
     );
   else if (pending) body = <WindowSkeleton />;
@@ -204,8 +206,68 @@ export function AccountLimits({ refs, pending }: { refs: AccountRef; pending: bo
   );
 }
 
+/** Whether credits carry the account now, and when that stretch ends (exact time in the tooltip). */
+function CreditsMeta({ inUse, extra, resetsAt, now }: { inUse?: boolean; extra?: boolean; resetsAt?: number; now: number }) {
+  const ahead = !!resetsAt && resetsAt > now;
+  if (!inUse && !ahead) return null;
+  return (
+    <div className="ul-meta">
+      {inUse && <span className="ul-pace">{extra ? 'Running on extra usage' : 'Running on credits'}</span>}
+      {ahead && (
+        <Tip label={exactTime(resetsAt!)} side="bottom">
+          <span className="ul-reset num" tabIndex={0}>
+            {inUse ? `Plan resets in ${duration(resetsAt! - now)}` : `Resets in ${duration(resetsAt! - now)}`}
+          </span>
+        </Tip>
+      )}
+    </div>
+  );
+}
+
+/** The agent reports credits or extra usage for this account (the credits setting applies to it). */
+export const offersCredits = (r: LimitsReport | undefined) => !!(r?.extra?.enabled || r?.credits?.has || r?.credits?.balance || r?.credits?.unlimited);
+
+/** Where each agent's own billing page is (opened in the user's browser). */
+const BILLING: Partial<Record<ProviderId, string>> = {
+  claude: 'https://claude.ai/settings/usage',
+  codex: 'https://chatgpt.com/codex/settings/usage',
+};
+
+/**
+ * "Use credits at a limit" for one account, shown only where its agent reports credits or extra
+ * usage. Neither agent lets Sable switch them per session: the account's own setting decides
+ * whether they are spent, so the line says that and links to the provider's billing page.
+ */
+export function CreditsSetting({ provider, accountId, name, className }: { provider: ProviderId; accountId: string; name?: string; className?: string }) {
+  const report = useLimitsReport(provider, accountId);
+  const key = `${provider}:${accountId}`;
+  const on = useStore((s) => !!s.settings.creditsAtLimit?.[key]);
+  if (!offersCredits(report)) return null;
+  const label = name ? `Use credits at a limit: ${name}` : 'Use credits at a limit';
+  const url = BILLING[provider];
+  return (
+    <div className={cx('ul-credits', className)} data-spot={className ? true : undefined}>
+      <label className="ul-credits-row">
+        <span className="ul-label truncate">{label}</span>
+        <Switch checked={on} onChange={(v) => void setSettings({ creditsAtLimit: { ...useStore.getState().settings.creditsAtLimit, [key]: v } })} label={label} />
+      </label>
+      <p className="ul-credits-note">
+        Whether credits are spent is set on your {PROVIDER_NAME[provider]} account.
+        {url && (
+          <>
+            {' '}
+            <a href={url} target="_blank" rel="noreferrer">
+              Billing
+            </a>
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
 /** Extra usage beyond the plan (Claude) or a credits balance (Codex), when the agent reports one. */
-function Extra({ report }: { report: LimitsReport | undefined }) {
+function Extra({ report, now }: { report: LimitsReport | undefined; now: number }) {
   const ex = report?.extra;
   if (ex?.enabled && (ex.limit || ex.used)) {
     const money = (v?: number) => (v === undefined ? '' : new Intl.NumberFormat(NUMBER_LOCALE, { style: 'currency', currency: ex.currency || 'USD' }).format(v / 100));
@@ -221,6 +283,7 @@ function Extra({ report }: { report: LimitsReport | undefined }) {
             <span className="meter-fill" style={{ '--p': Math.min(100, pct) / 100 } as CSSProperties} />
           </span>
         )}
+        <CreditsMeta inUse={ex.inUse} extra resetsAt={ex.resetsAt} now={now} />
       </div>
     );
   }
@@ -232,6 +295,7 @@ function Extra({ report }: { report: LimitsReport | undefined }) {
           <span className="ul-label">Credits</span>
           <span className="ul-extra-val num">{cr.unlimited ? 'Unlimited' : balance(cr.balance)}</span>
         </div>
+        <CreditsMeta inUse={cr.inUse} resetsAt={cr.resetsAt} now={now} />
       </div>
     );
   return null;
@@ -277,7 +341,14 @@ export function LimitsSection() {
       </header>
       {refs.length >= OVERVIEW_FROM ? (
         // Many accounts: one line each, the windows in full on demand.
-        <LimitsOverview refs={refs} pending={pending} />
+        <>
+          <LimitsOverview refs={refs} pending={pending} />
+          <div className="ul-credit-list">
+            {refs.map((r) => (
+              <CreditsSetting key={`${r.provider}:${r.account.id}`} className="card ul-credit-card" provider={r.provider} accountId={r.account.id} name={accountName(r.account)} />
+            ))}
+          </div>
+        </>
       ) : (
         <div className="ul-accounts">
           {refs.map((r) => (

@@ -34,6 +34,7 @@ import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
 import { WIDGET_DESCRIPTION, WIDGET_FENCE_HINT, WIDGET_INPUT_SCHEMA, WIDGET_TOOL, dynamicToolAnswer, widgetsEnabled } from './widget-tool';
 import { BROWSER_DESCRIPTIONS, BROWSER_HINT, BROWSER_INPUT_SCHEMAS, BROWSER_OPS, BROWSER_TOOLS, browserDynamicAnswer, browserOp, browserTabEnabled } from './browser-tool';
 import { CodexRpc, RpcError, resolveCodexCommand, type ExitInfo } from './codex-rpc';
+import { serviceTierFor } from './codex-map';
 import {
   PRESETS,
   activityFor,
@@ -531,11 +532,12 @@ export class CodexProvider implements Provider {
       let cursor: string | null = null;
       for (let page = 0; page < 10; page++) {
         const r: ModelListResponse = await rpc.request<ModelListResponse>('model/list', { cursor, limit: 100 }, 20_000);
-        for (const m of r.data ?? []) if (!m.hidden) out.push(mapModel(m));
+        // Hidden and superseded models come too (listed under Show all); the picker flag says which the agent offers.
+        for (const m of r.data ?? []) out.push(mapModel(m));
         cursor = r.nextCursor;
         if (!cursor) break;
       }
-      if (out.length && !out.some((m) => m.isDefault)) out[0].isDefault = true;
+      if (out.length && !out.some((m) => m.isDefault)) (out.find((m) => m.picker) ?? out[0]).isDefault = true;
       return out;
     };
     const skills = async () => {
@@ -874,6 +876,9 @@ class CodexSession implements ProviderSession {
     // Applied as a turn/start override (which persists for later turns).
   }
   async setEffort(_effort: Effort) {}
+  async setSpeed(_speed: string) {
+    // Applied as a turn/start override, like the model.
+  }
   async setMode(_mode: string) {
     this.policyDirty = true;
   }
@@ -977,6 +982,9 @@ class CodexSession implements ProviderSession {
     if (rt.meta.model) params.model = rt.meta.model;
     const effort = this.effortFor();
     if (effort) params.effort = effort;
+    // The speed as a service tier (it persists for later turns); null asks for standard. Unchosen leaves Codex's own.
+    const tier = serviceTierFor(rt.caps?.models.find((x) => x.id === rt.meta.model), rt.meta.speed);
+    if (tier !== undefined) params.serviceTier = tier;
     if (this.policyDirty) {
       const p = preset(rt.meta.mode);
       params.approvalPolicy = p.approval;

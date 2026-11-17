@@ -65,6 +65,9 @@ const MODES: ModeInfo[] = [
   { id: 'bypassPermissions', name: 'Bypass', description: 'Runs everything without asking. Use in sandboxes only', tone: 'danger' },
 ];
 
+/** Fast mode, which Claude Code bills as extra usage (it is refused with `extra_usage_disabled` otherwise). */
+const CLAUDE_FAST = { id: 'fast', name: 'Fast', note: 'Billed as extra usage' };
+
 const FALLBACK_MODELS: ModelInfo[] = [
   { id: 'default', name: 'Default', description: 'Recommended model for your plan', isDefault: true, efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
   { id: 'fable', name: 'Fable', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
@@ -171,6 +174,8 @@ export class ClaudeProvider implements Provider {
   private capsInflight = new Map<string, Promise<Capabilities>>();
   private loginProc?: ChildProcess;
   private limitsCache: RateLimit[] = [];
+  /** Extra usage as last known: from the usage request, and whether turns run on it (rate_limit_event). */
+  private extraCache?: NonNullable<LimitsMeta['extra']>;
   /** When limits were last read, the read in flight, and the last on-demand probe. */
   private limitsAt = 0;
   private limitsRun?: Promise<RateLimit[]>;
@@ -311,7 +316,7 @@ export class ClaudeProvider implements Provider {
       // Appended to Claude Code's own prompt: CLAUDE.md, output styles and settings still apply.
       systemPrompt: appendix ? { type: 'preset', preset: 'claude_code', append: appendix } : base.systemPrompt,
       // Flag-tier settings for this process (what applyFlagSettings changes later on).
-      settings: meta.ultracode ? ({ ultracode: true } as Options['settings']) : undefined,
+      settings: startSettings(meta),
       model: meta.model && meta.model !== 'default' ? meta.model : undefined,
       effort: sdkEffort(meta.effort) as Options['effort'],
       permissionMode: (meta.mode || 'default') as PermissionMode,
@@ -434,6 +439,9 @@ export class ClaudeProvider implements Provider {
           efforts: m.supportsEffort ? ((m.supportedEffortLevels as Effort[] | undefined) ?? ['low', 'medium', 'high']) : undefined,
           supportsFast: !!m.supportsFastMode,
           isDefault: m.value === 'default' || i === 0,
+          // Claude Code reports the models its own picker offers.
+          picker: true,
+          ...(m.supportsFastMode ? { speeds: [CLAUDE_FAST] } : {}),
         }))
       : FALLBACK_MODELS;
     const skills = new Set(skillNames ?? []);
@@ -533,6 +541,9 @@ export class ClaudeProvider implements Provider {
         if (ex.used_credits != null) meta.extra.used = Number(ex.used_credits);
         if (ex.monthly_limit != null) meta.extra.limit = Number(ex.monthly_limit);
         if (ex.currency) meta.extra.currency = String(ex.currency);
+        if (this.extraCache?.inUse !== undefined) meta.extra.inUse = this.extraCache.inUse;
+        if (this.extraCache?.resetsAt) meta.extra.resetsAt = this.extraCache.resetsAt;
+        this.extraCache = meta.extra;
       }
       if (rows.length) {
         meta.planLimits = true;
@@ -574,11 +585,21 @@ export class ClaudeProvider implements Provider {
     const type = info.rateLimitType ? String(info.rateLimitType) : undefined;
     const rejected = info.status === 'rejected';
     if (type) put(type, info.utilization, info.resetsAt, rejected);
+    // Past a window, the account may carry on with extra usage (its own setting decides).
+    const meta: LimitsMeta = { planLimits: true };
+    const over = info.isUsingOverage ?? info.overageInUse;
+    // Only an account with extra usage on (or already known) gets a record of it.
+    if (over || (info.overageStatus && info.overageStatus !== 'rejected') || this.extraCache) {
+      const prev = this.extraCache;
+      const extra = { ...prev, enabled: info.overageStatus ? info.overageStatus !== 'rejected' : (prev?.enabled ?? !!over), inUse: !!over, resetsAt: epochMs(info.overageResetsAt) ?? prev?.resetsAt };
+      if (extra.inUse !== prev?.inUse || extra.enabled !== prev?.enabled || extra.resetsAt !== prev?.resetsAt) changed = true;
+      this.extraCache = meta.extra = extra;
+    }
     if (changed) {
       const rank = (id: string) => LIMIT_ORDER.indexOf(id) + 1 || (id.startsWith('five_hour') ? 10 : 20);
       this.limitsCache = [...rows.values()].sort((a, b) => rank(a.id) - rank(b.id));
       this.limitsAt = Date.now();
-      this.ctx.emit({ type: 'limits.updated', provider: 'claude', limits: this.limitsCache, meta: { planLimits: true } });
+      this.ctx.emit({ type: 'limits.updated', provider: 'claude', limits: this.limitsCache, meta });
     }
     if (!rejected) return undefined;
     const row = type ? rows.get(type) : undefined;
@@ -1064,6 +1085,11 @@ class ClaudeSession implements ProviderSession {
 
   async setFast(fast: boolean) {
     await this.q?.applyFlagSettings({ fastMode: fast } as never);
+  }
+
+  /** Claude Code has one speed beyond standard: fast mode. */
+  async setSpeed(speed: string) {
+    await this.setFast(speed === 'fast');
   }
 
   async context(): Promise<ContextBreakdown | null> {
@@ -1724,4 +1750,15 @@ function resultLabel(subtype?: string): string {
 function fmtTokens(n?: number) {
   if (!n) return '0';
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n);
+}
+
+/**
+ * Flag settings an agent process starts with: ultracode, and fast mode once the session chose a
+ * speed (unchosen leaves the user's own Claude Code setting alone).
+ */
+export function startSettings(meta: Pick<SessionMeta, 'ultracode' | 'speed'>): Options['settings'] | undefined {
+  const out: Record<string, unknown> = {};
+  if (meta.ultracode) out.ultracode = true;
+  if (meta.speed) out.fastMode = meta.speed === 'fast';
+  return Object.keys(out).length ? (out as Options['settings']) : undefined;
 }

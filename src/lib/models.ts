@@ -29,8 +29,8 @@ export const isUltraEffort = (e: Effort | undefined) => e === 'ultra';
  * Which models a menu lists, and what they are called.
  *
  * Agents report every model they can run, including older generations and aliases
- * (Claude Code's `default`). By default Sable lists only the current generation:
- * the newest version of each model family, without aliases that name a listed model.
+ * (Claude Code's `default`). By default Sable lists what the agent's own picker offers
+ * (or, when it does not say, the newest version of each family), without aliases that name a listed model.
  * Settings › Models can show or hide any model; the model in use is always listed.
  */
 
@@ -110,8 +110,24 @@ function compareVersions(a: number[], b: number[]) {
   return 0;
 }
 
-/** Ids of the models listed when the user has changed nothing: the current generation. */
+/**
+ * Ids of the models listed when the user has changed nothing. When the agent says which models
+ * its own picker offers (`ModelInfo.picker`), exactly those, so a model released tomorrow is
+ * listed the day the agent offers it; otherwise the newest version of each family.
+ */
 export function currentGeneration(models: ModelInfo[]): Set<string> {
+  if (models.some((m) => m.picker !== undefined)) return offeredByAgent(models);
+  return newestOfEachFamily(models);
+}
+
+/** The models the agent's picker offers, without an alias that names one of them. */
+function offeredByAgent(models: ModelInfo[]): Set<string> {
+  const offered = models.filter((m) => m.picker !== false);
+  const listed = new Set(offered.filter((m) => !aliasTarget(m)).map((m) => modelName(m)));
+  return new Set(offered.filter((m) => !aliasTarget(m) || !listed.has(aliasTarget(m))).map((m) => m.id));
+}
+
+function newestOfEachFamily(models: ModelInfo[]): Set<string> {
   const names = new Map(models.map((m) => [m.id, modelName(m)!]));
   const listed = new Set(models.filter((m) => !aliasTarget(m)).map((m) => names.get(m.id)!));
   const newest = new Map<string, number[]>();
@@ -154,3 +170,5 @@ export function visibleModels(provider: ProviderId, models: ModelInfo[], overrid
   });
   return out.length ? out : models.filter((m) => base.has(m.id));
 }
+
+export { modelSpeeds, speedFor, toggledSpeed } from '@shared/speed';

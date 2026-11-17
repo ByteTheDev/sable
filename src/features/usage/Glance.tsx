@@ -50,6 +50,7 @@ export function LimitsGlance({ provider, accountId = DEFAULT_ACCOUNT, header = t
         {limits.map((l) => (
           <WindowRow key={l.id} limit={l} samples={report?.history[l.id]} pace={report?.pace[l.id]} now={now} compact />
         ))}
+        {(report?.extra?.inUse || report?.credits?.inUse) && <p className="ul-note ul-on-credits">{report?.extra?.inUse ? 'Running on extra usage' : 'Running on credits'}</p>}
       </div>
     );
   else if (pending) body = <WindowSkeleton />;

@@ -2057,3 +2057,23 @@ button.hc:active {
   opacity: 0;
   transition: none;
 }
+
+/* Speed: standard and the model's faster speeds, one row under effort and ultracode. */
+.th-speed {
+  padding: 0 4px 4px;
+}
+
+.th-speed-seg {
+  display: flex;
+  width: 100%;
+}
+
+.th-speed-seg .seg-item {
+  flex: 1;
+  justify-content: center;
+}
+
+.th-bolt {
+  flex: none;
+  color: var(--text);
+}

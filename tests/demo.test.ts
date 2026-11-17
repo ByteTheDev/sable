@@ -155,7 +155,7 @@ describe('DemoProvider catalog', () => {
     expect(new Set(caps.mcpServers.map((s) => s.status)).size).toBeGreaterThan(1);
     expect(caps.agents).toHaveLength(3);
     expect(caps.skillTrigger).toBe('/');
-    expect(caps.features).toEqual({ images: true, thinking: true, rewind: true, steer: true, compact: true, fast: false, browser: true, computerUse: true, remoteControl: true, ultracode: true });
+    expect(caps.features).toEqual({ images: true, thinking: true, rewind: true, steer: true, compact: true, fast: true, browser: true, computerUse: true, remoteControl: true, ultracode: true });
 
     expect(await p.limits()).toHaveLength(2);
     const history = await p.history('/work/relay-api');

@@ -305,6 +305,22 @@ function onStatusChange(session: SessionMeta, prev: SessionMeta['status']) {
   }
 }
 
+/** A full window of an account reset: a toast, and a system notification while Sable is not in view. */
+function announceReset(e: Extract<BridgeEvent, { type: 'limit.reset' }>) {
+  const s = useStore.getState();
+  const info = s.providers[e.provider];
+  const account = info?.accounts?.find((a) => a.id === (e.accountId ?? DEFAULT_ACCOUNT));
+  const who = (info?.accounts?.length ?? 0) > 1 ? (account?.label ?? account?.auth.email) : undefined;
+  const text = `${info?.name ?? 'The agent'}${who ? ` (${who})` : ''}: ${e.window} reset`;
+  s.toast(text, 'success');
+  if (!document.hidden || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  try {
+    new Notification('Limit reset', { body: text, tag: `reset:${e.provider}:${e.accountId ?? ''}` });
+  } catch {
+    /* notifications are best effort */
+  }
+}
+
 /** Applies one bridge event to the store. Exported for tests; the app feeds it from `startBridge`. */
 export function applyEvent(e: BridgeEvent) {
   switch (e.type) {
@@ -454,6 +470,9 @@ export function applyEvent(e: BridgeEvent) {
     case 'toast':
       useStore.getState().toast(e.text, e.level);
       return;
+    case 'limit.reset':
+      announceReset(e);
+      return;
     default:
       return;
   }
@@ -566,6 +585,23 @@ function normKey(key: string) {
 }
 
 const capsInflight = new Map<string, Promise<void>>();
+/** When each home caps key was last answered, so the model menu can ask again after an hour. */
+const capsLoadedAt = new Map<string, number>();
+const CAPS_STALE_MS = 3600_000;
+
+/**
+ * The model menu opened: when the list it shows is older than an hour, the agent is asked again
+ * in the background, so a model released meanwhile appears without a restart.
+ */
+export function refreshStaleCaps(provider: ProviderId, cwd: string | null, accountId?: string | null) {
+  const key = capsKey(provider, cwd, accountId);
+  if (capsInflight.has(key) || Date.now() - (capsLoadedAt.get(key) ?? Date.now()) < CAPS_STALE_MS) return;
+  capsLoadedAt.set(key, Date.now());
+  void bridge
+    .call('provider.caps', { provider, cwd: cwd ?? undefined, accountId: accountId && accountId !== DEFAULT_ACCOUNT ? accountId : undefined, refresh: true })
+    .then((caps) => useStore.setState((s) => ({ providerCaps: { ...s.providerCaps, [key]: caps } })))
+    .catch(() => {});
+}
 const CAPS_RETRIES = 2;
 const CAPS_RETRY_MS = 3000;
 
@@ -581,6 +617,7 @@ export function ensureProviderCaps(provider: ProviderId, cwd: string | null, acc
     .call('provider.caps', { provider, cwd: cwd ?? undefined, accountId: accountId && accountId !== DEFAULT_ACCOUNT ? accountId : undefined })
     .then((caps) =>
       useStore.setState((s) => {
+        capsLoadedAt.set(key, Date.now());
         const { [key]: _, ...capsFailed } = s.capsFailed;
         return { providerCaps: { ...s.providerCaps, [key]: caps }, capsFailed };
       }),

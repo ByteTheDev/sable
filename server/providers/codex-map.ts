@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { speedFor } from '../../shared/speed';
+import { STANDARD_SPEED } from '../../shared/protocol';
 import type {
   Attachment,
   Effort,
@@ -6,6 +8,7 @@ import type {
   HistoryEntry,
   ModeInfo,
   ModelInfo,
+  SpeedInfo,
   McpServerInfo,
   LimitsMeta,
   RateLimit,
@@ -106,6 +109,7 @@ export function toEffort(e: string | null | undefined): Effort | undefined {
 
 export function mapModel(m: Model): ModelInfo {
   const efforts = (m.supportedReasoningEfforts ?? []).map((o) => toEffort(o.reasoningEffort)).filter((e): e is Effort => !!e);
+  const speeds = codexSpeeds(m);
   return {
     id: m.model || m.id,
     name: m.displayName || m.model || m.id,
@@ -114,7 +118,36 @@ export function mapModel(m: Model): ModelInfo {
     defaultEffort: toEffort(m.defaultReasoningEffort),
     supportsFast: false,
     isDefault: !!m.isDefault,
+    // Codex's own picker: not hidden, and not superseded by a newer model it points to.
+    picker: !m.hidden && !m.upgrade,
+    ...(speeds.length ? { speeds } : {}),
   };
+}
+
+/**
+ * The `serviceTier` a turn carries for the session's speed: the tier id, null for standard (also
+ * when the model does not offer the speed), undefined when the session never chose one.
+ */
+export function serviceTierFor(model: ModelInfo | undefined, speed: string | undefined): string | null | undefined {
+  if (!speed) return undefined;
+  const tier = speedFor(model, speed);
+  return tier === STANDARD_SPEED ? null : tier;
+}
+
+/** Codex's service tiers for a model as speeds, without the standard one. */
+export function codexSpeeds(m: Pick<Model, 'serviceTiers' | 'additionalSpeedTiers'>): SpeedInfo[] {
+  const tiers = m.serviceTiers?.length ? m.serviceTiers : (m.additionalSpeedTiers ?? []).map((id) => ({ id, name: '', description: '' }));
+  return tiers
+    .filter((t) => t.id && !/^(default|standard|auto)$/i.test(t.id))
+    .map((t) => ({ id: t.id, name: t.name || t.id.charAt(0).toUpperCase() + t.id.slice(1), ...(costNote(t.description) ? { note: costNote(t.description) } : {}) }));
+}
+
+/** "Uses credits faster", "2x usage": the part of a tier's description that says it costs more, kept short. */
+function costNote(text: string | undefined): string | undefined {
+  const t = text?.trim();
+  if (!t || !/(cost|credit|usage|price|\dx|×)/i.test(t)) return undefined;
+  const first = t.split(/(?<=[.!])\s/)[0];
+  return first.length <= 60 ? first.replace(/\.$/, '') : 'Uses more of your plan';
 }
 
 export function mapSkill(s: SkillMetadata): SkillInfo {
@@ -189,7 +222,18 @@ export function mapLimits(snapshots: RateLimitSnapshot[]): RateLimit[] {
 export function limitsMeta(snapshots: RateLimitSnapshot[]): LimitsMeta {
   const meta: LimitsMeta = {};
   const credits = snapshots.map((s) => s.credits).find((c) => c && (c.hasCredits || c.unlimited));
-  if (credits) meta.credits = { ...(credits.balance ? { balance: credits.balance } : {}), ...(credits.unlimited ? { unlimited: true } : {}) };
+  if (credits) {
+    // At a full window an account with credits carries on with them (Codex decides, by the account's setting).
+    const full = snapshots.some((s) => s.credits === credits && [s.primary, s.secondary].some((w) => w && w.usedPercent >= 100));
+    const resets = snapshots.flatMap((s) => [s.primary, s.secondary]).filter((w) => w && w.usedPercent >= 100 && w.resetsAt).map((w) => (w!.resetsAt! < 1e12 ? w!.resetsAt! * 1000 : w!.resetsAt!));
+    meta.credits = {
+      ...(credits.balance ? { balance: credits.balance } : {}),
+      ...(credits.unlimited ? { unlimited: true } : {}),
+      has: true,
+      ...(full ? { inUse: true } : {}),
+      ...(full && resets.length ? { resetsAt: Math.max(...resets) } : {}),
+    };
+  }
   if (snapshots.some((s) => s.primary || s.secondary)) meta.planLimits = true;
   return meta;
 }

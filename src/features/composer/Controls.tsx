@@ -9,7 +9,7 @@ import { modelName } from '@/lib/models';
 import { currentBranch } from '@/lib/workspace';
 import { homeAccountId, openSettings, setHomeAccount } from '@/state/actions';
 import { accountName } from '@/state/hooks';
-import { useStore } from '@/state/store';
+import { refreshStaleCaps, useStore } from '@/state/store';
 import { Kbd, PathLabel, Tip } from '@/ui';
 import { planWord } from '@/features/accounts/model';
 import { LimitDot } from '@/features/usage';
@@ -181,6 +181,13 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
   const [open, setOpen] = useMenuOpen('model');
   const guard = useReleaseGuard(open);
   const [query, setQuery] = useState('');
+  // An hour-old list is asked for again while the menu is open (new models appear without a restart).
+  useEffect(() => {
+    if (!open) return;
+    const s = useStore.getState();
+    const meta = choice.provider === s.ui.homeProvider && !s.ui.activeSessionId ? undefined : s.sessions[s.ui.activeSessionId ?? ''];
+    refreshStaleCaps(choice.provider, meta ? meta.cwd : s.ui.homeCwd, choice.accountId);
+  }, [open, choice.provider, choice.accountId]);
   const content = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
 

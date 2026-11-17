@@ -95,7 +95,25 @@ export interface ModelInfo {
   defaultEffort?: Effort;
   supportsFast?: boolean;
   isDefault?: boolean;
+  /**
+   * The agent offers this model in its own picker (Codex: not hidden and not superseded; Claude
+   * Code: every model it reports). Absent when the agent does not say (older caches).
+   */
+  picker?: boolean;
+  /** Speeds beyond standard the agent can run this model at (Claude Code's fast mode, Codex's service tiers). */
+  speeds?: SpeedInfo[];
 }
+
+/** A speed beyond standard. Ids are the agent's own (Claude Code: `fast`; Codex: its service tier ids). */
+export interface SpeedInfo {
+  id: string;
+  name: string;
+  /** A few words for the tooltip (that it costs more), when the agent says so. */
+  note?: string;
+}
+
+/** The speed every model runs at when nothing else is chosen. */
+export const STANDARD_SPEED = 'standard';
 
 export type ModeTone = 'ask' | 'edit' | 'plan' | 'auto' | 'danger';
 
@@ -318,6 +336,10 @@ export interface SessionMeta {
   effort?: Effort;
   mode: string;
   fast?: boolean;
+  /** The chosen speed (`ModelInfo.speeds` id); absent or `standard` is standard. `fast` mirrors it being non-standard. */
+  speed?: string;
+  /** The limit handover moved this session here from this account (its preferred one). */
+  movedFrom?: string;
   /** Claude Code ultracode is on for this session (see `Capabilities.features.ultracode`). */
   ultracode?: boolean;
   status: SessionStatus;
@@ -639,9 +661,9 @@ export interface LimitsMeta {
   /** False when plan limits do not apply to this account (API key, cloud provider). */
   planLimits?: boolean;
   /** Paid usage beyond the plan (Claude extra usage), when the agent reports it. Amounts in minor units of `currency`. */
-  extra?: { enabled: boolean; percent?: number; used?: number; limit?: number; currency?: string };
+  extra?: { enabled: boolean; percent?: number; used?: number; limit?: number; currency?: string; inUse?: boolean; resetsAt?: number };
   /** Credits the agent reports (Codex). */
-  credits?: { balance?: string; unlimited?: boolean };
+  credits?: { balance?: string; unlimited?: boolean; has?: boolean; inUse?: boolean; resetsAt?: number };
 }
 
 /** How fast a limit window fills: from the recent samples, or the average since the window began. */
@@ -851,6 +873,14 @@ export interface AppSettings {
   generativeUi?: boolean;
   /** At a plan limit, a session carries on with the next signed-in account of its agent that has room. Absent means off. */
   continueAtLimit?: boolean;
+  /** Per account (`${provider}:${accountId}`): carry on with credits or extra usage at a limit, before the next account. Absent means off. */
+  creditsAtLimit?: Record<string, boolean>;
+  /** A notification when a window of an account at its limit resets. Absent means off. */
+  notifyLimitReset?: boolean;
+  /** New sessions go back to the preferred account once its limit resets (after a limit handover). Absent means off. */
+  returnToPreferred?: boolean;
+  /** The speed new sessions start with, per agent (a `SpeedInfo` id); absent means standard. */
+  defaultSpeeds?: Partial<Record<ProviderId, string>>;
 }
 
 /** One permission rule set from an agent's settings file (read-only view). */
@@ -930,6 +960,8 @@ export type BridgeEvent =
   | { type: 'limits.updated'; provider: ProviderId; accountId?: string; limits: RateLimit[]; meta?: LimitsMeta }
   /** An account's limits with their history and pace (after every read, and for cached ones at start-up). */
   | { type: 'limits.report'; report: LimitsReport }
+  /** A full window of an account reset (with `notifyLimitReset` on). */
+  | { type: 'limit.reset'; provider: ProviderId; accountId?: string; window: string; at: number }
   /** Local usage changed (a scan finished). */
   | { type: 'usage.updated'; report: UsageReport }
   /** Fresh capabilities for the home composer (after a cached answer was served first). */
@@ -994,7 +1026,8 @@ export interface RpcMethods {
   };
 
   /** Models, modes, commands… for a provider before any session exists. */
-  'provider.caps': { params: { provider: ProviderId; cwd?: string; accountId?: string }; result: Capabilities };
+  /** With `refresh`, the agent is asked again (the model menu opened on a list older than an hour). */
+  'provider.caps': { params: { provider: ProviderId; cwd?: string; accountId?: string; refresh?: boolean }; result: Capabilities };
   /** `force`: the user asked; may start a short agent process when none is running (no tokens). */
   'provider.limits': { params: { provider: ProviderId; accountId?: string; force?: boolean }; result: RateLimit[] };
   /**
@@ -1011,7 +1044,7 @@ export interface RpcMethods {
   'project.pin': { params: { path: string; pinned: boolean }; result: { ok: boolean } };
 
   'session.create': {
-    params: { provider: ProviderId; cwd: string; model?: string; effort?: Effort; mode?: string; resume?: string; title?: string; accountId?: string; options?: SessionOptions; ultracode?: boolean };
+    params: { provider: ProviderId; cwd: string; model?: string; effort?: Effort; mode?: string; resume?: string; title?: string; accountId?: string; options?: SessionOptions; ultracode?: boolean; speed?: string };
     result: SessionSnapshot;
   };
   'session.snapshot': { params: { sessionId: string }; result: SessionSnapshot };
@@ -1027,6 +1060,8 @@ export interface RpcMethods {
   'session.setEffort': { params: { sessionId: string; effort: Effort }; result: { ok: boolean } };
   'session.setMode': { params: { sessionId: string; mode: string }; result: { ok: boolean } };
   'session.setFast': { params: { sessionId: string; fast: boolean }; result: { ok: boolean } };
+  /** The session's speed (`standard` or a `SpeedInfo` id of its model); an unsupported one falls back to standard. */
+  'session.setSpeed': { params: { sessionId: string; speed: string }; result: { ok: boolean; speed: string } };
   /** Claude Code ultracode on or off: applied live to a running agent, and at every later start. */
   'session.setUltracode': { params: { sessionId: string; on: boolean }; result: { ok: boolean } };
   'session.rename': { params: { sessionId: string; title: string }; result: { ok: boolean } };

@@ -11,6 +11,8 @@ export interface CommandCtx {
   openModel: () => void;
   openMode: () => void;
   openEffort: () => void;
+  /** Switches between standard and the fastest speed the model offers; absent when it offers none. */
+  toggleSpeed?: () => void;
 }
 
 export interface AppCommand {
@@ -54,6 +56,11 @@ export const APP_COMMANDS: AppCommand[] = [
   },
   { name: 'model', description: 'Choose the model', run: (c) => c.openModel() },
   { name: 'effort', description: 'Choose the reasoning effort', run: (c) => c.openEffort() },
+  {
+    name: 'fast',
+    description: 'Switch the fastest speed on or off',
+    run: (c) => (c.toggleSpeed ? c.toggleSpeed() : useStore.getState().toast('This model has one speed')),
+  },
   { name: 'mode', description: 'Choose how much the agent may do without asking', run: (c) => c.openMode() },
   { name: 'resume', description: 'Resume an earlier conversation', run: () => ui()({ historyOpen: true }) },
   { name: 'settings', description: 'Open settings', run: () => openSettings() },

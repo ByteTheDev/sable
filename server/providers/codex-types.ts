@@ -88,6 +88,13 @@ export interface Model {
   defaultReasoningEffort: ReasoningEffort;
   inputModalities?: string[];
   isDefault: boolean;
+  /** The model that supersedes this one, when there is one. */
+  upgrade?: string | null;
+  /** Speeds beyond standard (`id` goes to `serviceTier`). */
+  serviceTiers?: { id: string; name: string; description: string }[];
+  /** Deprecated spelling of `serviceTiers`, ids only. */
+  additionalSpeedTiers?: string[];
+  defaultServiceTier?: string | null;
 }
 export interface ModelListResponse {
   data: Model[];
@@ -201,6 +208,8 @@ export type UserInput =
 export interface TurnStartParams {
   threadId: string;
   input: UserInput[];
+  /** A service tier id for this turn and later ones; null for standard. */
+  serviceTier?: string | null;
   cwd?: string | null;
   approvalPolicy?: AskForApproval | null;
   sandboxPolicy?: SandboxPolicy | null;
