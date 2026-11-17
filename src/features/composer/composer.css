@@ -1,7 +1,8 @@
-/* The composer: a solid object over the stage, two steps lighter than it, with an almost invisible
-   hairline that lights near the pointer (data-spot). Focus draws no ring: the surface lifts one
-   step lighter and rises on a deeper shadow, slowly; the placeholder steps back, and the
-   backdrop's light under the composer brightens a little while it holds focus. Monochrome. */
+/* The composer: frosted dark glass over the stage, the same on home and in a session. A translucent
+   ink fill with a backdrop blur, so the field's light under it shows through softly, the floating
+   glass's static grain, an inner hairline at low strength and one soft shadow. Focus draws no ring
+   and no jump: the fill gains a few percent of opacity and the hairline rises a little (its own
+   layer, opacity only), and the backdrop's light under the composer brightens. Monochrome. */
 
 .composer {
   position: relative;
@@ -9,51 +10,50 @@
 }
 
 .cmp-card {
-  --cmp-fill: #151518;
-  --cmp-lift: #1d1d21;
+  --cmp-fill: rgb(16 16 19 / 0.78);
+  --cmp-lift: rgb(16 16 19 / 0.84);
   position: relative;
   z-index: 1;
   container: cmp / inline-size;
   padding: 10px 11px 10px;
   border-radius: 20px;
   background-color: var(--cmp-fill);
-  /* An inner fringe so the object keeps its edge on any ground (not a border), and a soft shadow. */
-  box-shadow:
-    inset 0 0 0 1px rgb(255 255 255 / 0.06),
-    0 12px 32px -16px rgb(0 0 0 / 0.7);
-  transition: background-color 360ms var(--ease-out);
-}
-
-/* Home: the object floats over the field in the floating glass's frosted ink (nearly opaque, with
-   its grain, no backdrop blur: a blur here was re-computed on every backdrop frame, the largest
-   single cost on the home screen, for a difference the near-opaque fill hides anyway). */
-.composer[data-variant='home'] .cmp-card {
-  --cmp-fill: rgb(22 22 25 / 0.93);
-  --cmp-lift: rgb(30 30 34 / 0.95);
   background-image: var(--grain);
+  background-size: var(--grain-size);
+  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(22px);
   box-shadow:
-    inset 0 0 0 1px rgb(255 255 255 / 0.07),
+    inset 0 0 0 1px rgb(255 255 255 / 0.065),
     var(--shadow-composer);
+  transition: background-color 200ms var(--ease-out);
 }
 
 .cmp-card:has(> .cmp-field > textarea.cmp-input:focus) {
   background-color: var(--cmp-lift);
 }
 
-/* The lift: a deeper shadow on its own layer, so it fades in (opacity only, never an animated shadow). */
+/* The hairline's rise on focus: a second faint ring on its own layer, faded in (never an animated shadow). */
 .cmp-card::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  box-shadow: 0 22px 50px -22px rgb(0 0 0 / 0.9), 0 3px 10px -4px rgb(0 0 0 / 0.5);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 360ms var(--ease-out);
+  transition: opacity 200ms var(--ease-out);
 }
 
 .cmp-card:has(> .cmp-field > textarea.cmp-input:focus)::after {
   opacity: 1;
+}
+
+/* When the governor sheds effects, the glass goes opaque and stops blurring. */
+:root[data-quality] .cmp-card {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  --cmp-fill: var(--glass-solid);
+  --cmp-lift: var(--glass-solid);
 }
 
 /* The field's light under the composer brightens while it holds focus: the band's own opacity,

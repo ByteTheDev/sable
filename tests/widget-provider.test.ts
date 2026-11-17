@@ -57,7 +57,7 @@ describe('Codex: the show_widget dynamic tool', () => {
     const on = new CodexProvider(ctx({})).dynamicTools();
     expect(on).toHaveLength(1);
     expect(on![0]).toMatchObject({ type: 'function', name: WIDGET_TOOL, description: WIDGET_DESCRIPTION });
-    expect((on![0].inputSchema as { required: string[] }).required).toEqual(['title', 'code']);
+    expect(((on![0] as { inputSchema: unknown }).inputSchema as { required: string[] }).required).toEqual(['title', 'code']);
     expect(new CodexProvider(ctx({ generativeUi: false })).dynamicTools()).toBeUndefined();
   });
 

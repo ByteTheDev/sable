@@ -143,6 +143,14 @@ function errMsg(err: unknown): string {
  * OpenAI Codex via `codex app-server` (JSON-RPC v2 over stdio). One shared child process
  * per provider, started lazily and restarted on demand; threads are multiplexed by id.
  */
+/** A function tool as `thread/start` takes it (`DynamicToolFunctionSpec`). */
+export type CodexFunctionTool = { type: 'function'; name: string; description: string; inputSchema: unknown; deferLoading?: boolean };
+/** A dynamic tool: a function, or a namespace of functions (`DynamicToolSpec`); a deferred function must sit in a namespace. */
+export type CodexDynamicTool = CodexFunctionTool | { type: 'namespace'; name: string; description: string; tools: CodexFunctionTool[] };
+/** The namespace that holds the deferred Browser tab tools. */
+export const BROWSER_NAMESPACE = 'sable_browser';
+const BROWSER_NAMESPACE_DESCRIPTION = "Tools that work the page open in Sable's Browser tab: snapshot, click, type, press, scroll, evaluate, logs, wait, navigate.";
+
 export class CodexProvider implements Provider {
   readonly id = 'codex' as const;
   readonly name = 'Codex';
@@ -534,15 +542,25 @@ export class CodexProvider implements Provider {
     return own ? `${own}\n\n${ours}` : ours;
   }
 
-  /** Client-defined tools for a new thread: show_widget while generative UI is on. */
-  dynamicTools(meta?: Pick<SessionMeta, 'options'>): { type: 'function'; name: string; description: string; inputSchema: unknown; deferLoading?: boolean }[] | undefined {
-    const tools: { type: 'function'; name: string; description: string; inputSchema: unknown; deferLoading?: boolean }[] = [];
+  /**
+   * Client-defined tools for a new thread: show_widget while generative UI is on, and the Browser tab
+   * tools while that capability is on. The app-server accepts a deferred tool only inside a namespace,
+   * so the page-acting ones go in one (`sable_browser`); a call to them arrives as
+   * `{ namespace: 'sable_browser', tool: 'browser_click' }`, and `browserOp` reads the plain tool name.
+   */
+  dynamicTools(meta?: Pick<SessionMeta, 'options'>): CodexDynamicTool[] | undefined {
+    const tools: CodexDynamicTool[] = [];
     if (widgetsEnabled(this.ctx.settings?.())) tools.push({ type: 'function', name: WIDGET_TOOL, description: WIDGET_DESCRIPTION, inputSchema: WIDGET_INPUT_SCHEMA });
     // The Browser tab tools, while the session's capability is on (a thread keeps what it was started with).
     // Those that work an open page wait behind Codex's tool search until the agent looks for them.
     if (meta && browserTabEnabled(meta)) {
-      for (const op of BROWSER_OPS)
-        tools.push({ type: 'function', name: BROWSER_TOOLS[op], description: BROWSER_DESCRIPTIONS[op], inputSchema: BROWSER_INPUT_SCHEMAS[op], ...(BROWSER_CORE.has(op) ? {} : { deferLoading: true }) });
+      const deferred: CodexFunctionTool[] = [];
+      for (const op of BROWSER_OPS) {
+        const fn: CodexFunctionTool = { type: 'function', name: BROWSER_TOOLS[op], description: BROWSER_DESCRIPTIONS[op], inputSchema: BROWSER_INPUT_SCHEMAS[op] };
+        if (BROWSER_CORE.has(op)) tools.push(fn);
+        else deferred.push({ ...fn, deferLoading: true });
+      }
+      if (deferred.length) tools.push({ type: 'namespace', name: BROWSER_NAMESPACE, description: BROWSER_NAMESPACE_DESCRIPTION, tools: deferred });
     }
     return tools.length ? tools : undefined;
   }

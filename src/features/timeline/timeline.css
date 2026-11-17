@@ -852,19 +852,22 @@ button:hover > .row-caret {
 
 /* ───────────── user message ───────────── */
 
-/* The person's words open the exchange in the reading column itself: no bubble and no fill, a
-   hairline rule down their left edge (the steer's wire continues it into the turn), the type one
-   step larger than the answer's. Time and actions appear above the right end on hover. */
+/* The person's words sit on the right in the composer's own material: a card of frosted ink with
+   its grain and an inner hairline, so a message reads as what left the composer. Type one step
+   larger than the answer's. Time and actions appear above its right end on hover. */
 .user {
   position: relative;
   display: flex;
+  justify-content: flex-end;
 }
 
 .user-card {
   position: relative;
-  flex: 1;
+  isolation: isolate;
+  flex: 0 1 auto;
   min-width: 0;
-  padding: 1px 0 2px 18px;
+  max-width: 80%;
+  padding: 9px 15px 10px;
   font-size: 15px;
   line-height: 1.55;
   letter-spacing: -0.003em;
@@ -872,52 +875,30 @@ button:hover > .row-caret {
   transition: opacity var(--d-3) var(--ease);
 }
 
-/* The rule (at rest a hairline) and the light that writes it when sent words land (flight.ts). */
-.user-card::before,
-.user-card::after {
+/* The card's surface on its own layer, so it can resolve around the words when they land
+   (flight.ts sets data-draw) without the text itself flickering. */
+.user-card::before {
   content: '';
   position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  border-radius: 1px;
-  background-color: var(--line-3);
-  transform-origin: 50% 0;
+  inset: 0;
+  z-index: -1;
+  border-radius: 16px 16px 6px 16px;
+  background-color: rgb(30 30 35 / 0.82);
+  background-image: var(--grain);
+  background-size: var(--grain-size);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.075);
   pointer-events: none;
 }
 
-.user-card::after {
-  background-color: var(--text);
-  opacity: 0;
-}
-
 .user-card[data-draw]::before {
-  animation: rule-draw 300ms var(--ease-out) backwards;
+  transform-origin: 100% 100%;
+  animation: card-form 340ms var(--ease-out) backwards;
 }
 
-.user-card[data-draw]::after {
-  animation: rule-light 560ms var(--ease-out) backwards;
-}
-
-@keyframes rule-draw {
+@keyframes card-form {
   from {
-    transform: scaleY(0);
-  }
-}
-
-@keyframes rule-light {
-  0% {
-    opacity: 0.85;
-    transform: scaleY(0);
-  }
-  50% {
-    opacity: 0.85;
-    transform: scaleY(1);
-  }
-  100% {
     opacity: 0;
-    transform: scaleY(1);
+    transform: scale(0.94);
   }
 }
 
@@ -980,7 +961,7 @@ button:hover > .row-caret {
    a light runs down it once (User.tsx). */
 .user-wire {
   position: absolute;
-  left: 0;
+  right: 22px;
   top: 100%;
   width: 2px;
   height: 16px;

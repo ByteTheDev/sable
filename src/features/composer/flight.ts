@@ -99,14 +99,14 @@ function guessLanding(clone: HTMLElement, left: number, top: number, from: HTMLE
   // in is not certain, so the words wait for the real row instead of flying toward a guess.
   if (contents.length > 1 || (!first && contents.length !== 1)) return null;
   const content = first ? null : contents[0];
-  let colLeft: number;
+  let colRight: number;
   let y: number;
   let lo = -Infinity;
   let hi = Infinity;
   if (content) {
     const c = content.getBoundingClientRect();
-    // The message starts at the reading column's left edge (the row's side padding centres it).
-    colLeft = columnEdges(c.left / z, c.width / z, column).left;
+    // The message ends at the reading column's right edge (the row's side padding centres it).
+    colRight = columnEdges(c.left / z, c.width / z, column).right;
     const card = from.closest('.cmp-card')?.getBoundingClientRect();
     const last = [...content.children].reverse().find((n) => !n.classList.contains('tail'));
     const after = last ? last.getBoundingClientRect().bottom / z + 36 : c.top / z + 16;
@@ -120,16 +120,23 @@ function guessLanding(clone: HTMLElement, left: number, top: number, from: HTMLE
     const sb = document.querySelector('.stage-body');
     if (!sb) return null;
     const r = sb.getBoundingClientRect();
-    colLeft = columnEdges(r.left / z, r.width / z, column).left;
+    colRight = columnEdges(r.left / z, r.width / z, column).right;
     y = r.top / z + 56;
   }
   // Only a place inside the visible conversation is certain enough to fly to.
   if (!(y >= lo && y + clone.offsetHeight <= hi + 1)) return null;
-  return { x: colLeft + TEXT_INSET - left, y: y - top };
+  // The card sits on the right and fits its text: the words start one text-width in from its padding.
+  const set = clone.style.width;
+  clone.style.width = 'max-content';
+  const natural = clone.offsetWidth;
+  clone.style.width = set;
+  const textWidth = Math.min(natural, bubbleTextWidth() ?? natural, clone.offsetWidth);
+  return { x: colRight - TEXT_INSET - textWidth - left, y: y + CARD_PAD_TOP - top };
 }
 
-/** A message's text inset from the column's left edge (timeline.css `.user-card`: the rule and its padding). */
-const TEXT_INSET = 18;
+/** A message's text inset from its card's side and top (timeline.css `.user-card` padding). */
+const TEXT_INSET = 15;
+const CARD_PAD_TOP = 9;
 /** The narrowest side padding of a conversation row (timeline.css `.tl-content --gutter`). */
 const MIN_GUTTER = 24;
 
@@ -202,7 +209,7 @@ function bubbleTextWidth(): number | null {
   const box = contents.length === 1 ? contents[0] : contents.length ? null : document.querySelector('.stage-body');
   if (!box) return null;
   const col = columnEdges(0, box.getBoundingClientRect().width / z, columnToken()).width;
-  return Math.floor(col - TEXT_INSET);
+  return Math.floor(col * 0.8 - TEXT_INSET * 2);
 }
 
 /**

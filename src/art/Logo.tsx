@@ -151,11 +151,20 @@ export const PROVIDER_NAME: Record<ProviderId, string> = {
  * Only for the timeline's working line; small indicators in lists and tabs use `Ring`.
  * `active={false}` renders it at rest.
  */
+/** The 4x4 ordered-dither thresholds: the working mark's cells light in this order, as the mark builds. */
+const TILE_ORDER = [
+  [0, 8, 2, 10],
+  [12, 4, 14, 6],
+  [3, 11, 1, 9],
+  [15, 7, 13, 5],
+] as const;
+
+/** The working indicator: the Sable mark's own cells, lit one after another in dither order, in ivory. */
 export function Tiles({ size = 14, active = true, className }: { size?: number; active?: boolean; className?: string }) {
   return (
     <span className={`tiles ${active ? 'tiles-active' : ''} ${className ?? ''}`} style={{ '--s': `${size}px` } as CSSProperties} role={active ? 'status' : undefined} aria-label={active ? 'Working' : undefined}>
-      {Array.from({ length: 9 }, (_, i) => (
-        <i key={i} style={{ '--d': (i % 3) + Math.floor(i / 3) } as CSSProperties} />
+      {MARK_CELLS.map(([c, r], i) => (
+        <i key={i} style={{ gridColumn: c + 1, gridRow: r + 1, '--d': TILE_ORDER[r][c] } as CSSProperties} />
       ))}
     </span>
   );

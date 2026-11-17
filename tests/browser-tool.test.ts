@@ -73,6 +73,22 @@ describe('the tools are offered while the Browser tab capability is on', () => {
     expect(browserOnly.allowedTools).toEqual(BROWSER_TOOL_IDS);
   });
 
+  it('Codex: a deferred dynamic tool always sits in a namespace (the app-server refuses it otherwise)', () => {
+    const tools = new CodexProvider(ctx({})).dynamicTools({ options: {} }) ?? [];
+    const loose = tools.filter((t) => t.type === 'function' && t.deferLoading);
+    expect(loose.map((t) => t.name)).toEqual([]);
+    const spaces = tools.filter((t) => t.type === 'namespace');
+    expect(spaces.length).toBe(1);
+    for (const ns of spaces) {
+      if (ns.type !== 'namespace') continue;
+      expect(ns.name).toMatch(/^[a-z_]+$/);
+      expect(ns.tools.length).toBeGreaterThan(0);
+      expect(ns.tools.every((f) => f.deferLoading === true)).toBe(true);
+      // A call arrives with the namespace and the plain tool name: each maps back to its tool.
+      for (const f of ns.tools) expect(browserOp(f.name)).toBeTruthy();
+    }
+  });
+
   it('Codex: as dynamic tools on thread start, not when off', async () => {
     const p = new CodexProvider(ctx({}));
     expect(p.dynamicTools({ options: {} })?.map((t) => t.name).slice(0, 4)).toEqual(['show_widget', 'browser_read', 'browser_screenshot', 'browser_open']);

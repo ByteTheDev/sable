@@ -109,7 +109,7 @@ describe('offered with the Browser tab capability, withheld without it', () => {
     const off = new ClaudeProvider(ctx({ generativeUi: false })).agentOptions({ ...meta, options: { browserTab: false } }, {});
     expect(off.allowedTools ?? []).toEqual([]);
     const codex = new CodexProvider(ctx({ generativeUi: false }));
-    expect(codex.dynamicTools({ options: {} })?.map((t) => t.name)).toEqual(names);
+    expect(codex.dynamicTools({ options: {} })?.flatMap((t) => (t.type === 'namespace' ? t.tools.map((f) => f.name) : [t.name]))).toEqual(names);
     expect(codex.dynamicTools({ options: { browserTab: false } })).toBeUndefined();
   });
 

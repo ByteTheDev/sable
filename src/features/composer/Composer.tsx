@@ -751,7 +751,6 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
   // controls yet, so the dock never shows a default ("Reply", skeleton chips) for a frame before
   // the session's own state arrives.
   const placeholder = opening ? '' : ghost || (shell && text === '!') ? '' : variant === 'home' ? (signedOut ? `Sign in to ${PROVIDER_NAME[homeAgent]} to start` : 'Describe a task or ask a question') : queueing ? 'Queue a follow-up' : 'Reply';
-  const steerHint = queueing && steerable && !text && !attachments.length && !!sessionId && !hinted.has(sessionId);
 
   return (
     <div className="composer" data-variant={variant}>
@@ -832,12 +831,6 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
           {shell && text === '!' && (
             <div className="cmp-ghost" aria-hidden>
               <span className="cmp-ghost-pre">!</span> Run a shell command in the terminal
-            </div>
-          )}
-          {steerHint && (
-            <div className="cmp-steer-hint" aria-hidden>
-              <Kbd combo={sendWithEnter ? 'mod+enter' : 'mod+shift+enter'} />
-              steers it into this turn
             </div>
           )}
         </div>
