@@ -25,7 +25,7 @@ import { SessionRuntime, autoTitle } from './core/runtime';
 import { Store, type StoredAccount } from './core/store';
 import { DiskCache } from './core/cache';
 import { creditsKey, decideAtLimit, dueResets, nextResetAlert, runningOnCredits } from './core/limit-policy';
-import { speedFor } from '../shared/speed';
+import { speedFor, startSpeedFor } from '../shared/speed';
 import type { Provider, ProviderContext, ProviderSession } from './providers/types';
 import { findAccountFolders, folderLabel, labelFromAuth, pickNextAccount } from './accounts/folders';
 import { handoverText } from './accounts/handover';
@@ -365,7 +365,8 @@ export class App {
         ...(a.dir ? { external: true } : {}),
       };
     });
-    return Promise.resolve({ ...cached, accounts });
+    // Setup warnings belong to the run that saw them: the fresh read brings this run's.
+    return Promise.resolve({ ...cached, accounts, warnings: undefined });
   }
 
   /**
@@ -388,8 +389,9 @@ export class App {
     if (!speed || speed === STANDARD_SPEED) return {};
     const caps = this.cache.get<Capabilities>(capsCacheKey(provider, accountId, path.resolve(cwd))) ?? this.cache.get<Capabilities>(capsCacheKey(provider, accountId, cwd));
     const info = caps?.models.find((m) => m.id === model) ?? caps?.models.find((m) => m.isDefault);
-    // Unknown caps: keep the choice; the agent's adapter checks it against the model again.
-    const chosen = caps ? speedFor(info, speed) : speed;
+    // Unknown caps: keep the choice; the agent's adapter checks it against the model again. A paid
+    // speed (Claude's fast mode) is never started from a default: the session turns it on itself.
+    const chosen = caps ? startSpeedFor(info, speed) : provider === 'claude' ? STANDARD_SPEED : speed;
     return chosen === STANDARD_SPEED ? {} : { speed: chosen, fast: true };
   }
 
@@ -952,6 +954,13 @@ export class App {
       if ((this.limitsSeq.get(key) ?? 0) === seq) this.emit({ type: 'limits.updated', provider, accountId, limits });
       return limits;
     });
+    // Spends a reset credit: only the confirmed click in the UI calls this, never anything automatic.
+    this.register('provider.useReset', async ({ provider, accountId = DEFAULT_ACCOUNT, key }) => {
+      const p = this.provider(provider, accountId);
+      if (!p.useReset) throw new Error('This agent has no resets');
+      if (!key || typeof key !== 'string') throw new Error('Missing reset key');
+      return { outcome: await p.useReset(key) };
+    });
 
     // ── projects ──
     this.register('project.add', ({ path: dir }) => this.touchProject(dir));
@@ -1000,6 +1009,17 @@ export class App {
       if (options && Object.keys(options).length) meta.options = { ...options };
       const rt = this.makeRuntime(meta);
       this.sessions.set(meta.id, rt);
+      // Continue in the other agent: the first message carries a compact account of the source
+      // conversation (read from Sable's timeline; the source and its transcript stay untouched).
+      const source = p.handoverFrom ? this.sessions.get(p.handoverFrom) : undefined;
+      if (source) {
+        this.hydrate(source);
+        const summary = handoverText(source.items, { from: this.provider(source.meta.provider, source.meta.accountId ?? DEFAULT_ACCOUNT).name });
+        if (summary) {
+          this.handovers.set(meta.id, summary);
+          rt.notice('info', `Continued from ${source.meta.title}`, 'It starts with a summary of that conversation');
+        }
+      }
       this.touchProject(meta.cwd);
       this.emit({ type: 'session.added', session: meta });
       const opened = provider.open(rt, { loadTranscript: !!p.resume }).then(

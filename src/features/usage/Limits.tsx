@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { DEFAULT_ACCOUNT, type AccountInfo, type LimitPace, type LimitsReport, type ProviderId, type ProviderInfo, type RateLimit } from '@shared/protocol';
 import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
 import { useNow } from '@/lib/useNow';
@@ -8,6 +8,7 @@ import { accountKey, useStore } from '@/state/store';
 import { cx, IconButton, Switch, Tip } from '@/ui';
 import { clock, duration, exactTime, isApiKey, NUMBER_LOCALE, planText, STALE_MS, windowLevel } from './format';
 import { LimitsOverview } from './Overview';
+import { LimitReset, resetTarget } from './LimitReset';
 import './usage.css';
 
 /** From this many accounts on, the Usage page lists them as an overview instead of one block each. */
@@ -160,6 +161,7 @@ export function AccountLimits({ refs, pending }: { refs: AccountRef; pending: bo
   // One account: the agent's name says it all. Several: each by its email (or label).
   const name = multi && info?.installed ? accountName(account) : PROVIDER_NAME[provider];
   const stale = report?.readAt && now - report.readAt > STALE_MS ? report.readAt : undefined;
+  const resetOn = report?.resets?.available ? resetTarget(limits, report.resets.windows) : undefined;
 
   let body;
   if (!info?.installed) body = <p className="ul-note">Not installed</p>;
@@ -177,7 +179,10 @@ export function AccountLimits({ refs, pending }: { refs: AccountRef; pending: bo
     body = (
       <div className="ul-rows">
         {limits.map((l) => (
-          <WindowRow key={l.id} limit={l} samples={report?.history[l.id]} pace={report?.pace[l.id]} now={now} />
+          <Fragment key={l.id}>
+            <WindowRow limit={l} samples={report?.history[l.id]} pace={report?.pace[l.id]} now={now} />
+            {l.id === resetOn?.id && <LimitReset provider={provider} accountId={account.id} limit={l} />}
+          </Fragment>
         ))}
         <Extra report={report} now={now} />
         <CreditsSetting provider={provider} accountId={account.id} />

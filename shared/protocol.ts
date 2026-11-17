@@ -37,6 +37,11 @@ export interface ProviderInfo {
   problem?: string;
   /** Every profile of this agent, the built-in `default` first. Absent from older bridges. */
   accounts?: AccountInfo[];
+  /**
+   * Warnings the agent gave in this app run about its own setup (Codex: unrecognized keys in its
+   * config.toml), each once. Shown as a quiet line in Settings › Agents, never in a conversation.
+   */
+  warnings?: { text: string; detail?: string }[];
 }
 
 /** The id of the account every provider always has: the CLI's own config (~/.claude, ~/.codex). */
@@ -110,6 +115,8 @@ export interface SpeedInfo {
   name: string;
   /** A few words for the tooltip (that it costs more), when the agent says so. */
   note?: string;
+  /** Billed outside the plan (Claude Code's fast mode draws on extra usage): offered only with extra usage on, never a default, asked once per session. */
+  paid?: boolean;
 }
 
 /** The speed every model runs at when nothing else is chosen. */
@@ -664,7 +671,15 @@ export interface LimitsMeta {
   extra?: { enabled: boolean; percent?: number; used?: number; limit?: number; currency?: string; inUse?: boolean; resetsAt?: number };
   /** Credits the agent reports (Codex). */
   credits?: { balance?: string; unlimited?: boolean; has?: boolean; inUse?: boolean; resetsAt?: number };
+  /**
+   * Reset credits the agent reports (Codex: granted resets that restore the plan windows at once).
+   * `windows` are the ids of the windows one reset restores. Absent when the agent reports none.
+   */
+  resets?: { available: number; windows: string[] };
 }
+
+/** What spending a reset credit did (Codex's `account/rateLimitResetCredit/consume` outcomes). */
+export type ResetOutcome = 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed';
 
 /** How fast a limit window fills: from the recent samples, or the average since the window began. */
 export interface LimitPace {
@@ -1031,6 +1046,11 @@ export interface RpcMethods {
   /** `force`: the user asked; may start a short agent process when none is running (no tokens). */
   'provider.limits': { params: { provider: ProviderId; accountId?: string; force?: boolean }; result: RateLimit[] };
   /**
+   * Spends one reset credit of the account (only after the user confirmed it), then reads the
+   * limits again. `key` identifies one attempt: the same key on a retry never spends a second one.
+   */
+  'provider.useReset': { params: { provider: ProviderId; accountId?: string; key: string }; result: { outcome: ResetOutcome } };
+  /**
    * Starts the agent process for the session about to be created from the home composer (no
    * prompt is sent). `session.create` with the same choice adopts it. At most one is kept.
    */
@@ -1044,7 +1064,11 @@ export interface RpcMethods {
   'project.pin': { params: { path: string; pinned: boolean }; result: { ok: boolean } };
 
   'session.create': {
-    params: { provider: ProviderId; cwd: string; model?: string; effort?: Effort; mode?: string; resume?: string; title?: string; accountId?: string; options?: SessionOptions; ultracode?: boolean; speed?: string };
+    params: {
+      provider: ProviderId; cwd: string; model?: string; effort?: Effort; mode?: string; resume?: string; title?: string; accountId?: string; options?: SessionOptions; ultracode?: boolean; speed?: string;
+      /** "Continue in the other agent": a Sable session (any agent) whose conversation the new one starts from, as a compact handover sent ahead of the first message. The original is left as it is. */
+      handoverFrom?: string;
+    };
     result: SessionSnapshot;
   };
   'session.snapshot': { params: { sessionId: string }; result: SessionSnapshot };

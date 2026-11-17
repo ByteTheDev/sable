@@ -35,7 +35,7 @@ export const MODELS: ModelInfo[] = [
     description: 'Longest reasoning, may split work across sub-agents',
     efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
     defaultEffort: 'medium',
-    speeds: [{ id: 'fast', name: 'Fast', note: 'Billed as extra usage' }],
+    speeds: [{ id: 'fast', name: 'Fast', note: 'Extra usage', paid: true }],
   },
   {
     id: 'demo-fast',
@@ -201,6 +201,16 @@ export function capabilities(): Capabilities {
  * calm, near a cap, at a cap (with its reset), light, and an API-key account without plan limits.
  */
 export type DemoLimitProfile = 'calm' | 'near' | 'cap' | 'light' | 'none';
+
+/** Reset credits a demo account was granted (like Codex's banked resets), by its limit state. */
+export function demoResetCredits(profile: DemoLimitProfile): number {
+  return profile === 'cap' ? 2 : profile === 'near' ? 1 : 0;
+}
+
+/** A demo account's windows right after a reset: empty, each starting over now. */
+export function freshLimits(limits: RateLimit[], now = Date.now()): RateLimit[] {
+  return limits.map((l) => ({ ...l, percent: 0, ...(l.windowMins ? { resetsAt: now + l.windowMins * MIN } : {}) }));
+}
 
 /** The next Monday 09:00 still ahead (today's, on a Monday morning). */
 function nextMonday(now: number) {

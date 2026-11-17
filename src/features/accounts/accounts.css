@@ -380,6 +380,12 @@
   flex-shrink: 0;
 }
 
+.lim-ask {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .lim-went {
   display: inline-flex;
   align-items: center;
@@ -398,6 +404,7 @@
     flex-wrap: wrap;
   }
   .lim-go,
+  .lim-ask,
   .lim-went {
     margin-left: 28px;
   }

@@ -25,6 +25,7 @@ import { makeFileDiff, parseUnifiedDiff } from '../../shared/diff';
 import { WIDGET_TOOL, describeWidget, isWidgetTool } from './widget-tool';
 import { browserOp, describeBrowser } from './browser-tool';
 import type {
+  RateLimitResetCreditsSummary,
   AskForApproval,
   CommandAction,
   FileUpdateChange,
@@ -236,6 +237,19 @@ export function limitsMeta(snapshots: RateLimitSnapshot[]): LimitsMeta {
   }
   if (snapshots.some((s) => s.primary || s.secondary)) meta.planLimits = true;
   return meta;
+}
+
+/**
+ * The account's granted resets, from the same read. A reset of type `codexRateLimits` restores
+ * the windows of the `codex` limit (both, per OpenAI's help on banked resets). Undefined when
+ * the read carries no summary (older app-server); `{ available: 0 }` when it says there are none.
+ */
+export function resetsMeta(summary: RateLimitResetCreditsSummary | null | undefined, limits: RateLimit[]): LimitsMeta['resets'] {
+  if (!summary) return undefined;
+  const n = Number(summary.availableCount);
+  const available = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  const windows = limits.filter((l) => l.id.startsWith('codex:')).map((l) => l.id);
+  return { available, windows };
 }
 
 /** A Codex window's name from its length ("5-hour limit", "Weekly limit"), as `mapLimits` names it. */

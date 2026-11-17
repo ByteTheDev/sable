@@ -66,7 +66,7 @@ const MODES: ModeInfo[] = [
 ];
 
 /** Fast mode, which Claude Code bills as extra usage (it is refused with `extra_usage_disabled` otherwise). */
-const CLAUDE_FAST = { id: 'fast', name: 'Fast', note: 'Billed as extra usage' };
+const CLAUDE_FAST = { id: 'fast', name: 'Fast', note: 'Extra usage', paid: true };
 
 const FALLBACK_MODELS: ModelInfo[] = [
   { id: 'default', name: 'Default', description: 'Recommended model for your plan', isDefault: true, efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
@@ -1753,12 +1753,13 @@ function fmtTokens(n?: number) {
 }
 
 /**
- * Flag settings an agent process starts with: ultracode, and fast mode once the session chose a
- * speed (unchosen leaves the user's own Claude Code setting alone).
+ * Flag settings an agent process starts with: ultracode, and fast mode only when this session chose
+ * it. Fast mode is billed as extra usage and Claude Code keeps its own `/fast` choice across
+ * sessions, so a session that never chose it starts with it off (a flag overlay: nothing is saved).
  */
 export function startSettings(meta: Pick<SessionMeta, 'ultracode' | 'speed'>): Options['settings'] | undefined {
   const out: Record<string, unknown> = {};
   if (meta.ultracode) out.ultracode = true;
-  if (meta.speed) out.fastMode = meta.speed === 'fast';
+  out.fastMode = meta.speed === 'fast';
   return Object.keys(out).length ? (out as Options['settings']) : undefined;
 }

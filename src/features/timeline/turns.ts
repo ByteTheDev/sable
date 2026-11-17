@@ -9,7 +9,7 @@ import type { TimelineItem } from '@shared/protocol';
  *   U  a sent message that starts a turn       Q  a queued message, not taken yet (floats to the end)
  *   S  a message steered into the running turn  t  assistant prose (an answer candidate)
  *   c  command output (an answer candidate)     p  a plan (an answer candidate)
- *   w  a step: a tool call                      n  any other notice (mode, model, compaction, retry)
+ *   w  a step: a tool call                      n  any other notice (mode, model, compaction, retry): not a step
  *   h  thinking: part of the work, not counted as a step
  *   k  a task list update: kept in the work, not counted as a step (the dock shows the list)
  *   i  "Interrupted"                            e  an error notice
@@ -99,7 +99,8 @@ export function shapeOf(item: TimelineItem | undefined): string {
 }
 
 const ANSWER = new Set(['t', 'c', 'p']);
-const STEP = new Set(['w', 'p', 'n']);
+/** What counts as a step in the turn's line: tool calls and plans. A notice is never a step. */
+const STEP = new Set(['w', 'p']);
 
 interface Open {
   ids: string[];

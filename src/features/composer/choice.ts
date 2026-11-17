@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { STANDARD_SPEED, type Capabilities, type Effort, type ModeInfo, type ModelInfo, type ProviderId, type SpeedInfo } from '@shared/protocol';
-import { modelNameById, modelSpeeds, speedFor, visibleModels } from '@/lib/models';
+import { defaultableSpeeds, isPaidSpeed, modelNameById, modelSpeeds, offeredSpeeds, speedFor, visibleModels } from '@/lib/models';
+import { useLimitsReport } from '@/state/hooks';
 import { homeAccountId, setEffort as setSessionEffort, setMode as setSessionMode, setModel as setSessionModel, setSettings, setSpeed as setSessionSpeed } from '@/state/actions';
 import { useShallow } from 'zustand/react/shallow';
 import { useCapsState } from '@/state/hooks';
@@ -59,7 +60,9 @@ export interface Choice {
   /** Home only: back to the model's default effort. */
   clearEffort?: () => void;
   setMode: (id: string) => void;
-  /** Speeds the model offers beyond standard (empty: no Speed row). */
+  /** The session this choice is for (null on home). */
+  sessionId: string | null;
+  /** Speeds offered beyond standard (empty: no Speed row); a paid one only in a session with extra usage on. */
   speeds: SpeedInfo[];
   /** The speed in use (`standard` when none beyond it is on). */
   speed: string;
@@ -157,8 +160,15 @@ export function useChoice(sessionId: string | null): Choice {
     s.setUi({ homeEffort: next });
   }, [provider]);
 
-  const speeds = modelSpeeds(model);
-  const speed = speedFor(model, meta ? meta.speed : homeSpeed);
+  // A paid speed (Claude's fast mode, billed as extra usage) is listed only in a session whose
+  // account has extra usage on; home sets the default for new sessions, which a paid speed never is.
+  const report = useLimitsReport(provider, accountId);
+  const extraOn = !!report?.extra?.enabled;
+  const speeds = useMemo(() => (sessionId ? offeredSpeeds(model, extraOn) : defaultableSpeeds(model)), [sessionId, model, extraOn]);
+  const raw = speedFor(model, meta ? meta.speed : homeSpeed);
+  // A paid speed already on stays visible (so it can be turned off) even if the report has not arrived.
+  const speed = speeds.some((s) => s.id === raw) || (meta && isPaidSpeed(modelSpeeds(model).find((s) => s.id === raw))) ? raw : STANDARD_SPEED;
+  const shownSpeeds = useMemo(() => (speed !== STANDARD_SPEED && !speeds.some((s) => s.id === speed) ? [...speeds, ...modelSpeeds(model).filter((s) => s.id === speed)] : speeds), [speeds, speed, model]);
   const setSpeed = useCallback(
     (id: string) => {
       if (sessionId) void setSessionSpeed(sessionId, id);
@@ -170,7 +180,7 @@ export function useChoice(sessionId: string | null): Choice {
   const modelLabel = modelNameById(modelId, all);
   // One object per distinct choice, so memoized controls skip renders when only the draft changed.
   return useMemo(
-    () => ({ provider, accountId, caps, capsPending, models, model, modelId, modelLabel, effort, effortChosen, mode, pickModel, setEffort, clearEffort: sessionId ? undefined : clearEffort, setMode, speeds, speed, setSpeed }),
-    [provider, accountId, caps, capsPending, models, model, modelId, modelLabel, effort, effortChosen, mode, pickModel, setEffort, clearEffort, sessionId, setMode, speeds, speed, setSpeed],
+    () => ({ provider, accountId, sessionId, caps, capsPending, models, model, modelId, modelLabel, effort, effortChosen, mode, pickModel, setEffort, clearEffort: sessionId ? undefined : clearEffort, setMode, speeds: shownSpeeds, speed, setSpeed }),
+    [provider, accountId, caps, capsPending, models, model, modelId, modelLabel, effort, effortChosen, mode, pickModel, setEffort, clearEffort, sessionId, setMode, shownSpeeds, speed, setSpeed],
   );
 }

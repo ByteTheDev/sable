@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { PROVIDER_NAME } from '@/art/Logo';
+import { Icon } from '@/icons';
+import { useStore } from '@/state/store';
 import { Card, Empty, SearchField, Skeleton, useContextTarget, useProviderCaps, Scope } from './parts';
 import { rank, UseList, type UseItem } from './UseList';
 
@@ -7,6 +9,8 @@ export function Agents() {
   const { provider, cwd, sessionId } = useContextTarget();
   const caps = useProviderCaps(provider, cwd, sessionId);
   const [query, setQuery] = useState('');
+  // What the agent said about its own setup in this run (Codex: unknown config keys), once, quietly.
+  const warnings = useStore((s) => s.providers[provider]?.warnings);
 
   const agents = useMemo<UseItem[]>(
     () =>
@@ -44,6 +48,15 @@ export function Agents() {
       ) : (
         <UseList items={shown} icon="robot" />
       )}
+      {warnings?.map((w) => (
+        <p key={w.text} className="set-foot-note set-agent-warning">
+          <Icon name="info" size={14} />
+          <span title={w.detail}>
+            {w.text}
+            {w.detail && <span className="set-agent-warning-detail">{w.detail}</span>}
+          </span>
+        </p>
+      ))}
     </div>
   );
 }

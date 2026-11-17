@@ -3,7 +3,7 @@ import { DropdownMenu as RM } from 'radix-ui';
 import type { Effort, ProviderId } from '@shared/protocol';
 import { PROVIDER_NAME } from '@/art/Logo';
 import { Icon, MODE_ICON } from '@/icons';
-import { aliasTarget, currentGeneration, effortName, modelName, visibilityKey, visibleModels } from '@/lib/models';
+import { aliasTarget, currentGeneration, defaultableSpeeds, effortName, modelName, visibilityKey, visibleModels } from '@/lib/models';
 import { setSettings } from '@/state/actions';
 import { useActiveProvider } from '@/state/hooks';
 import { useStore } from '@/state/store';
@@ -59,13 +59,19 @@ export function Models() {
   const modelId = settings.defaultModels[provider] ?? models.find((m) => m.isDefault)?.id ?? models[0]?.id;
   const model = models.find((m) => m.id === modelId);
   const visible = visibleModels(provider, models, overrides, modelId);
-  const efforts = model?.efforts ?? [];
   const effort = settings.defaultEfforts[provider];
+  // A saved effort the model does not list stays shown as chosen (a turn that needs it falls back
+  // on its own); the saved choice is never rewritten here.
+  const listedEfforts = model?.efforts ?? [];
+  const efforts = effort && listedEfforts.length && !listedEfforts.includes(effort) ? [...listedEfforts, effort] : listedEfforts;
   // Nothing chosen and no model default: the agent decides, so nothing is selected.
   const effortValue = effort && efforts.includes(effort) ? effort : (model?.defaultEffort ?? null);
   const modeId = settings.defaultModes[provider] ?? caps?.modes[0]?.id;
-  const speeds = model?.speeds ?? [];
+  // A speed billed outside the plan (Claude's fast mode) is never a default: a session turns it on.
+  const listedSpeeds = defaultableSpeeds(model);
   const speed = settings.defaultSpeeds?.[provider];
+  // Likewise a saved speed the model does not offer: still shown as chosen, by its id's name.
+  const speeds = speed && listedSpeeds.length && !listedSpeeds.some((s) => s.id === speed) ? [...listedSpeeds, { id: speed, name: speed.charAt(0).toUpperCase() + speed.slice(1) }] : listedSpeeds;
   const speedValue = speed && speeds.some((s) => s.id === speed) ? speed : 'standard';
   const customised = !!(settings.defaultModels[provider] || settings.defaultEfforts[provider] || settings.defaultModes[provider] || speed);
 
@@ -159,7 +165,7 @@ export function Models() {
                 <Pick label="Model" value={modelId} options={visible.map((m) => ({ value: m.id, label: modelName(m) ?? m.id }))} onChange={(id) => patch('defaultModels', id)} />
               </Row>
             )}
-            {model && efforts.length > 0 && (
+            {efforts.length > 0 && (
               <Row label="Effort">
                 <Segmented<Effort> id="set-effort" value={effortValue} onChange={(e) => patch('defaultEfforts', e)} options={efforts.map((e) => ({ value: e, label: effortName(e) }))} />
               </Row>

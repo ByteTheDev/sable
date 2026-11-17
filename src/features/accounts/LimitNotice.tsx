@@ -1,10 +1,11 @@
-import { memo, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import { DEFAULT_ACCOUNT, type NoticeItem } from '@shared/protocol';
 import { PROVIDER_NAME } from '@/art/Logo';
 import { Icon } from '@/icons';
 import { resetIn } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
-import { switchSessionAccount } from '@/state/actions';
+import { spendLimitReset, switchSessionAccount } from '@/state/actions';
+import { useResets } from '@/features/usage/LimitReset';
 import { accountName, useLimitLevel } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { Spinner } from '@/ui';
@@ -53,16 +54,84 @@ export const LimitNotice = memo(function LimitNotice({ item, sessionId }: { item
   const who = accounts && accounts.length > 1 && self ? accountName(self) : provider ? PROVIDER_NAME[provider] : 'This account';
   const reset = resetLine(limit.resetsAt, now);
 
+  // A reset the agent granted this account: one action, asked first, never spent without the click.
+  const resets = useResets(provider ?? 'demo', limit.accountId ?? DEFAULT_ACCOUNT);
+  const [ask, setAsk] = useState<'idle' | 'ask' | 'busy' | 'done'>('idle');
+  const [resetNote, setResetNote] = useState<string>();
+  const attempt = useRef('');
+  const canReset = !!provider && !limit.continuedWith && (!!resets || ask !== 'idle');
+  const n = resets?.available ?? 0;
+  const question = `Use 1 of ${n} ${n === 1 ? 'reset' : 'resets'} on the ${windowName(limit.window)} of ${self?.label || (self ? accountName(self) : 'Main')}?`;
+  const spend = async () => {
+    if (!provider) return;
+    setAsk('busy');
+    attempt.current ||= globalThis.crypto?.randomUUID?.() ?? String(Date.now());
+    try {
+      const { outcome } = await spendLimitReset(provider, limit.accountId && limit.accountId !== DEFAULT_ACCOUNT ? limit.accountId : undefined, attempt.current);
+      attempt.current = '';
+      setResetNote(outcome === 'reset' ? undefined : outcome === 'noCredit' ? 'No resets left' : outcome === 'nothingToReset' ? 'Nothing to reset right now' : 'That reset was already used');
+      setAsk(outcome === 'reset' ? 'done' : 'idle');
+    } catch (err) {
+      setResetNote(err instanceof Error && err.message ? err.message : 'The reset did not go through');
+      setAsk('ask');
+    }
+  };
+
+  if (canReset && ask !== 'idle' && ask !== 'done')
+    return (
+      <div className="lim" role="status">
+        <Icon name="hourglass" size={16} className="lim-icon" />
+        <div className="lim-body">
+          <div className="lim-text">{question}</div>
+          {resetNote && <div className="lim-detail">{resetNote}</div>}
+        </div>
+        <span className="lim-ask">
+          <button type="button" className="btn btn-sm" disabled={ask === 'busy'} onClick={() => (setAsk('idle'), setResetNote(undefined))}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-sm btn-primary" disabled={ask === 'busy'} autoFocus onClick={() => void spend()}>
+            {ask === 'busy' ? <Spinner size={12} /> : null}
+            Use reset
+          </button>
+        </span>
+      </div>
+    );
+
   return (
-    <div className="lim" role="status" data-done={limit.continuedWith ? '' : undefined}>
+    <div className="lim" role="status" data-done={limit.continuedWith || ask === 'done' ? '' : undefined}>
       <Icon name="hourglass" size={16} className="lim-icon" />
       <div className="lim-body">
         <div className="lim-text">
           {who} is at its {windowName(limit.window)}
         </div>
-        {(reset || item.detail) && <div className="lim-detail">{reset ?? item.detail}</div>}
+        {(resetNote || reset || item.detail) && <div className="lim-detail">{resetNote ?? reset ?? item.detail}</div>}
       </div>
-      {limit.continuedWith ? (
+      {ask === 'done' ? (
+        <span className="lim-went">
+          <Icon name="check" size={13} />
+          Limit reset
+        </span>
+      ) : canReset && n > 0 ? (
+        <span className="lim-ask">
+          <button type="button" className="btn btn-sm lim-reset" disabled={busy} onClick={() => (setResetNote(undefined), setAsk('ask'))}>
+            Use a reset
+          </button>
+          {offer && sid && (
+            <button
+              type="button"
+              className="btn btn-sm lim-go"
+              disabled={moving || busy}
+              onClick={() => {
+                setMoving(true);
+                void switchSessionAccount(sid, offer.id, true).finally(() => setMoving(false));
+              }}
+            >
+              {moving ? <Spinner size={12} /> : <Icon name="arrow-right" size={14} />}
+              Continue with {accountName(offer)}
+            </button>
+          )}
+        </span>
+      ) : limit.continuedWith ? (
         <span className="lim-went">
           <Icon name="check" size={13} />
           Continued with {went ? accountName(went) : 'another account'}

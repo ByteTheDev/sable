@@ -56,7 +56,7 @@ export class LimitsBook {
     // An empty read without news (no session to ask, or a failed read) keeps what was known.
     if (!limits.length && meta.planLimits !== false && prev?.limits.length) return this.report(provider, accountId, now);
     const entry: Entry = { history: { ...prev?.history }, limits, readAt: now };
-    for (const k of ['planLimits', 'extra', 'credits'] as const) {
+    for (const k of ['planLimits', 'extra', 'credits', 'resets'] as const) {
       const v = meta[k] ?? prev?.[k];
       if (v !== undefined) (entry as unknown as Record<string, unknown>)[k] = v;
     }
@@ -87,6 +87,7 @@ export class LimitsBook {
     if (e.planLimits !== undefined) report.planLimits = e.planLimits;
     if (e.extra) report.extra = e.extra;
     if (e.credits) report.credits = e.credits;
+    if (e.resets?.available) report.resets = e.resets;
     for (const l of e.limits) {
       const samples = windowSamples(e.history[l.id] ?? [], l);
       report.history[l.id] = samples;

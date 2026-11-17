@@ -31,6 +31,22 @@ interface SessionFile {
   queue?: QueuedMessage[];
 }
 
+const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * `saved` with what `defaults` has and it lacks filled in, recursively for nested objects. A value
+ * that is present (null and false included) always stays as saved: an update only adds.
+ */
+export function fillMissing<T>(defaults: T, saved: unknown): T {
+  if (!plain(defaults) || !plain(saved)) return (saved === undefined ? structuredClone(defaults) : saved) as T;
+  const out: Record<string, unknown> = { ...saved };
+  for (const [k, d] of Object.entries(defaults)) {
+    if (out[k] === undefined) out[k] = d === undefined ? d : structuredClone(d);
+    else if (plain(d) && plain(out[k])) out[k] = fillMissing(d, out[k]);
+  }
+  return out as T;
+}
+
 /** JSON persistence under ~/.sable. Writes are debounced and atomic. */
 export class Store {
   readonly dir: string;
@@ -42,17 +58,21 @@ export class Store {
     this.dir = dir ?? process.env.SABLE_HOME ?? path.join(homedir(), '.sable');
     mkdirSync(path.join(this.dir, 'sessions'), { recursive: true });
     this.state = this.readJson<StateFile>(this.statePath) ?? { projects: [], settings: { ...DEFAULT_SETTINGS }, sessions: [], accounts: [] };
-    this.state.settings = { ...DEFAULT_SETTINGS, ...this.state.settings };
+    const saved = (this.state.settings && typeof this.state.settings === 'object' ? this.state.settings : {}) as Partial<AppSettings>;
+    // A config the user already has is never rebuilt from the old switches below.
+    const hadBackdrop = !!saved.backdropConfig && typeof saved.backdropConfig === 'object';
+    // What an update adds is filled in; nothing the user saved is replaced (also inside nested choices).
+    this.state.settings = fillMissing(DEFAULT_SETTINGS, saved);
     // One-time move to the current default backdrop for profiles saved before it existed
     // (their stored value is the old default, not a choice the user made).
     const versioned = this.state.settings as AppSettings & { rev?: number };
     if (!versioned.rev || versioned.rev < 2) {
-      versioned.backdrop = DEFAULT_SETTINGS.backdrop;
+      if (!hadBackdrop) versioned.backdrop = DEFAULT_SETTINGS.backdrop;
       versioned.rev = 2;
     }
     // The backdrop config replaces the ambience / backdrop / texture switches (read once, here).
     if (versioned.rev < 3) {
-      versioned.backdropConfig = migrateBackdrop(versioned);
+      if (!hadBackdrop) versioned.backdropConfig = migrateBackdrop(versioned);
       versioned.rev = 3;
     }
     // The quieter default backdrop: fields still at the old default move to the new one.

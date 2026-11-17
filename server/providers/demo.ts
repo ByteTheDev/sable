@@ -21,6 +21,7 @@ import type {
   ProviderInfo,
   LimitsMeta,
   RateLimit,
+  ResetOutcome,
   TextItem,
   TimelineItem,
   ToolItem,
@@ -38,6 +39,8 @@ import {
   contextBreakdown,
   pastSessions,
   rateLimits,
+  demoResetCredits,
+  freshLimits,
   type DemoLimitProfile,
 } from './demo-catalog';
 import { pickScenario, SCENARIOS, deniedReply } from './demo-scenarios';
@@ -156,13 +159,46 @@ export class DemoProvider implements Provider {
     return capabilities();
   }
 
+  /** Resets this demo account spent (kept beside its pretend sign-in); the default account has none. */
+  private resetState(): { used: number; at?: number } {
+    if (!this.authFile) return { used: 0 };
+    try {
+      const r = JSON.parse(readFileSync(path.join(path.dirname(this.authFile), 'demo-resets.json'), 'utf8')) as { used?: number; at?: number };
+      return { used: Math.max(0, Number(r.used) || 0), at: typeof r.at === 'number' ? r.at : undefined };
+    } catch {
+      return { used: 0 };
+    }
+  }
+
+  /** The limit state a turn meets: an account at its cap is free again after a reset. */
+  private turnProfile(): DemoLimitProfile | undefined {
+    const profile = this.limitProfile();
+    return profile === 'cap' && this.resetState().at ? 'light' : profile;
+  }
+
   async limits(): Promise<RateLimit[]> {
     const profile = this.limitProfile();
     if (!profile) return [];
     const now = Date.now();
-    const limits = rateLimits(now, profile);
-    this.ctx.emit({ type: 'limits.updated', provider: 'demo', limits, meta: { planLimits: profile !== 'none', ...demoCredits(profile, limits) } });
+    const state = this.resetState();
+    const limits = state.at ? freshLimits(rateLimits(state.at, profile), state.at) : rateLimits(now, profile);
+    const granted = this.authFile ? demoResetCredits(profile) : 0;
+    // After a reset the account is off credits again (said explicitly: the limits book keeps what a read leaves out).
+    const meta: LimitsMeta = { planLimits: profile !== 'none', ...(state.at ? { credits: { has: false } } : demoCredits(profile, limits)) };
+    if (granted) meta.resets = { available: Math.max(0, granted - state.used), windows: limits.map((l) => l.id) };
+    this.ctx.emit({ type: 'limits.updated', provider: 'demo', limits, meta });
     return limits;
+  }
+
+  /** Spends a pretend reset: the windows start over now. Same outcomes as Codex's. */
+  async useReset(_key: string): Promise<ResetOutcome> {
+    const profile = this.limitProfile();
+    if (!profile || !this.authFile) return 'noCredit';
+    const state = this.resetState();
+    if (demoResetCredits(profile) - state.used <= 0) return 'noCredit';
+    writeFileSync(path.join(path.dirname(this.authFile), 'demo-resets.json'), JSON.stringify({ used: state.used + 1, at: Date.now() }));
+    await this.limits();
+    return 'reset';
   }
 
   async history(cwd?: string, limit?: number): Promise<HistoryEntry[]> {
@@ -185,7 +221,7 @@ export class DemoProvider implements Provider {
     rt.update(patch);
     if (resumeId && opts.loadTranscript) rt.reset(transcript(rt, resumeId));
     this.ctx.log(`demo session ${rt.id} opened (${resumeId ? 'resumed' : 'new'})`);
-    const session = new DemoSession(rt, this.speed, this.ctx, () => this.limitProfile());
+    const session = new DemoSession(rt, this.speed, this.ctx, () => this.turnProfile());
     if (rt.meta.options) void session.setOptions(rt.meta.options);
     return session;
   }

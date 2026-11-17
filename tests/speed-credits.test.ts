@@ -91,10 +91,10 @@ describe('speeds', () => {
     expect(serviceTierFor(model, undefined)).toBeUndefined();
   });
 
-  it("Claude Code receives fast mode when its process starts, and the user's own setting is left alone otherwise", () => {
+  it('Claude Code starts with fast mode only when the session chose it (its own saved /fast never carries over)', () => {
     expect(startSettings({ speed: 'fast' })).toEqual({ fastMode: true });
     expect(startSettings({ speed: 'standard', ultracode: true })).toEqual({ ultracode: true, fastMode: false });
-    expect(startSettings({})).toBeUndefined();
+    expect(startSettings({})).toEqual({ fastMode: false });
   });
 
   it('a model without the speed falls back to standard; /fast toggles the fastest', () => {

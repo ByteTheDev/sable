@@ -20,6 +20,7 @@ import { Kbd, Tip } from '@/ui';
 import { readFiles, withTextAttachments } from './attach';
 import { AttachmentRow } from './Attachments';
 import { useChoice } from './choice';
+import { paidAsk, paidConfirmed } from './paid-speed';
 import { APP_COMMANDS, appCommandsFor, commandRows, skillRows, type CommandCtx, type SuggestRow } from './commands';
 import { keepDrafts } from './drafts';
 import { HomeChips, ModelPopover, ModeMenu, openComposerMenu, useHomeSignedOut } from './Controls';
@@ -422,7 +423,16 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
       openModel: () => openComposerMenu('model'),
       openMode: () => openComposerMenu('mode'),
       openEffort: () => openComposerMenu('effort'),
-      toggleSpeed: speeds.length ? () => setSpeed(toggledSpeed(speedModel, speed)) : undefined,
+      // A paid speed (Claude's fast mode) is asked for in the effort popover the first time in a session.
+      toggleSpeed: speeds.length
+        ? () => {
+            const next = toggledSpeed(speedModel, speed, speeds);
+            if (sessionId && speeds.find((s) => s.id === next)?.paid && !paidConfirmed(sessionId)) {
+              paidAsk(sessionId, next);
+              openComposerMenu('effort');
+            } else setSpeed(next);
+          }
+        : undefined,
     }),
     [sessionId, speedModel, speed, speeds, setSpeed],
   );

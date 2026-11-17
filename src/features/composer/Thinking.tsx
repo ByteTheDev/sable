@@ -1,17 +1,17 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { Popover as RP } from 'radix-ui';
 import { STANDARD_SPEED, type Effort, type SpeedInfo } from '@shared/protocol';
 import { effortName, isUltraEffort } from '@/lib/models';
-import { EASE_OUT, play, reducedMotion, spring } from '@/lib/motion';
+import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
 import { Segmented, Switch, Tip } from '@/ui';
 import { Icon } from '@/icons';
 import { type Choice } from './choice';
 import { ChipSkeleton, MENU_EVENT } from './Controls';
+import { headerLevel, step, stopAt, TRACK_KEYS, type TrackEvent, type TrackState } from './effort-track';
+import { paidConfirmed, confirmPaid, takePaidAsk } from './paid-speed';
 
-/** The rail's drawn length; stops sit evenly along it, the first and last on its ends. */
-const RAIL_W = 196;
-/** The thumb lands on a stop with a small, quick settle: the detent. */
-const DETENT = spring(560, 34);
+/** The landed bar's detent. */
+const SETTLE_MS = 220;
 /** How long the "ultra" moment plays when it turns on. */
 const BURST_MS = 900;
 
@@ -63,29 +63,68 @@ function LevelName({ effort, mark }: { effort: Effort | undefined; mark?: boolea
 
 interface TrackProps {
   efforts: Effort[];
+  /** The confirmed level (or -1 when the agent decides). */
   level: number;
-  onPick: (i: number) => void;
+  /** While the pointer drags: the stop it stands on, so the chip names the same level as the track. */
+  onPreview: (i: number | null) => void;
+  /** A stop settled (release, click or key): save and send it. */
+  onCommit: (i: number) => void;
   onDone: () => void;
   trackRef: RefObject<HTMLDivElement | null>;
   burst: boolean;
 }
 
+/** A bar's height in the popover: the chip's rising ticks, drawn large. */
+const barHeight = (i: number, n: number) => Math.round(8 + (i * 24) / Math.max(1, n - 1));
+
 /**
- * One horizontal stepped track: click a stop, drag across the stops, arrows / Home / End / number
- * keys. The thumb moves on a spring and settles on each stop; only the current name is bright.
+ * The effort steps: one column per level, a bar rising with it, lit up to the level (an Ultra level
+ * in dither). Click a column, drag across them, or use the arrows, Home, End and number keys: all
+ * go through `step()` (effort-track.ts), so what the header names is what lands and is sent.
  */
-function Track({ efforts, level, onPick, onDone, trackRef, burst }: TrackProps) {
+function Track({ efforts, level, onPreview, onCommit, onDone, trackRef, burst }: TrackProps) {
   const n = efforts.length;
-  const [hover, setHover] = useState<number | null>(null);
-  const [pressed, setPressed] = useState(false);
-  const rail = useRef<HTMLSpanElement>(null);
-  const dragging = useRef(false);
+  const [s, setS] = useState<TrackState>({ level, hover: null, dragging: false });
+  // The landing: the settled bar takes a short detent (one keyframe, restarted per landing).
+  const [settle, setSettle] = useState(false);
+  const settleTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(settleTimer.current), []);
+  const row = useRef<HTMLSpanElement>(null);
+  const sRef = useRef(s);
+  sRef.current = s;
+  // The level the track drew last, so the lighting runs outward from where it was.
+  const prev = useRef(s.level);
+  const from = prev.current;
+  useEffect(() => {
+    prev.current = s.level;
+  }, [s.level]);
+
+  // The confirmed value moved from outside: follow it (never mid-drag).
+  useEffect(() => {
+    if (level !== sRef.current.level) setS((cur) => step(cur, { type: 'sync', level }, n).state);
+  }, [level, n]);
+
+  const dispatch = (e: TrackEvent) => {
+    const out = step(sRef.current, e, n);
+    sRef.current = out.state;
+    setS(out.state);
+    if (e.type === 'down' || e.type === 'move') onPreview(out.state.dragging ? out.state.level : null);
+    if (out.commit !== undefined) {
+      onPreview(null);
+      onCommit(out.commit);
+      setSettle(false);
+      window.clearTimeout(settleTimer.current);
+      settleTimer.current = window.setTimeout(() => {
+        setSettle(true);
+        settleTimer.current = window.setTimeout(() => setSettle(false), SETTLE_MS);
+      }, 0);
+    }
+    if (out.done) onDone();
+  };
 
   const at = (clientX: number) => {
-    const r = rail.current?.getBoundingClientRect();
-    if (!r || n < 2) return 0;
-    const f = (clientX - r.left) / r.width;
-    return Math.max(0, Math.min(n - 1, Math.round(f * (n - 1))));
+    const r = row.current?.getBoundingClientRect();
+    return r ? stopAt(clientX, r.left, r.width, n) : 0;
   };
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -97,57 +136,30 @@ function Track({ efforts, level, onPick, onDone, trackRef, burst }: TrackProps) 
       /* a synthetic pointer */
     }
     e.currentTarget.focus({ preventScroll: true });
-    dragging.current = true;
-    setPressed(true);
-    onPick(at(e.clientX));
+    dispatch({ type: 'down', at: at(e.clientX) });
   };
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const i = at(e.clientX);
-    if (dragging.current) {
-      if (i !== level) onPick(i);
-    } else setHover(i);
+    const cur = sRef.current;
+    if (cur.dragging ? i !== cur.level : i !== cur.hover) dispatch({ type: 'move', at: i });
   };
-  const end = () => {
-    dragging.current = false;
-    setPressed(false);
-  };
-
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const k = e.key;
-    let next: number | null = null;
-    if (k === 'ArrowRight' || k === 'ArrowUp') next = level + 1;
-    else if (k === 'ArrowLeft' || k === 'ArrowDown') next = level - 1;
-    else if (k === 'Home') next = 0;
-    else if (k === 'End') next = n - 1;
-    else if (/^[1-9]$/.test(k)) next = Number(k) - 1;
-    else if (k === 'Enter') {
-      e.preventDefault();
-      onDone();
-      return;
-    } else return;
+    if (!TRACK_KEYS.test(e.key)) return;
     e.preventDefault();
-    setHover(null);
-    if (next >= 0 && next < n && next !== level) onPick(next);
+    dispatch({ type: 'key', key: e.key });
   };
 
-  const step = n > 1 ? RAIL_W / (n - 1) : 0;
-  const x = Math.max(0, level) * step;
+  const named = headerLevel(s);
+  const shown = efforts[named];
   const still = reducedMotion();
-  const move: CSSProperties = still ? {} : { transitionDuration: `${DETENT.duration}ms`, transitionTimingFunction: DETENT.easing };
-  const named = hover !== null && hover !== level ? hover : null;
-  const shown = efforts[named ?? level];
-  const ultraAt = efforts.findIndex(isUltraEffort);
-  // The solid fill ends where an Ultra stretch begins; that last stretch is drawn in dither.
-  const cap = ultraAt > 0 ? ultraAt - 1 : n - 1;
-  const fill = cap > 0 ? Math.min(Math.max(0, level), cap) / cap : 0;
 
   return (
     <div className="th-body">
       <div className="th-head">
-        <span className="th-title">Effort</span>
-        <span className="th-name" data-preview={named !== null || undefined} data-ultra={isUltraEffort(shown) || undefined} key={`${named ?? level}`}>
+        <span className="th-name" data-preview={named !== s.level || undefined} data-ultra={isUltraEffort(shown) || undefined} key={named}>
           <LevelName effort={shown} />
         </span>
+        <span className="th-title">Effort</span>
       </div>
       <div
         ref={trackRef}
@@ -157,23 +169,38 @@ function Track({ efforts, level, onPick, onDone, trackRef, burst }: TrackProps) 
         aria-label="Effort"
         aria-valuemin={1}
         aria-valuemax={n}
-        aria-valuenow={level + 1}
-        aria-valuetext={effortName(efforts[level]) ?? 'Default'}
-        data-pressed={pressed || undefined}
+        aria-valuenow={s.level + 1}
+        aria-valuetext={effortName(efforts[s.level]) ?? 'Default'}
+        data-pressed={s.dragging || undefined}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
-        onPointerUp={end}
-        onPointerCancel={end}
-        onPointerLeave={() => setHover(null)}
+        onPointerUp={() => dispatch({ type: 'up' })}
+        onPointerCancel={() => dispatch({ type: 'up' })}
+        onLostPointerCapture={() => sRef.current.dragging && dispatch({ type: 'up' })}
+        onPointerLeave={() => dispatch({ type: 'leave' })}
         onKeyDown={onKeyDown}
       >
-        <span ref={rail} className="th-rail" style={{ width: RAIL_W }}>
-          {ultraAt > 0 && <span className="th-ultra-seg" data-on={level >= ultraAt || undefined} data-burst={burst || undefined} style={{ left: (ultraAt - 1) * step, width: step }} />}
-          <span className="th-fill" style={{ ...move, transform: `scaleX(${fill})`, width: cap * step }} />
-          {efforts.map((e, i) => (
-            <span key={e} className="th-stop" data-on={i <= level || undefined} data-hover={i === hover || undefined} style={{ left: i * step }} />
-          ))}
-          {level >= 0 && <span className="th-thumb" style={{ ...move, transform: `translateX(${x}px)` }} />}
+        <span ref={row} className="th-steps">
+          {efforts.map((e, i) => {
+            const on = i <= s.level;
+            const cur = i === s.level;
+            return (
+              <span
+                key={e}
+                className="th-col"
+                data-on={on || undefined}
+                data-cur={cur || undefined}
+                data-hover={(i === s.hover && !s.dragging) || undefined}
+                data-ultra={isUltraEffort(e) || undefined}
+                data-burst={(burst && isUltraEffort(e)) || undefined}
+              >
+                <i
+                  data-settle={(cur && settle && !still) || undefined}
+                  style={{ height: barHeight(i, n), transitionDelay: still ? undefined : `${Math.max(0, Math.abs(i - from) - 1) * 24}ms` }}
+                />
+              </span>
+            );
+          })}
         </span>
       </div>
     </div>
@@ -193,15 +220,27 @@ export interface ThinkingProps {
   speeds?: SpeedInfo[];
   speed?: string;
   onSpeed?: (id: string) => void;
+  /** The session (a paid speed is asked for once per session); null on home. */
+  sessionId?: string | null;
   side: 'top' | 'bottom';
   onClosed: () => void;
 }
 
-/** Standard and the model's faster speeds, one segmented row; a speed that costs more says so in its tooltip. */
-function SpeedRow({ speeds, speed, onSpeed }: { speeds: SpeedInfo[]; speed: string; onSpeed: (id: string) => void }) {
+/**
+ * Standard and the faster speeds, one segmented row. A speed included in the plan is a plain
+ * choice (its cost note in the tooltip); a paid one (Claude's fast mode) names its cost in the row
+ * and, the first time in a session, asks before it is turned on.
+ */
+function SpeedRow({ speeds, speed, onSpeed, sessionId, ask, onAsk }: { speeds: SpeedInfo[]; speed: string; onSpeed: (id: string) => void; sessionId: string | null; ask: string | null; onAsk: (id: string | null) => void }) {
+  const asking = ask ? speeds.find((s) => s.id === ask) : undefined;
   const options = [{ id: STANDARD_SPEED, name: 'Standard' } as SpeedInfo, ...speeds].map((s) => ({
     value: s.id,
-    label: s.note ? (
+    label: s.paid ? (
+      <span className="th-paid">
+        {s.name}
+        <span className="th-cost">{s.note ?? 'Extra usage'}</span>
+      </span>
+    ) : s.note ? (
       <Tip label={s.note} side="bottom">
         <span>{s.name}</span>
       </Tip>
@@ -209,12 +248,43 @@ function SpeedRow({ speeds, speed, onSpeed }: { speeds: SpeedInfo[]; speed: stri
       s.name
     ),
   }));
+  const pick = (id: string) => {
+    const s = speeds.find((x) => x.id === id);
+    if (s?.paid && sessionId && !paidConfirmed(sessionId)) return onAsk(id);
+    onAsk(null);
+    onSpeed(id);
+  };
   return (
     <div className="th-speed">
       <div className="th-head">
         <span className="th-title">Speed</span>
       </div>
-      <Segmented id="th-speed" className="th-speed-seg" value={speed} onChange={onSpeed} options={options} />
+      {asking ? (
+        <div className="th-ask" role="group" aria-label={`Turn on ${asking.name.toLowerCase()} mode`}>
+          <p className="th-ask-q">
+            {asking.name} mode is billed as extra usage, not from your plan.
+          </p>
+          <div className="th-ask-row">
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => onAsk(null)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              autoFocus
+              onClick={() => {
+                if (sessionId) confirmPaid(sessionId);
+                onAsk(null);
+                onSpeed(asking.id);
+              }}
+            >
+              Turn on
+            </button>
+          </div>
+        </div>
+      ) : (
+        <Segmented id="th-speed" className="th-speed-seg" value={speed} onChange={pick} options={options} />
+      )}
     </div>
   );
 }
@@ -223,42 +293,54 @@ function SpeedRow({ speeds, speed, onSpeed }: { speeds: SpeedInfo[]; speed: stri
  * The thinking control: the level's name and a step meter at rest; a small popover with the
  * stepped track and, where the agent has it, the ultracode switch. Choices apply live.
  */
-export const Thinking = memo(function Thinking({ efforts, value, onChange, ultraOffered, ultracode, onUltracode, speeds = NO_SPEEDS, speed = STANDARD_SPEED, onSpeed, side, onClosed }: ThinkingProps) {
+export const Thinking = memo(function Thinking({ efforts, value, onChange, ultraOffered, ultracode, onUltracode, speeds = NO_SPEEDS, speed = STANDARD_SPEED, onSpeed, sessionId = null, side, onClosed }: ThinkingProps) {
   const [open, setOpen] = useState(false);
-  // What the control shows before the agent confirms a change, so the thumb never waits on a round trip.
+  // A level sent and not yet confirmed, so nothing waits on a round trip; and the stop a drag stands on.
   const [local, setLocal] = useState<Effort | undefined>();
-  const shown = local && efforts.includes(local) ? local : value;
+  const [preview, setPreview] = useState<number | null>(null);
+  const committed = local && efforts.includes(local) ? local : value;
+  const committedLevel = committed ? efforts.indexOf(committed) : -1;
+  // The chip names what the track stands for: the dragged stop while a drag runs.
+  const shown = preview !== null && efforts[preview] ? efforts[preview] : committed;
   const level = shown ? efforts.indexOf(shown) : -1;
   const ucOn = ultraOffered && ultracode;
   const look = ucOn || isUltraEffort(shown);
+  // A paid speed waiting on its question (from a click in the row or from `/fast`).
+  const [ask, setAsk] = useState<string | null>(null);
 
   const chip = useRef<HTMLButtonElement>(null);
   const track = useRef<HTMLDivElement>(null);
-  const sendTimer = useRef(0);
   const settleTimer = useRef(0);
 
   useEffect(() => {
-    const on = (e: Event) => (e as CustomEvent<string>).detail === 'effort' && setOpen(true);
+    const on = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== 'effort') return;
+      const want = takePaidAsk(sessionId);
+      if (want) setAsk(want);
+      setOpen(true);
+    };
     window.addEventListener(MENU_EVENT, on);
     return () => window.removeEventListener(MENU_EVENT, on);
-  }, []);
+  }, [sessionId]);
+  useEffect(() => {
+    if (!open) setAsk(null);
+  }, [open]);
 
-  // The confirmed value caught up (or never will): drop the local one.
+  // The confirmed value caught up: drop the local one.
   useEffect(() => {
     if (local && value === local) setLocal(undefined);
   }, [value, local]);
-  useEffect(() => () => (window.clearTimeout(sendTimer.current), window.clearTimeout(settleTimer.current)), []);
+  useEffect(() => () => window.clearTimeout(settleTimer.current), []);
 
-  const pick = useCallback(
+  const commit = useCallback(
     (i: number) => {
       const e = efforts[i];
       if (!e) return;
       setLocal(e);
-      // Dragging across stops sends only where it rests.
-      window.clearTimeout(sendTimer.current);
-      sendTimer.current = window.setTimeout(() => onChange(e), 90);
+      onChange(e);
+      // Never confirmed (the agent refused it): show what is really in use again.
       window.clearTimeout(settleTimer.current);
-      settleTimer.current = window.setTimeout(() => setLocal(undefined), 2500);
+      settleTimer.current = window.setTimeout(() => setLocal(undefined), 4000);
     },
     [efforts, onChange],
   );
@@ -293,10 +375,10 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
   if (!efforts.length && !ultraOffered && !hasSpeed) return null;
 
   const fast = hasSpeed && speed !== STANDARD_SPEED;
-  const speedName = speeds.find((s) => s.id === speed)?.name;
+  const speedInfo = speeds.find((s) => s.id === speed);
   const name = shown ? effortName(shown) : 'Default';
-  const aria = (efforts.length ? `Effort: ${name}${ucOn ? ', ultracode on' : ''}` : ultraOffered ? `Ultracode ${ucOn ? 'on' : 'off'}` : 'Speed') + (fast ? `, ${speedName ?? 'fast'} speed` : '');
-  const tip = efforts.length ? (ucOn ? `Effort and ultracode` : 'Effort') : ultraOffered ? 'Ultracode' : 'Speed';
+  const aria = (efforts.length ? `Effort: ${name}${ucOn ? ', ultracode on' : ''}` : ultraOffered ? `Ultracode ${ucOn ? 'on' : 'off'}` : 'Speed') + (fast ? `, ${speedInfo?.name ?? 'fast'} speed${speedInfo?.paid ? ', billed as extra usage' : ''}` : '');
+  const tip = (efforts.length ? (ucOn ? `Effort and ultracode` : 'Effort') : ultraOffered ? 'Ultracode' : 'Speed') + (fast && speedInfo?.paid ? ` · ${speedInfo.name} on extra usage` : '');
   return (
     <RP.Root open={open} onOpenChange={setOpen}>
       <Tip label={tip} side="top">
@@ -339,7 +421,7 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
             onClosed();
           }}
         >
-          {efforts.length > 0 && <Track efforts={efforts} level={level} onPick={pick} onDone={() => setOpen(false)} trackRef={track} burst={burst && isUltraEffort(shown)} />}
+          {efforts.length > 0 && <Track efforts={efforts} level={committedLevel} onPreview={setPreview} onCommit={commit} onDone={() => setOpen(false)} trackRef={track} burst={burst && isUltraEffort(shown)} />}
           {efforts.length > 0 && ultraOffered && <div className="menu-sep th-sep" role="separator" />}
           {ultraOffered && (
             <label className="th-uc-row" data-on={ucOn || undefined} data-burst={(burst && ucOn) || undefined}>
@@ -349,7 +431,7 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
             </label>
           )}
           {hasSpeed && (efforts.length > 0 || ultraOffered) && <div className="menu-sep th-sep" role="separator" />}
-          {hasSpeed && <SpeedRow speeds={speeds} speed={speed} onSpeed={onSpeed!} />}
+          {hasSpeed && <SpeedRow speeds={speeds} speed={speed} onSpeed={onSpeed!} sessionId={sessionId} ask={ask} onAsk={setAsk} />}
         </RP.Content>
       </RP.Portal>
     </RP.Root>
@@ -385,6 +467,7 @@ export const ModelEffort = memo(function ModelEffort({
       speeds={choice.speeds}
       speed={choice.speed}
       onSpeed={choice.setSpeed}
+      sessionId={choice.sessionId}
       side={side}
       onClosed={onClosed}
     />

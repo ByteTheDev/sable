@@ -1333,3 +1333,15 @@ button.xrow-head:disabled:hover {
 .xrow[data-status='failed'] .xrow-desc {
   color: oklch(0.8 0.12 24);
 }
+
+/* The agent's own setup warnings (Codex config keys it ignores): one quiet line each, details below. */
+.set-agent-warning {
+  margin-top: 4px;
+}
+
+.set-agent-warning-detail {
+  display: block;
+  margin-top: 2px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}

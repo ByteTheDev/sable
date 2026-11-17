@@ -1,7 +1,7 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { SessionRuntime } from '../core/runtime';
-import { BROWSER_DESCRIPTIONS, BROWSER_OPS, BROWSER_PARAMS, BROWSER_TOOLS, runBrowserTool, type BrowserOp, type BrowserToolResult } from './browser-tool';
+import { BROWSER_CORE, BROWSER_DESCRIPTIONS, BROWSER_OPS, BROWSER_PARAMS, BROWSER_TOOLS, runBrowserTool, type BrowserOp, type BrowserToolResult } from './browser-tool';
 import { WIDGET_CODE_DESCRIPTION, WIDGET_DESCRIPTION, WIDGET_SERVER, WIDGET_TITLE_DESCRIPTION, WIDGET_TOOL, widgetResult } from './widget-tool';
 
 /**
@@ -24,7 +24,8 @@ export function widgetServer(opts: { widgets?: boolean; session?: () => SessionR
           const r = widgetResult(args);
           return { content: [{ type: 'text' as const, text: r.text }], isError: !r.ok };
         },
-        { annotations: { title: 'Show widget', readOnlyHint: true, destructiveHint: false, openWorldHint: false } },
+        // Never deferred behind tool search: the agent should know it can draw without searching.
+        { annotations: { title: 'Show widget', readOnlyHint: true, destructiveHint: false, openWorldHint: false }, alwaysLoad: true },
       ),
     );
   }
@@ -62,6 +63,8 @@ export function widgetServer(opts: { widgets?: boolean; session?: () => SessionR
       tools.push(
         tool(BROWSER_TOOLS[op], BROWSER_DESCRIPTIONS[op], shape, (args) => run(op, args), {
           annotations: { title: TITLES[op], readOnlyHint: LOOKS.has(op), destructiveHint: false, openWorldHint: true },
+          // Looking and opening are always in the prompt; working a page waits behind tool search.
+          ...(BROWSER_CORE.has(op) ? { alwaysLoad: true } : { searchHint: 'Sable Browser tab: work the open page' }),
         }),
       );
     }
@@ -69,8 +72,8 @@ export function widgetServer(opts: { widgets?: boolean; session?: () => SessionR
   return createSdkMcpServer({
     name: WIDGET_SERVER,
     version: '1.0.0',
-    // Never deferred behind tool search: the agent should know it can draw and look without searching.
-    alwaysLoad: true,
+    // Per tool (above): drawing, looking and opening are always loaded; the tools that work an open
+    // page are deferred behind tool search where the agent has it, so they cost nothing until used.
     tools,
   });
 }

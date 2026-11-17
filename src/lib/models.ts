@@ -168,7 +168,14 @@ export function visibleModels(provider: ProviderId, models: ModelInfo[], overrid
     if (standIn && !aliasTarget(m) && modelName(m) === standIn) return false;
     return shown(m);
   });
-  return out.length ? out : models.filter((m) => base.has(m.id));
+  const list = out.length ? out : models.filter((m) => base.has(m.id));
+  // A saved model the agent no longer lists stays chosen and in the menu, by its name only.
+  return currentId && !current && models.length ? [...list, savedModel(currentId, models)] : list;
 }
 
-export { modelSpeeds, speedFor, toggledSpeed } from '@shared/speed';
+/** A stand-in for a model the user chose that the agent's list no longer has. */
+export function savedModel(id: string, models: ModelInfo[]): ModelInfo {
+  return { id, name: modelNameById(id, models) ?? id };
+}
+
+export { modelSpeeds, speedFor, toggledSpeed, offeredSpeeds, defaultableSpeeds, isPaidSpeed } from '@shared/speed';

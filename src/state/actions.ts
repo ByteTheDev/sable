@@ -47,6 +47,15 @@ export interface NewSessionChoice {
   accountId?: string;
   /** Claude Code: start with ultracode on. */
   ultracode?: boolean;
+  /** Start from a summary of this Sable session's conversation (Continue in the other agent). */
+  handoverFrom?: string;
+}
+
+/** Continue in the other agent: a new session with `provider` in the same folder, starting from a summary of `sessionId`. */
+export function continueInAgent(sessionId: string, provider: ProviderId) {
+  const s = useStore.getState().sessions[sessionId];
+  if (!s || s.provider === provider) return Promise.resolve(null);
+  return createSession({ provider, cwd: s.cwd, handoverFrom: sessionId, title: s.title });
 }
 
 export async function createSession(choice: NewSessionChoice): Promise<SessionMeta | null> {
@@ -369,6 +378,8 @@ export const refreshProvider = (provider: ProviderId, accountId?: string) => bri
 export const refreshLimits = (provider: ProviderId, accountId?: string) => bridge.call('provider.limits', { provider, accountId }).catch(() => []);
 /** Plan limits read now, even when no agent process runs (it may start a short one; no tokens). For a refresh the user asked for. */
 export const readLimitsNow = (provider: ProviderId, accountId?: string) => bridge.call('provider.limits', { provider, accountId, force: true }).catch(() => []);
+/** Spends one reset credit of the account. Call only from the user's confirmed click; reuse `key` on a retry. */
+export const spendLimitReset =(provider: ProviderId, accountId: string | undefined, key: string) => bridge.call('provider.useReset', { provider, accountId, key }, 60_000);
 /** Local token usage for the last 30 days, at once; `refresh` scans the transcripts for changes (the result comes as `usage.updated`). */
 export const fetchUsage = (refresh = false) => bridge.call('usage.report', { refresh }, 120_000);
 /** Opens the Usage page. */

@@ -34,6 +34,13 @@ export const BROWSER_OPS = Object.keys(BROWSER_TOOLS) as BrowserOp[];
 /** The tools that act on a page (the rest only look): on a page that is not local they ask on their own, apart from looking. */
 export const BROWSER_ACTS: ReadonlySet<BrowserOp> = new Set<BrowserOp>(['click', 'type', 'press', 'eval']);
 
+/**
+ * The tools always in the agent's prompt (the hint names them). The others, which work a page
+ * once one is open, are deferred behind the agent's tool search where it has one (Claude Code's
+ * `alwaysLoad`, Codex's `deferLoading`): about 1.2k tokens less in every request.
+ */
+export const BROWSER_CORE: ReadonlySet<BrowserOp> = new Set<BrowserOp>(['read', 'screenshot', 'open']);
+
 /** Full names inside Claude Code. */
 export const BROWSER_TOOL_IDS = Object.values(BROWSER_TOOLS).map((t) => `mcp__${WIDGET_SERVER}__${t}`);
 

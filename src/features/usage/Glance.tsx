@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { DEFAULT_ACCOUNT, type ProviderId } from '@shared/protocol';
 import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
 import { Icon } from '@/icons';
@@ -9,6 +9,7 @@ import { accountKey, useStore } from '@/state/store';
 import { cx } from '@/ui';
 import { clock, exactTime, isApiKey, planText, STALE_MS } from './format';
 import { NO_DATA, WindowRow, WindowSkeleton } from './Limits';
+import { LimitReset, resetTarget } from './LimitReset';
 
 /**
  * One account's plan limits in compact form, for a popover (sidebar footer, account switcher):
@@ -29,6 +30,7 @@ export function LimitsGlance({ provider, accountId = DEFAULT_ACCOUNT, header = t
   const now = useNow();
   const limits = report?.limits.length ? report.limits : live;
   const stale = report?.readAt && now - report.readAt > STALE_MS ? report.readAt : undefined;
+  const resetOn = report?.resets?.available ? resetTarget(limits, report.resets.windows) : undefined;
 
   const [pending, setPending] = useState(false);
   useEffect(() => {
@@ -48,7 +50,10 @@ export function LimitsGlance({ provider, accountId = DEFAULT_ACCOUNT, header = t
     body = (
       <div className="ul-rows">
         {limits.map((l) => (
-          <WindowRow key={l.id} limit={l} samples={report?.history[l.id]} pace={report?.pace[l.id]} now={now} compact />
+          <Fragment key={l.id}>
+            <WindowRow limit={l} samples={report?.history[l.id]} pace={report?.pace[l.id]} now={now} compact />
+            {l.id === resetOn?.id && <LimitReset provider={provider} accountId={accountId} limit={l} compact />}
+          </Fragment>
         ))}
         {(report?.extra?.inUse || report?.credits?.inUse) && <p className="ul-note ul-on-credits">{report?.extra?.inUse ? 'Running on extra usage' : 'Running on credits'}</p>}
       </div>

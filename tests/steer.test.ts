@@ -251,8 +251,10 @@ describe('ultracode', () => {
     const p = new ClaudeProvider({ emit: () => {}, log: () => {} });
     const owner = {};
     const on = p.agentOptions({ cwd: tmpdir(), model: 'haiku', mode: 'default', ultracode: true }, owner);
-    expect(on.settings).toEqual({ ultracode: true });
-    expect(p.agentOptions({ cwd: tmpdir(), model: 'haiku', mode: 'default' }, owner).settings).toBeUndefined();
+    // Every process also starts with fast mode off unless the session chose it: Claude Code keeps its
+    // own /fast choice across sessions, and fast mode is billed as usage credits.
+    expect(on.settings).toEqual({ ultracode: true, fastMode: false });
+    expect(p.agentOptions({ cwd: tmpdir(), model: 'haiku', mode: 'default' }, owner).settings).toEqual({ fastMode: false });
     expect(p.buildCaps({ models: [] }, []).features.ultracode).toBe(true);
     expect(p.buildCaps(undefined, []).features.ultracode).toBe(false);
   });

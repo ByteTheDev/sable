@@ -27,6 +27,15 @@ export function History() {
   );
 }
 
+/** The next History opens on conversations not yet in Sable (Import), grouped by project. */
+let importNext = false;
+
+/** Opens History on what the agents keep on disk that Sable has not opened yet, to continue here. */
+export function openImport() {
+  importNext = true;
+  useStore.getState().setUi({ historyOpen: true });
+}
+
 const ORDER: ProviderId[] = ['claude', 'codex', 'demo'];
 const pathKey = (p?: string) => (p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
@@ -53,7 +62,13 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
     const open = s.ui.activeSessionId ? s.sessions[s.ui.activeSessionId] : undefined;
     return open?.provider === provider ? (open.accountId ?? DEFAULT_ACCOUNT) : homeAccountId(provider, s);
   });
-  const [cwd, setCwd] = useState<string | null>(() => activeCwd ?? homeCwd ?? null);
+  // Import: only conversations not yet in Sable, across every project, grouped by project.
+  const [onlyNew, setOnlyNew] = useState(() => {
+    const v = importNext;
+    importNext = false;
+    return v;
+  });
+  const [cwd, setCwd] = useState<string | null>(() => (onlyNew ? null : (activeCwd ?? homeCwd ?? null)));
   const [query, setQuery] = useState('');
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +80,9 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
 
   // Load (cache first, then refresh).
   useEffect(() => {
-    const key = `${provider}\u0000${accountId}\u0000${pathKey(cwd ?? '')}`;
+    // Import reaches further back (the agents cap a page: Codex at 100).
+    const limit = onlyNew ? 200 : 80;
+    const key = `${provider}\u0000${accountId}\u0000${pathKey(cwd ?? '')}\u0000${limit}`;
     const cached = cache.get(key);
     setEntries(cached ?? null);
     setError(null);
@@ -73,7 +90,7 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
     let live = true;
     const slowTimer = window.setTimeout(() => live && !cached && setSlow(true), 1600);
     bridge
-      .call('history.list', { provider, cwd: cwd ?? undefined, limit: 80, accountId: accountId === DEFAULT_ACCOUNT ? undefined : accountId })
+      .call('history.list', { provider, cwd: cwd ?? undefined, limit, accountId: accountId === DEFAULT_ACCOUNT ? undefined : accountId })
       .then((list) => {
         if (!live) return;
         const sorted = [...list].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -92,7 +109,7 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
       live = false;
       window.clearTimeout(slowTimer);
     };
-  }, [provider, cwd]);
+  }, [provider, cwd, onlyNew]);
 
   const openIds = useMemo(() => {
     const m = new Map<string, string>();
@@ -101,8 +118,15 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
   }, [sessions]);
 
   const rows = useMemo<Row[]>(() => {
-    const list = entries ?? [];
+    const all = entries ?? [];
+    const list = onlyNew ? all.filter((e) => !openIds.has(`${e.provider}:${e.providerSessionId}`)) : all;
     const q = query.trim();
+    if (!q && onlyNew) {
+      // Grouped by project, the project with the newest conversation first, newest first inside.
+      const order = new Map<string, number>();
+      for (const e of list) if (!order.has(pathKey(e.cwd))) order.set(pathKey(e.cwd), order.size);
+      return [...list].sort((a, b) => order.get(pathKey(a.cwd))! - order.get(pathKey(b.cwd))! || b.updatedAt - a.updatedAt).map((entry) => ({ entry }));
+    }
     if (!q) return list.map((entry) => ({ entry }));
     const out: (Row & { score: number })[] = [];
     for (const entry of list) {
@@ -115,12 +139,12 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
       if (w !== null) out.push({ entry, score: w * 0.6 });
     }
     return out.sort((a, b) => b.score - a.score);
-  }, [entries, query]);
+  }, [entries, query, onlyNew, openIds]);
 
   // Group by day only while browsing; a search ranks by relevance instead.
   const grouped = !query.trim();
 
-  useEffect(() => setCursor(0), [query, provider, cwd]);
+  useEffect(() => setCursor(0), [query, provider, cwd, onlyNew]);
   const safe = Math.min(cursor, Math.max(0, rows.length - 1));
   useLayoutEffect(() => {
     listRef.current?.querySelector<HTMLElement>(`[data-index="${safe}"]`)?.scrollIntoView({ block: 'nearest' });
@@ -161,7 +185,7 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
   return (
     <div className="history-body">
       <div className="history-head">
-        <h2 className="dialog-title">History</h2>
+        <h2 className="dialog-title">{onlyNew ? 'Import' : 'History'}</h2>
         {installed.length > 1 && (
           <Segmented
             id="history-provider"
@@ -194,6 +218,9 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
             onKeyDown={onKey}
           />
         </div>
+        <button type="button" className="chip history-new" aria-pressed={onlyNew} data-on={onlyNew || undefined} onClick={() => setOnlyNew((v) => !v)}>
+          Not in Sable
+        </button>
         <Menu>
           <MenuTrigger className="chip history-project" aria-label="Project">
             <Icon name={cwd ? 'folder' : 'stack'} size={14} />
@@ -229,12 +256,20 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
           <Skeleton slow={slow} provider={provider} />
         ) : rows.length === 0 ? (
           <div className="history-note">
-            {query.trim() ? `No conversation matches “${query.trim()}”.` : cwd ? `No ${PROVIDER_NAME[provider]} conversations in ${projectName} yet.` : `No ${PROVIDER_NAME[provider]} conversations yet.`}
+            {query.trim()
+              ? `No conversation matches “${query.trim()}”.`
+              : onlyNew && entries.length
+                ? `Every ${PROVIDER_NAME[provider]} conversation here is already in Sable.`
+                : cwd
+                  ? `No ${PROVIDER_NAME[provider]} conversations in ${projectName} yet.`
+                  : `No ${PROVIDER_NAME[provider]} conversations yet.`}
           </div>
         ) : (
           rows.map((r, i) => {
-            const bucket = grouped ? dayBucket(r.entry.updatedAt) : null;
-            const head = grouped && (i === 0 || dayBucket(rows[i - 1].entry.updatedAt) !== bucket);
+            // Browsing groups by day; Import groups by project.
+            const groupOf = (e: HistoryEntry) => (onlyNew ? (e.cwd ? (projects.find((p) => pathKey(p.path) === pathKey(e.cwd))?.name ?? baseName(e.cwd)) : 'No folder') : dayBucket(e.updatedAt));
+            const bucket = grouped ? groupOf(r.entry) : null;
+            const head = grouped && (i === 0 || groupOf(rows[i - 1].entry) !== bucket);
             const openId = openIds.get(`${r.entry.provider}:${r.entry.providerSessionId}`);
             return (
               <HistoryRowView
@@ -244,7 +279,7 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
                 head={head ? bucket : null}
                 active={i === safe}
                 isOpen={!!openId}
-                showProject={!cwd}
+                showProject={!cwd && !(onlyNew && grouped)}
                 busy={resuming === r.entry.providerSessionId}
                 onHover={setCursor}
                 onResume={resume}
@@ -265,7 +300,7 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
           to resume
         </span>
         <span className="grow" />
-        {entries && <span className="history-count num">{rows.length === entries.length ? plural(entries.length, "conversation") : `${rows.length} of ${entries.length}`}</span>}
+        {entries && <span className="history-count num">{rows.length === entries.length || (onlyNew && !query.trim()) ? plural(rows.length, 'conversation') : `${rows.length} of ${entries.length}`}</span>}
       </div>
     </div>
   );

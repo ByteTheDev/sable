@@ -4,7 +4,8 @@ import type { IconName } from '@/icons';
 import { baseName, tildePath } from '@/lib/format';
 import { skillLabeller } from '@/lib/skills';
 import { SECTIONS as SETTINGS_SECTIONS } from '@/features/settings/sections';
-import { goHome, interrupt, openSession, openSettings } from '@/state/actions';
+import { openImport } from '@/features/history/History';
+import { continueInAgent, goHome, interrupt, openSession, openSettings } from '@/state/actions';
 import { focusComposer } from '@/state/hooks';
 import { useStore, type RailTab } from '@/state/store';
 
@@ -81,6 +82,7 @@ export function buildItems(opts: {
   act('new', 'New session', 'compose', () => goHome(), { keys: 'mod+shift+o', keywords: 'start create chat' });
   act('open-folder', 'Open a folder', 'folder-plus', () => setUi({ projectPicker: true }), { keys: 'mod+o', keywords: 'project add browse' });
   act('history', 'History', 'history', () => setUi({ historyOpen: true }), { keywords: 'resume past conversations' });
+  act('import', 'Import conversations', 'download', () => openImport(), { keywords: 'continue claude code codex cli desktop app history resume' });
   act('settings', 'Settings', 'settings', () => openSettings(), { keys: 'mod+,', keywords: 'preferences' });
   for (const s of SETTINGS_SECTIONS) {
     if (s.id === 'shortcuts') continue;
@@ -98,6 +100,10 @@ export function buildItems(opts: {
       if (t.id === 'browser') act('panel:browser', 'Open browser', t.icon, () => setUi({ railOpen: true, railTab: 'browser' }), { sub: 'Panel', keywords: 'panel show web page preview localhost url' });
       else act(`panel:${t.id}`, t.label, t.icon, () => setUi({ railOpen: true, railTab: t.id }), { sub: 'Panel', keywords: 'panel show open' });
     }
+    // Continue in the other agent: Claude Code to Codex and back, starting from a summary.
+    const other: ProviderId | undefined = opts.active.provider === 'claude' ? 'codex' : opts.active.provider === 'codex' ? 'claude' : undefined;
+    if (other && opts.installed.includes(other))
+      act(`continue:${other}`, `Continue in ${PROVIDER_NAME[other]}`, 'arrow-right', () => void continueInAgent(id, other), { keywords: 'handover switch agent move conversation' });
     const s = opts.active.status;
     if (s === 'running' || s === 'starting' || s === 'awaiting') {
       act('stop', 'Stop the current session', 'stop', () => void interrupt(id), { keywords: 'interrupt cancel halt', tone: 'var(--red)' });

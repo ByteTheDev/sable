@@ -74,6 +74,25 @@ export interface RateLimitSnapshot {
 export interface GetAccountRateLimitsResponse {
   rateLimits: RateLimitSnapshot;
   rateLimitsByLimitId: Record<string, RateLimitSnapshot | undefined> | null;
+  /** Granted resets (newer app-servers); null or absent when the backend reports none. */
+  rateLimitResetCredits?: RateLimitResetCreditsSummary | null;
+}
+export interface RateLimitResetCredit {
+  id: string;
+  resetType: 'codexRateLimits' | 'unknown';
+  status: 'available' | 'redeeming' | 'redeemed' | 'unknown';
+  grantedAt: number;
+  expiresAt: number | null;
+  title: string | null;
+  description: string | null;
+}
+export interface RateLimitResetCreditsSummary {
+  /** A bigint in the Rust schema; a plain JSON number on the wire. */
+  availableCount: number | string;
+  credits: RateLimitResetCredit[] | null;
+}
+export interface ConsumeAccountRateLimitResetCreditResponse {
+  outcome: 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed';
 }
 
 // ── models / skills / mcp ──

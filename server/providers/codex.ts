@@ -20,6 +20,7 @@ import type {
   ProviderInfo,
   Question,
   RateLimit,
+  ResetOutcome,
   TextItem,
   ThinkingItem,
   TimelineItem,
@@ -32,7 +33,7 @@ import type { Provider, ProviderContext, ProviderSession } from './types';
 import { codexPlan } from './plans';
 import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
 import { WIDGET_DESCRIPTION, WIDGET_FENCE_HINT, WIDGET_INPUT_SCHEMA, WIDGET_TOOL, dynamicToolAnswer, widgetsEnabled } from './widget-tool';
-import { BROWSER_DESCRIPTIONS, BROWSER_HINT, BROWSER_INPUT_SCHEMAS, BROWSER_OPS, BROWSER_TOOLS, browserDynamicAnswer, browserOp, browserTabEnabled } from './browser-tool';
+import { BROWSER_CORE, BROWSER_DESCRIPTIONS, BROWSER_HINT, BROWSER_INPUT_SCHEMAS, BROWSER_OPS, BROWSER_TOOLS, browserDynamicAnswer, browserOp, browserTabEnabled } from './browser-tool';
 import { CodexRpc, RpcError, resolveCodexCommand, type ExitInfo } from './codex-rpc';
 import { serviceTierFor } from './codex-map';
 import {
@@ -46,6 +47,7 @@ import {
   mapHistory,
   mapLimits,
   limitsMeta,
+  resetsMeta,
   mapMcp,
   mapModel,
   mapPlan,
@@ -62,6 +64,14 @@ import {
 
 /** Codex warnings already shown in this app run (config warnings arrive again for every thread). */
 const shownWarnings = new Set<string>();
+/** Codex's warnings about its own setup in this app run, for Settings › Agents (never the timeline). */
+const setupWarnings: { text: string; detail?: string }[] = [];
+const setupSeen = new Set<string>();
+
+/** A warning about Codex's configuration or setup rather than this thread's work. */
+export function isSetupWarning(w: { threadId?: string | null; message?: string | null }): boolean {
+  return !w.threadId || /config(uration)?\b|config\.toml|setting|deprecat|feature flag/i.test(w.message ?? '');
+}
 import type {
   AccountLoginCompletedNotification,
   ApplyPatchApprovalParams,
@@ -73,6 +83,7 @@ import type {
   FileChangePatchUpdatedNotification,
   FileChangeRequestApprovalParams,
   GetAccountRateLimitsResponse,
+  ConsumeAccountRateLimitResetCreditResponse,
   GetAccountResponse,
   ItemDeltaNotification,
   ItemNotification,
@@ -261,6 +272,13 @@ export class CodexProvider implements Provider {
       case 'remoteControl/status/changed':
         this.remoteStatus = p?.status;
         return this.broadcastRemote();
+      case 'configWarning':
+        return this.noteWarning(p?.summary, p?.details);
+      case 'warning':
+        // A warning for no thread in particular (the app-server's own start-up); a thread's goes to its session.
+        if (!p?.threadId) return this.noteWarning(p?.message);
+        if (typeof p.threadId === 'string') this.sessions.get(p.threadId)?.onNotification(method, p);
+        return;
       case 'account/updated':
         void this.info()
           .then((info) => {
@@ -350,10 +368,23 @@ export class CodexProvider implements Provider {
         this.limitsPrimed = true;
         void this.limits().catch(() => {});
       }
-      return { ...base, auth };
+      return { ...base, auth, ...(setupWarnings.length ? { warnings: setupWarnings.map((w) => ({ ...w })) } : {}) };
     } catch (err) {
       return { ...base, auth: { loggedIn: false }, problem: errMsg(err) };
     }
+  }
+
+  /**
+   * Records a warning about Codex's own setup (once per app run) and tells the UI, which shows it
+   * as one quiet line in Settings › Agents. Never a timeline item.
+   */
+  noteWarning(message: string | null | undefined, detail?: string | null) {
+    const n = warningNotice(detail ? `${message ?? ''}\n${detail}` : message, setupSeen);
+    if (!n) return;
+    setupWarnings.push(n);
+    void this.info()
+      .then((info) => this.ctx.emit({ type: 'provider.updated', provider: info }))
+      .catch(() => {});
   }
 
   async login(): Promise<void> {
@@ -503,12 +534,14 @@ export class CodexProvider implements Provider {
   }
 
   /** Client-defined tools for a new thread: show_widget while generative UI is on. */
-  dynamicTools(meta?: Pick<SessionMeta, 'options'>): { type: 'function'; name: string; description: string; inputSchema: unknown }[] | undefined {
-    const tools: { type: 'function'; name: string; description: string; inputSchema: unknown }[] = [];
+  dynamicTools(meta?: Pick<SessionMeta, 'options'>): { type: 'function'; name: string; description: string; inputSchema: unknown; deferLoading?: boolean }[] | undefined {
+    const tools: { type: 'function'; name: string; description: string; inputSchema: unknown; deferLoading?: boolean }[] = [];
     if (widgetsEnabled(this.ctx.settings?.())) tools.push({ type: 'function', name: WIDGET_TOOL, description: WIDGET_DESCRIPTION, inputSchema: WIDGET_INPUT_SCHEMA });
     // The Browser tab tools, while the session's capability is on (a thread keeps what it was started with).
+    // Those that work an open page wait behind Codex's tool search until the agent looks for them.
     if (meta && browserTabEnabled(meta)) {
-      for (const op of BROWSER_OPS) tools.push({ type: 'function', name: BROWSER_TOOLS[op], description: BROWSER_DESCRIPTIONS[op], inputSchema: BROWSER_INPUT_SCHEMAS[op] });
+      for (const op of BROWSER_OPS)
+        tools.push({ type: 'function', name: BROWSER_TOOLS[op], description: BROWSER_DESCRIPTIONS[op], inputSchema: BROWSER_INPUT_SCHEMAS[op], ...(BROWSER_CORE.has(op) ? {} : { deferLoading: true }) });
     }
     return tools.length ? tools : undefined;
   }
@@ -627,13 +660,26 @@ export class CodexProvider implements Provider {
       for (const s of byId.length ? byId : r.rateLimits ? [r.rateLimits] : []) this.snapshots.set(s.limitId ?? 'codex', s);
       const snaps = [...this.snapshots.values()];
       const limits = mapLimits(snaps);
-      this.ctx.emit({ type: 'limits.updated', provider: 'codex', limits, meta: limitsMeta(snaps) });
+      const resets = resetsMeta(r.rateLimitResetCredits, limits);
+      this.ctx.emit({ type: 'limits.updated', provider: 'codex', limits, meta: { ...limitsMeta(snaps), ...(resets ? { resets } : {}) } });
       return limits;
     })().finally(() => {
       if (this.limitsRun === run) this.limitsRun = undefined;
     });
     this.limitsRun = run;
     return run;
+  }
+
+  /**
+   * Spends one granted reset (the backend picks the next available credit), then reads the
+   * limits again. Only ever called from the user's confirmed click (`provider.useReset`).
+   */
+  async useReset(key: string): Promise<ResetOutcome> {
+    const rpc = await this.client();
+    const r = await rpc.request<ConsumeAccountRateLimitResetCreditResponse>('account/rateLimitResetCredit/consume', { idempotencyKey: key }, 30_000);
+    await this.limitsRun?.catch(() => {}); // a read started before the reset would show the old state
+    await this.limits().catch(() => {});
+    return r.outcome;
   }
 
   private limitsTimer?: NodeJS.Timeout;
@@ -1216,8 +1262,12 @@ class CodexSession implements ProviderSession {
         return;
       }
       case 'warning': {
-        // Once per app run, paths cut to the file name (config warnings repeat for every thread).
-        const n = warningNotice((p as WarningNotification).message, shownWarnings);
+        // Codex's warnings about its own setup (unknown config.toml keys, sent again for every
+        // thread) are not part of the conversation: once per app run, to the agent's status in
+        // Settings › Agents. Only a warning about this thread's work stays in the timeline.
+        const w = p as WarningNotification;
+        if (isSetupWarning(w)) return void this.provider.noteWarning(w.message);
+        const n = warningNotice(w.message, shownWarnings);
         if (n) rt.notice('info', n.text, n.detail);
         return;
       }

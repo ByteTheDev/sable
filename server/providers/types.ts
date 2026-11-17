@@ -11,6 +11,7 @@ import type {
   BridgeEvent,
   SessionOptions,
   AppSettings,
+  ResetOutcome,
 } from '../../shared/protocol';
 import type { SessionRuntime } from '../core/runtime';
 
@@ -77,6 +78,11 @@ export interface Provider {
    * known ones otherwise. `force`: the user asked (the agent may start a short process to read them).
    */
   limits(force?: boolean): Promise<RateLimit[]>;
+  /**
+   * Spends one of the account's reset credits (only on the user's confirmed click), then reads
+   * the limits again. Present only for agents that report resets. `key` makes a retry idempotent.
+   */
+  useReset?(key: string): Promise<ResetOutcome>;
   history(cwd?: string, limit?: number): Promise<HistoryEntry[]>;
   /**
    * Binds a runtime to the provider. When `rt.meta.providerSessionId` is set the

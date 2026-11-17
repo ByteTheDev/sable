@@ -260,3 +260,16 @@
 .history-count {
   color: var(--text-4);
 }
+
+/* Import: only conversations not yet in Sable. On, the chip takes one fill step and full ink. */
+.history-new {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: var(--r-sm);
+}
+
+.history-new[data-on] {
+  background-color: var(--fill-3);
+  color: var(--text);
+}

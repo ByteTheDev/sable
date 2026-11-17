@@ -722,12 +722,12 @@
 /* ── the popover ── */
 
 .th-pop {
-  width: 236px;
+  width: 244px;
   padding: 4px;
 }
 
 .th-body {
-  padding: 2px 4px 0;
+  padding: 4px 4px 0;
 }
 
 .th-head {
@@ -743,35 +743,45 @@
   color: var(--text-2);
 }
 
+.th-body > .th-head {
+  height: 34px;
+  align-items: baseline;
+  padding-top: 6px;
+}
+
+.th-body .th-title {
+  color: var(--text-3);
+}
+
+/* The level's name: the popover's headline. */
 .th-name {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-weight: var(--w-medium);
+  gap: 6px;
+  font-size: var(--t-lead);
+  font-weight: var(--w-semi);
+  letter-spacing: -0.01em;
   color: var(--text);
-  animation: th-name-in 120ms var(--ease-out);
+  animation: th-name-in 140ms var(--ease-out);
 }
 
+/* A hover preview: the stop's name, dimmed, until the pointer leaves or presses. */
 .th-name[data-preview] {
-  font-weight: var(--w-regular);
   color: var(--text-3);
 }
 
 @keyframes th-name-in {
   from {
     opacity: 0;
-    translate: 0 2px;
+    translate: 0 3px;
   }
 }
 
-/* The track: a 32px hit row, a hairline rail with a detent tick at every stop. */
+/* The steps: one column per level (each a full-height target), a bar rising with it, lit up to the level. */
 .th-track {
   position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 32px;
-  margin: 0 0 4px;
+  margin: 2px 0 6px;
+  padding: 0 4px;
   border-radius: var(--r-md);
   cursor: pointer;
   touch-action: none;
@@ -782,115 +792,113 @@
   box-shadow: 0 0 0 1.5px var(--focus);
 }
 
-.th-rail {
-  position: relative;
-  height: 2px;
-  border-radius: 1px;
-  background-color: rgb(255 255 255 / 0.1);
+.th-steps {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  height: 44px;
 }
 
-.th-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 2px;
-  border-radius: 1px;
+.th-col {
+  flex: 1 1 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 7px;
+  border-radius: var(--r-sm);
+  transition: background-color 100ms var(--ease);
+}
+
+/* Each column is the stop's target: it lights one step under the pointer. */
+.th-col[data-hover] {
+  background-color: var(--fill-1);
+}
+
+.th-col > i {
+  display: block;
+  width: 6px;
+  border-radius: 3px;
+  background-color: rgb(255 255 255 / 0.07);
+  transform-origin: 50% 100%;
+  transition:
+    background-color 120ms var(--ease),
+    scale 120ms var(--ease-out);
+}
+
+.th-col[data-hover]:not([data-on]) > i {
+  background-color: rgb(255 255 255 / 0.15);
+}
+
+.th-col[data-on] > i {
   background-color: var(--text-2);
-  transform-origin: 0 50%;
-  transition-property: transform;
 }
 
-.th-track:is(:hover, :focus-visible, [data-pressed]) .th-fill {
+.th-col[data-cur] > i {
   background-color: var(--text);
 }
 
-/* The Ultra stretch (from the level before it to Ultra): dithered, dim until it is reached. */
-.th-ultra-seg {
-  position: absolute;
-  top: -1px;
-  height: 4px;
-  background: var(--dither-50) 0 0 / 2px 2px;
-  image-rendering: pixelated;
-  opacity: 0.18;
-  transition: opacity 160ms var(--ease);
+/* Pressed: the bar under the pointer gives a little. */
+.th-track[data-pressed] .th-col[data-cur] > i {
+  scale: 1 0.9;
 }
 
-.th-ultra-seg[data-on] {
-  opacity: 0.8;
+/* Landing on a stop: the bar sets with one short detent. */
+.th-col > i[data-settle] {
+  animation: th-settle 220ms var(--ease-out);
 }
 
-.th-ultra-seg[data-burst] {
-  animation: th-seg-charge 700ms var(--ease-out) both;
-}
-
-@keyframes th-seg-charge {
+@keyframes th-settle {
   0% {
-    opacity: 0.18;
-    clip-path: inset(0 100% 0 0);
+    scale: 1 0.9;
   }
-  40% {
-    opacity: 1;
+  55% {
+    scale: 1 1.05;
   }
   100% {
-    opacity: 0.8;
-    clip-path: inset(0 0 0 0);
+    scale: 1 1;
   }
 }
 
-.th-stop {
-  position: absolute;
-  top: 50%;
-  width: 2px;
-  height: 8px;
-  margin: -4px 0 0 -1px;
-  border-radius: 1px;
-  background-color: rgb(255 255 255 / 0.2);
-  transition: background-color var(--d-1) var(--ease);
-}
-
-.th-stop[data-on] {
-  background-color: var(--text-2);
-}
-
-.th-stop[data-hover]:not([data-on]) {
-  background-color: rgb(255 255 255 / 0.42);
-}
-
-.th-thumb {
-  position: absolute;
-  left: -6px;
-  top: 50%;
-  width: 12px;
-  height: 12px;
-  margin-top: -6px;
-  border-radius: 50%;
-  background-color: var(--text);
-  transition-property: transform, scale;
-  transition-duration: 0ms;
-}
-
-/* Inner dot sized by `scale`, which is separate from the transform the spring moves. */
-.th-thumb::after {
-  content: '';
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-  background-color: rgb(242 241 238 / 0.12);
-  scale: 0.6;
-  opacity: 0;
+/* Ultra: the top level, drawn in dither (faint until reached). */
+.th-col[data-ultra] > i {
+  background: var(--dither-50) 0 0 / 2px 2px, rgb(255 255 255 / 0.05);
+  image-rendering: pixelated;
+  opacity: 0.6;
   transition:
-    scale 120ms var(--ease-out),
-    opacity 120ms var(--ease);
+    opacity 140ms var(--ease),
+    scale 120ms var(--ease-out);
 }
 
-.th-track:is(:hover, :focus-visible) .th-thumb::after {
-  scale: 1;
+.th-col[data-ultra][data-hover] > i {
+  opacity: 0.85;
+}
+
+.th-col[data-ultra][data-on] > i {
+  background: var(--dither-50) 0 0 / 2px 2px, rgb(242 241 238 / 0.5);
   opacity: 1;
 }
 
-.th-track[data-pressed] .th-thumb {
-  scale: 0.86;
+.th-col[data-ultra][data-burst] > i {
+  animation: th-ultra-in 520ms var(--ease-out) both;
 }
+
+@keyframes th-ultra-in {
+  0% {
+    scale: 1 0.15;
+  }
+  100% {
+    scale: 1 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .th-col > i,
+  .th-name {
+    transition: none;
+    animation: none;
+  }
+}
+
 
 .th-sep {
   margin: 2px 4px;
@@ -2071,6 +2079,37 @@ button.hc:active {
 .th-speed-seg .seg-item {
   flex: 1;
   justify-content: center;
+}
+
+/* A speed billed outside the plan names its cost right in its segment. */
+.th-paid {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.th-cost {
+  font-size: var(--t-micro);
+  color: var(--text-3);
+}
+
+/* The once-per-session question before a paid speed is turned on. */
+.th-ask {
+  padding: 2px 4px 2px;
+  animation: th-name-in 140ms var(--ease-out);
+}
+
+.th-ask-q {
+  margin: 0 0 10px;
+  padding: 0 4px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+.th-ask-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .th-bolt {

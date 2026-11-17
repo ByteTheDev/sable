@@ -100,7 +100,8 @@ export function describeTool(name: string, input: Obj = {}): ToolView {
       return {
         kind: 'agent',
         title: input.description || 'Run a subagent',
-        detail: { subagent: input.subagent_type, description: input.description, prompt: input.prompt },
+        // A background agent (run_in_background, or a remote one, which always runs in the background) keeps working after the call returns.
+        detail: { subagent: input.subagent_type, description: input.description, prompt: input.prompt, ...(input.run_in_background || input.isolation === 'remote' ? { background: true } : {}) },
       };
     case 'TodoWrite':
       return { kind: 'todo', title: 'Update the task list', detail: { todos: normalizeTodos(input.todos) } };
