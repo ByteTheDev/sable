@@ -823,6 +823,8 @@ class ClaudeSession implements ProviderSession {
   /** A new agent process has not said hello yet (system/init): the live line says "Starting", not "Thinking". */
   private booting = false;
   private idleTimer?: NodeJS.Timeout;
+  /** Background tasks (agents, shells, monitors) running in this process, by task id. */
+  private liveTasks = new Set<string>();
   private costBase = 0;
   private lastTotalCost = 0;
   private retryNotice?: string;
@@ -1038,6 +1040,7 @@ class ClaudeSession implements ProviderSession {
     this.q = undefined;
     this.input = undefined;
     this.streams.clear();
+    this.liveTasks.clear();
     this.clearLiveState();
     if (this.rt.turnActive && !this.closed) {
       this.rt.settle(failure ? 'error' : 'cancelled');
@@ -1052,7 +1055,11 @@ class ClaudeSession implements ProviderSession {
     clearTimeout(this.idleTimer);
     this.idleTimer = setTimeout(() => {
       // Remote Control lives in this process: closing it would end the remote session.
-      if (!this.rt.turnActive && !this.rt.meta.options?.remoteControl) this.shutdown();
+      if (this.rt.turnActive || this.rt.meta.options?.remoteControl) return;
+      // Background agents and shells live in this process too, and wake the agent when they end:
+      // it stays while any runs, and the idle clock starts again once the last one is done.
+      if (this.liveTasks.size) return this.scheduleIdleClose();
+      this.shutdown();
     }, IDLE_CLOSE_MS);
   }
 
@@ -1679,6 +1686,27 @@ class ClaudeSession implements ProviderSession {
       case 'task_progress': {
         const item = m.tool_use_id ? rt.get<ToolItem>(m.tool_use_id) : undefined;
         if (item && m.summary) rt.patch<ToolItem>(item.id, { output: String(m.summary) });
+        // A background sub-agent has its (placeholder) result already: its figures keep counting on it.
+        if (item?.kind === 'agent' && item.result?.agent?.background === 'running') {
+          rt.patch<ToolItem>(item.id, { result: { ...item.result, agent: { ...item.result.agent, ...taskFigures(m.usage) } } });
+        }
+        break;
+      }
+      case 'background_tasks_changed':
+        // Every live background task (replace, not merge): the process is kept open while any runs.
+        this.liveTasks = new Set(((m.tasks as Obj[] | undefined) ?? []).map((t) => String(t.task_id)));
+        break;
+      case 'task_started':
+        if (m.task_id) this.liveTasks.add(String(m.task_id));
+        break;
+      case 'task_notification': {
+        if (m.task_id) this.liveTasks.delete(String(m.task_id));
+        // How a sub-agent ended, with its own figures. For one started in the background this is the only word of it.
+        const item = m.tool_use_id ? rt.get<ToolItem>(m.tool_use_id) : undefined;
+        if (item?.kind !== 'agent' || !item.result) break;
+        const agent = { ...item.result.agent, ...taskFigures(m.usage) };
+        if (agent.background) agent.background = m.status === 'completed' ? 'done' : m.status === 'failed' ? 'failed' : 'stopped';
+        rt.patch<ToolItem>(item.id, { result: { ...item.result, agent } });
         break;
       }
       case 'commands_changed':
