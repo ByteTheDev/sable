@@ -11,7 +11,7 @@ import { Sidebar } from '@/features/sidebar/Sidebar';
 import { Icon } from '@/icons';
 import { windowShell } from '@/lib/desktop';
 import { baseName, formatTokens } from '@/lib/format';
-import { goHome, openSettings } from '@/state/actions';
+import { goHome, openSettings, renameSession } from '@/state/actions';
 import { useActiveProvider, useHotkey } from '@/state/hooks';
 import { SessionAccount } from '@/features/accounts';
 import { useShallow } from 'zustand/react/shallow';
@@ -470,6 +470,65 @@ function ContextMeter({ sessionId }: { sessionId: string }) {
   );
 }
 
+/**
+ * The session's title. A double-click (or Enter on it from the keyboard) renames it in place, the
+ * same rename the sidebar row offers; Enter or leaving the field saves, Escape keeps the old title.
+ */
+function TitleName({ id, title }: { id: string; title: string }) {
+  const [editing, setEditing] = useState(false);
+  if (editing) return <TitleField id={id} title={title} onDone={() => setEditing(false)} />;
+  return (
+    <button
+      type="button"
+      className="truncate topbar-name"
+      aria-label={`${title}. Rename`}
+      onDoubleClick={() => setEditing(true)}
+      // A click from the keyboard (Enter or Space) has no pointer detail.
+      onClick={(e) => e.detail === 0 && setEditing(true)}
+    >
+      {title}
+    </button>
+  );
+}
+
+function TitleField({ id, title, onDone }: { id: string; title: string; onDone: () => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [value, setValue] = useState(title);
+  const done = useRef(false);
+  useLayoutEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  const commit = (save: boolean) => {
+    if (done.current) return;
+    done.current = true;
+    const next = value.trim();
+    if (save && next && next !== title) void renameSession(id, next);
+    const hadFocus = ref.current === document.activeElement;
+    onDone();
+    // Back to the title, so the keys carry on from where they were.
+    if (hadFocus) requestAnimationFrame(() => document.querySelector<HTMLElement>('.topbar .topbar-name')?.focus());
+  };
+  return (
+    <input
+      ref={ref}
+      className="topbar-rename"
+      value={value}
+      aria-label="Session title"
+      spellCheck={false}
+      // Grows with the title, inside what the bar has room for.
+      style={{ width: `calc(${Math.max(8, value.length + 2)}ch + 14px)` }}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') commit(true);
+        else if (e.key === 'Escape') commit(false);
+      }}
+      onBlur={() => commit(true)}
+    />
+  );
+}
+
 /** Shows or hides the sidebar as it is drawn now: one stepped aside for the panel comes back by closing the panel. */
 function toggleSidebar(shown: boolean) {
   const { ui, setUi } = useStore.getState();
@@ -502,7 +561,7 @@ function Topbar() {
       {session ? (
         <div className="topbar-title">
           <ProviderMark provider={session.provider} size={15} />
-          <span className="truncate topbar-name">{session.title}</span>
+          <TitleName key={session.id} id={session.id} title={session.title} />
           <span className="topbar-crumb">
             <Icon name="folder" size={13} />
             <span className="truncate">{baseName(session.cwd)}</span>

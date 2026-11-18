@@ -144,8 +144,41 @@
    an ellipsis; only then does the title end with one. */
 .topbar-name {
   flex-shrink: 1;
+  /* Plain text at rest; a double-click renames it. The fill reaches past the text, not the layout. */
+  margin: 0 -6px;
+  padding: 3px 6px;
+  border-radius: var(--r-ctl-xs);
   font-weight: var(--w-medium);
   letter-spacing: -0.005em;
+  text-align: left;
+  color: var(--text);
+  cursor: default;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.topbar-name:hover {
+  background-color: var(--fill-1);
+}
+
+.topbar-rename {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 46%;
+  height: 26px;
+  margin: 0 -7px;
+  padding: 0 6px;
+  border: 1px solid var(--focus-field);
+  border-radius: var(--r-ctl-xs);
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  letter-spacing: -0.005em;
+  color: var(--text);
+  background-color: var(--well-strong);
+  user-select: text;
+}
+
+.topbar-rename:focus {
+  outline: none;
 }
 
 .topbar-crumb {

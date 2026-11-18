@@ -397,9 +397,11 @@
   min-width: 0;
 }
 
+/* The keys sit on the sentence's baseline (ui.css `p .kbds`), and punctuation after them sits
+   against them, as it would after a word. */
 .set-foot-note .kbds {
-  margin: 0 2px;
-  vertical-align: -4px;
+  margin: -2px 0 -2px 2px;
+  vertical-align: baseline;
 }
 
 .set-empty {
