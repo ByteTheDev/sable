@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { DEFAULT_ACCOUNT, type AccountInfo, type LimitPace, type LimitsReport, type ProviderId, type ProviderInfo, type RateLimit } from '@shared/protocol';
 import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
 import { useNow } from '@/lib/useNow';
@@ -6,8 +6,9 @@ import { openSettings, readLimitsNow, refreshLimits, setSettings } from '@/state
 import { accountName, useLimitsReport } from '@/state/hooks';
 import { accountKey, useStore } from '@/state/store';
 import { cx, IconButton, Switch, Tip } from '@/ui';
-import { clock, duration, exactTime, isApiKey, NUMBER_LOCALE, orderWindows, planText, STALE_MS, windowLevel } from './format';
+import { clock, duration, exactTime, isApiKey, NUMBER_LOCALE, orderWindows, STALE_MS, windowLevel, windowNote } from './format';
 import { LimitsOverview, LimitsTotals } from './Overview';
+import { planShort } from './plans';
 import { livePercent } from './room';
 import { LimitReset, resetTarget } from './LimitReset';
 import { useLimitsTicker } from './ticker';
@@ -19,70 +20,17 @@ const OVERVIEW_FROM = 3;
 /** Figures older than this are read for real while the Usage view stays open. */
 const AGED_MS = 10 * 60_000;
 
-/** One sentence about where the pace leads, or nothing. */
-export function paceText(l: RateLimit, p: LimitPace | undefined, now: number, short = false): { text: string; warn: boolean } | undefined {
-  if (!p || l.percent >= 100 || (l.resetsAt && l.resetsAt <= now)) return undefined;
-  if (p.fullAt) return { text: short ? `runs out at ${clock(p.fullAt, now)}` : `On pace to run out at ${clock(p.fullAt, now)}`, warn: true };
-  if (p.perHour <= 0.01) return l.resetsAt ? { text: short ? 'steady' : 'Steady until the reset', warn: false } : undefined;
-  if (p.atReset !== undefined) return { text: short ? `${p.atReset}% by then` : `On pace for ${p.atReset}% at the reset`, warn: false };
-  return undefined;
-}
-
-/** One plan-limit window: name, figure, meter, reset and pace, for popovers and the side panel (`compact`); Settings › Usage uses WindowLine. */
-// `samples` (the window's history) is still accepted; the small curve it drew was too small to read.
-export const WindowRow = memo(function WindowRow({ limit, pace, now, compact }: { limit: RateLimit; samples?: [number, number][]; pace?: LimitPace; now: number; compact?: boolean }) {
-  const pct = Math.max(0, Math.min(100, Math.round(limit.percent)));
-  const past = !!limit.resetsAt && limit.resetsAt <= now;
-  const level = windowLevel(limit, now);
-  const p = paceText(limit, pace, now, compact);
-  // No reset yet: the window has not started (it starts, and its clock runs, with the next message).
-  const reset = limit.resetsAt ? (past ? `Reset at ${clock(limit.resetsAt, now)}` : `Resets in ${duration(limit.resetsAt - now)}`) : pct === 0 ? 'Starts with your next message' : undefined;
-  return (
-    <div className="ul-row" data-compact={compact || undefined} data-level={level} data-past={past || undefined}>
-      <div className="ul-top">
-        <span className="ul-label truncate">{limit.label}</span>
-        <span className="ul-pct num">
-          {pct}
-          <span className="ul-pct-sign">%</span>
-        </span>
-      </div>
-      <span className="meter ul-meter" data-level={level} role="progressbar" aria-label={limit.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
-        <span className="meter-fill" style={{ '--p': past ? 0 : Math.max(pct, pct > 0 ? 1.5 : 0) / 100 } as CSSProperties} />
-      </span>
-      {(reset || p) && (
-        <div className="ul-meta">
-          {reset && limit.resetsAt && (
-            <Tip label={exactTime(limit.resetsAt)} side="bottom">
-              <span className="ul-reset num" tabIndex={0}>
-                {reset}
-              </span>
-            </Tip>
-          )}
-          {reset && !limit.resetsAt && <span className="ul-reset">{reset}</span>}
-          {p && (
-            <span className="ul-pace" data-warn={p.warn || undefined} data-short={compact || undefined}>
-              {p.warn && <span className="ul-pace-mark" aria-hidden />}
-              {p.text}
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-});
-
 /**
- * One plan-limit window on the Usage page, one line in the columns of the overview: its name, a
- * thin meter with the percent used, and the time to its reset; where the pace leads on a quiet
- * line under the meter.
+ * One plan-limit window as a line: its name, a thin meter with the percent used, the time to its
+ * reset, and where the pace leads on a quiet line under the meter. On the Usage page it sits in the
+ * page's columns; in a compact list (`WindowList compact`: popovers, the side panel) the same line
+ * puts its name above the meter and keeps the figures in their two columns.
  */
 export const WindowLine = memo(function WindowLine({ limit, pace, now }: { limit: RateLimit; pace?: LimitPace; now: number }) {
   const past = !!limit.resetsAt && limit.resetsAt <= now;
   const pct = Math.round(livePercent(limit, now));
   const level = windowLevel(limit, now);
-  const p = paceText(limit, pace, now);
-  // No reset yet: the window has not started (it starts, and its clock runs, with the next message).
-  const note = p?.text ?? (past ? `Reset at ${clock(limit.resetsAt!, now)}` : !limit.resetsAt && pct === 0 ? 'Starts with your next message' : undefined);
+  const note = windowNote(limit, pace, now);
   return (
     <div className="ulw" data-level={level} data-past={past || undefined}>
       <span className="ulw-label truncate">{limit.label}</span>
@@ -92,36 +40,70 @@ export const WindowLine = memo(function WindowLine({ limit, pace, now }: { limit
         </span>
         <span className="ulw-pct num">{pct}%</span>
       </span>
-      {limit.resetsAt && !past ? (
-        <Tip label={exactTime(limit.resetsAt)} side="bottom">
-          <span className="ulw-reset num" tabIndex={0} aria-label={`Resets in ${duration(limit.resetsAt - now)}`}>
-            {duration(limit.resetsAt - now)}
-          </span>
-        </Tip>
-      ) : (
-        <span className="ulw-reset" />
-      )}
+      <ResetCell at={limit.resetsAt} now={now} />
       {note && (
-        <span className="ulw-note" data-warn={p?.warn || undefined}>
-          {p?.warn && <span className="ul-pace-mark" aria-hidden />}
-          {note}
+        <span className="ulw-note" data-warn={note.warn || undefined}>
+          {note.warn && <span className="ul-pace-mark" aria-hidden />}
+          {note.text}
         </span>
       )}
     </div>
   );
 });
 
-/** Rows while the first read is on its way. */
-export function WindowSkeleton({ rows = 2 }: { rows?: number }) {
+/**
+ * Every window of one account as lines, in the usual order, with a reset under the window it
+ * applies to and extra usage or credits last. `compact` for narrow places (popovers, the side
+ * panel); `head` goes first, in the same columns ("Resets in" over the times).
+ */
+export function WindowList({ provider, accountId, report, limits, now, compact, head, children }: { provider: ProviderId; accountId: string; report: LimitsReport | undefined; limits: RateLimit[]; now: number; compact?: boolean; head?: ReactNode; children?: ReactNode }) {
+  const ordered = useMemo(() => orderWindows(limits), [limits]);
+  const resetOn = report?.resets?.available ? resetTarget(limits, report.resets.windows) : undefined;
   return (
-    <div className="ul-skel" aria-hidden>
+    <div className="ulw-list" data-compact={compact || undefined}>
+      {head}
+      {ordered.map((l) => (
+        <Fragment key={l.id}>
+          <WindowLine limit={l} pace={report?.pace[l.id]} now={now} />
+          {l.id === resetOn?.id && (
+            <div className="ulw-sub">
+              <LimitReset provider={provider} accountId={accountId} limit={l} compact={compact} />
+            </div>
+          )}
+        </Fragment>
+      ))}
+      <Extra report={report} now={now} />
+      {children}
+    </div>
+  );
+}
+
+/** Lines while the first read is on its way, in the columns of the window lines. */
+export function LineSkeleton({ rows = 2, compact }: { rows?: number; compact?: boolean }) {
+  return (
+    <div className="ulw-list" data-compact={compact || undefined} aria-hidden>
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="ul-skel-row">
-          <span className="skel" style={{ width: i ? '34%' : '26%', height: 10 }} />
-          <span className="skel" style={{ width: '100%', height: 4 }} />
+        <div key={i} className="ulw">
+          <span className="skel ulw-skel-label" style={{ width: compact ? (i ? '46%' : '34%') : i ? '72%' : '54%' }} />
+          <span className="ulw-bar">
+            <span className="skel ulw-skel-meter" />
+          </span>
         </div>
       ))}
     </div>
+  );
+}
+
+/** "as of 14:02" when an account's figures are older than a quarter of an hour; nothing otherwise. */
+export function AsOf({ report, now, pending }: { report: LimitsReport | undefined; now: number; pending?: boolean }) {
+  const stale = report?.readAt && now - report.readAt > STALE_MS ? report.readAt : undefined;
+  if (!stale) return null;
+  return (
+    <Tip label={`Read ${exactTime(stale)}`}>
+      <span className={cx('ul-asof num', pending && 'is-pending')} tabIndex={0}>
+        as of {clock(stale, now)}
+      </span>
+    </Tip>
   );
 }
 
@@ -204,20 +186,63 @@ export function useLimitsRefresh(refs: AccountRef[], ready: boolean) {
 /** What an account without limits waits for, in one line. */
 export const NO_DATA = 'Limits appear after the next turn';
 
-/** Lines while the first read is on its way, in the columns of the window lines. */
-function LineSkeleton({ rows = 2 }: { rows?: number }) {
-  return (
-    <div className="ulw-list" aria-hidden>
-      {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="ulw">
-          <span className="skel ulw-skel-label" style={{ width: i ? '72%' : '54%' }} />
-          <span className="ulw-bar">
-            <span className="skel ulw-skel-meter" />
-          </span>
-        </div>
-      ))}
-    </div>
-  );
+const NONE: RateLimit[] = [];
+
+/** One account's windows as known: the bridge's record first (it has the history and the pace), the last event otherwise. */
+export function useAccountWindows(provider: ProviderId, accountId: string): { report: LimitsReport | undefined; limits: RateLimit[] } {
+  const report = useLimitsReport(provider, accountId);
+  const live = useStore((s) => s.limits[accountKey(provider, accountId)]);
+  return { report, limits: report?.limits.length ? report.limits : (live ?? NONE) };
+}
+
+/**
+ * What one account's limits show, wherever they are shown: its windows, one line saying why there
+ * are none (not installed, signed out, no plan limits, nothing reported yet), or lines while the
+ * first read is on its way.
+ */
+export function LimitsBody({
+  provider,
+  account,
+  installed,
+  report,
+  limits,
+  now,
+  pending,
+  compact,
+  children,
+}: {
+  provider: ProviderId;
+  account: AccountInfo;
+  installed: boolean;
+  report: LimitsReport | undefined;
+  limits: RateLimit[];
+  now: number;
+  pending: boolean;
+  compact?: boolean;
+  children?: ReactNode;
+}) {
+  if (!installed) return <p className="ulw-msg">Not installed</p>;
+  if (!account.auth.loggedIn)
+    return (
+      <p className="ulw-msg">
+        <span>Not signed in</span>
+        {!compact && (
+          <button type="button" className="btn btn-sm ul-note-btn" onClick={() => openSettings('accounts')}>
+            Accounts
+          </button>
+        )}
+      </p>
+    );
+  if (report?.planLimits === false || (!limits.length && isApiKey(account.auth))) return <p className="ulw-msg">No plan limits on this account</p>;
+  if (limits.length)
+    return (
+      <WindowList provider={provider} accountId={account.id} report={report} limits={limits} now={now} compact={compact}>
+        {children}
+      </WindowList>
+    );
+  if (pending) return <LineSkeleton compact={compact} />;
+  // Nothing to read on demand: the agent reports its limits while it works.
+  return <p className="ulw-msg">{NO_DATA}</p>;
 }
 
 /**
@@ -227,70 +252,33 @@ function LineSkeleton({ rows = 2 }: { rows?: number }) {
  */
 export function AccountLimits({ refs, pending, inline }: { refs: AccountRef; pending: boolean; inline?: boolean }) {
   const { provider, info, account } = refs;
-  const report = useLimitsReport(provider, account.id);
-  const live = useStore((s) => s.limits[accountKey(provider, account.id)]);
+  const { report, limits } = useAccountWindows(provider, account.id);
   const now = useNow();
-  // The bridge's record first (it has the history); the last event otherwise.
-  const limits = report?.limits.length ? report.limits : live;
-  const ordered = useMemo(() => orderWindows(limits ?? []), [limits]);
-  const plan = planText(account.auth);
+  const plan = planShort(account.auth);
   const multi = (info?.accounts?.length ?? 0) > 1;
   // One account: the agent's name says it all. Several: each by its email (or label).
   const name = multi && info?.installed ? accountName(account) : PROVIDER_NAME[provider];
-  const stale = report?.readAt && now - report.readAt > STALE_MS ? report.readAt : undefined;
-  const resetOn = report?.resets?.available ? resetTarget(limits, report.resets.windows) : undefined;
-  const asOf = stale ? (
-    <Tip label={`Read ${exactTime(stale)}`}>
-      <span className={cx('ul-asof num', pending && 'is-pending')} tabIndex={0}>
-        as of {clock(stale, now)}
-      </span>
-    </Tip>
-  ) : null;
+  const shows = !!info?.installed && account.auth.loggedIn && report?.planLimits !== false && limits.length > 0;
 
-  let body;
-  if (!info?.installed) body = <p className="ulw-msg">Not installed</p>;
-  else if (!account.auth.loggedIn)
-    body = (
-      <p className="ulw-msg">
-        <span>Not signed in</span>
-        <button type="button" className="btn btn-sm ul-note-btn" onClick={() => openSettings('accounts')}>
-          Accounts
-        </button>
-      </p>
-    );
-  else if (report?.planLimits === false || (!limits?.length && isApiKey(account.auth))) body = <p className="ulw-msg">No plan limits on this account</p>;
-  else if (ordered.length)
-    body = (
-      <div className="ulw-list">
-        {ordered.map((l) => (
-          <Fragment key={l.id}>
-            <WindowLine limit={l} pace={report?.pace[l.id]} now={now} />
-            {l.id === resetOn?.id && (
-              <div className="ulw-sub">
-                <LimitReset provider={provider} accountId={account.id} limit={l} />
-              </div>
-            )}
-          </Fragment>
-        ))}
-        <Extra report={report} now={now} />
-        {!inline && offersCredits(report) && (
-          <div className="ulw-sub ulw-sub-wide">
-            <CreditsSetting provider={provider} accountId={account.id} />
-          </div>
-        )}
-      </div>
-    );
-  else if (pending) body = <LineSkeleton />;
-  // Nothing to read on demand: the agent reports its limits while it works.
-  else body = <p className="ulw-msg">{NO_DATA}</p>;
+  const body = (
+    <LimitsBody provider={provider} account={account} installed={!!info?.installed} report={report} limits={limits} now={now} pending={pending}>
+      {!inline && offersCredits(report) && (
+        <div className="ulw-sub ulw-sub-wide">
+          <CreditsSetting provider={provider} accountId={account.id} />
+        </div>
+      )}
+    </LimitsBody>
+  );
 
-  if (inline)
+  if (inline) {
+    const asOf = <AsOf report={report} now={now} pending={pending} />;
     return (
       <div className="ul-account" data-inline>
         {body}
-        {asOf && <div className="ulw-asof">{asOf}</div>}
+        {!!report?.readAt && now - report.readAt > STALE_MS && <div className="ulw-asof">{asOf}</div>}
       </div>
     );
+  }
   return (
     <section className="ul-account card" data-spot aria-label={`${PROVIDER_NAME[provider]}: ${name}`}>
       <header className="ul-account-head">
@@ -298,9 +286,11 @@ export function AccountLimits({ refs, pending, inline }: { refs: AccountRef; pen
         <span className="ul-account-who">
           <span className="ul-account-name truncate">{name}</span>
           {plan && <span className="ul-account-plan truncate">{plan}</span>}
-          {asOf && <span className="ul-account-asof">{asOf}</span>}
+          <span className="ul-account-asof">
+            <AsOf report={report} now={now} pending={pending} />
+          </span>
         </span>
-        {ordered.length > 0 && <span className="ul-account-col">Resets in</span>}
+        {shows && <span className="ul-account-col">Resets in</span>}
       </header>
       {body}
     </section>
@@ -346,6 +336,53 @@ export function CreditsSetting({ provider, accountId, name, className }: { provi
         )}
       </p>
     </div>
+  );
+}
+
+/**
+ * "Use credits at a limit" for many accounts at once: one card, a switch per account whose agent
+ * reports credits or extra usage, and the one line on who decides (with each agent's billing page).
+ */
+function CreditsList({ refs }: { refs: AccountRef[] }) {
+  const reports = useStore((s) => s.limitReports);
+  const chosen = useStore((s) => s.settings.creditsAtLimit);
+  const rows = refs.filter((r) => r.info?.installed && r.account.auth.loggedIn && offersCredits(reports[accountKey(r.provider, r.account.id)]));
+  if (!rows.length) return null;
+  const agents = [...new Set(rows.map((r) => r.provider))];
+  const links = agents.filter((p) => BILLING[p]);
+  return (
+    <section className="ul-credit-card card" data-spot aria-label="Use credits at a limit">
+      <div className="ul-credit-head">Use credits at a limit</div>
+      <div className="ul-credit-rows">
+        {rows.map((r) => {
+          const key = `${r.provider}:${r.account.id}`;
+          const multi = (r.info?.accounts?.length ?? 0) > 1;
+          const name = multi ? accountName(r.account) : PROVIDER_NAME[r.provider];
+          const plan = planShort(r.account.auth);
+          return (
+            <label key={key} className="ul-credit-row">
+              <ProviderMark provider={r.provider} size={14} className="ulo-mark" />
+              <span className="ulo-who">
+                <span className="ulo-name truncate">{name}</span>
+                {plan && <span className="ulo-plan truncate">{plan}</span>}
+              </span>
+              <Switch checked={!!chosen?.[key]} onChange={(v) => void setSettings({ creditsAtLimit: { ...useStore.getState().settings.creditsAtLimit, [key]: v } })} label={`Use credits at a limit: ${PROVIDER_NAME[r.provider]}, ${name}`} />
+            </label>
+          );
+        })}
+      </div>
+      <p className="ul-credits-note">
+        Whether credits are spent is set on each account with its agent.
+        {links.map((p) => (
+          <Fragment key={p}>
+            {' '}
+            <a href={BILLING[p]} target="_blank" rel="noreferrer">
+              {links.length > 1 || agents.length > 1 ? `${PROVIDER_NAME[p]} billing` : 'Billing'}
+            </a>
+          </Fragment>
+        ))}
+      </p>
+    </section>
   );
 }
 
@@ -447,11 +484,7 @@ export function LimitsSection() {
         // Many accounts: one line each, the windows in full on demand.
         <>
           <LimitsOverview refs={refs} pending={pending} />
-          <div className="ul-credit-list">
-            {refs.map((r) => (
-              <CreditsSetting key={`${r.provider}:${r.account.id}`} className="card ul-credit-card" provider={r.provider} accountId={r.account.id} name={accountName(r.account)} />
-            ))}
-          </div>
+          <CreditsList refs={refs} />
         </>
       ) : (
         <div className="ul-accounts">

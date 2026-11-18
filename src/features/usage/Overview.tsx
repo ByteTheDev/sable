@@ -9,7 +9,7 @@ import { accountKey, useStore } from '@/state/store';
 import { Segmented, Tip } from '@/ui';
 import { duration, exactTime, isApiKey, isScopedWindow } from './format';
 import { AccountLimits, type AccountRef } from './Limits';
-import { planShort, poolTotals, units, type PoolInput, type PoolPart, type PoolTotal } from './plans';
+import { planShort, poolTotals, poolWeeksText, units, type PoolInput, type PoolPart, type PoolTotal } from './plans';
 import { livePercent, NEAR_AT, overview, type RoomInput, type RoomRow, type SortBy } from './room';
 
 const SORT_KEY = 'sable.usage.sort';
@@ -239,7 +239,7 @@ export function LimitsTotals({ refs }: { refs: AccountRef[] }) {
 }
 
 function TotalRow({ total: t }: { total: PoolTotal }) {
-  const left = `${units(t.week.left)} of ${units(t.week.size)} ${t.unit} weeks left`;
+  const left = poolWeeksText(t);
   const mix = t.plans.map((p) => `${p.count} ${p.name}`).join(', ');
   const used = (p: PoolPart) => Math.min(100, Math.round(p.used));
   return (

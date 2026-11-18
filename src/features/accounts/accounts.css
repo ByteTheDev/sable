@@ -8,8 +8,10 @@
   color: var(--text-3);
 }
 
+/* The account's own limit mark, right after its name. */
 .acs-dot {
-  margin-right: 1px;
+  align-self: center;
+  margin-left: -1px;
 }
 
 .acs-row {
@@ -40,13 +42,12 @@
   color: var(--text-3);
 }
 
-/* One column for the limit mark and the check, so plans line up whichever a row has. */
+/* One column for the check, so the figures line up whichever row has it. */
 .acs-end {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
-  width: 30px;
+  width: 14px;
   flex-shrink: 0;
 }
 
@@ -63,15 +64,19 @@
   opacity: 1;
 }
 
-/* The pointed-at account's limits, beside the menu, bottoms aligned with it. Solid enough to read
-   without a blur of its own (it sits outside the menu's backdrop). */
+/* The pointed-at account's limits, beside the menu, bottoms aligned with it. Its glass sits on
+   the ground colour, so it reads as the menu does without a blur of its own and nothing behind it
+   shows through (it sits outside the menu's backdrop). */
 .acs-peek {
   position: absolute;
   left: calc(100% + 8px);
   bottom: 0;
-  width: 276px;
+  width: 284px;
   border-radius: 16px;
-  background: var(--grain) 0 0 / var(--grain-size), var(--glass-strong);
+  background:
+    var(--grain) 0 0 / var(--grain-size),
+    linear-gradient(var(--glass-strong), var(--glass-strong)),
+    var(--bg);
   box-shadow: var(--glass-edge), var(--shadow-pop);
   pointer-events: auto;
 }
@@ -499,12 +504,6 @@
   color: var(--text-2);
 }
 
-.acs-group-count {
-  flex-shrink: 0;
-  font-size: var(--t-small);
-  color: var(--text-3);
-}
-
 .acs-fold {
   color: var(--text-3);
   transition: rotate var(--d-2) var(--ease-out);
@@ -522,20 +521,51 @@
   flex-shrink: 0;
 }
 
+/* How full an account is, as the Usage page draws a window: a thin meter and the percent used. */
 .acs-used {
+  display: inline-grid;
+  grid-template-columns: 28px 36px;
+  align-items: center;
+  column-gap: 5px;
   flex-shrink: 0;
-  width: 36px;
+  width: 69px;
+}
+
+/* Too short for the dithered edge the wider meters carry: a plain fill. */
+.acs-meter {
+  height: 3px;
+}
+
+.acs-meter .meter-fill {
+  padding-right: 0;
+}
+
+.acs-meter .meter-fill::after {
+  display: none;
+}
+
+.acs-pct {
   font-size: var(--t-small);
   text-align: right;
   color: var(--text-3);
 }
 
-.acs-used[data-level='amber'] {
+.acs-pct[data-level='amber'],
+.acs-left[data-level='amber'] {
   color: var(--amber);
 }
 
-.acs-used[data-level='red'] {
+.acs-pct[data-level='red'],
+.acs-left[data-level='red'] {
   color: var(--red);
+}
+
+/* What is left across an agent's accounts: the group's head in the menu, the footer's figure. */
+.acs-left {
+  flex-shrink: 0;
+  font-size: var(--t-small);
+  white-space: nowrap;
+  color: var(--text-3);
 }
 
 .acs-empty {
@@ -545,9 +575,13 @@
   color: var(--text-3);
 }
 
-/* The footer's figure when there are several accounts: how many have room. */
+/* The footer's figure once the agent in focus has several accounts: what is left across them. */
 .acs-room {
   flex-shrink: 0;
+  display: inline-flex;
+  border-radius: 4px;
+}
+
+.acs-room .acs-left {
   font-size: var(--t-micro);
-  color: var(--text-3);
 }

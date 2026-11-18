@@ -1,5 +1,6 @@
-import type { AuthState, RateLimit } from '@shared/protocol';
+import type { AuthState, LimitPace, RateLimit } from '@shared/protocol';
 import { planLabel } from '@/features/connect/plan';
+import { livePercent } from './room';
 
 /**
  * Dates read in the interface's language (English day and month names), with the computer's own
@@ -34,10 +35,10 @@ export function exactTime(ts: number): string {
   return `${d.toLocaleDateString(DATE_LOCALE, { weekday: 'long', day: 'numeric', month: 'long' })}, ${timeOf(ts)}`;
 }
 
-/** "2h 14m", "38m", "3d 4h", "under a minute". */
+/** "2h 14m", "38m", "3d 4h", "<1m": short enough for the reset column. */
 export function duration(ms: number): string {
   const m = Math.round(ms / 60_000);
-  if (m < 1) return 'under a minute';
+  if (m < 1) return '<1m';
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   if (h < 24) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
@@ -92,4 +93,25 @@ export const STALE_MS = 15 * 60_000;
 export function money(usd: number): string {
   if (usd > 0 && usd < 0.01) return '<$0.01';
   return usd.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: usd >= 100 ? 0 : 2, minimumFractionDigits: usd >= 100 ? 0 : 2 });
+}
+
+/** One sentence about where the pace leads, or nothing. */
+export function paceText(l: RateLimit, p: LimitPace | undefined, now: number): { text: string; warn: boolean } | undefined {
+  if (!p || l.percent >= 100 || (l.resetsAt && l.resetsAt <= now)) return undefined;
+  if (p.fullAt) return { text: `On pace to run out at ${clock(p.fullAt, now)}`, warn: true };
+  if (p.perHour <= 0.01) return l.resetsAt ? { text: 'Steady until the reset', warn: false } : undefined;
+  if (p.atReset !== undefined) return { text: `On pace for ${p.atReset}% at the reset`, warn: false };
+  return undefined;
+}
+
+/**
+ * The quiet line under a window: where the pace leads, a reset that has passed (the agent has not
+ * reported the new window yet), or a window that has not started (no reset time, nothing used).
+ */
+export function windowNote(l: RateLimit, p: LimitPace | undefined, now: number): { text: string; warn: boolean } | undefined {
+  const pace = paceText(l, p, now);
+  if (pace) return pace;
+  if (l.resetsAt && l.resetsAt <= now) return { text: `Reset at ${clock(l.resetsAt, now)}`, warn: false };
+  if (!l.resetsAt && Math.round(livePercent(l, now)) === 0) return { text: 'Starts with your next message', warn: false };
+  return undefined;
 }

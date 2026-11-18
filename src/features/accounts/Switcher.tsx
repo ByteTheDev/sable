@@ -8,14 +8,17 @@ import { Icon } from '@/icons';
 import { openSettings, setDefaultAccount } from '@/state/actions';
 import { accountName, useFocusAccount } from '@/state/hooks';
 import { useStore } from '@/state/store';
-import { ManyAccounts, MANY_ACCOUNTS, RoomFigure } from './ManyAccounts';
+import { AccountUsed, ManyAccounts, MANY_ACCOUNTS, planOf, PoolFigure, usePool } from './ManyAccounts';
+import { poolLeftPercent } from '@/features/usage/plans';
 import { accountAgents, accountsOf, openAddAccount, planWord } from './model';
 
 /**
  * The sidebar footer's account switcher. The row names the account in focus by its plan (the label
- * follows when an agent has several); it opens every agent's accounts as rows with the plan and a
- * limit mark, the default checked. Pointing at a row (or moving to it with the keys) shows that
- * account's limits beside the menu. Picking one makes it the account new sessions use.
+ * follows when an agent has several, then its limit mark) and, once the agent has several accounts
+ * with figures, what is left across them, weighted by plan. It opens every agent's accounts as rows
+ * with the plan and how full each is, the default checked. Pointing at a row (or moving to it with
+ * the keys) shows that account's limits beside the menu. Picking one makes it the account new
+ * sessions use.
  */
 export function AccountSwitcher() {
   const providers = useStore((s) => s.providers);
@@ -53,9 +56,11 @@ export function AccountSwitcher() {
   const several = list.length > 1;
   const many = agents.reduce((n, id) => n + accountsOf(providers[id]).length, 0) >= MANY_ACCOUNTS;
 
+  const pool = usePool(focus, providers[focus]);
+
   const name = current ? accountName(current) : PROVIDER_NAME[focus];
   const headline = current?.auth.loggedIn ? (plan ? `${plan} plan` : PROVIDER_NAME[focus]) : 'Not signed in';
-  const described = [PROVIDER_NAME[focus], several ? name : undefined, headline].filter(Boolean).join(', ');
+  const described = [PROVIDER_NAME[focus], several ? name : undefined, headline, pool ? `${poolLeftPercent(pool)}% left across its accounts` : undefined].filter(Boolean).join(', ');
 
   return (
     <RM.Root
@@ -75,9 +80,9 @@ export function AccountSwitcher() {
           <span className="account-who">
             <span className="account-plan">{headline}</span>
             {several && current && <span className="acs-label truncate">{name}</span>}
+            {current && <LimitDot provider={focus} accountId={current.id} className="acs-dot" />}
           </span>
-          <RoomFigure agents={agents} providers={providers} />
-          {current && <LimitDot provider={focus} accountId={current.id} className="acs-dot" />}
+          <PoolFigure provider={focus} total={pool} />
           <Icon name="caret-updown" size={13} className="account-caret" />
         </button>
       </RM.Trigger>
@@ -90,7 +95,7 @@ export function AccountSwitcher() {
           align="start"
           sideOffset={8}
           collisionPadding={10}
-          style={{ width: 252 }}
+          style={{ width: 268 }}
           loop
         >
           {many && (
@@ -158,7 +163,7 @@ export function AccountSwitcher() {
 }
 
 function Row({ provider, account, single, inUse, onPeek, onSelect }: { provider: ProviderId; account: AccountInfo; single: boolean; inUse: boolean; onPeek: () => void; onSelect: () => void }) {
-  const plan = account.auth.loggedIn ? planWord(account) : undefined;
+  const plan = planOf(account);
   // An agent's only account goes by the agent's name, and there is no choice to check.
   const label = single ? PROVIDER_NAME[provider] : accountName(account);
   return (
@@ -173,10 +178,8 @@ function Row({ provider, account, single, inUse, onPeek, onSelect }: { provider:
       <ProviderMark provider={provider} size={14} className="acs-mark" />
       <span className="acs-name truncate">{label}</span>
       <span className="acs-plan">{account.auth.loggedIn ? plan : 'Sign in'}</span>
-      <span className="acs-end">
-        <LimitDot provider={provider} accountId={account.id} />
-        {account.isDefault && !single && <Icon name="check" size={14} className="acs-check" />}
-      </span>
+      {account.auth.loggedIn ? <AccountUsed provider={provider} accountId={account.id} /> : <span className="acs-used" aria-hidden />}
+      <span className="acs-end">{account.isDefault && !single && <Icon name="check" size={14} className="acs-check" />}</span>
     </RM.Item>
   );
 }

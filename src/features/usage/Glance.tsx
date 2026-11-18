@@ -1,93 +1,87 @@
-import { Fragment, useEffect, useState } from 'react';
-import { DEFAULT_ACCOUNT, type ProviderId } from '@shared/protocol';
+import { useEffect, useState } from 'react';
+import { DEFAULT_ACCOUNT, type AccountInfo, type ProviderId } from '@shared/protocol';
 import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
 import { Icon } from '@/icons';
 import { useNow } from '@/lib/useNow';
 import { openUsage, refreshLimits } from '@/state/actions';
-import { accountName, useLimitLevel, useLimitsReport } from '@/state/hooks';
-import { accountKey, useStore } from '@/state/store';
+import { accountName, useLimitLevel } from '@/state/hooks';
+import { useStore } from '@/state/store';
 import { cx } from '@/ui';
-import { clock, exactTime, isApiKey, planText, STALE_MS } from './format';
-import { NO_DATA, WindowRow, WindowSkeleton } from './Limits';
-import { LimitReset, resetTarget } from './LimitReset';
+import { isApiKey, STALE_MS } from './format';
+import { AsOf, LimitsBody, useAccountWindows } from './Limits';
+import { planShort } from './plans';
+import { useLimitsTicker } from './ticker';
 
 /**
- * One account's plan limits in compact form, for a popover (sidebar footer, account switcher):
- * each window with its figure, meter, reset and pace, then a row that opens the Usage page.
- * Reads the limits once when it mounts (cheap: from a running agent, or the last known).
+ * One account's plan limits in compact form, in the Usage page's language: a head with the agent,
+ * the account and its plan ("Resets in" over the times), then every window the account has as a
+ * line (name, thin meter, percent, time to the reset, the pace under it), "as of" under them when
+ * the figures are old. For the account switcher's popover and the side panel.
+ *
+ * `read` keeps the figures current while it is shown (a cheap read when it mounts and on the
+ * limits ticker); leave it off where the host reads them already. `onOpenUsage` adds a last row
+ * that opens Settings › Usage.
  */
-export function LimitsGlance({ provider, accountId = DEFAULT_ACCOUNT, header = true, onOpenUsage }: { provider: ProviderId; accountId?: string; header?: boolean; onOpenUsage?: () => void }) {
-  const account = useStore((s) => s.providers[provider]?.accounts?.find((a) => a.id === accountId));
+export function LimitsGlance({ provider, accountId = DEFAULT_ACCOUNT, read = true, onOpenUsage }: { provider: ProviderId; accountId?: string; read?: boolean; onOpenUsage?: () => void }) {
+  const info = useStore((s) => s.providers[provider]);
+  const found = info?.accounts?.find((a) => a.id === accountId);
+  // Older bridges list no accounts: the agent's own sign-in is its one account.
+  const account: AccountInfo | undefined = found ?? (accountId === DEFAULT_ACCOUNT && info ? { id: DEFAULT_ACCOUNT, provider, label: 'Main', isDefault: true, auth: info.auth } : undefined);
   // An agent's only account goes by the agent's name (as in the switcher); several go by their own.
-  const several = useStore((s) => (s.providers[provider]?.accounts?.length ?? 0) > 1);
-  const signedIn = useStore((s) => {
-    const p = s.providers[provider];
-    const a = p?.accounts?.find((x) => x.id === accountId);
-    return !!(a ? a.auth.loggedIn : accountId === DEFAULT_ACCOUNT && p?.auth.loggedIn);
-  });
-  const live = useStore((s) => s.limits[accountKey(provider, accountId)]);
-  const report = useLimitsReport(provider, accountId);
+  const several = (info?.accounts?.length ?? 0) > 1;
+  const signedIn = !!account?.auth.loggedIn;
+  const { report, limits } = useAccountWindows(provider, accountId);
   const now = useNow();
-  const limits = report?.limits.length ? report.limits : live;
-  const stale = report?.readAt && now - report.readAt > STALE_MS ? report.readAt : undefined;
-  const resetOn = report?.resets?.available ? resetTarget(limits, report.resets.windows) : undefined;
 
   const [pending, setPending] = useState(false);
   useEffect(() => {
-    if (!signedIn) return;
+    if (!read || !signedIn) return;
     let live = true;
     setPending(true);
     void refreshLimits(provider, accountId).finally(() => live && setPending(false));
     return () => {
       live = false;
     };
-  }, [provider, accountId, signedIn]);
+  }, [provider, accountId, signedIn, read]);
+  useLimitsTicker(read && signedIn, () => void refreshLimits(provider, accountId));
 
-  let body;
-  if (!signedIn) body = <p className="ul-note">Not signed in</p>;
-  else if (report?.planLimits === false || (!limits?.length && isApiKey(account?.auth))) body = <p className="ul-note">No plan limits on this account</p>;
-  else if (limits?.length)
-    body = (
-      <div className="ul-rows">
-        {limits.map((l) => (
-          <Fragment key={l.id}>
-            <WindowRow limit={l} samples={report?.history[l.id]} pace={report?.pace[l.id]} now={now} compact />
-            {l.id === resetOn?.id && <LimitReset provider={provider} accountId={accountId} limit={l} compact />}
-          </Fragment>
-        ))}
-        {(report?.extra?.inUse || report?.credits?.inUse) && <p className="ul-note ul-on-credits">{report?.extra?.inUse ? 'Running on extra usage' : 'Running on credits'}</p>}
-      </div>
-    );
-  else if (pending) body = <WindowSkeleton />;
-  else body = <p className="ul-note">{NO_DATA}</p>;
+  const plan = signedIn ? planShort(account?.auth) : undefined;
+  const shows = signedIn && report?.planLimits !== false && limits.length > 0 && !isApiKey(account?.auth);
+  const stale = !!report?.readAt && now - report.readAt > STALE_MS;
 
   return (
     <div className="ul-glance">
-      {header && (
-        <div className="ul-glance-head">
-          <ProviderMark provider={provider} size={14} />
-          <span className="ul-account-name truncate">{account && several ? accountName(account) : PROVIDER_NAME[provider]}</span>
-          {planText(account?.auth) && <span className="ul-account-plan">{planText(account?.auth)}</span>}
-          {stale && (
-            <span className="ul-asof num" title={`Read ${exactTime(stale)}`}>
-              as of {clock(stale, now)}
-            </span>
-          )}
+      <div className="ul-glance-head">
+        <ProviderMark provider={provider} size={14} className="ul-glance-mark" />
+        <span className="ul-glance-name truncate">{account && several ? accountName(account) : PROVIDER_NAME[provider]}</span>
+        {plan && <span className="ul-glance-plan">{plan}</span>}
+        {shows && <span className="ul-glance-col">Resets in</span>}
+      </div>
+      {account ? (
+        <LimitsBody provider={provider} account={account} installed={!!info?.installed} report={report} limits={limits} now={now} pending={pending} compact />
+      ) : (
+        <p className="ulw-msg">Removed account</p>
+      )}
+      {/* Old figures say so under them (the head keeps the name whole), as an opened account does on the Usage page. */}
+      {stale && (
+        <div className="ul-glance-asof">
+          <AsOf report={report} now={now} pending={pending} />
         </div>
       )}
-      {body}
-      <button
-        type="button"
-        className="ul-glance-open"
-        onClick={() => {
-          onOpenUsage?.();
-          openUsage();
-        }}
-      >
-        <Icon name="gauge" size={15} />
-        <span>Usage</span>
-        <Icon name="caret-right" size={12} className="ul-glance-caret" />
-      </button>
+      {onOpenUsage && (
+        <button
+          type="button"
+          className="ul-glance-open"
+          onClick={() => {
+            onOpenUsage();
+            openUsage();
+          }}
+        >
+          <Icon name="gauge" size={15} />
+          <span>Usage</span>
+          <Icon name="caret-right" size={12} className="ul-glance-caret" />
+        </button>
+      )}
     </div>
   );
 }

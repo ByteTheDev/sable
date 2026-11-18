@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import type { ContextBreakdown, ProviderId, RateLimit } from '@shared/protocol';
+import type { ContextBreakdown, ProviderId } from '@shared/protocol';
 import { Icon } from '@/icons';
 import { bridge } from '@/lib/bridge';
 import { formatCost, formatTokens } from '@/lib/format';
 import { modelNameById } from '@/lib/models';
-import { useNow } from '@/lib/useNow';
-import { WindowRow } from '@/features/usage';
+import { LimitsGlance } from '@/features/usage';
 import { useLimitsReport } from '@/state/hooks';
 import { openUsage, readLimitsNow, refreshLimits, sendMessage } from '@/state/actions';
 import { useLimitsTicker } from '@/features/usage/ticker';
@@ -22,13 +21,10 @@ interface Segment {
   color: string;
 }
 
-const NO_LIMITS: RateLimit[] = [];
-
 export function ContextTab({ sessionId, active }: { sessionId: string; active: boolean }) {
   const session = useStore((s) => s.sessions[sessionId]);
   const caps = useStore((s) => s.data[sessionId]?.caps);
   const provider = session?.provider;
-  const limits = useStore((s) => (provider ? s.limits[accountKey(provider, session?.accountId)] : undefined)) ?? NO_LIMITS;
   const [ctx, setCtx] = useState<ContextBreakdown | null | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const status = session?.status;
@@ -177,7 +173,7 @@ export function ContextTab({ sessionId, active }: { sessionId: string; active: b
           </div>
         </section>
 
-        {provider && <Limits provider={provider} accountId={session.accountId} limits={limits} />}
+        {provider && <Limits provider={provider} accountId={session.accountId} />}
       </div>
     </div>
     </div>
@@ -247,12 +243,14 @@ function Ring({ segments, max, buffer }: { segments: Segment[]; max: number; buf
   );
 }
 
-/** The session's account plan limits, as on the Usage page (compact), with the pace when known. */
-function Limits({ provider, accountId, limits }: { provider: ProviderId; accountId?: string; limits: RateLimit[] }) {
+/**
+ * The session's account plan limits, as on the Usage page (compact): every window it has, the pace
+ * under each, "as of" when the figures are old. Hidden while nothing is known about them.
+ */
+function Limits({ provider, accountId }: { provider: ProviderId; accountId?: string }) {
   const report = useLimitsReport(provider, accountId);
-  const now = useNow();
-  const shown = report?.limits.length ? report.limits : limits;
-  if (!shown.length) return null;
+  const known = useStore((s) => !!s.limits[accountKey(provider, accountId)]?.length);
+  if (!report?.limits.length && !known) return null;
   return (
     <section aria-label="Plan limits">
       <div className="rail-h">
@@ -262,12 +260,9 @@ function Limits({ provider, accountId, limits }: { provider: ProviderId; account
           <IconButton icon="refresh" label="Read limits now" size={13} onClick={() => void readLimitsNow(provider, accountId)} className="rail-h-btn" />
         </span>
       </div>
-      <div className="lm-list card">
-        <div className="ul-rows">
-          {shown.map((l) => (
-            <WindowRow key={l.id} limit={l} samples={report?.history[l.id]} pace={report?.pace[l.id]} now={now} compact />
-          ))}
-        </div>
+      <div className="ul-rail card">
+        {/* The tab keeps them current while it is shown; the glance only shows them. */}
+        <LimitsGlance provider={provider} accountId={accountId} read={false} />
       </div>
     </section>
   );

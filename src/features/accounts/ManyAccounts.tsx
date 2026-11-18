@@ -1,13 +1,15 @@
-import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { DropdownMenu as RM } from 'radix-ui';
-import type { AccountInfo, ProviderId, ProviderInfo } from '@shared/protocol';
+import type { AccountInfo, LimitsReport, ProviderId, ProviderInfo, RateLimit } from '@shared/protocol';
 import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
-import { planText } from '@/features/usage/format';
-import { livePercent, roomCount, roomRow, sortRows, type RoomInput, type RoomRow } from '@/features/usage/room';
+import { isApiKey, planText, windowLevel } from '@/features/usage/format';
+import { poolLeftPercent, poolTotals, poolWeeksText, type PoolInput, type PoolTotal } from '@/features/usage/plans';
+import { livePercent, roomRow, sortRows, tightest, type RoomInput, type RoomRow } from '@/features/usage/room';
 import { Icon } from '@/icons';
 import { useNow } from '@/lib/useNow';
 import { accountName } from '@/state/hooks';
 import { accountKey, useStore } from '@/state/store';
+import { Tip } from '@/ui';
 import { accountsOf, planWord } from './model';
 
 /** From this many accounts on, the switcher filters, groups and orders by room left. */
@@ -24,8 +26,31 @@ function loadCollapsed(): Set<string> {
   }
 }
 
-interface Entry extends RoomInput {
+interface Entry extends RoomInput, PoolInput {
   account: AccountInfo;
+}
+
+/** One agent's accounts as inputs for room and for the weighted total: the bridge's record first, the last event otherwise. */
+function entriesOf(provider: ProviderId, info: ProviderInfo | undefined, reports: Partial<Record<string, LimitsReport>>, live: Partial<Record<string, RateLimit[]>>): Entry[] {
+  return accountsOf(info).map((account) => {
+    const key = accountKey(provider, account.id);
+    const known = reports[key]?.limits;
+    return {
+      key,
+      account,
+      provider,
+      name: accountName(account),
+      usable: account.auth.loggedIn,
+      limits: known?.length ? known : live[key],
+      auth: account.auth,
+      unmetered: reports[key]?.planLimits === false || isApiKey(account.auth),
+    };
+  });
+}
+
+/** What is left across an agent's accounts, weighted by plan (as on the Usage page); undefined below two accounts with figures. */
+function poolOf(entries: Entry[], now: number): PoolTotal | undefined {
+  return poolTotals(entries, now)[0];
 }
 
 /** Whether an account answers a filter: every word must be in its name, email, plan or agent. */
@@ -64,16 +89,11 @@ export function ManyAccounts({
   const groups = useMemo(
     () =>
       agents.map((id) => {
-        const info = providers[id];
-        const entries: Entry[] = accountsOf(info).map((account) => {
-          const key = accountKey(id, account.id);
-          const known = reports[key]?.limits;
-          return { key, account, provider: id, name: accountName(account), usable: account.auth.loggedIn, limits: known?.length ? known : live[key] };
-        });
+        const entries = entriesOf(id, providers[id], reports, live);
         const rows = entries.map((e) => roomRow(e, now));
         // Usable accounts by room left; signed-out ones after them.
         const sorted = [...sortRows(rows.filter((r) => r.state !== 'off'), 'room'), ...sortRows(rows.filter((r) => r.state === 'off'), 'agent')];
-        return { id, rows: sorted, total: sorted.length };
+        return { id, rows: sorted, total: sorted.length, pool: poolOf(entries, now) };
       }),
     [agents, providers, reports, live, now],
   );
@@ -172,7 +192,7 @@ export function ManyAccounts({
               <RM.Item
                 className="menu-item acs-group-head"
                 aria-expanded={!folded}
-                aria-label={`${PROVIDER_NAME[g.id]}, ${free} of ${g.rows.length} with room`}
+                aria-label={`${PROVIDER_NAME[g.id]}, ${g.pool ? poolWeeksText(g.pool) : `${free} of ${g.rows.length} with room`}`}
                 onFocus={() => onPeek(null)}
                 onSelect={(e) => {
                   e.preventDefault();
@@ -181,9 +201,7 @@ export function ManyAccounts({
               >
                 <ProviderMark provider={g.id} size={14} className="acs-mark" />
                 <span className="acs-name truncate">{PROVIDER_NAME[g.id]}</span>
-                <span className="acs-group-count num">
-                  {free} of {g.rows.length}
-                </span>
+                {g.pool ? <PoolLeft total={g.pool} /> : <span className="acs-left num">{free} of {g.rows.length} with room</span>}
                 <span className="acs-end">
                   <Icon name="caret-down" size={11} className="acs-fold" />
                 </span>
@@ -198,13 +216,12 @@ export function ManyAccounts({
 }
 
 /** The plan as one word, the Demo's made-up plans included. */
-const planOf = (a: AccountInfo) => (a.auth.loggedIn ? (planWord(a) ?? planText(a.auth)?.replace(/\s+plan$/i, '')) : undefined);
+export const planOf = (a: AccountInfo) => (a.auth.loggedIn ? (planWord(a) ?? planText(a.auth)?.replace(/\s+plan$/i, '')) : undefined);
 
 function ManyRow({ row, now, inUse, single, onPeek, onSelect }: { row: RoomRow<Entry>; now: number; inUse: boolean; single?: boolean; onPeek: () => void; onSelect: () => void }) {
   const { account, provider } = row.input;
   const plan = planOf(account);
   const used = row.tight ? Math.round(livePercent(row.tight, now)) : undefined;
-  const level = row.state === 'cap' ? 'red' : row.state === 'near' ? 'amber' : undefined;
   return (
     <RM.Item
       className="menu-item acs-row acs-row-in"
@@ -223,35 +240,73 @@ function ManyRow({ row, now, inUse, single, onPeek, onSelect }: { row: RoomRow<E
       )}
       <span className="acs-name truncate">{single ? PROVIDER_NAME[provider] : row.input.name}</span>
       <span className="acs-plan">{account.auth.loggedIn ? plan : 'Sign in'}</span>
-      <span className="acs-used num" data-level={level}>
-        {used !== undefined ? `${used}%` : ''}
-      </span>
+      <UsedCell limit={account.auth.loggedIn ? row.tight : undefined} now={now} />
     </RM.Item>
   );
 }
 
 /**
- * How many accounts have room, of those signed in ("14/22"): the one figure the sidebar footer
- * shows once there are several accounts, so "who has room" needs no click. Nothing below four.
+ * How full an account is, in a menu row, drawn as the Usage page draws a window: a thin meter and
+ * the percent used of the window that leaves it the least room; amber near a cap, red at it. An
+ * empty cell of the same width when nothing is known, so the plans line up.
  */
-export function RoomFigure({ agents, providers }: { agents: ProviderId[]; providers: Partial<Record<ProviderId, ProviderInfo>> }) {
+export function UsedCell({ limit, now }: { limit: RateLimit | undefined; now: number }) {
+  if (!limit) return <span className="acs-used" aria-hidden />;
+  const used = Math.round(livePercent(limit, now));
+  const level = windowLevel(limit, now);
+  return (
+    <span className="acs-used" aria-hidden>
+      <span className="meter acs-meter" data-level={level}>
+        <span className="meter-fill" style={{ '--p': Math.max(used, used > 0 ? 3 : 0) / 100 } as CSSProperties} />
+      </span>
+      <span className="acs-pct num" data-level={level}>
+        {used}%
+      </span>
+    </span>
+  );
+}
+
+/** UsedCell for one account, read from the store. */
+export function AccountUsed({ provider, accountId }: { provider: ProviderId; accountId: string }) {
+  const limits = useStore((s) => {
+    const key = accountKey(provider, accountId);
+    const known = s.limitReports[key]?.limits;
+    return known?.length ? known : s.limits[key];
+  });
+  const now = useNow();
+  return <UsedCell limit={tightest(limits, now)} now={now} />;
+}
+
+/** "51% left": an agent's weeks left across its accounts, weighted by plan; amber near the end (as its used meter on the Usage page), red at it. */
+function PoolLeft({ total }: { total: PoolTotal }) {
+  const left = poolLeftPercent(total);
+  return (
+    <span className="acs-left num" data-level={left <= 0 ? 'red' : left <= 20 ? 'amber' : undefined}>
+      {left}% left
+    </span>
+  );
+}
+
+/**
+ * The one figure the sidebar footer shows beside the account in focus: what is left of its agent's
+ * weeks across all its accounts, weighted by plan (one Ultra counts as ten Pro), the same total the
+ * Usage page draws ("51% left"; the tooltip says it in weeks). Nothing while the agent has fewer
+ * than two accounts with a known plan and figures: the account's own limit mark says it all then.
+ */
+export function usePool(provider: ProviderId, info: ProviderInfo | undefined): PoolTotal | undefined {
   const reports = useStore((s) => s.limitReports);
   const live = useStore((s) => s.limits);
   const now = useNow();
-  const { free, of } = useMemo(() => {
-    const inputs: RoomInput[] = agents.flatMap((id) =>
-      accountsOf(providers[id]).map((a) => {
-        const key = accountKey(id, a.id);
-        const known = reports[key]?.limits;
-        return { key, provider: id, name: accountName(a), usable: a.auth.loggedIn, limits: known?.length ? known : live[key] };
-      }),
-    );
-    return roomCount(inputs, now);
-  }, [agents, providers, reports, live, now]);
-  if (of < 4) return null;
+  return useMemo(() => poolOf(entriesOf(provider, info, reports, live), now), [provider, info, reports, live, now]);
+}
+
+export function PoolFigure({ provider, total }: { provider: ProviderId; total: PoolTotal | undefined }) {
+  if (!total) return null;
   return (
-    <span className="acs-room num" title={`${free} of ${of} accounts have room`}>
-      {free}/{of}
-    </span>
+    <Tip label={`${PROVIDER_NAME[provider]}: ${poolWeeksText(total)}`} side="top">
+      <span className="acs-room">
+        <PoolLeft total={total} />
+      </span>
+    </Tip>
   );
 }

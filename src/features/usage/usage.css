@@ -82,7 +82,10 @@
 
 .ul-account-asof {
   flex-shrink: 0;
-  margin-left: auto;
+}
+
+.ul-account-asof:empty {
+  display: none;
 }
 
 .ul-account-col {
@@ -248,7 +251,6 @@
 
 .ul-asof {
   flex-shrink: 0;
-  margin-left: auto;
   font-size: var(--t-small);
   color: var(--text-3);
   border-radius: 4px;
@@ -259,182 +261,110 @@
   opacity: 0.5;
 }
 
-.ul-asof:focus-visible,
-.ul-reset:focus-visible {
+.ul-asof:focus-visible {
   outline: var(--focus-w) solid var(--focus);
   outline-offset: var(--focus-offset);
 }
 
-.ul-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.ul-row {
-  min-width: 0;
-}
-
-.ul-top {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  min-width: 0;
-}
-
-.ul-label {
-  flex: 1;
-  min-width: 0;
-  padding-bottom: 3px;
-  font-size: var(--t-ui);
-  color: var(--text-2);
-}
-
-.ul-pct {
-  flex-shrink: 0;
-  min-width: 3ch;
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: -0.015em;
-  text-align: right;
-  color: var(--text);
-}
-
-.ul-pct-sign {
-  margin-left: 1px;
-  font-size: var(--t-ui);
-  font-weight: var(--w-medium);
-  letter-spacing: 0;
-  color: var(--text-3);
-}
-
-.ul-row[data-past] .ul-pct {
-  color: var(--text-3);
-}
-
-.ul-meter {
-  margin-top: 9px;
-}
-
-.ul-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 16px;
-  margin-top: 8px;
-  font-size: var(--t-small);
-  color: var(--text-3);
-}
-
-.ul-reset {
-  border-radius: 4px;
-  cursor: default;
-}
-
-.ul-pace {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.ul-pace[data-warn] {
-  color: var(--text-2);
-}
-
 .ul-pace-mark {
+  flex-shrink: 0;
   width: 5px;
   height: 5px;
   border-radius: 99px;
   background-color: var(--amber);
 }
 
-/* Compact rows: popovers and the side panel. */
-.ul-row[data-compact] .ul-top {
-  align-items: baseline;
-}
-
-.ul-row[data-compact] .ul-label {
-  padding-bottom: 0;
-  font-size: var(--t-small);
-}
-
-.ul-row[data-compact] .ul-pct {
-  font-size: var(--t-ui);
-  font-weight: var(--w-semi);
-  letter-spacing: 0;
-}
-
-.ul-row[data-compact] .ul-pct-sign {
-  font-size: var(--t-small);
-}
-
-.ul-row[data-compact] .ul-meter {
-  margin-top: 7px;
-}
-
-.ul-row[data-compact] .ul-meta {
-  flex-wrap: nowrap;
-  gap: 0;
-  margin-top: 6px;
-  font-size: var(--t-micro);
-  white-space: nowrap;
-}
-
-/* Compact: one line, "Resets in 2h 13m · 66% by then". */
-.ul-pace[data-short]:not(:first-child)::before {
-  content: '·';
-  margin: 0 6px;
-  color: var(--text-4);
-}
-
-.ul-pace[data-short] {
-  gap: 0;
-}
-
-.ul-pace[data-short] .ul-pace-mark {
-  margin-right: 6px;
-}
-
-.ul-rows:has(> .ul-row[data-compact]) {
-  gap: 14px;
-}
-
-.ul-extra-val {
-  flex-shrink: 0;
+.ul-label {
   font-size: var(--t-ui);
   color: var(--text-2);
-}
-
-.ul-note {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 24px;
-  margin: 0;
-  font-size: var(--t-ui);
-  color: var(--text-3);
 }
 
 .ul-note-btn {
   margin-left: auto;
 }
 
-.ul-skel {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding: 2px 0 4px;
+/*
+ * Compact (the account switcher's popover, the side panel): the same window lines, reflowed for a
+ * narrow column. The name sits above its meter; the percent and the time to the reset keep two
+ * columns of their own, under the head's "Resets in"; the pace starts where the meter starts.
+ */
+.ulw-list[data-compact],
+.ul-glance {
+  --ulc-cols: minmax(0, 1fr) 34px 50px;
+  --ulc-gap: 10px;
 }
 
-.ul-skel-row {
+.ulw-list[data-compact] {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
-.ul-skel-row .skel {
+.ulw-list[data-compact] .ulw {
+  grid-template-columns: var(--ulc-cols);
+  column-gap: var(--ulc-gap);
+  min-height: 0;
+}
+
+.ulw-list[data-compact] .ulw-label,
+.ulw-list[data-compact] .ulw-skel-label {
+  grid-row: 1;
+  grid-column: 1 / -1;
+  margin-bottom: 7px;
+}
+
+.ulw-list[data-compact] .ulw-bar {
+  display: contents;
+}
+
+.ulw-list[data-compact] .ulw-meter {
+  grid-row: 2;
+  grid-column: 1;
+}
+
+.ulw-list[data-compact] .ulw-skel-meter {
+  grid-row: 2;
+  grid-column: 1 / -1;
+}
+
+.ulw-list[data-compact] .ulw-pct {
+  grid-row: 2;
+  grid-column: 2;
+}
+
+.ulw-list[data-compact] .ulw-value {
+  grid-row: 2;
+  grid-column: 1 / 3;
+}
+
+.ulw-list[data-compact] .ulw-reset {
+  grid-row: 2;
+  grid-column: 3;
+}
+
+.ulw-list[data-compact] .ulw-note {
+  grid-row: 3;
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding: 0;
+}
+
+.ulw-list[data-compact] .ulw-skel-label {
+  height: 9px;
+}
+
+.ulw-list[data-compact] > .ulw-sub {
   display: block;
+  margin-top: -5px;
+  padding: 0;
+}
+
+.ulw-list[data-compact] > .ulw-sub > * {
+  padding-left: 0;
+}
+
+.ulw-list[data-compact] > .ulw-sub > .ul-resets {
+  margin-top: 0;
 }
 
 /* The refresh icon turns once per click. */
@@ -476,7 +406,7 @@
   margin-left: auto;
 }
 
-/* ───────────── glance (popover) ───────────── */
+/* ───────────── glance (the switcher's popover, the side panel) ───────────── */
 
 .ul-glance {
   display: flex;
@@ -487,14 +417,56 @@
   padding: 10px 10px 4px;
 }
 
-.ul-glance > .ul-rows,
-.ul-glance > .ul-note,
-.ul-glance > .ul-skel {
+.ul-glance > :not(.ul-glance-open) {
   padding: 0 2px;
 }
 
 .ul-glance-head {
-  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 20px;
+}
+
+.ul-glance-mark {
+  flex-shrink: 0;
+}
+
+.ul-glance-name {
+  min-width: 0;
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.ul-glance-plan {
+  flex-shrink: 0;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* Over the times to the resets: as wide as their column, flush right. */
+.ul-glance-col {
+  flex-shrink: 0;
+  width: 50px;
+  margin-left: auto;
+  font-size: var(--t-micro);
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.ul-glance-asof {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -4px;
+}
+
+.ul-glance .ulw-msg {
+  min-height: 24px;
+  padding-left: 0;
+  font-size: var(--t-ui);
 }
 
 .ul-glance-open {
@@ -528,6 +500,20 @@
 .ul-glance-caret {
   margin-left: auto;
   color: var(--text-4);
+}
+
+/* The side panel's Plan limits: the glance in a card, on the card's own padding. */
+.ul-rail {
+  padding: 14px;
+}
+
+.ul-rail .ul-glance {
+  min-width: 0;
+  padding: 0;
+}
+
+.ul-rail .ul-glance > :not(.ul-glance-open) {
+  padding: 0;
 }
 
 /* ───────────── activity ───────────── */
@@ -1270,19 +1256,45 @@
   color: var(--text);
 }
 
-.ul-credit-list {
+/* Many accounts: one card, a switch per account in the overview's columns, one line on who decides. */
+.ul-credit-card {
+  margin-top: 10px;
+  padding: 6px 6px 12px;
+}
+
+.ul-credit-head {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 10px;
+  font-size: var(--t-ui);
+  color: var(--text);
+}
+
+.ul-credit-rows {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
 }
 
-.ul-credit-list:empty {
-  display: none;
+.ul-credit-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--ul-gap, 12px);
+  height: 34px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background-color var(--d-1) var(--ease);
 }
 
-.ul-credit-card {
-  padding: 12px 14px 12px 16px;
+.ul-credit-row:hover {
+  background-color: var(--fill-1);
+}
+
+.ul-credit-card > .ul-credits-note {
+  margin-top: 6px;
+  padding: 0 10px;
 }
 
 /* Resets an account was granted, under the window they apply to; the confirmation replaces the line. */

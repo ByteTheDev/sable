@@ -7,7 +7,7 @@ import { openSettings, switchSessionAccount } from '@/state/actions';
 import { accountName } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { Spinner } from '@/ui';
-import { planWord } from './model';
+import { AccountUsed, planOf } from './ManyAccounts';
 
 /**
  * The account a session runs under, quietly in the session's header, only when its agent has more
@@ -37,11 +37,11 @@ export function SessionAccount({ sessionId }: { sessionId: string }) {
         </button>
       </RM.Trigger>
       <RM.Portal>
-        <RM.Content className="pop sa-pop" data-spot side="bottom" align="start" sideOffset={6} collisionPadding={10} style={{ width: 236 }} loop>
+        <RM.Content className="pop sa-pop" data-spot side="bottom" align="start" sideOffset={6} collisionPadding={10} style={{ width: 268 }} loop>
           <RM.Label className="menu-label">Continue with</RM.Label>
           {accounts.map((a) => {
             const here = a.id === accountId;
-            const plan = a.auth.loggedIn ? planWord(a) : 'Signed out';
+            const plan = a.auth.loggedIn ? planOf(a) : 'Signed out';
             return (
               <RM.Item
                 key={a.id}
@@ -55,10 +55,8 @@ export function SessionAccount({ sessionId }: { sessionId: string }) {
               >
                 <span className="acs-name truncate">{accountName(a)}</span>
                 <span className="acs-plan">{plan}</span>
-                <span className="acs-end">
-                  <LimitDot provider={provider} accountId={a.id} />
-                  {here && <Icon name="check" size={14} className="acs-check" />}
-                </span>
+                {a.auth.loggedIn ? <AccountUsed provider={provider} accountId={a.id} /> : <span className="acs-used" aria-hidden />}
+                <span className="acs-end">{here && <Icon name="check" size={14} className="acs-check" />}</span>
               </RM.Item>
             );
           })}
