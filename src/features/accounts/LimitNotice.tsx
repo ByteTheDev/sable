@@ -102,7 +102,7 @@ export const LimitNotice = memo(function LimitNotice({ item, sessionId }: { item
       <Icon name="hourglass" size={16} className="lim-icon" />
       <div className="lim-body">
         <div className="lim-text">
-          {who} is at its {windowName(limit.window)}
+          {who} {limit.continuedWith ? 'reached' : 'is at'} its {windowName(limit.window)}
         </div>
         {(resetNote || reset || item.detail) && <div className="lim-detail">{resetNote ?? reset ?? item.detail}</div>}
       </div>

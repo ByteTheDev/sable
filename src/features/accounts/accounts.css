@@ -395,8 +395,26 @@
   color: var(--text-3);
 }
 
+/* Once the conversation went on under another account, the limit is history: one quiet line in
+   the flow of the conversation, no card, no reset time. */
+.lim[data-done] {
+  padding: 2px 0;
+  gap: 10px;
+  border-color: transparent;
+  background-color: transparent;
+}
+
 .lim[data-done] .lim-text {
-  color: var(--text-2);
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.lim[data-done] .lim-icon {
+  color: var(--text-4);
+}
+
+.lim[data-done] .lim-detail {
+  display: none;
 }
 
 @media (max-width: 640px) {

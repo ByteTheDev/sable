@@ -645,6 +645,23 @@ export class App {
     rt.notice('info', meta?.extra?.inUse ? 'Running on extra usage' : 'Running on credits', 'This account is past its limit. Its setting with the provider decides whether credits are spent.');
   }
 
+  /**
+   * What goes out after a move to another account at a limit. Refused before any work: the
+   * message again. Cut off mid-turn: the new account carries on where the old one stopped instead
+   * of starting the task over (the conversation came along, or the summary shows what was done),
+   * and nothing new appears in the conversation.
+   */
+  private resumeMessage(rt: SessionRuntime, refused: UserItem, carried: 'conversation' | 'summary' | 'none'): UserItem {
+    const from = rt.items.findIndex((i) => i.id === refused.id);
+    const progressed = from >= 0 && rt.items.slice(from + 1).some((i) => (i.type === 'text' && i.text.trim()) || i.type === 'tool');
+    if (!progressed) return refused;
+    const text =
+      carried === 'conversation'
+        ? 'The last turn was cut off by a usage limit; the conversation now continues under another account. Carry on with the task from where it stopped. Do not repeat steps that are already done.'
+        : `${refused.text}\n\n(Part of this was already done before a usage limit cut the turn off: the summary above shows how far it got. Carry on from there.)`;
+    return { id: randomUUID(), ts: Date.now(), type: 'user', text, state: 'sent' };
+  }
+
   /** The message the last limit notice refused: the user message just before it. */
   private refusedMessage(rt: SessionRuntime): UserItem | undefined {
     const at = rt.items.findLastIndex((i) => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
@@ -706,7 +723,7 @@ export class App {
     if (refused) {
       const handle = await this.ensureHandle(rt);
       try {
-        await handle.send(this.withHandover(rt, refused));
+        await handle.send(this.withHandover(rt, this.resumeMessage(rt, refused, carried)));
       } catch (err) {
         rt.notice('error', 'Could not send the message', (err as Error).message);
         rt.endTurn((err as Error).message);

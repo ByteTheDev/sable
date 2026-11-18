@@ -441,6 +441,29 @@ describe('at a plan limit', () => {
     expect(sent[2]).toBe('third');
   });
 
+  it('carries on where a turn cut off by a limit stopped, instead of starting it over', async () => {
+    const sent: string[] = [];
+    const { app, home } = start({ make: (ctx) => new RecordingDemo(ctx, sent) });
+    const studio = await demoAccount(app, 'Studio', 'light');
+    const roomy = await demoAccount(app, 'Work', 'light');
+    const snap = await app.call('session.create', { provider: 'demo', cwd: path.join(home, 'p'), accountId: studio.id });
+    const rt = app.runtime(snap.session.id);
+    await app.call('session.send', { sessionId: rt.id, text: 'hi' });
+    await until(() => rt.meta.status === 'idle' && rt.items.some((i) => i.type === 'text'), 'first answer');
+    sent.length = 0;
+    // A turn that did some work before the limit cut it off.
+    rt.add<UserItem>({ type: 'user', text: 'build the importer', state: 'sent' });
+    rt.add({ type: 'text', text: 'Reading the parser first.', streaming: false });
+    rt.add<NoticeItem>({ type: 'notice', variant: 'error', text: 'You have reached your usage limit.', limit: { window: '5-hour limit' } });
+    const users = rt.items.filter((i) => i.type === 'user').length;
+    await app.call('session.switchAccount', { sessionId: rt.id, accountId: roomy.id, retry: true });
+    await until(() => sent.length === 1, 'the carry-on message');
+    expect(sent[0]).toMatch(/Carry on with the task from where it stopped/);
+    expect(sent[0]).not.toContain('build the importer');
+    // Nothing new in the conversation: it simply goes on.
+    expect(rt.items.filter((i) => i.type === 'user')).toHaveLength(users);
+  });
+
   it('refuses to move a working session, and to an account that is gone', async () => {
     const { app, home } = start();
     const other = await demoAccount(app, 'Work', 'light');
@@ -466,6 +489,25 @@ class CappedDemo extends DemoProvider {
   }
   override limitProfile() {
     return super.limitProfile() === 'calm' && !this.configHome() ? ('cap' as const) : super.limitProfile();
+  }
+}
+
+/** The demo agent recording what each send carried. */
+class RecordingDemo extends DemoProvider {
+  constructor(
+    ctx: ProviderContext,
+    private sent: string[],
+  ) {
+    super(ctx, { speed: 0 });
+  }
+  override async open(rt: SessionRuntime, opts: { loadTranscript?: boolean }): Promise<ProviderSession> {
+    const s = await super.open(rt, opts);
+    const send = s.send.bind(s);
+    s.send = (item) => {
+      this.sent.push(item.text);
+      return send(item);
+    };
+    return s;
   }
 }
 
