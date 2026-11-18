@@ -8,7 +8,7 @@ import { focusComposer } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { IconButton, Spinner, Tip } from '@/ui';
 import { STATUS_TONE, commitAll, gitKey, isSmall, loadAllDiffs, loadDiff, refreshGit, useRepo, type DiffEntry } from './git-state';
-import { splitPath, useToolIds } from './util';
+import { splitPath, useArrivals, useToolIds } from './util';
 
 /** How many files the Changes tab lists (working tree, or this session's edits outside a repo). */
 export function useChangeCount(sessionId: string, cwd: string): number {
@@ -51,6 +51,7 @@ function RepoChanges({ cwd }: { cwd: string }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
   const small = isSmall(status);
   const allOpen = status.files.length > 0 && status.files.every((f) => open.has(f.path));
+  const arrived = useArrivals(status.files.map((f) => f.path));
 
   // Drop open entries for files that left the tree.
   useEffect(() => {
@@ -136,7 +137,7 @@ function RepoChanges({ cwd }: { cwd: string }) {
         ) : (
           <ul className="ch-list">
             {status.files.map((f) => (
-              <FileRow key={f.path} file={f} open={open.has(f.path)} entry={repo.diffs[f.path]} onToggle={toggle} onRetry={() => loadDiff(cwd, f.path)} />
+              <FileRow key={f.path} file={f} fresh={arrived.has(f.path)} open={open.has(f.path)} entry={repo.diffs[f.path]} onToggle={toggle} onRetry={() => loadDiff(cwd, f.path)} />
             ))}
           </ul>
         )}
@@ -244,12 +245,15 @@ function needs(d: DiffEntry | undefined) {
 
 const FileRow = memo(function FileRow({
   file,
+  fresh,
   open,
   entry,
   onToggle,
   onRetry,
 }: {
   file: GitFileStatus;
+  /** It joined the list while the list was on screen. */
+  fresh?: boolean;
   open: boolean;
   entry: DiffEntry | undefined;
   onToggle: (p: string) => void;
@@ -258,7 +262,7 @@ const FileRow = memo(function FileRow({
   const [dir, base] = splitPath(file.path);
   const diff = entry?.state === 'ok' ? entry.diff : entry?.state === 'loading' ? entry.prev : undefined;
   return (
-    <li className="ch-item rail-row-host" data-open={open || undefined}>
+    <li className="ch-item rail-row-host" data-open={open || undefined} data-new={fresh || undefined}>
       <button type="button" className="ch-row" aria-expanded={open} onClick={() => onToggle(file.path)}>
         <StatusLetter status={file.status} />
         <span className="ch-path">
@@ -358,6 +362,7 @@ function SessionEdits({ sessionId, cwd }: { sessionId: string; cwd: string }) {
   const adds = files.reduce((n, f) => n + f.additions, 0);
   const dels = files.reduce((n, f) => n + f.deletions, 0);
   const allOpen = files.length > 0 && files.every((f) => open.has(f.path));
+  const arrived = useArrivals(files.map((f) => f.path));
   const toggle = (p: string) =>
     setOpen((o) => {
       const n = new Set(o);
@@ -400,7 +405,7 @@ function SessionEdits({ sessionId, cwd }: { sessionId: string; cwd: string }) {
                 const [dir, base] = splitPath(f.path);
                 const isOpen = open.has(f.path);
                 return (
-                  <li key={f.path} className="ch-item rail-row-host" data-open={isOpen || undefined}>
+                  <li key={f.path} className="ch-item rail-row-host" data-open={isOpen || undefined} data-new={arrived.has(f.path) || undefined}>
                     <button type="button" className="ch-row" aria-expanded={isOpen} onClick={() => toggle(f.path)}>
                       <StatusLetter status={f.status === 'added' ? 'A' : f.status === 'deleted' ? 'D' : f.status === 'renamed' ? 'R' : 'M'} />
                       <span className="ch-path">

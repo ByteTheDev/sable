@@ -357,6 +357,16 @@ export const ANIMATED: Record<string, AnimatedDef> = {
     ),
   },
 
+  commit: {
+    parts: (
+      <>
+        <D c="l1" d="M80,128H8" />
+        <D c="l2" d="M176,128H248" />
+        <path className="node" d={circ(128, 128, 48)} />
+      </>
+    ),
+  },
+
   // ── panel bars and message actions ──
   refresh: {
     parts: (

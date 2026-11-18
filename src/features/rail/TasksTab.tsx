@@ -1,8 +1,9 @@
-import type { CSSProperties } from 'react';
+import { useRef, type CSSProperties } from 'react';
 import type { Todo } from '@shared/protocol';
 import { Ring } from '@/art/Logo';
 import { Icon } from '@/icons';
 import { useStore } from '@/state/store';
+import { useArrivals } from './util';
 
 const NO_TODOS: Todo[] = [];
 
@@ -13,6 +14,13 @@ export function useOpenTaskCount(sessionId: string): number {
 /** The agent's task list for this session. Sub-agents have their own tab (Agents). */
 export function TasksTab({ sessionId }: { sessionId: string }) {
   const todos = useStore((s) => s.data[sessionId]?.todos) ?? NO_TODOS;
+  const keys = todos.map((t, i) => t.id ?? String(i));
+  const arrived = useArrivals(keys);
+  // Tasks finished while the list was on screen: their mark closes and the tick draws itself, once.
+  const was = useRef<Map<string, string> | null>(null);
+  const ticked = useRef(new Set<string>());
+  if (was.current) todos.forEach((t, i) => t.status === 'completed' && was.current!.has(keys[i]) && was.current!.get(keys[i]) !== 'completed' && ticked.current.add(keys[i]));
+  was.current = new Map(todos.map((t, i) => [keys[i], t.status]));
 
   if (!todos.length) {
     return (
@@ -39,8 +47,8 @@ export function TasksTab({ sessionId }: { sessionId: string }) {
           <section className="tk-section" aria-label="Tasks">
             <ol className="tk-list">
               {todos.map((t, i) => (
-                <li key={t.id ?? i} className="tk-item" data-status={t.status}>
-                  <span className="tk-mark" aria-hidden>
+                <li key={keys[i]} className="tk-item" data-status={t.status} data-new={arrived.has(keys[i]) || undefined}>
+                  <span className="tk-mark" aria-hidden data-ai-play={(t.status === 'completed' && ticked.current.has(keys[i])) || undefined}>
                     {t.status === 'completed' ? <Icon name="check" size={10} /> : t.status === 'in_progress' ? <Ring size={10} /> : null}
                   </span>
                   <span className="tk-text">{t.status === 'in_progress' ? <span className="shimmer">{t.activeForm || t.content}</span> : t.content}</span>

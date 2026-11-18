@@ -9,7 +9,7 @@ import { useLimitsReport } from '@/state/hooks';
 import { openUsage, readLimitsNow, refreshLimits, sendMessage } from '@/state/actions';
 import { useLimitsTicker } from '@/features/usage/ticker';
 import { accountKey, useStore } from '@/state/store';
-import { IconButton } from '@/ui';
+import { IconButton, Tip } from '@/ui';
 
 /** Context categories in steps of ivory, brightest first: the interface stays monochrome. */
 const STEPS = [0.9, 0.66, 0.48, 0.35, 0.26, 0.19, 0.14, 0.1];
@@ -151,11 +151,22 @@ export function ContextTab({ sessionId, active }: { sessionId: string; active: b
           )}
           {caps?.features.compact && (
             <div className="cx-compact">
-              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void sendMessage(sessionId, '/compact')}>
-                <Icon name="broom" size={14} />
-                Compact conversation
-              </button>
-              {busy && <span className="cx-compact-hint">Available when this turn ends</span>}
+              {busy ? (
+                // A disabled button takes no pointer: the span around it carries the reason.
+                <Tip label="Available when this turn ends" side="top">
+                  <span className="cx-compact-wrap" tabIndex={0}>
+                    <button type="button" className="btn btn-sm" disabled>
+                      <Icon name="broom" size={14} />
+                      Compact conversation
+                    </button>
+                  </span>
+                </Tip>
+              ) : (
+                <button type="button" className="btn btn-sm" onClick={() => void sendMessage(sessionId, '/compact')}>
+                  <Icon name="broom" size={14} />
+                  Compact conversation
+                </button>
+              )}
             </div>
           )}
         </section>

@@ -171,6 +171,28 @@ function RailTabs({ sessionId, cwd, tab, onPick }: { sessionId: string; cwd: str
   const need = TABS.length * TAB + (TABS.length - 1) * TAB_GAP + 3 * COUNT_ROOM + Math.ceil(longest) + 9;
   const labels = width > 0 && width >= need;
 
+  // One pill for the row: it glides to the selected tab on the same spring that opens the tab's name.
+  // Where it lands is worked out from the row as it will be (each tab without a name, plus the
+  // selected one's full name), so it does not wait for the names to finish opening and closing.
+  const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
+  useLayoutEffect(() => {
+    const row = list.current;
+    if (!row) return;
+    const z = parseFloat(document.documentElement.style.zoom) || 1;
+    let x = 0;
+    let next: { x: number; w: number } | null = null;
+    for (const btn of row.querySelectorAll<HTMLElement>('.rail-tab')) {
+      const label = btn.querySelector<HTMLElement>('.rail-tab-label');
+      const on = btn.dataset.tab === tab;
+      const base = (btn.getBoundingClientRect().width - (label ? label.getBoundingClientRect().width : 0)) / z;
+      const name = on && label?.firstElementChild ? label.firstElementChild.getBoundingClientRect().width / z : 0;
+      if (on) next = { x, w: base + name };
+      x += base + name + TAB_GAP;
+    }
+    const to = next as { x: number; w: number } | null;
+    setPill((was) => (was && to && Math.abs(was.x - to.x) < 0.05 && Math.abs(was.w - to.w) < 0.05 ? was : to));
+  }, [tab, labels, width, changes, tasks, agents]);
+
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') return;
     e.preventDefault();
@@ -182,6 +204,15 @@ function RailTabs({ sessionId, cwd, tab, onPick }: { sessionId: string; cwd: str
 
   return (
     <div className="tabs rail-tabs" role="tablist" aria-label="Panel" ref={list} onKeyDown={onKey}>
+      {pill && (
+        <motion.span
+          className="rail-tabs-pill dither-sel"
+          aria-hidden
+          initial={false}
+          animate={{ x: pill.x, width: pill.w }}
+          transition={reducedMotion() ? { duration: 0 } : LABEL_SPRING}
+        />
+      )}
       {TABS.map((t, i) => {
         const active = t.id === tab;
         const count = counts[t.id];
@@ -200,7 +231,6 @@ function RailTabs({ sessionId, cwd, tab, onPick }: { sessionId: string; cwd: str
               data-count={count ? '' : undefined}
               onClick={() => onPick(t.id)}
             >
-              <span className="rail-tab-pill dither-sel" aria-hidden />
               <Icon name={t.icon} size={16} />
               <AnimatePresence initial={false}>
                 {active && labels && (

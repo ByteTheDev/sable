@@ -224,6 +224,12 @@ svg[data-anim] {
     & .n3 { transform-origin: 200px 64px; animation: ai-node var(--ai-d3) var(--ai-out); }
   }
 
+  /* commit: the node answers, the line runs out of it on both sides */
+  & svg[data-icon='commit'][data-anim] {
+    & .node { transform-origin: 128px 128px; animation: ai-node var(--ai-d3) var(--ai-out); }
+    & :is(.l1, .l2) { animation: ai-draw var(--ai-d2) var(--ai-lag) var(--ai-out) both; }
+  }
+
   /* refresh, reload, rewind: the arrow lunges along its arc (the tail runs up behind the head), then the arc pays back out. Never blank. */
   & svg[data-icon='refresh'][data-anim] {
     & .a1 { animation: ai-pull var(--ai-d3) var(--ai-io); }

@@ -93,6 +93,7 @@
   align-items: center;
   gap: 2px;
   overflow: hidden;
+  position: relative;
 }
 
 .rail-tab {
@@ -139,17 +140,14 @@
   scale: none;
 }
 
-.rail-tab-pill {
+/* The selection: one pill for the whole row, moved by transform (and its width) on the name's spring. */
+.rail-tabs-pill {
   position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: inherit;
-  opacity: 0;
-  transition: opacity var(--d-2) var(--ease);
-}
-
-.rail-tab[data-on] .rail-tab-pill {
-  opacity: 1;
+  top: calc(50% - 14px);
+  left: 0;
+  height: 28px;
+  border-radius: var(--r-ctl);
+  pointer-events: none;
 }
 
 /* The name's box animates its width (motion); the text inside keeps its own size and never wraps. */
@@ -160,6 +158,8 @@
 
 .rail-tab-label > span {
   display: block;
+  /* Its own width whatever the box is at: the pill reads where the name will end. */
+  width: max-content;
   padding: 0 2px 0 7px;
 }
 
@@ -1019,6 +1019,17 @@ textarea.field.ch-commit-field {
   overflow: hidden;
 }
 
+/* A command's block rises in when it starts (only the newest: earlier ones are simply there). */
+.tm-run:last-child {
+  animation: rail-row-in var(--d-3) var(--ease-out) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tm-run:last-child {
+    animation: none;
+  }
+}
+
 .tm-run[data-tone='live'] {
   --mark: var(--text-2);
 }
@@ -1301,6 +1312,40 @@ textarea.field.ch-commit-field {
 .tk-text {
   flex: 1;
   min-width: 0;
+  transition: color var(--d-2) var(--ease);
+}
+
+/* A task that finishes while you watch: the mark closes in and the tick draws itself (the icon's own motion). */
+.tk-mark[data-ai-play] {
+  animation: tk-done var(--d-3) var(--ease-out);
+}
+
+@keyframes tk-done {
+  from {
+    scale: 0.6;
+    opacity: 0.4;
+  }
+}
+
+/* A row that joins a list on screen (a new task, a file the agent just touched) rises into place, once. */
+.tk-item[data-new],
+.ch-item[data-new] {
+  animation: rail-row-in var(--d-3) var(--ease-out) backwards;
+}
+
+@keyframes rail-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tk-mark[data-ai-play],
+  .tk-item[data-new],
+  .ch-item[data-new] {
+    animation: none;
+  }
 }
 
 .ag-list {
@@ -1548,9 +1593,9 @@ textarea.field.ch-commit-field {
   border-top: 1px solid var(--line);
 }
 
-.cx-compact-hint {
-  font-size: var(--t-small);
-  color: var(--text-3);
+.cx-compact-wrap {
+  border-radius: var(--r-sm);
+  display: inline-flex;
 }
 
 .cx-stats {

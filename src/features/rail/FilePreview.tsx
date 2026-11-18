@@ -104,7 +104,7 @@ export function FilePreview({ path, cwd, status, onBack }: { path: string; cwd: 
         ) : image && (data.binary || svg) ? (
           <ImagePreview path={path} size={data.size} svgText={svg && !data.truncated ? data.content : undefined} />
         ) : data.binary ? (
-          <p className="rail-empty">This is a binary file, so there is nothing to preview.</p>
+          <p className="rail-empty">A binary file has no preview.</p>
         ) : !data.content ? (
           <p className="rail-empty">This file is empty.</p>
         ) : (

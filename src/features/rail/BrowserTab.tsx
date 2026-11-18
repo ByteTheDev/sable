@@ -688,7 +688,7 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
       {showNote && (
         <div className="bw-note">
           <Icon name="info" size={14} />
-          <span className="bw-note-text">Some sites refuse to be embedded. Local pages work here; use the desktop app for the full web.</span>
+          <span className="bw-note-text">This site may not load here.</span>
           <button type="button" className="btn btn-sm" onClick={openOutside}>
             Open in your browser
           </button>
@@ -1256,7 +1256,7 @@ function StartView({ sessionId, onGo }: { sessionId: string; onGo: (raw: string)
   if (!previews.length && !visits.length) {
     return (
       <div className="bw-start">
-        <p className="rail-empty">Enter an address to see the page next to the conversation.</p>
+        <p className="rail-empty">No pages opened yet.</p>
       </div>
     );
   }

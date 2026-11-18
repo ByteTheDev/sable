@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import type { ToolItem } from '@shared/protocol';
 import { useStore } from '@/state/store';
 
@@ -55,4 +55,23 @@ export function isAbsolute(p: string): boolean {
 export function joinPath(root: string, rel: string): string {
   const sep = root.includes('\\') && !root.includes('/') ? '\\' : '/';
   return root.replace(/[\\/]+$/, '') + sep + rel.replace(/^[\\/]+/, '').replace(/[\\/]/g, sep);
+}
+
+/**
+ * Keys that joined a list while it was on screen: those rows arrive with a short rise (`data-new`).
+ * The first set is simply there, and so is a whole batch (a tree that just loaded, a new plan).
+ */
+export function useArrivals(keys: readonly string[]): ReadonlySet<string> {
+  const seen = useRef<Set<string> | null>(null);
+  const fresh = useRef(new Set<string>());
+  if (!seen.current) seen.current = new Set(keys);
+  else {
+    const news = keys.filter((k) => !seen.current!.has(k));
+    const quiet = seen.current.size === 0 || news.length > 6;
+    for (const k of news) {
+      seen.current.add(k);
+      if (!quiet) fresh.current.add(k);
+    }
+  }
+  return fresh.current;
 }

@@ -222,7 +222,7 @@ const RunView = memo(function RunView({ run }: { run: TermRun; v: number }) {
           </Tip>
         )}
       </div>
-      {run.trimmed && <div className="tm-trim">Earlier output was trimmed; showing the latest part.</div>}
+      {run.trimmed && <div className="tm-trim">Earlier output trimmed</div>}
       {hasOut && <pre className="tm-out">{body}</pre>}
       {run.error && <div className="tm-error">{run.error}</div>}
       <div className="tm-foot num">
