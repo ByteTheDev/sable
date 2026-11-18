@@ -15,8 +15,9 @@ import { reducedMotion, uiZoom } from '@/lib/motion';
  *
  * The spring is stepped ahead of time and handed over as animations (like the sent words in
  * `composer/flight.ts`): the glide is one compositor transform, so the session view mounting under
- * it cannot make it stutter; the small change of width rides along as a declarative animation of
- * the ghost alone. The main thread only acts at the send, the claim and the landing.
+ * it cannot make it stutter; a change of width (only in a window too narrow for the column) rides
+ * along as a declarative animation of the ghost alone. The main thread only acts at the send, the
+ * claim and the landing.
  *
  * Under reduced motion there is no ghost: the views crossfade.
  */
@@ -141,7 +142,10 @@ function run(f: Flight, path: Sample[], then: () => void) {
   const oldSize = f.size;
   f.path = path;
   const move = (f.move = f.ghost.animate(moves, opts));
-  f.size = f.ghost.animate(sizes, opts);
+  // A width is laid out and painted on the main thread every frame: animated only when it changes
+  // (the home card and the dock share the reading column's width, so normally it does not).
+  const sized = path.some((p) => Math.abs(p.w - f.start.width) > 0.5);
+  f.size = sized ? f.ghost.animate(sizes, opts) : null;
   oldMove?.cancel();
   oldSize?.cancel();
   move.finished.then(() => f.move === move && !f.ending && then(), () => {});

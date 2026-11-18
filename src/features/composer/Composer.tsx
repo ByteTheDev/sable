@@ -163,15 +163,37 @@ function PlusGlyph() {
 }
 
 /**
+ * Resolves once the frame being prepared now has been handed to the compositor (a task after its
+ * animation frame), or after 100 ms when no frame comes (a hidden window draws none).
+ */
+function afterFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const go = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    requestAnimationFrame(() => window.setTimeout(go, 0));
+    window.setTimeout(go, 100);
+  });
+}
+
+/**
  * The composer: one card that takes text, mentions, commands and files, and sends them to the
  * agent (or starts a session from the home screen). While a turn runs, Enter queues and Ctrl+Enter
  * steers. Menus and keys are memoized children that keep their own state, so opening a menu or
  * typing never re-renders more than it must.
  */
-export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
+export const Composer = memo(function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
   const key = sessionId ?? 'home';
-  const text = useStore((s) => s.drafts[key]?.text ?? '');
-  const attachments = useStore((s) => s.drafts[key]?.attachments ?? EMPTY);
+  // A message on its way out (see submit): the field is already empty on screen and every render
+  // until the store follows shows it so, or React would write the words back for a frame.
+  const sent = useRef<{ text: string; attachments: Attachment[] } | null>(null);
+  const storedText = useStore((s) => s.drafts[key]?.text ?? '');
+  const storedAttachments = useStore((s) => s.drafts[key]?.attachments ?? EMPTY);
+  const text = sent.current ? '' : storedText;
+  const attachments = sent.current ? EMPTY : storedAttachments;
   const setDraft = useStore((s) => s.setDraft);
   const sendWithEnter = useStore((s) => s.settings.sendWithEnter);
   const status = useStore((s) => (sessionId ? s.sessions[sessionId]?.status : undefined));
@@ -539,6 +561,8 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
   };
 
   const submit = async (steer = false) => {
+    // A second press before the store has followed the first: that message is already on its way.
+    if (sent.current) return;
     if (shell) {
       const command = text.slice(1).trim();
       if (!command || !sessionId) return;
@@ -570,13 +594,27 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
     // In a session the next placeholder is always the queueing one: the turn is running (or about to).
     // A queued message's words rise through the field into the tray: the placeholder waits for them.
     rollOut(text, variant === 'session' ? 'Queue a follow-up' : null, flew, !!sessionId && busy && !steering);
-    clear();
+    // From home: the composer starts its glide to the dock at once, before the session exists.
+    if (!sessionId && homeChoice()) beginHandoff(card.current);
+    // The press itself only touches the page: the field empties on screen now, and the store, React
+    // and the bridge follow once this frame is on the compositor. So the bubble, the key and the
+    // glide are already moving there when the work they set off (the composer and the conversation
+    // re-rendering, a session mounting) takes the main thread.
+    if (ta) ta.value = '';
+    sent.current = draft;
+    await afterFrame();
+    if (sent.current === draft) sent.current = null;
+    const now = useStore.getState().drafts[key];
+    // Words typed meanwhile stay (onChange let go of the hold); the sent ones and their files go.
+    if ((now?.text ?? '') === draft.text) {
+      setDraft(key, { text: '', attachments: [] });
+      pendingCaret.current = 0;
+    } else if (now?.attachments === draft.attachments) setDraft(key, { attachments: [] });
+    setRecall(null);
     if (sessionId) {
       await sendMessage(sessionId, out.text, out.attachments, steer && busy ? { steer: true } : {});
       return;
     }
-    // From home: the composer starts its glide to the dock at once, before the session exists.
-    if (homeChoice()) beginHandoff(card.current);
     if (!(await startFromHome(out.text, out.attachments))) {
       cancelHandoff();
       setDraft(key, draft);
@@ -728,6 +766,8 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
   };
 
   const onChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
+    // Typed right after a send: these words are the next message (submit leaves them be).
+    sent.current = null;
     pendingCaret.current = null;
     setDraft(key, { text: e.target.value });
     setCaret(e.target.selectionStart);
@@ -797,7 +837,7 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
             aria-activedescendant={menuOpen && rows.length ? `${listId}-${active}` : undefined}
             spellCheck={false}
             onChange={onChange}
-            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+            onSelect={(e) => !sent.current && setCaret(e.currentTarget.selectionStart)}
             onScroll={syncHighlight}
             onKeyDown={onKeyDown}
             onPaste={(e) => {
@@ -895,4 +935,4 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
       {variant === 'home' && <HomeChips onClosed={focus} />}
     </div>
   );
-}
+});

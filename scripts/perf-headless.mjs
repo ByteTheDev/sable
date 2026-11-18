@@ -9,6 +9,19 @@
  * raster workers, the backdrop's worker, GPU), paint count and painted area, rAF and timer counts,
  * long tasks, and the layer count afterwards. Results go to scratch/speed/<label>.json and a table
  * is printed. Uses the installed Edge (or Chrome) through playwright-core, like shot.mjs.
+ *
+ * The sends (`send`, `send-home`) also time the flight itself, from the key to the landing (the
+ * moment the last flight layer, `.send-bubble` or `.handoff-ghost`, leaves the page):
+ * - `raf`: the main thread's frames in that span (a rAF probe): dropped frames (16.7 ms slots
+ *   missed) and the longest frame;
+ * - `cc`: the compositor's frames from the trace (`PipelineReporter`): presented in full, presented
+ *   partially (the compositor moved on without the main thread: compositor animations still smooth),
+ *   and dropped (nothing new on screen: what the eye sees as a stutter), with the longest gap
+ *   between presented frames;
+ * - main-thread long tasks inside the span.
+ *
+ *   --throttle 4   slows the page's CPU 4x (Emulation.setCPUThrottlingRate), a stand-in for a loaded laptop
+ *   PERF_TRACE=1   also writes each scenario's raw trace to scratch/speed/<label>-<scenario>-<n>.trace.json
  */
 import { chromium } from 'playwright-core';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -25,6 +38,7 @@ const only = opt('only', '')
   .filter(Boolean);
 const repeat = Number(opt('repeat', '1'));
 const size = opt('size', '1440x900').split('x').map(Number);
+const throttle = Number(opt('throttle', '1'));
 
 async function findServer() {
   if (process.env.SABLE_URL) return process.env.SABLE_URL;
@@ -227,6 +241,86 @@ function analyse(events) {
   return out;
 }
 
+/**
+ * The compositor's frames between the trace marks `sable:send` and `sable:land` (set by the flight
+ * probe in measure()): PipelineReporter states, DrawFrame gaps, and main-thread long tasks.
+ */
+function flightFrames(events) {
+  const mark = (m) => events.find((e) => e.name === 'TimeStamp' && (e.args?.data?.message === m || e.args?.data?.name === m));
+  const s = mark('sable:send');
+  if (!s) return { cc: null };
+  const l = mark('sable:land');
+  const t0 = s.ts;
+  const t1 = l ? l.ts : t0 + 1_200_000;
+  // The page's renderer and its threads.
+  const pid = s.pid;
+  const mainTid = s.tid;
+  // Per frame sequence the best outcome among its reporters (a frame can have a forked reporter
+  // for main-thread work that lands later).
+  const RANK = { STATE_DROPPED: 1, STATE_PRESENTED_PARTIAL: 2, STATE_PRESENTED_ALL: 3 };
+  const bySeq = new Map();
+  for (const e of events) {
+    if (e.name !== 'PipelineReporter' || (e.ph !== 'b' && e.ph !== 'X') || e.pid !== pid) continue;
+    const fr = e.args?.frame_reporter ?? e.args?.chrome_frame_reporter;
+    if (!fr?.state || !RANK[fr.state] || e.ts < t0 || e.ts > t1) continue;
+    const prev = bySeq.get(fr.frame_sequence);
+    if (!prev || RANK[fr.state] > RANK[prev.state]) bySeq.set(fr.frame_sequence, { state: fr.state, ts: e.ts });
+  }
+  const states = {};
+  const presented = [];
+  for (const v of bySeq.values()) {
+    states[v.state] = (states[v.state] ?? 0) + 1;
+    if (v.state !== 'STATE_DROPPED') presented.push(v.ts);
+  }
+  let draws = events.filter((e) => e.name === 'DrawFrame' && e.pid === pid && e.ts >= t0 && e.ts <= t1).map((e) => e.ts);
+  if (!draws.length) draws = events.filter((e) => e.name === 'DrawFrame' && e.ts >= t0 && e.ts <= t1).map((e) => e.ts);
+  const gap = (list) => {
+    list.sort((a, b) => a - b);
+    let worst = 0;
+    for (let i = 1; i < list.length; i++) worst = Math.max(worst, list[i] - list[i - 1]);
+    return Math.round(worst / 1000);
+  };
+  let long = 0;
+  let longMs = 0;
+  const spans = [];
+  for (const e of events) {
+    if (e.ph !== 'X' || e.pid !== pid || e.tid !== mainTid) continue;
+    if (e.name !== 'ThreadControllerImpl::RunTask' && e.name !== 'RunTask') continue;
+    const a = Math.max(e.ts, t0);
+    const b = Math.min(e.ts + e.dur, t1);
+    if (b <= a) continue;
+    spans.push([a, b]);
+    if (e.dur > 50_000) (long++, (longMs += e.dur / 1000));
+  }
+  // Busy: the union of the tasks (they nest).
+  spans.sort((x, y) => x[0] - y[0]);
+  let busy = 0;
+  let cs = -1;
+  let ce = -1;
+  for (const [a, b] of spans) {
+    if (a > ce) {
+      if (ce > cs) busy += ce - cs;
+      cs = a;
+      ce = b;
+    } else if (b > ce) ce = b;
+  }
+  if (ce > cs) busy += ce - cs;
+  return {
+    span: Math.round((t1 - t0) / 1000),
+    cc: {
+      all: states.STATE_PRESENTED_ALL ?? 0,
+      partial: states.STATE_PRESENTED_PARTIAL ?? 0,
+      dropped: states.STATE_DROPPED ?? 0,
+      gap: gap(presented),
+    },
+    draws: draws.length,
+    drawGap: gap(draws),
+    mainBusy: Math.round(busy / 1000),
+    long,
+    longMs: Math.round(longMs),
+  };
+}
+
 // ── harness ──
 
 const url = await findServer();
@@ -300,6 +394,8 @@ if (process.env.PERF_RENDERS)
 const page = await context.newPage();
 const cdp = await context.newCDPSession(page);
 await cdp.send('Performance.enable', { timeDomain: 'threadTicks' });
+let traceN = 0;
+mkdirSync(path.resolve('scratch/speed'), { recursive: true });
 const errors = [];
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
 page.on('console', (m) => m.type() === 'error' && errors.push(`console: ${m.text().slice(0, 200)}`));
@@ -368,6 +464,36 @@ async function measure(name, run) {
     } catch {
       /* unsupported */
     }
+    // The flight probe: from Enter to the moment no flight layer is left. A rAF loop records the
+    // main thread's frames; trace marks bound the span for the compositor's frames.
+    window.__flightMo?.disconnect();
+    if (window.__flightKey) window.removeEventListener('keydown', window.__flightKey, true);
+    const F = (window.__flight = { t0: 0, land: 0, seen: 0, frames: [], log: [] });
+    const LAYERS = '.send-bubble, .handoff-ghost';
+    window.__flightKey = (e) => {
+      if (e.key !== 'Enter' || F.t0) return;
+      F.t0 = performance.now();
+      if (window.__renders) F.r0 = { ...window.__renders };
+      console.timeStamp('sable:send');
+      const loop = (t) => {
+        F.frames.push(t);
+        if (t - F.t0 < 2500 && !F.land) requestAnimationFrame(loop);
+      };
+      requestAnimationFrame(loop);
+    };
+    window.addEventListener('keydown', window.__flightKey, true);
+    window.__flightMo = new MutationObserver((recs) => {
+      for (const r of recs) {
+        for (const n of r.addedNodes) if (n.nodeType === 1 && n.matches(LAYERS)) (F.seen++, F.log.push(`+${n.className.split(' ').pop()}@${Math.round(performance.now() - F.t0)}`));
+        for (const n of r.removedNodes) if (n.nodeType === 1 && n.matches(LAYERS)) F.log.push(`-${n.className.split(' ').pop()}@${Math.round(performance.now() - F.t0)}`);
+      }
+      if (F.seen && !F.land && !document.querySelector(LAYERS)) {
+        F.land = performance.now();
+        if (window.__renders) F.r1 = { ...window.__renders };
+        console.timeStamp('sable:land');
+      }
+    });
+    window.__flightMo.observe(document.body, { childList: true });
   });
   await page.evaluate(() => (window.__renders = {}));
   const m0 = await metrics();
@@ -378,7 +504,30 @@ async function measure(name, run) {
   const buf = await browser.stopTracing();
   const m1 = await metrics();
   const trace = JSON.parse(buf.toString());
+  if (process.env.PERF_TRACE) writeFileSync(path.resolve(`scratch/speed/${label}-${name}-${++traceN}.trace.json`), buf);
   const a = analyse(trace.traceEvents ?? trace);
+  const flight = await page.evaluate(() => {
+    const F = window.__flight;
+    window.__flightMo?.disconnect();
+    if (!F?.t0) return null;
+    const end = F.land || F.t0 + 1200;
+    const fr = F.frames.filter((t) => t <= end + 17);
+    let dropped = 0;
+    let worst = 0;
+    for (let i = 1; i < fr.length; i++) {
+      const dt = fr[i] - fr[i - 1];
+      worst = Math.max(worst, dt);
+      dropped += Math.max(0, Math.round(dt / 16.667) - 1);
+    }
+    // Renders between the key and the landing (PERF_RENDERS).
+    const r1 = F.r1 ?? window.__renders;
+    const renders = F.r0 && r1 ? Object.entries(r1).map(([k, v]) => [k, v - (F.r0[k] ?? 0)]).filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1]).slice(0, 40).map(([k, v]) => `${k} ${v}`).join(', ') : undefined;
+    // The first frame after the key: how long the press waited for anything to draw.
+    return {
+      log: F.log.join(' '),
+      renders, ms: Math.round(end - F.t0), landed: !!F.land, frames: fr.length, dropped, worst: Math.round(worst), first: fr.length ? Math.round(fr[0] - F.t0) : -1 };
+  });
+  if (flight) Object.assign(flight, flightFrames(trace.traceEvents ?? trace));
   const page2 = await page.evaluate(() => {
     const anims = document.getAnimations().filter((x) => x.playState === 'running');
     const who = anims.slice(0, 6).map((x) => {
@@ -433,13 +582,14 @@ async function measure(name, run) {
     layoutMs: +(d('LayoutDuration') * 1000).toFixed(1),
     layoutN: d('LayoutCount'),
     taskMs: +(d('TaskDuration') * 1000).toFixed(1),
+    flight,
     trace: a,
     ...page2,
     ...L,
   };
 }
 
-const ev = (js) => page.evaluate(js);
+const ev = (js, arg) => page.evaluate(js, arg);
 
 async function waitIdle(id, timeout = 60_000) {
   await page.waitForFunction((sid) => window.sable.store.getState().sessions[sid]?.status === 'idle', id, { timeout, polling: 250 });
@@ -452,6 +602,12 @@ async function sweep(from, to, steps = 60, gap = 16) {
     await page.mouse.move(from[0] + (to[0] - from[0]) * k, from[1] + (to[1] - from[1]) * k);
     await sleep(gap);
   }
+}
+
+/** A slow landing (a loaded machine) stays inside the trace: wait for it, up to 8 s after the key. */
+async function landed() {
+  await page.waitForFunction(() => !window.__flight?.t0 || window.__flight.land || performance.now() - window.__flight.t0 > 8000, null, { timeout: 9000, polling: 50 }).catch(() => {});
+  await sleep(100);
 }
 
 async function box(sel) {
@@ -581,12 +737,23 @@ const SCENARIOS = {
   // A message sent in a finished Demo session: the flight of the words and the short turn.
   send: async () => {
     await finishedSession();
-    await page.click('.composer[data-variant=session] textarea.cmp-input:not(.cmp-mirror)');
+    const left = await ev(() => [...document.querySelectorAll('.handoff-ghost, .send-bubble')].map((g) => `${g.className} op ${getComputedStyle(g).opacity} anims ${g.getAnimations().map((a) => a.playState).join(',')}`));
+    if (left.length) console.log('    left on the page:', left.join(' ; '));
+    if (process.env.PERF_ERR)
+      console.log(
+        '    state:',
+        await ev((id) => {
+          const s = window.sable.store.getState();
+          return JSON.stringify({ want: id, active: s.ui.activeSessionId, status: s.sessions[id]?.status, home: !!document.querySelector('.home'), dock: !!document.querySelector('.dock'), composers: [...document.querySelectorAll('.composer')].map((c) => `${c.className}/${c.dataset.variant}`) });
+        }, finishedId),
+      );
+    await page.click('.composer[data-variant=session]:not(.handoff-ghost) textarea.cmp-input:not(.cmp-mirror)');
     await sleep(300);
     const r = await measure('send', async () => {
       await page.keyboard.type('hi');
       await page.keyboard.press('Enter');
       await sleep(3000);
+      await landed();
     });
     await waitIdle(finishedId).catch(() => {});
     return r;
@@ -606,6 +773,7 @@ const SCENARIOS = {
       await page.keyboard.type('hi');
       await page.keyboard.press('Enter');
       await sleep(2500);
+      await landed();
     });
   },
   // Six switches between two finished sessions, 400 ms apart.
@@ -677,7 +845,11 @@ try {
   // Experiments: --css "rule" is added to the page before measuring.
   const css = opt('css', '');
   if (css) await page.addStyleTag({ content: css });
+  // Experiments: --init "js" runs in the page before measuring (e.g. a switch the code reads).
+  const init = opt('init', '');
+  if (init) await page.evaluate(init);
   await sleep(3000);
+  if (throttle > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle });
   const names = Object.keys(SCENARIOS).filter((n) => !only.length || only.includes(n));
   for (let rep = 0; rep < repeat; rep++)
     for (const n of names) {
@@ -707,6 +879,19 @@ try {
             `focus ${r.focus} field ${r.field}`,
           ].join(' | '),
         );
+        const f = r.flight;
+        if (f?.renders) console.log(`    renders in flight: ${f.renders}`);
+        if (f)
+          console.log(
+            [
+              `    flight ${f.ms}ms${f.landed ? '' : ' (no landing)'}`,
+              `raf ${f.frames} frames, dropped ${f.dropped}, worst ${f.worst}ms, first ${f.first}ms`,
+              f.cc ? `cc all ${f.cc.all} partial ${f.cc.partial} dropped ${f.cc.dropped} gap ${f.cc.gap}ms` : 'cc -',
+              `draws ${f.draws} gap ${f.drawGap}ms`,
+              `main busy ${f.mainBusy}ms long ${f.long}/${f.longMs}ms`,
+              f.log,
+            ].join(' | '),
+          );
         if (t.detail)
           console.log(
             Object.entries(t.detail)
@@ -716,12 +901,12 @@ try {
               .join('\n'),
           );
       } catch (err) {
-        console.log(n, 'failed:', err.message.split('\n')[0]);
+        console.log(n, 'failed:', err.message.split('\n').slice(0, process.env.PERF_ERR ? 30 : 1).join('\n'));
       }
     }
 } finally {
-  mkdirSync(path.resolve('scratch/speed'), { recursive: true });
   writeFileSync(path.resolve(`scratch/speed/${label}.json`), JSON.stringify(results, null, 1));
+  if (throttle > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 }).catch(() => {});
   if (errors.length) console.log([...new Set(errors)].slice(0, 8).join('\n'));
   await browser.close();
 }
