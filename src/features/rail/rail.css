@@ -1317,12 +1317,12 @@ textarea.field.ch-commit-field {
 
 /* A task that finishes while you watch: the mark closes in and the tick draws itself (the icon's own motion). */
 .tk-mark[data-ai-play] {
-  animation: tk-done var(--d-3) var(--ease-out);
+  animation: tk-done 280ms var(--ease-out);
 }
 
 @keyframes tk-done {
   from {
-    scale: 0.6;
+    scale: 0.5;
     opacity: 0.4;
   }
 }
@@ -1701,6 +1701,22 @@ textarea.field.ch-commit-field {
 
 .agc .agent-row > .tool-meta:empty {
   display: none;
+}
+
+/* In a narrow panel the line keeps its figures whole and shortens what the agent is doing. */
+.agc .agent-line {
+  min-width: 0;
+}
+
+.agc .agent-line > span {
+  flex-shrink: 0;
+}
+
+.agc .agent-line > span:first-child {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .agc .agent-report .md {

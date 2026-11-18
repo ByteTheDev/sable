@@ -3,6 +3,7 @@ import type { Todo } from '@shared/protocol';
 import { Ring } from '@/art/Logo';
 import { Icon } from '@/icons';
 import { useStore } from '@/state/store';
+import { LeaveList } from './leave';
 import { useArrivals } from './util';
 
 const NO_TODOS: Todo[] = [];
@@ -45,17 +46,17 @@ export function TasksTab({ sessionId }: { sessionId: string }) {
       <div className="rail-scroll scroll">
         <div className="rail-stack tk-stack">
           <section className="tk-section" aria-label="Tasks">
-            <ol className="tk-list">
+            <LeaveList className="tk-list" order={keys.join('|')}>
               {todos.map((t, i) => (
-                <li key={keys[i]} className="tk-item" data-status={t.status} data-new={arrived.has(keys[i]) || undefined}>
+                <div role="listitem" data-flip={keys[i]} key={keys[i]} className="tk-item" data-status={t.status} data-new={arrived.has(keys[i]) || undefined}>
                   <span className="tk-mark" aria-hidden data-ai-play={(t.status === 'completed' && ticked.current.has(keys[i])) || undefined}>
                     {t.status === 'completed' ? <Icon name="check" size={10} /> : t.status === 'in_progress' ? <Ring size={10} /> : null}
                   </span>
                   <span className="tk-text">{t.status === 'in_progress' ? <span className="shimmer">{t.activeForm || t.content}</span> : t.content}</span>
                   <span className="sr-only">{t.status === 'completed' ? 'done' : t.status === 'in_progress' ? 'in progress' : 'pending'}</span>
-                </li>
+                </div>
               ))}
-            </ol>
+            </LeaveList>
           </section>
         </div>
       </div>

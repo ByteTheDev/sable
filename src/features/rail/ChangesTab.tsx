@@ -8,6 +8,7 @@ import { focusComposer } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { IconButton, Spinner, Tip } from '@/ui';
 import { STATUS_TONE, commitAll, gitKey, isSmall, loadAllDiffs, loadDiff, refreshGit, useRepo, type DiffEntry } from './git-state';
+import { LeaveList } from './leave';
 import { splitPath, useArrivals, useToolIds } from './util';
 
 /** How many files the Changes tab lists (working tree, or this session's edits outside a repo). */
@@ -135,11 +136,11 @@ function RepoChanges({ cwd }: { cwd: string }) {
         {status.files.length === 0 ? (
           <p className="rail-empty">The working tree is clean.</p>
         ) : (
-          <ul className="ch-list">
+          <LeaveList className="ch-list" order={status.files.map((f) => f.path).join('|')}>
             {status.files.map((f) => (
               <FileRow key={f.path} file={f} fresh={arrived.has(f.path)} open={open.has(f.path)} entry={repo.diffs[f.path]} onToggle={toggle} onRetry={() => loadDiff(cwd, f.path)} />
             ))}
-          </ul>
+          </LeaveList>
         )}
       </div>
       {status.files.length > 0 && <CommitBox cwd={cwd} />}
@@ -262,7 +263,7 @@ const FileRow = memo(function FileRow({
   const [dir, base] = splitPath(file.path);
   const diff = entry?.state === 'ok' ? entry.diff : entry?.state === 'loading' ? entry.prev : undefined;
   return (
-    <li className="ch-item rail-row-host" data-open={open || undefined} data-new={fresh || undefined}>
+    <div role="listitem" data-flip={file.path} className="ch-item rail-row-host" data-open={open || undefined} data-new={fresh || undefined}>
       <button type="button" className="ch-row" aria-expanded={open} onClick={() => onToggle(file.path)}>
         <StatusLetter status={file.status} />
         <span className="ch-path">
@@ -294,7 +295,7 @@ const FileRow = memo(function FileRow({
           )}
         </div>
       </Collapse>
-    </li>
+    </div>
   );
 });
 

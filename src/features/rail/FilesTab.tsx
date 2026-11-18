@@ -281,7 +281,7 @@ export function FilesTab({ sessionId, cwd }: { sessionId: string; cwd: string })
                 <IconButton icon="collapse" label="Collapse folders" size={14} disabled={!expanded.size} onClick={() => setExpanded(new Set())} />
                 <IconButton
                   icon="refresh"
-                  label="Reload"
+                  label="Refresh"
                   size={14}
                   onClick={() => {
                     load(cwd, true);

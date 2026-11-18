@@ -230,6 +230,12 @@ svg[data-anim] {
     & :is(.l1, .l2) { animation: ai-draw var(--ai-d2) var(--ai-lag) var(--ai-out) both; }
   }
 
+  /* pick an element: the pointer presses toward its tip, the rays draw in and flash out from it */
+  & svg[data-icon='cursor-click'][data-anim] {
+    & .ptr { transform-origin: 48px 48px; animation: ai-click-ptr var(--ai-d2) var(--ai-out); }
+    & .ray { transform-origin: 48px 48px; animation: ai-click-ray var(--ai-d2) var(--ai-lag) var(--ai-out); }
+  }
+
   /* refresh, reload, rewind: the arrow lunges along its arc (the tail runs up behind the head), then the arc pays back out. Never blank. */
   & svg[data-icon='refresh'][data-anim] {
     & .a1 { animation: ai-pull var(--ai-d3) var(--ai-io); }
@@ -707,6 +713,18 @@ svg[data-anim] {
 @keyframes ai-slice {
   40% { transform: translate(-18px, -10px); }
   74% { transform: translate(3px, 2px); }
+}
+@keyframes ai-click-ptr {
+  0% { transform: scale(1); }
+  40% { transform: translate(-8px, -8px) scale(0.92); }
+  75% { transform: translate(2px, 2px) scale(1.02); }
+  100% { transform: scale(1); }
+}
+@keyframes ai-click-ray {
+  0% { transform: scale(1); opacity: 1; }
+  35% { transform: scale(0.72); opacity: 0.35; }
+  70% { transform: scale(1.14); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
 }
 @keyframes ai-node {
   0% { transform: scale(1); }
