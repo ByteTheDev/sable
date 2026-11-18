@@ -51,11 +51,19 @@ export interface NewSessionChoice {
   handoverFrom?: string;
 }
 
-/** Continue in the other agent: a new session with `provider` in the same folder, starting from a summary of `sessionId`. */
-export function continueInAgent(sessionId: string, provider: ProviderId) {
-  const s = useStore.getState().sessions[sessionId];
-  if (!s || s.provider === provider) return Promise.resolve(null);
-  return createSession({ provider, cwd: s.cwd, handoverFrom: sessionId, title: s.title });
+/**
+ * Continue in the other agent: a new session with `provider` (and `model`, else its default) in the
+ * same folder, under the account new sessions of that agent use, starting from a summary of
+ * `sessionId`. A draft in the composer goes along.
+ */
+export async function continueInAgent(sessionId: string, provider: ProviderId, model?: string) {
+  const st = useStore.getState();
+  const s = st.sessions[sessionId];
+  if (!s || s.provider === provider) return null;
+  const draft = st.drafts[sessionId];
+  const made = await createSession({ provider, cwd: s.cwd, handoverFrom: sessionId, title: s.title, accountId: homeAccountId(provider), ...(model ? { model } : {}) });
+  if (made && draft && (draft.text?.trim() || draft.attachments?.length)) useStore.setState((x) => ({ drafts: { ...x.drafts, [made.id]: draft } }));
+  return made;
 }
 
 export async function createSession(choice: NewSessionChoice): Promise<SessionMeta | null> {

@@ -1469,6 +1469,16 @@
   flex-shrink: 0;
 }
 
+/* Another agent's model: the arrow says it carries the conversation over, quiet until pointed at. */
+.mm-away .mm-check {
+  color: var(--text-4);
+  transition: color 90ms var(--ease);
+}
+
+.mm-away:is([data-highlighted], :hover) .mm-check {
+  color: var(--text-2);
+}
+
 .menu-item.mm-row .mm-check svg {
   color: var(--text);
 }

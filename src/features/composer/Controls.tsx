@@ -1,15 +1,17 @@
-import { Fragment, memo, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { DropdownMenu as RM } from 'radix-ui';
-import type { ProviderId } from '@shared/protocol';
+import { useShallow } from 'zustand/react/shallow';
+import type { ModelInfo, ProviderId } from '@shared/protocol';
+import { isSignedIn } from '@/features/connect/plan';
 import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
 import { Icon, MODE_ICON } from '@/icons';
 import { baseName, tildePath } from '@/lib/format';
 import { fuzzy } from '@/lib/fuzzy';
-import { modelName } from '@/lib/models';
+import { modelName, visibleModels } from '@/lib/models';
 import { currentBranch } from '@/lib/workspace';
-import { homeAccountId, openSettings, setHomeAccount } from '@/state/actions';
+import { continueInAgent, homeAccountId, openSettings, setHomeAccount } from '@/state/actions';
 import { accountName } from '@/state/hooks';
-import { refreshStaleCaps, useStore } from '@/state/store';
+import { capsKey, ensureProviderCaps, refreshStaleCaps, useStore } from '@/state/store';
 import { Kbd, PathLabel, Tip } from '@/ui';
 import { planWord } from '@/features/accounts/model';
 import { LimitDot } from '@/features/usage';
@@ -190,6 +192,7 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
   }, [open, choice.provider, choice.accountId]);
   const content = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
+  const others = useOtherAgentModels(choice, open);
 
   useEffect(() => {
     if (!open) setQuery('');
@@ -199,7 +202,7 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
   if (!choice.caps.models.length) return null;
 
   const models = choice.models;
-  const withField = models.length > 7;
+  const withField = models.length + others.length > 7;
   const q = query.trim();
   const rows = models
     .map((m) => {
@@ -207,6 +210,17 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
       return { m, name, hit: q ? fuzzy(q, name) : undefined };
     })
     .filter((r) => !q || r.hit);
+  // The other agents' models: picking one carries the conversation over (Continue in the other agent).
+  const away = others
+    .map((o) => {
+      const name = modelName(o.m) ?? o.m.id;
+      return { ...o, name, hit: q ? fuzzy(q, name) : undefined };
+    })
+    .filter((r) => !q || r.hit);
+  const goAway = (provider: ProviderId, id: string) => {
+    setOpen(false);
+    if (choice.sessionId) void continueInAgent(choice.sessionId, provider, id);
+  };
 
   const name = choice.modelLabel ?? 'Model';
   const pick = (id: string) => {
@@ -285,6 +299,9 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
                   } else if (e.key === 'Enter' && rows[0]) {
                     e.preventDefault();
                     pick(rows[0].m.id);
+                  } else if (e.key === 'Enter' && away[0]) {
+                    e.preventDefault();
+                    goAway(away[0].provider, away[0].m.id);
                   }
                 }}
               />
@@ -303,13 +320,48 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
                 </RM.Item>
               );
             })}
-            {!rows.length && <div className="mm-empty">No models match “{q}”</div>}
+            {away.length > 0 && rows.length > 0 && <RM.Separator className="menu-sep" />}
+            {away.map(({ provider, m, name, hit }) => (
+              <RM.Item key={`${provider}:${m.id}`} className="menu-item mm-row mm-away" data-mrow aria-label={`Continue in ${PROVIDER_NAME[provider]} with ${name}`} onSelect={() => goAway(provider, m.id)} {...guard}>
+                <ProviderMark provider={provider} size={14} className="mm-mark" />
+                <span className="mm-name truncate">
+                  <Hits text={name} indices={hit?.indices} />
+                </span>
+                <span className="mm-check">
+                  <Icon name="arrow-right" size={13} />
+                </span>
+              </RM.Item>
+            ))}
+            {!rows.length && !away.length && <div className="mm-empty">No models match “{q}”</div>}
           </div>
         </RM.Content>
       </RM.Portal>
     </RM.Root>
   );
 });
+
+const NO_OTHERS: { provider: ProviderId; m: ModelInfo }[] = [];
+const AGENTS: ProviderId[] = ['claude', 'codex'];
+
+/**
+ * In a session, the models of the other agents the user is signed in to (what their own pickers
+ * list), loaded when the menu first opens. Empty on home, where the agent is chosen beside it.
+ */
+function useOtherAgentModels(choice: Choice, open: boolean) {
+  const sessionId = choice.sessionId;
+  const cwd = useStore((s) => (sessionId ? (s.sessions[sessionId]?.cwd ?? null) : null));
+  const signedIn = useStore(useShallow((s) => AGENTS.filter((p) => p !== choice.provider && isSignedIn(s.providers[p]))));
+  const visibility = useStore((s) => s.settings.modelVisibility);
+  const caps = useStore(useShallow((s) => signedIn.map((p) => s.providerCaps[capsKey(p, cwd, homeAccountId(p, s))] ?? s.providerCaps[capsKey(p, cwd)])));
+  useEffect(() => {
+    if (!open || !sessionId || !cwd) return;
+    for (const p of signedIn) ensureProviderCaps(p, cwd, homeAccountId(p));
+  }, [open, sessionId, cwd, signedIn]);
+  return useMemo(() => {
+    if (!sessionId || !cwd) return NO_OTHERS;
+    return signedIn.flatMap((p, i) => (caps[i] ? visibleModels(p, caps[i]!.models, visibility).map((m) => ({ provider: p, m })) : []));
+  }, [sessionId, cwd, signedIn, caps, visibility]);
+}
 
 // ───────────────────────── home chips ─────────────────────────
 
