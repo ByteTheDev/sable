@@ -1,6 +1,6 @@
 import { forwardRef, memo, useMemo, type ReactNode } from 'react';
 import type { Capabilities } from '@shared/protocol';
-import { appCommandsFor } from './commands';
+import { knownTokens } from './commands';
 
 export type PillKind = 'command' | 'mention' | 'skill' | 'shell';
 
@@ -47,14 +47,7 @@ export function tokenize(text: string, known: { commands: Set<string>; skills: S
  */
 export const Highlight = memo(
   forwardRef<HTMLDivElement, { text: string; caps: Capabilities | undefined; sessionId: string | null; shell: boolean }>(function Highlight({ text, caps, sessionId, shell }, ref) {
-    const known = useMemo(
-      () => ({
-        commands: new Set([...appCommandsFor(sessionId).map((c) => c.name), ...(caps?.commands ?? []).map((c) => c.name)]),
-        skills: new Set((caps?.skills ?? []).map((s) => s.name)),
-        dollar: caps?.skillTrigger === '$',
-      }),
-      [caps, sessionId],
-    );
+    const known = useMemo(() => knownTokens(caps, sessionId), [caps, sessionId]);
     const parts = useMemo(() => (mayHavePills(text) ? tokenize(text, { ...known, shell }) : null), [text, known, shell]);
     if (!parts || !parts.some((p) => p.kind)) return null;
     const nodes: ReactNode[] = parts.map((p, i) =>

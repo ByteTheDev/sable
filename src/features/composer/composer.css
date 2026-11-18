@@ -301,6 +301,7 @@
 .cmp-right {
   gap: 2px;
   flex-shrink: 1;
+  margin-left: auto;
 }
 
 .cmp-attach {
@@ -409,7 +410,8 @@
   opacity: 0.7;
 }
 
-/* Mode: one fill step at rest, like a button. Every mode is neutral ivory, bypass included. */
+/* Mode: one fill step at rest, like a button. Every mode is neutral ivory except bypass, whose icon
+   and label are red (it carries meaning: nothing asks first). The fill stays neutral. */
 .cm-mode {
   color: var(--text);
   font-weight: var(--w-medium);
@@ -428,6 +430,11 @@
 .cm-mode svg,
 .cm-mode:hover svg {
   color: var(--text-2);
+}
+
+.cm-mode[data-tone='danger'],
+.cm-mode[data-tone='danger'] svg {
+  color: var(--red);
 }
 
 .cm-mode-label {
@@ -1024,7 +1031,8 @@
   background-color: currentColor;
 }
 
-/* The glyph's parts move between send, queue and steer (and gain a second head for ultracode). */
+/* One arrow in every state: straight up to send (and to queue while a turn runs), leaning into the
+   turn to steer. The lean is the only move between states: a short turn about the arrow's centre. */
 .sk-glyph {
   display: block;
   overflow: visible;
@@ -1036,38 +1044,16 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   transform-box: view-box;
-  transition:
-    transform 150ms var(--ease-out),
-    opacity 110ms var(--ease);
 }
 
 .sk-arrow {
   transform-box: view-box;
-  transform-origin: 8px 8.4px;
-  transition: transform 170ms var(--ease-out);
+  transform-origin: 8px 8.25px;
+  transition: transform 140ms var(--ease-out);
 }
 
 .sk-shaft {
   transform-origin: 8px 3.6px;
-}
-
-.sk-line {
-  opacity: 0;
-  transform-origin: 8px 12px;
-  transform: translateY(2px) scaleX(0.4);
-}
-
-.sk-glyph[data-glyph='queue'] .sk-arrow {
-  transform: translateY(-1px);
-}
-
-.sk-glyph[data-glyph='queue'] .sk-shaft {
-  transform: scaleY(0.36);
-}
-
-.sk-glyph[data-glyph='queue'] .sk-line {
-  opacity: 1;
-  transform: none;
 }
 
 .sk-glyph[data-glyph='steer'] .sk-arrow {
@@ -1076,36 +1062,6 @@
 
 .cmp-send[data-ready]:is(:hover, :focus-visible) .sk-glyph[data-glyph='send'] .sk-arrow {
   transform: translateY(-1px);
-}
-
-/* The key hint while a turn runs: in the toolbar's free space, right next to the keys. */
-.sk-hint {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  justify-content: flex-end;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.sk-hint-in {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--t-small);
-  color: var(--text-3);
-  white-space: nowrap;
-  opacity: 0;
-  translate: 4px 0;
-  transition:
-    opacity 110ms var(--ease),
-    translate 140ms var(--ease-out);
-}
-
-.sk-hint[data-on] .sk-hint-in {
-  opacity: 1;
-  translate: 0 0;
-  animation: fade-in 90ms var(--ease);
 }
 
 /* ── full-stage drop state ── */
@@ -1274,7 +1230,10 @@
   padding-top: 4px;
 }
 
+/* One line per row, like the command palette: an icon where the row is a thing (a file, a folder,
+   an agent), the name, then what places it, dim. The active row is the dithered selection pill. */
 .sg-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1292,7 +1251,25 @@
 
 .sg-row[data-active] {
   color: var(--text);
-  background-color: var(--hl);
+}
+
+.sg-icon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: -1px;
+  flex-shrink: 0;
+  color: var(--text-3);
+  transition: color 80ms var(--ease-out);
+}
+
+.sg-icon svg {
+  display: block;
+}
+
+.sg-row[data-active] .sg-icon {
+  color: var(--text);
 }
 
 .sg-main {
@@ -1304,14 +1281,39 @@
   flex-shrink: 0;
 }
 
+/* Mentions have no description column: the name and its folder take the whole row. */
+.sg-row:is([data-kind='file'], [data-kind='dir'], [data-kind='agent']) .sg-main {
+  flex: 1 1 auto;
+  max-width: none;
+  gap: 10px;
+}
+
 .sg-label {
   flex-shrink: 0;
   max-width: 100%;
   font-size: var(--t-ui);
-  font-weight: var(--w-medium);
+  font-weight: var(--w-regular);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* A file's folder: the UI font, dim, elided from its start so the folders nearest the name stay. */
+.sg-dir {
+  min-width: 0;
+  font-size: var(--t-small);
+  color: var(--text-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+  transition: color 80ms var(--ease-out);
+}
+
+.sg-row[data-active] .sg-dir {
+  color: var(--text-3);
 }
 
 .sg-hint {
@@ -1350,12 +1352,6 @@
 .sg-slash {
   color: var(--text-4);
   font-weight: var(--w-regular);
-}
-
-/* Folders as labels: UI font, elided from the start so the nearest folders stay readable. */
-.sg-path {
-  direction: rtl;
-  unicode-bidi: plaintext;
 }
 
 .sg-hit {
@@ -1819,15 +1815,13 @@
   font-variant-ligatures: none;
 }
 
-/* The pill never changes the text's box: a near-black fill grown by a spread (about 22px tall) and a
-   faint neutral rim. */
+/* A token in the text: one flat step lighter than the field, softly squared, no rim. It never
+   changes the text's box: the fill is grown by a spread of its own colour. */
 .cmp-pill {
   color: transparent;
-  border-radius: 11px;
+  border-radius: 5px;
   background: var(--pill-bg, #000);
-  box-shadow:
-    0 0 0 2px var(--pill-bg, #000),
-    0 0 0 3px var(--pill);
+  box-shadow: 0 0 0 2px var(--pill-bg, #000);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
@@ -1835,8 +1829,7 @@
 .cmp-pill[data-kind='mention'],
 .cmp-pill[data-kind='command'],
 .cmp-pill[data-kind='skill'] {
-  --pill-bg: #1a1a1e;
-  --pill: rgb(255 255 255 / 0.1);
+  --pill-bg: var(--fill-3);
 }
 
 /* The "!" is one narrow mono glyph: a ring around it crowded the command. A soft fill, no ring. */

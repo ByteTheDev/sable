@@ -14,6 +14,33 @@ import { FileCodeIcon } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText';
 import { FilePlusIcon } from '@phosphor-icons/react/dist/csr/FilePlus';
 import { FileMagnifyingGlassIcon } from '@phosphor-icons/react/dist/csr/FileMagnifyingGlass';
+import { FileTsIcon } from '@phosphor-icons/react/dist/csr/FileTs';
+import { FileTsxIcon } from '@phosphor-icons/react/dist/csr/FileTsx';
+import { FileJsIcon } from '@phosphor-icons/react/dist/csr/FileJs';
+import { FileJsxIcon } from '@phosphor-icons/react/dist/csr/FileJsx';
+import { FileCssIcon } from '@phosphor-icons/react/dist/csr/FileCss';
+import { FileHtmlIcon } from '@phosphor-icons/react/dist/csr/FileHtml';
+import { FileMdIcon } from '@phosphor-icons/react/dist/csr/FileMd';
+import { FilePyIcon } from '@phosphor-icons/react/dist/csr/FilePy';
+import { FileRsIcon } from '@phosphor-icons/react/dist/csr/FileRs';
+import { FileSqlIcon } from '@phosphor-icons/react/dist/csr/FileSql';
+import { FileSvgIcon } from '@phosphor-icons/react/dist/csr/FileSvg';
+import { FileVueIcon } from '@phosphor-icons/react/dist/csr/FileVue';
+import { FileCIcon } from '@phosphor-icons/react/dist/csr/FileC';
+import { FileCppIcon } from '@phosphor-icons/react/dist/csr/FileCpp';
+import { FileCSharpIcon } from '@phosphor-icons/react/dist/csr/FileCSharp';
+import { FileCsvIcon } from '@phosphor-icons/react/dist/csr/FileCsv';
+import { FilePdfIcon } from '@phosphor-icons/react/dist/csr/FilePdf';
+import { FileImageIcon } from '@phosphor-icons/react/dist/csr/FileImage';
+import { FileZipIcon } from '@phosphor-icons/react/dist/csr/FileZip';
+import { FileVideoIcon } from '@phosphor-icons/react/dist/csr/FileVideo';
+import { FileAudioIcon } from '@phosphor-icons/react/dist/csr/FileAudio';
+import { FileLockIcon } from '@phosphor-icons/react/dist/csr/FileLock';
+import { FileTxtIcon } from '@phosphor-icons/react/dist/csr/FileTxt';
+import { FileDocIcon } from '@phosphor-icons/react/dist/csr/FileDoc';
+import { FileXlsIcon } from '@phosphor-icons/react/dist/csr/FileXls';
+import { FilePptIcon } from '@phosphor-icons/react/dist/csr/FilePpt';
+import { FileIniIcon } from '@phosphor-icons/react/dist/csr/FileIni';
 import { ImageSquareIcon } from '@phosphor-icons/react/dist/csr/ImageSquare';
 import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { GitCommitIcon } from '@phosphor-icons/react/dist/csr/GitCommit';
@@ -169,6 +196,34 @@ const ICONS = {
   'file-text': FileTextIcon,
   'file-plus': FilePlusIcon,
   'file-search': FileMagnifyingGlassIcon,
+  /** File types, for rows that list files (the @ menu). */
+  'file-ts': FileTsIcon,
+  'file-tsx': FileTsxIcon,
+  'file-js': FileJsIcon,
+  'file-jsx': FileJsxIcon,
+  'file-css': FileCssIcon,
+  'file-html': FileHtmlIcon,
+  'file-md': FileMdIcon,
+  'file-py': FilePyIcon,
+  'file-rs': FileRsIcon,
+  'file-sql': FileSqlIcon,
+  'file-svg': FileSvgIcon,
+  'file-vue': FileVueIcon,
+  'file-c': FileCIcon,
+  'file-cpp': FileCppIcon,
+  'file-cs': FileCSharpIcon,
+  'file-csv': FileCsvIcon,
+  'file-pdf': FilePdfIcon,
+  'file-image': FileImageIcon,
+  'file-zip': FileZipIcon,
+  'file-video': FileVideoIcon,
+  'file-audio': FileAudioIcon,
+  'file-lock': FileLockIcon,
+  'file-txt': FileTxtIcon,
+  'file-doc': FileDocIcon,
+  'file-xls': FileXlsIcon,
+  'file-ppt': FilePptIcon,
+  'file-ini': FileIniIcon,
   image: ImageSquareIcon,
   branch: GitBranchIcon,
   commit: GitCommitIcon,

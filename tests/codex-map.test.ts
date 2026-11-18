@@ -163,6 +163,21 @@ describe('input', () => {
     expect(matchSkill('reviewer', many)?.name).toBe('reviewer');
     expect(matchSkill('reviews', many)).toBeUndefined();
   });
+
+  it('matches a plugin skill by the short name the menu inserts, unless two share it', () => {
+    const plugins = [
+      { name: 'pdf:pdf', path: '/p' },
+      { name: 'vercel:deploy', path: '/v' },
+      { name: 'netlify:deploy', path: '/n' },
+      { name: 'review', path: '/r' },
+    ] as typeof skills;
+    expect(buildInput('$pdf the report', undefined, plugins).filter((i) => i.type === 'skill')).toEqual([{ type: 'skill', name: 'pdf:pdf', path: '/p' }]);
+    expect(matchSkill('pdf:pdf', plugins)?.name).toBe('pdf:pdf');
+    expect(matchSkill('pdf.', plugins)?.name).toBe('pdf:pdf');
+    expect(matchSkill('deploy', plugins)).toBeUndefined();
+    expect(matchSkill('vercel:deploy', plugins)?.name).toBe('vercel:deploy');
+    expect(matchSkill('review', plugins)?.name).toBe('review');
+  });
 });
 
 describe('commands and titles', () => {

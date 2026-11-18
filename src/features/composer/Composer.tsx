@@ -5,8 +5,6 @@ import type { Attachment, QueuedMessage } from '@shared/protocol';
 import { beginHandoff, cancelHandoff, claimHandoff } from '@/features/home/handoff';
 import { Icon } from '@/icons';
 import { pathForFile } from '@/lib/desktop';
-import { baseName, dirName } from '@/lib/format';
-import { fuzzy } from '@/lib/fuzzy';
 import { isUltraEffort, toggledSpeed } from '@/lib/models';
 import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
 import { launchFlight, RELEASE } from './flight';
@@ -21,14 +19,14 @@ import { readFiles, withTextAttachments } from './attach';
 import { AttachmentRow } from './Attachments';
 import { useChoice } from './choice';
 import { paidAsk, paidConfirmed } from './paid-speed';
-import { APP_COMMANDS, appCommandsFor, commandRows, skillRows, type CommandCtx, type SuggestRow } from './commands';
+import { APP_COMMANDS, appCommandsFor, commandRows, expandCommand, mentionRows, skillRows, type CommandCtx, type SuggestRow } from './commands';
 import { keepDrafts } from './drafts';
 import { HomeChips, ModelPopover, ModeMenu, openComposerMenu, useHomeSignedOut } from './Controls';
 import { PROVIDER_NAME } from '@/art/Logo';
 import { ModelEffort } from './Thinking';
 import { Highlight } from './Highlight';
 import { NO_QUEUE, QueueTray } from './QueueTray';
-import { SendHint, SendKey } from './SendKey';
+import { SendKey } from './SendKey';
 import { SuggestMenu } from './SuggestMenu';
 import { UltraEdge } from './Ultracode';
 import './composer.css';
@@ -47,9 +45,6 @@ const LINE = 22;
 const PAD_Y = 10;
 const MAX_LINES = 10;
 const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
-
-/** Sessions that have already shown the "Ctrl+Enter steers" hint (once each while the app is open). */
-const hinted = new Set<string>();
 
 type Trigger = { kind: 'slash' | 'mention' | 'skill'; start: number; query: string };
 
@@ -362,16 +357,17 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
 
   // ── typeahead ──
 
-  const trigger = shell ? null : findTrigger(text, caret, caps?.skillTrigger === '$');
+  // "$" invokes a skill only for an agent that uses it (Codex) and has skills to offer.
+  const trigger = shell ? null : findTrigger(text, caret, caps?.skillTrigger === '$' && !!caps.skills.length);
   const trigKey = trigger ? `${trigger.kind}:${trigger.start}` : null;
-  const menuOpen = !!trigger && focused && dismissed !== trigKey && (trigger.kind !== 'mention' || !!cwd);
+  const wantMenu = !!trigger && focused && dismissed !== trigKey && (trigger.kind !== 'mention' || !!cwd);
 
   useEffect(() => {
     if (!trigKey) setDismissed(null);
   }, [trigKey]);
 
   useEffect(() => {
-    if (!menuOpen || trigger?.kind !== 'mention' || !cwd) return;
+    if (!wantMenu || trigger?.kind !== 'mention' || !cwd) return;
     const q = trigger.query;
     const my = ++searchSeq.current;
     setFilesLoading(true);
@@ -381,27 +377,17 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
         .catch(() => my === searchSeq.current && (setFiles([]), setFilesLoading(false)));
     }, 80);
     return () => window.clearTimeout(t);
-  }, [menuOpen, trigger?.kind, trigger?.query, cwd]);
+  }, [wantMenu, trigger?.kind, trigger?.query, cwd]);
 
   const rows: SuggestRow[] = useMemo(() => {
-    if (!menuOpen || !trigger) return [];
+    if (!wantMenu || !trigger) return [];
     if (trigger.kind === 'slash') return commandRows(trigger.query, caps, sessionId);
     if (trigger.kind === 'skill') return skillRows(trigger.query, caps);
-    return files.map((f) => {
-      const rel = f.rel.replace(/\\/g, '/');
-      const name = baseName(rel);
-      const dir = dirName(rel);
-      return {
-        id: `file:${rel}`,
-        kind: f.dir ? ('dir' as const) : ('file' as const),
-        name,
-        label: name,
-        indices: fuzzy(trigger.query.split('/').pop() ?? '', name)?.indices,
-        detail: dir && dir !== name ? dir : undefined,
-        value: f.dir ? `${rel}/` : rel,
-      };
-    });
-  }, [menuOpen, trigger?.kind, trigger?.query, caps, sessionId, files]); // eslint-disable-line react-hooks/exhaustive-deps
+    return mentionRows(files, trigger.query, caps);
+  }, [wantMenu, trigger?.kind, trigger?.query, caps, sessionId, files]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A "$" that no skill answers ("$20") is ordinary text: no menu.
+  const menuOpen = wantMenu && !(trigger?.kind === 'skill' && trigger.query && !rows.length);
 
   useEffect(() => setActive(0), [trigKey, trigger?.query]);
 
@@ -536,14 +522,12 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
     last.finished.then(done, done);
   };
 
-  // The backdrop answers the turn's end (light settling onto the composer, or a dip on an error);
-  // the steer hint has had its turn once the first one ends.
+  // The backdrop answers the turn's end (light settling onto the composer, or a dip on an error).
   const wasBusy = useRef(busy);
   useEffect(() => {
     if (wasBusy.current && !busy && variant === 'session') {
       if (status === 'error') fieldBeat('fail', card.current, 1);
       else fieldBeat('done', card.current, 1, 'top');
-      if (sessionId) hinted.add(sessionId);
     }
     wasBusy.current = busy;
   }, [busy, variant, sessionId]);
@@ -573,14 +557,15 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
       }
     }
     const draft = { text, attachments };
-    const out = parcel(trimmed, attachments);
-    if (sessionId && busy) hinted.add(sessionId);
+    // A command picked by its short name goes out under the full one the agent knows it by.
+    const body = expandCommand(trimmed, caps);
+    const out = parcel(body, attachments);
     // The words leave the field for where they land: the conversation, or the queue tray while a
     // turn runs (a steer goes into the turn). Measured once here, before the field empties.
     const steering = steer && busy && steerable;
     const ta = ref.current;
-    const flew = !!ta && !!trimmed && !reducedMotion();
-    if (flew) launchFlight({ el: ta, text: trimmed }, { dest: sessionId && busy && !steering ? 'tray' : 'timeline', steer: steering, first: !sessionId });
+    const flew = !!ta && !!body && !reducedMotion();
+    if (flew) launchFlight({ el: ta, text: body }, { dest: sessionId && busy && !steering ? 'tray' : 'timeline', steer: steering, first: !sessionId });
     if (variant === 'session') launchKey(card.current);
     // In a session the next placeholder is always the queueing one: the turn is running (or about to).
     // A queued message's words rise through the field into the tray: the placeholder waits for them.
@@ -668,9 +653,12 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
         setActive((a) => (e.key === 'ArrowDown' ? (a + 1) % rows.length : (a - 1 + rows.length) % rows.length));
         return;
       }
-      if (((e.key === 'Enter' && !e.shiftKey && !mod) || (e.key === 'Tab' && !e.shiftKey)) && rows.length) {
+      const row = rows[active];
+      // A command or skill typed out in full sends on Enter (Tab still completes it).
+      const typedOut = e.key === 'Enter' && sendWithEnter && !!row && row.kind !== 'app' && trigger?.kind !== 'mention' && trigger?.query === row.name;
+      if (((e.key === 'Enter' && !e.shiftKey && !mod) || (e.key === 'Tab' && !e.shiftKey)) && row && !typedOut) {
         e.preventDefault();
-        accept(rows[active]);
+        accept(row);
         return;
       }
       if (e.key === 'Escape') {
@@ -870,7 +858,6 @@ export function Composer({ sessionId, variant, autoFocus }: ComposerProps) {
               </>
             )}
           </div>
-          <SendHint on={queueing && canSend} steerable={steerable} sendWithEnter={sendWithEnter} />
           <div className="cmp-side cmp-right">
             <div className="cmp-agent" inert={shell || undefined}>
               <ModelPopover choice={choice} side={popSide} onClosed={focus} />

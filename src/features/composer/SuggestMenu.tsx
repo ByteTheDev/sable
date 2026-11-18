@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { Icon } from '@/icons';
 import { highlightRuns } from '@/lib/fuzzy';
 import { play, spring } from '@/lib/motion';
 import type { SuggestRow } from './commands';
@@ -160,7 +161,8 @@ export function SuggestMenu({
                 data-index={i}
                 data-rid={r.id}
                 data-active={i === active || undefined}
-                className="sg-row"
+                data-kind={r.kind}
+                className={i === active ? 'sg-row dither-sel' : 'sg-row'}
                 onMouseMove={() => {
                   if (i === active) return;
                   hovered.current = i;
@@ -168,15 +170,26 @@ export function SuggestMenu({
                 }}
                 onClick={() => onPick(i)}
               >
+                {r.icon && (
+                  <span className="sg-icon" aria-hidden>
+                    <Icon name={r.icon} size={16} />
+                  </span>
+                )}
                 <span className="sg-main">
                   <span className="sg-label">
                     <Lit text={r.label} indices={r.indices} />
                     {r.kind === 'dir' && <span className="sg-slash">/</span>}
                   </span>
                   {r.hint && <span className="sg-hint">{r.hint}</span>}
+                  {/* Where a file is: its folder, dim, right after the name (elided from its start). */}
+                  {r.detail && (r.kind === 'file' || r.kind === 'dir') && <span className="sg-dir">{r.detail}</span>}
                 </span>
-                {/* A folder says where a file is; a command's description shows on the active row only. */}
-                {r.detail && (r.kind === 'file' || r.kind === 'dir' ? <span className="sg-detail sg-path">{r.detail}</span> : <span className="sg-detail" data-desc>{r.detail}</span>)}
+                {/* A command's or skill's description shows on the active row only. */}
+                {r.detail && r.kind !== 'file' && r.kind !== 'dir' && (
+                  <span className="sg-detail" data-desc>
+                    {r.detail}
+                  </span>
+                )}
               </div>
             </Fragment>
           );

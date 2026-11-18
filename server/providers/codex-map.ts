@@ -317,20 +317,40 @@ export function mapPlan(n: TurnPlanUpdatedNotification): Todo[] {
 
 // ───────────────────────────── user input ─────────────────────────────
 
+/** A plugin skill's short name: the part after its last colon ("pdf" for "pdf:pdf"). */
+const shortSkillName = (name: string) => {
+  const i = name.lastIndexOf(':');
+  return i >= 0 && i < name.length - 1 ? name.slice(i + 1) : name;
+};
+
 /**
  * The skill a `$token` names. Names may contain `.`, `:` and `-`, so trailing punctuation
  * ("$review.") is only dropped when the longer token is not itself a skill: the longest
  * skill name that the token starts with and that ends where a word does wins.
+ * Sable's menu shows and inserts plugin skills by their short name ("$pdf" for "pdf:pdf") where
+ * no other skill shares it, so a token that is no full name is matched by that short name.
  */
 export function matchSkill(token: string, skills: SkillInfo[]): SkillInfo | undefined {
-  let best: SkillInfo | undefined;
-  for (const k of skills) {
-    if (!k.name || !token.startsWith(k.name)) continue;
-    const next = token[k.name.length];
-    if (next !== undefined && /\w/.test(next)) continue;
-    if (!best || k.name.length > best.name.length) best = k;
-  }
-  return best;
+  const longest = (name: (k: SkillInfo) => string, list: SkillInfo[]) => {
+    let best: SkillInfo | undefined;
+    for (const k of list) {
+      const n = name(k);
+      if (!n || !token.startsWith(n)) continue;
+      const next = token[n.length];
+      if (next !== undefined && /\w/.test(next)) continue;
+      if (!best || n.length > name(best).length) best = k;
+    }
+    return best;
+  };
+  const full = longest((k) => k.name, skills);
+  if (full) return full;
+  // Counted once per distinct full name, like the menu's labels.
+  const counts = new Map<string, number>();
+  for (const name of new Set(skills.map((k) => k.name).filter(Boolean))) counts.set(shortSkillName(name), (counts.get(shortSkillName(name)) ?? 0) + 1);
+  return longest(
+    (k) => shortSkillName(k.name),
+    skills.filter((k) => k.name && k.name.includes(':') && counts.get(shortSkillName(k.name)) === 1),
+  );
 }
 
 export function buildInput(text: string, attachments: Attachment[] | undefined, skills: SkillInfo[]): UserInput[] {

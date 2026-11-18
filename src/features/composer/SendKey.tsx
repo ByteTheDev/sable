@@ -1,11 +1,11 @@
 import { memo, useSyncExternalStore } from 'react';
-import { Kbd, Tip } from '@/ui';
+import { Tip } from '@/ui';
 
 const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
-export type SendGlyph = 'send' | 'queue' | 'steer';
+export type SendGlyph = 'send' | 'steer';
 
-// ── the modifier key, shared by the send key and its hint (one set of listeners for the app) ──
+// ── the modifier key (one set of listeners for the app) ──
 
 let held = false;
 const subs = new Set<() => void>();
@@ -36,12 +36,11 @@ export function useModHeld(on: boolean): boolean {
 }
 
 /**
- * The send key's glyph: one drawing whose parts move between three states, so a change of
- * meaning is a morph, not a swap.
- * - send: an arrow straight up.
- * - queue: the shaft retracts into two lines below the head: "onto the list".
- * - steer: the lines drop away and the arrow leans into the turn, up and to the right.
- * One arrow in every state: Ultra and ultracode are shown by the effort chip, never by the key.
+ * The send key's glyph: one arrow.
+ * - send: straight up. While a turn runs Enter queues and the key keeps this arrow: the message
+ *   still goes up, only after the turn (the tooltip says so).
+ * - steer (the modifier held while a turn runs): the arrow leans into the turn, up and to the right.
+ * Ultra and ultracode are shown by the effort chip, never by the key.
  */
 export function SendGlyphSvg({ glyph }: { glyph: SendGlyph }) {
   return (
@@ -50,8 +49,6 @@ export function SendGlyphSvg({ glyph }: { glyph: SendGlyph }) {
         <path className="sk-shaft" d="M8 12.75V3.75" />
         <path className="sk-head" d="M4.25 7.5 8 3.75l3.75 3.75" />
       </g>
-      <path className="sk-line sk-line-1" d="M4.4 10.4h7.2" />
-      <path className="sk-line sk-line-2" d="M5.6 13.4h4.8" />
     </svg>
   );
 }
@@ -82,7 +79,7 @@ export const SendKey = memo(function SendKey({ canSend, busy, showStop, steerabl
   const queueing = busy && !shell;
   const held = useModHeld(queueing && steerable);
   const steer = queueing && steerable && held;
-  const glyph: SendGlyph = !queueing ? 'send' : steer ? 'steer' : 'queue';
+  const glyph: SendGlyph = steer ? 'steer' : 'send';
   const steerKeys = sendWithEnter ? 'mod+enter' : 'mod+shift+enter';
   const label = shell ? 'Run in terminal' : steer ? 'Steer into this turn' : queueing ? 'Queue message' : 'Send';
 
@@ -119,24 +116,6 @@ export const SendKey = memo(function SendKey({ canSend, busy, showStop, steerabl
           </button>
         </Tip>
       )}
-    </div>
-  );
-});
-
-/**
- * The key hint while a turn runs and something is typed: which keys queue, and (with the modifier
- * held) which steer. It lives in the toolbar's free space, so it never moves another control.
- */
-export const SendHint = memo(function SendHint({ on, steerable, sendWithEnter }: { on: boolean; steerable: boolean; sendWithEnter: boolean }) {
-  const steer = useModHeld(on && steerable);
-  const queueKeys = sendWithEnter ? 'enter' : 'mod+enter';
-  const steerKeys = sendWithEnter ? 'mod+enter' : 'mod+shift+enter';
-  return (
-    <div className="sk-hint" data-on={on || undefined} aria-hidden>
-      <span className="sk-hint-in" key={steer ? 'steer' : 'queue'}>
-        <Kbd combo={steer ? steerKeys : queueKeys} />
-        {steer ? 'Steer into this turn' : steerable ? 'Queue' : 'Queue for when this turn ends'}
-      </span>
     </div>
   );
 });

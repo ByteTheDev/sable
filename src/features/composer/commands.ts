@@ -1,6 +1,10 @@
 import type { Capabilities, CommandKind } from '@shared/protocol';
+import type { IconName } from '@/icons';
+import { baseName, dirName } from '@/lib/format';
 import { fuzzy } from '@/lib/fuzzy';
 import { skillLabeller } from '@/lib/skills';
+import type { FileHit } from '@/lib/workspace';
+import { fileIcon } from './file-icon';
 import { goHome, interrupt, openSettings, renameSession } from '@/state/actions';
 import { useStore } from '@/state/store';
 
@@ -100,7 +104,7 @@ export const APP_COMMANDS: AppCommand[] = [
 
 export const appCommandsFor = (sessionId: string | null) => APP_COMMANDS.filter((c) => !c.session || sessionId);
 
-export type RowKind = CommandKind | 'file' | 'dir' | 'skill';
+export type RowKind = CommandKind | 'file' | 'dir' | 'skill' | 'agent';
 
 export interface SuggestRow {
   id: string;
@@ -112,9 +116,9 @@ export interface SuggestRow {
   indices?: number[];
   hint?: string;
   detail?: string;
-  /** Path-like rows use the mono face. */
-  mono?: boolean;
-  /** For files: the relative path to insert. */
+  /** Mentions: what the row is (a file's type, a folder, an agent). */
+  icon?: IconName;
+  /** Mentions: what follows the "@" (a relative path, or `agent-<name>`). */
   value?: string;
 }
 
@@ -162,6 +166,74 @@ export function commandRows(query: string, caps: Capabilities | undefined, sessi
   for (const { t, indices } of rank(skills, query, (c) => short(c.name), (c) => c.name))
     rows.push({ id: `skill:${t.name}`, group: 'Skills', kind: 'skill', name: short(t.name), label: `/${short(t.name)}`, indices: shift(indices), detail: t.description });
   return rows;
+}
+
+/**
+ * Rows for "@": files and folders in the session's folder, then the agent's sub-agents where it
+ * has any (Claude Code reads `@agent-<name>` in a prompt as "hand this to that agent").
+ */
+export function mentionRows(files: FileHit[], query: string, caps: Capabilities | undefined): SuggestRow[] {
+  const agents = caps?.agents ?? [];
+  // "@agent-ex" looks for the agent "Explore"; a path query never matches an agent. An agent is
+  // offered when a word of its name starts with what is typed ("ex", "rev" for code-reviewer),
+  // not on any scattered letters: the few agents must not crowd out the files.
+  const agentQuery = query.replace(/^agent-?/i, '').toLowerCase();
+  const short = skillLabeller(agents.map((a) => a.name));
+  const words = (name: string) => [name.toLowerCase(), ...name.toLowerCase().split(/[-_:. ]+/)];
+  const agentHits = query.includes('/')
+    ? []
+    : agents.filter((a) => !agentQuery || words(short(a.name)).some((w) => w.startsWith(agentQuery))).map((t) => ({ t, indices: agentQuery ? (fuzzy(agentQuery, short(t.name))?.indices ?? []) : [] }));
+  const grouped = agentHits.length > 0 && files.length > 0;
+  const agentRows = agentHits.map(
+    ({ t, indices }): SuggestRow => ({ id: `agent:${t.name}`, group: grouped ? 'Agents' : undefined, kind: 'agent', name: t.name, label: short(t.name), icon: 'robot', indices, value: `agent-${t.name}` }),
+  );
+  const fileRows = files.map((f): SuggestRow => {
+    const rel = f.rel.replace(/\\/g, '/');
+    const name = baseName(rel);
+    const dir = dirName(rel);
+    return {
+      id: `file:${rel}`,
+      group: grouped ? 'Files' : undefined,
+      kind: f.dir ? 'dir' : 'file',
+      name,
+      label: name,
+      icon: fileIcon(name, f.dir),
+      indices: fuzzy(query.split('/').pop() ?? '', name)?.indices,
+      detail: dir && dir !== name ? dir : undefined,
+      value: f.dir ? `${rel}/` : rel,
+    };
+  });
+  // With nothing typed the files lead (the common case); once something is typed the matching
+  // agents, one or two at most, come first so they are never buried under thirty files.
+  return agentQuery || /^agent/i.test(query) ? [...agentRows, ...fileRows] : [...fileRows, ...agentRows];
+}
+
+/** Every name plus its short form ("cinetic" for "cinetic:cinetic") where that stays unambiguous. */
+function withShortNames(names: string[]): Set<string> {
+  const short = skillLabeller(names);
+  return new Set([...names, ...names.map(short)]);
+}
+
+/** What the field may show as a token: commands and skills by their full and their short names. */
+export function knownTokens(caps: Capabilities | undefined, sessionId: string | null) {
+  const commands = [...appCommandsFor(sessionId).map((c) => c.name), ...(caps?.commands ?? []).map((c) => c.name)];
+  const skills = (caps?.skills ?? []).map((s) => s.name);
+  return { commands: withShortNames([...commands, ...skills]), skills: withShortNames(skills), dollar: caps?.skillTrigger === '$' && skills.length > 0 };
+}
+
+/**
+ * The menus show and insert short names ("/cinetic"), but Claude Code runs a plugin's command or
+ * skill only by its full name ("/cinetic:cinetic"): an unqualified one is answered with a "did you
+ * mean". A leading short name that stands for exactly one of the agent's entries goes out in full.
+ */
+export function expandCommand(text: string, caps: Capabilities | undefined): string {
+  const m = /^\/([\w.-]+)(?=\s|$)/.exec(text);
+  if (!m || !caps) return text;
+  const name = m[1];
+  const names = new Set([...caps.commands.map((c) => c.name), ...(caps.skillTrigger === '/' ? caps.skills.map((s) => s.name) : [])]);
+  if (names.has(name) || APP_COMMANDS.some((c) => c.name === name)) return text;
+  const full = [...names].filter((n) => n.endsWith(`:${name}`));
+  return full.length === 1 ? `/${full[0]}${text.slice(m[0].length)}` : text;
 }
 
 /** Rows for "$" (Codex): skills only. */
