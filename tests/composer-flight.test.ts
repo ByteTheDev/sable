@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { columnEdges, firstLanding, landingCertain, RELEASE, springPath } from '../src/features/composer/flight';
+import { ACKED_MS, bubbleHold, columnEdges, firstLanding, HOLD_MS, landingCertain, RELEASE, springPath, waitStart } from '../src/features/composer/flight';
+import { afterSend, holdSend, sendInAir } from '../src/features/composer/settle';
 
 describe('send flight landing', () => {
   it('centres the reading column in a wide conversation', () => {
@@ -93,5 +94,74 @@ describe('first message landing', () => {
   it('sits on the column\'s right edge under the top padding', () => {
     // The stage at 1536 x 912 with the sidebar open: the card measured there is at 1061, 109 (225 wide).
     expect(firstLanding({ left: 285, top: 53, width: 1242 }, 760, { width: 225 })).toEqual({ left: 1061, top: 109 });
+  });
+});
+
+describe('a late row: the bubble holds until it is there', () => {
+  const at = (o: Partial<Parameters<typeof bubbleHold>[0]>) => bubbleHold({ row: false, answer: 'pending', sinceLaunch: 0, sinceAnswer: 0, ...o });
+
+  it('holds without its row while the bridge has not answered, long past the old 4 s fade', () => {
+    expect(at({ sinceLaunch: 400 })).toBe('hold');
+    expect(at({ sinceLaunch: 4000 })).toBe('hold');
+    expect(at({ sinceLaunch: HOLD_MS - 1 })).toBe('hold');
+  });
+
+  it('lands as soon as its row is there, however late', () => {
+    expect(at({ row: true, sinceLaunch: 9000 })).toBe('land');
+    expect(at({ row: true, answer: 'taken', sinceLaunch: 14000, sinceAnswer: 2900 })).toBe('land');
+  });
+
+  it('flies back into the field when the bridge refuses the message', () => {
+    expect(at({ answer: 'refused', sinceLaunch: 300 })).toBe('back');
+  });
+
+  it('keeps holding a while after the bridge took the message, then lets go', () => {
+    expect(at({ answer: 'taken', sinceLaunch: 2000, sinceAnswer: ACKED_MS - 1 })).toBe('hold');
+    expect(at({ answer: 'taken', sinceLaunch: 5000, sinceAnswer: ACKED_MS })).toBe('release');
+  });
+
+  it('lets go after the safety limit when no answer ever comes', () => {
+    expect(at({ sinceLaunch: HOLD_MS })).toBe('release');
+  });
+
+  it('shows the waiting state only once the path has been flown, never in a normal landing', () => {
+    // A ~350 ms path: waiting from about 470 ms, after a row that mounts in time has taken it.
+    expect(waitStart(350)).toBe(470);
+    // A short lift (no landing guessed): still not before the usual landing time.
+    expect(waitStart(100)).toBeGreaterThanOrEqual(380);
+  });
+});
+
+describe('chrome waits for a send to land', () => {
+  it('runs at once when nothing is in the air', () => {
+    let ran = 0;
+    afterSend(() => ran++);
+    expect(ran).toBe(1);
+    expect(sendInAir()).toBe(false);
+  });
+
+  it('waits for every flight in the air, then runs once', () => {
+    const bubble = holdSend();
+    const ghost = holdSend();
+    let ran = 0;
+    afterSend(() => ran++);
+    expect(sendInAir()).toBe(true);
+    bubble();
+    expect(ran).toBe(0);
+    // Landing twice counts once.
+    bubble();
+    expect(ran).toBe(0);
+    ghost();
+    expect(ran).toBe(1);
+    expect(sendInAir()).toBe(false);
+  });
+
+  it('can be cancelled while waiting', () => {
+    const done = holdSend();
+    let ran = 0;
+    const cancel = afterSend(() => ran++);
+    cancel();
+    done();
+    expect(ran).toBe(0);
   });
 });

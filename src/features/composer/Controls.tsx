@@ -17,6 +17,7 @@ import { planWord } from '@/features/accounts/model';
 import { LimitDot } from '@/features/usage';
 import { type Choice } from './choice';
 import { Morph } from './Morph';
+import { Later } from './later';
 
 export const ChipSkeleton = ({ w }: { w: number }) => <span className="chip-skel skel" style={{ width: w }} aria-hidden />;
 
@@ -137,17 +138,23 @@ export const ModeMenu = memo(function ModeMenu({ choice, side, onClosed }: MenuP
             onClosed();
           }}
         >
-          {up && [foot, sep]}
-          {ordered.map((m) => (
-            <RM.Item key={m.id} className="menu-item mm-row" data-current={m.id === anchor || undefined} onSelect={() => choice.setMode(m.id)} {...guard}>
-              <Icon name={MODE_ICON[m.tone] ?? 'shield'} size={15} className="mm-lead" />
-              <span className="mm-name truncate" data-origin-anchor>
-                {m.name}
-              </span>
-              <span className="mm-check">{m.id === cur?.id && <Icon name="check" size={14} />}</span>
-            </RM.Item>
-          ))}
-          {!up && [sep, foot]}
+          <Later>
+            {() => (
+              <>
+                {up && [foot, sep]}
+                {ordered.map((m) => (
+                  <RM.Item key={m.id} className="menu-item mm-row" data-current={m.id === anchor || undefined} onSelect={() => choice.setMode(m.id)} {...guard}>
+                    <Icon name={MODE_ICON[m.tone] ?? 'shield'} size={15} className="mm-lead" />
+                    <span className="mm-name truncate" data-origin-anchor>
+                      {m.name}
+                    </span>
+                    <span className="mm-check">{m.id === cur?.id && <Icon name="check" size={14} />}</span>
+                  </RM.Item>
+                ))}
+                {!up && [sep, foot]}
+              </>
+            )}
+          </Later>
         </RM.Content>
       </RM.Portal>
     </RM.Root>
@@ -279,61 +286,67 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
             onClosed();
           }}
         >
-          {withField && (
-            <div className="mm-search">
-              <Icon name="search" size={14} />
-              <input
-                ref={field}
-                className="mm-field"
-                value={query}
-                placeholder="Search models"
-                aria-label="Search models"
-                spellCheck={false}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') return;
-                  e.stopPropagation();
-                  if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    content.current?.querySelector<HTMLElement>('[data-mrow]')?.focus();
-                  } else if (e.key === 'Enter' && rows[0]) {
-                    e.preventDefault();
-                    pick(rows[0].m.id);
-                  } else if (e.key === 'Enter' && away[0]) {
-                    e.preventDefault();
-                    goAway(away[0].provider, away[0].m.id);
-                  }
-                }}
-              />
-            </div>
-          )}
-          <div className="mm-list scroll">
-            {rows.map(({ m, name, hit }) => {
-              const current = m.id === choice.modelId;
-              return (
-                <RM.Item key={m.id} className="menu-item mm-row" data-mrow data-current={current || undefined} onSelect={() => pick(m.id)} {...guard}>
-                  <ProviderMark provider={choice.provider} size={14} className="mm-mark" />
-                  <span className="mm-name truncate" data-origin-anchor>
-                    <Hits text={name} indices={hit?.indices} />
-                  </span>
-                  <span className="mm-check">{current && <Icon name="check" size={14} />}</span>
-                </RM.Item>
-              );
-            })}
-            {away.length > 0 && rows.length > 0 && <RM.Separator className="menu-sep" />}
-            {away.map(({ provider, m, name, hit }) => (
-              <RM.Item key={`${provider}:${m.id}`} className="menu-item mm-row mm-away" data-mrow aria-label={`Continue in ${PROVIDER_NAME[provider]} with ${name}`} onSelect={() => goAway(provider, m.id)} {...guard}>
-                <ProviderMark provider={provider} size={14} className="mm-mark" />
-                <span className="mm-name truncate">
-                  <Hits text={name} indices={hit?.indices} />
-                </span>
-                <span className="mm-check">
-                  <Icon name="arrow-right" size={13} />
-                </span>
-              </RM.Item>
-            ))}
-            {!rows.length && !away.length && <div className="mm-empty">No models match “{q}”</div>}
-          </div>
+          <Later>
+            {() => (
+              <>
+                {withField && (
+                  <div className="mm-search">
+                    <Icon name="search" size={14} />
+                    <input
+                      ref={field}
+                      className="mm-field"
+                      value={query}
+                      placeholder="Search models"
+                      aria-label="Search models"
+                      spellCheck={false}
+                      onChange={(e) => setQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') return;
+                        e.stopPropagation();
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          content.current?.querySelector<HTMLElement>('[data-mrow]')?.focus();
+                        } else if (e.key === 'Enter' && rows[0]) {
+                          e.preventDefault();
+                          pick(rows[0].m.id);
+                        } else if (e.key === 'Enter' && away[0]) {
+                          e.preventDefault();
+                          goAway(away[0].provider, away[0].m.id);
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+                <div className="mm-list scroll">
+                  {rows.map(({ m, name, hit }) => {
+                    const current = m.id === choice.modelId;
+                    return (
+                      <RM.Item key={m.id} className="menu-item mm-row" data-mrow data-current={current || undefined} onSelect={() => pick(m.id)} {...guard}>
+                        <ProviderMark provider={choice.provider} size={14} className="mm-mark" />
+                        <span className="mm-name truncate" data-origin-anchor>
+                          <Hits text={name} indices={hit?.indices} />
+                        </span>
+                        <span className="mm-check">{current && <Icon name="check" size={14} />}</span>
+                      </RM.Item>
+                    );
+                  })}
+                  {away.length > 0 && rows.length > 0 && <RM.Separator className="menu-sep" />}
+                  {away.map(({ provider, m, name, hit }) => (
+                    <RM.Item key={`${provider}:${m.id}`} className="menu-item mm-row mm-away" data-mrow aria-label={`Continue in ${PROVIDER_NAME[provider]} with ${name}`} onSelect={() => goAway(provider, m.id)} {...guard}>
+                      <ProviderMark provider={provider} size={14} className="mm-mark" />
+                      <span className="mm-name truncate">
+                        <Hits text={name} indices={hit?.indices} />
+                      </span>
+                      <span className="mm-check">
+                        <Icon name="arrow-right" size={13} />
+                      </span>
+                    </RM.Item>
+                  ))}
+                  {!rows.length && !away.length && <div className="mm-empty">No models match “{q}”</div>}
+                </div>
+              </>
+            )}
+          </Later>
         </RM.Content>
       </RM.Portal>
     </RM.Root>
@@ -421,44 +434,50 @@ function AgentMenu({ onClosed }: { onClosed: () => void }) {
             onClosed();
           }}
         >
-          {/* Many accounts make a long list: it scrolls inside the room the window has, never past its edge. */}
-          <div className="hc-list scroll">
-          {installed.map((p) => {
-            const accounts = p.accounts ?? [];
-            const several = accounts.length > 1;
-            const chosen = accountOf(p.id);
-            return (
-              <RM.Group key={p.id} className="hc-group">
-                <RM.Item className="menu-item cm-row" onSelect={() => (p.auth.loggedIn || several ? setUi({ homeProvider: p.id }) : openSettings('accounts'))}>
-                  <ProviderMark provider={p.id} size={15} className="hc-mark" />
-                  <span className="cm-row-name grow">{PROVIDER_NAME[p.id]}</span>
-                  {/* With several accounts the check goes on the account, not twice. */}
-                  <span className="cm-check">{p.id === provider && !several ? <Icon name="check" size={14} /> : !p.auth.loggedIn && !several && <span className="hc-signin">Sign in</span>}</span>
-                </RM.Item>
-                {several &&
-                  accounts.map((a) => (
-                    <RM.Item
-                      key={a.id}
-                      className="menu-item hc-acct"
-                      data-current={(p.id === provider && a.id === chosen) || undefined}
-                      onSelect={() => {
-                        if (!a.auth.loggedIn) return openSettings('accounts');
-                        setHomeAccount(p.id, a.id);
-                        setUi({ homeProvider: p.id });
-                      }}
-                    >
-                      <span className="grow truncate">{accountName(a)}</span>
-                      <span className="hc-plan">{a.auth.loggedIn ? planWord(a) : 'Sign in'}</span>
-                      <span className="hc-acct-end">
-                        <LimitDot provider={p.id} accountId={a.id} />
-                        {p.id === provider && a.id === chosen && <Icon name="check" size={14} />}
-                      </span>
-                    </RM.Item>
-                  ))}
-              </RM.Group>
-            );
-          })}
-          </div>
+          <Later>
+            {() => (
+              <>
+                {/* Many accounts make a long list: it scrolls inside the room the window has, never past its edge. */}
+                <div className="hc-list scroll">
+                {installed.map((p) => {
+                  const accounts = p.accounts ?? [];
+                  const several = accounts.length > 1;
+                  const chosen = accountOf(p.id);
+                  return (
+                    <RM.Group key={p.id} className="hc-group">
+                      <RM.Item className="menu-item cm-row" onSelect={() => (p.auth.loggedIn || several ? setUi({ homeProvider: p.id }) : openSettings('accounts'))}>
+                        <ProviderMark provider={p.id} size={15} className="hc-mark" />
+                        <span className="cm-row-name grow">{PROVIDER_NAME[p.id]}</span>
+                        {/* With several accounts the check goes on the account, not twice. */}
+                        <span className="cm-check">{p.id === provider && !several ? <Icon name="check" size={14} /> : !p.auth.loggedIn && !several && <span className="hc-signin">Sign in</span>}</span>
+                      </RM.Item>
+                      {several &&
+                        accounts.map((a) => (
+                          <RM.Item
+                            key={a.id}
+                            className="menu-item hc-acct"
+                            data-current={(p.id === provider && a.id === chosen) || undefined}
+                            onSelect={() => {
+                              if (!a.auth.loggedIn) return openSettings('accounts');
+                              setHomeAccount(p.id, a.id);
+                              setUi({ homeProvider: p.id });
+                            }}
+                          >
+                            <span className="grow truncate">{accountName(a)}</span>
+                            <span className="hc-plan">{a.auth.loggedIn ? planWord(a) : 'Sign in'}</span>
+                            <span className="hc-acct-end">
+                              <LimitDot provider={p.id} accountId={a.id} />
+                              {p.id === provider && a.id === chosen && <Icon name="check" size={14} />}
+                            </span>
+                          </RM.Item>
+                        ))}
+                    </RM.Group>
+                  );
+                })}
+                </div>
+              </>
+            )}
+          </Later>
         </RM.Content>
       </RM.Portal>
     </RM.Root>
@@ -494,19 +513,25 @@ function FolderMenu({ onClosed }: { onClosed: () => void }) {
             onClosed();
           }}
         >
-          {recent.map((p) => (
-            <RM.Item key={p.path} className="menu-item cm-row" onSelect={() => setUi({ homeCwd: p.path })}>
-              <Icon name={p.pinned ? 'pin' : 'folder'} size={15} className="hc-icon" />
-              <PathLabel path={tildePath(p.path, home)} title={p.path} className="cm-row-path grow" />
-              <span className="cm-check">{p.path === cwd && <Icon name="check" size={14} />}</span>
-            </RM.Item>
-          ))}
-          {recent.length > 0 && <RM.Separator className="menu-sep" />}
-          <RM.Item className="menu-item cm-row" onSelect={() => setUi({ projectPicker: true })}>
-            <Icon name="folder-open" size={15} className="hc-icon" />
-            <span className="grow">Open a folder…</span>
-            <Kbd combo="mod+o" />
-          </RM.Item>
+          <Later>
+            {() => (
+              <>
+                {recent.map((p) => (
+                  <RM.Item key={p.path} className="menu-item cm-row" onSelect={() => setUi({ homeCwd: p.path })}>
+                    <Icon name={p.pinned ? 'pin' : 'folder'} size={15} className="hc-icon" />
+                    <PathLabel path={tildePath(p.path, home)} title={p.path} className="cm-row-path grow" />
+                    <span className="cm-check">{p.path === cwd && <Icon name="check" size={14} />}</span>
+                  </RM.Item>
+                ))}
+                {recent.length > 0 && <RM.Separator className="menu-sep" />}
+                <RM.Item className="menu-item cm-row" onSelect={() => setUi({ projectPicker: true })}>
+                  <Icon name="folder-open" size={15} className="hc-icon" />
+                  <span className="grow">Open a folder…</span>
+                  <Kbd combo="mod+o" />
+                </RM.Item>
+              </>
+            )}
+          </Later>
         </RM.Content>
       </RM.Portal>
     </RM.Root>

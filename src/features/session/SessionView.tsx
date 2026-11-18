@@ -3,6 +3,7 @@ import { Backdrop } from '@/art/Backdrop';
 import { Composer } from '@/features/composer/Composer';
 import { PromptDock } from '@/features/prompts/PromptDock';
 import { Timeline } from '@/features/timeline/Timeline';
+import { afterSend } from '@/features/composer/settle';
 import { useStore } from '@/state/store';
 import { ConversationFind } from './FindBar';
 import './session.css';
@@ -33,15 +34,21 @@ export function SessionLight({ sessionId }: { sessionId: string }) {
   const provider = useStore((s) => s.sessions[sessionId]?.provider);
   const status = useStore((s) => s.sessions[sessionId]?.status);
 
-  // The band is not needed for the first paint: it starts in idle time and fades in.
+  // The band is not needed for the first paint: it starts in idle time and fades in, and after a
+  // sent message has landed (its field starting up is not part of the send's frames).
   const [light, setLight] = useState(false);
   useEffect(() => {
-    if (typeof requestIdleCallback !== 'function') {
-      const t = window.setTimeout(() => setLight(true), 120);
-      return () => window.clearTimeout(t);
-    }
-    const id = requestIdleCallback(() => setLight(true), { timeout: 700 });
-    return () => cancelIdleCallback(id);
+    let t = 0;
+    let id = 0;
+    const off = afterSend(() => {
+      if (typeof requestIdleCallback !== 'function') t = window.setTimeout(() => setLight(true), 120);
+      else id = requestIdleCallback(() => setLight(true), { timeout: 700 });
+    });
+    return () => {
+      off();
+      window.clearTimeout(t);
+      if (id) cancelIdleCallback(id);
+    };
   }, []);
 
   if (!provider || !status) return null;

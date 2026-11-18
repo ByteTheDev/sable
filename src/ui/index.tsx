@@ -1,4 +1,4 @@
-import { forwardRef, useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactNode, type RefObject } from 'react';
+import { cloneElement, forwardRef, isValidElement, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type FocusEvent, type PointerEvent, type ReactNode, type Ref, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog as RD, DropdownMenu as RM, Popover as RP, Slider as RSl, Switch as RS, Tooltip as RT } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
@@ -52,25 +52,126 @@ if (typeof window !== 'undefined') {
 }
 export const focusFromKeyboard = () => navKeyAt > 0 && performance.now() - navKeyAt < 1000;
 
-/** Radix skips its own open-on-focus when the handler before it prevents default. */
-const gateTipFocus = (e: { preventDefault: () => void }) => {
-  if (!focusFromKeyboard()) e.preventDefault();
-};
+type TipSide = 'top' | 'bottom' | 'left' | 'right';
+type Woken = { el: HTMLElement; by: 'pointer' | 'focus' };
+interface TipHooks {
+  onPointerEnter?: (e: PointerEvent<HTMLElement>) => void;
+  onFocus?: (e: FocusEvent<HTMLElement>) => void;
+}
 
-export function Tip({ label, keys, side = 'bottom', children }: { label: ReactNode; keys?: string; side?: 'top' | 'bottom' | 'left' | 'right'; children: ReactNode }) {
+/**
+ * A tooltip on its one child (a control that spreads its props on an element, as a Radix trigger
+ * needs). It costs nothing until it is needed: a view holds dozens of these, and a Radix tooltip
+ * built for each up front (root, trigger, popper, portal) was most of their weight in every render.
+ * The control renders as it is, never wrapped; the first time the pointer or the keyboard focus
+ * reaches it, the tooltip mounts beside it and takes the control itself as its trigger (`TipAnchor`),
+ * so the control is never remounted and the tooltip behaves exactly as Radix's own.
+ */
+export function Tip({ label, keys, side = 'bottom', children }: { label: ReactNode; keys?: string; side?: TipSide; children: ReactNode }) {
+  const [woken, setWoken] = useState<Woken | null>(null);
+  if (!isValidElement<TipHooks>(children)) return <>{children}</>;
+  const own = children.props;
+  const control = cloneElement(children, {
+    onPointerEnter: (e: PointerEvent<HTMLElement>) => {
+      own.onPointerEnter?.(e);
+      if (e.pointerType !== 'touch' && woken?.el !== e.currentTarget) setWoken({ el: e.currentTarget, by: 'pointer' });
+    },
+    onFocus: (e: FocusEvent<HTMLElement>) => {
+      own.onFocus?.(e);
+      if (focusFromKeyboard() && woken?.el !== e.currentTarget) setWoken({ el: e.currentTarget, by: 'focus' });
+    },
+  });
   return (
-    <RT.Root>
-      <RT.Trigger asChild onFocus={gateTipFocus}>
-        {children}
-      </RT.Trigger>
-      <RT.Portal>
-        <RT.Content className="tooltip" side={side} sideOffset={7} collisionPadding={8}>
-          {label}
-          {keys && <Kbd combo={keys} />}
-        </RT.Content>
-      </RT.Portal>
-    </RT.Root>
+    <>
+      {control}
+      {woken && (
+        <RT.Root>
+          <RT.Trigger asChild>
+            <TipAnchor el={woken.el} by={woken.by} />
+          </RT.Trigger>
+          <RT.Portal>
+            <RT.Content className="tooltip" side={side} sideOffset={7} collisionPadding={8}>
+              {label}
+              {keys && <Kbd combo={keys} />}
+            </RT.Content>
+          </RT.Portal>
+        </RT.Root>
+      )}
+    </>
   );
+}
+
+type Handler = (e: Event) => void;
+/** What Radix's trigger hands its child: a ref, the handlers that open and close the tip, the link to it. */
+interface AnchorProps {
+  el: HTMLElement;
+  by: Woken['by'];
+  ref?: Ref<HTMLElement>;
+  'aria-describedby'?: string;
+  onPointerMove?: Handler;
+  onPointerLeave?: Handler;
+  onPointerDown?: Handler;
+  onFocus?: Handler;
+  onBlur?: Handler;
+  onClick?: Handler;
+}
+
+/** The DOM events that drive Radix's trigger, and the handler each one goes to (React's onFocus and onBlur are focusin and focusout). */
+const ANCHOR_EVENTS: [string, keyof AnchorProps][] = [
+  ['pointermove', 'onPointerMove'],
+  ['pointerleave', 'onPointerLeave'],
+  ['pointerdown', 'onPointerDown'],
+  ['focusin', 'onFocus'],
+  ['focusout', 'onBlur'],
+  ['click', 'onClick'],
+];
+
+function setRef(ref: Ref<HTMLElement> | undefined, el: HTMLElement | null): (() => void) | void {
+  if (typeof ref === 'function') return ref(el) as (() => void) | void;
+  if (ref) (ref as { current: HTMLElement | null }).current = el;
+}
+
+/**
+ * Radix's tooltip trigger, played by a control that already exists: renders nothing, hands the
+ * element to Radix (it positions on it and tracks it), and listens on it for what the trigger would.
+ * Woken by the pointer, the move that brought it there has already passed: it counts as the first.
+ * Woken by keyboard focus, the tip opens at once, as Radix's does.
+ */
+function TipAnchor(props: AnchorProps) {
+  const { el, by } = props;
+  const latest = useRef(props);
+  latest.current = props;
+  useLayoutEffect(() => {
+    // The ref is composed afresh on each render of Radix's slot; the refs inside it are stable, so it is given the element once.
+    const undo = setRef(latest.current.ref, el);
+    const offs = ANCHOR_EVENTS.map(([type, name]) => {
+      const fn = (e: Event) => {
+        // Focus that came from a click (or a menu handing it back) does not open a tip.
+        if (type === 'focusin' && !focusFromKeyboard()) return;
+        (latest.current[name] as Handler | undefined)?.(e);
+      };
+      el.addEventListener(type, fn);
+      return () => el.removeEventListener(type, fn);
+    });
+    // A frame on, once Radix's own effects have mounted (its timers are cleared when they remount).
+    const wake = requestAnimationFrame(() => {
+      if (by === 'pointer' && el.matches(':hover')) latest.current.onPointerMove?.(new window.PointerEvent('pointermove', { pointerType: 'mouse' }));
+      else if (by === 'focus' && el.contains(document.activeElement)) latest.current.onFocus?.(new window.FocusEvent('focusin'));
+    });
+    return () => {
+      cancelAnimationFrame(wake);
+      offs.forEach((off) => off());
+      if (typeof undo === 'function') undo();
+      else setRef(latest.current.ref, null);
+    };
+  }, [el, by]);
+  const described = props['aria-describedby'];
+  useLayoutEffect(() => {
+    if (!described) return;
+    el.setAttribute('aria-describedby', described);
+    return () => el.removeAttribute('aria-describedby');
+  }, [el, described]);
+  return null;
 }
 
 // ── buttons ──

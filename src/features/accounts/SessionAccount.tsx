@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { DropdownMenu as RM } from 'radix-ui';
-import { DEFAULT_ACCOUNT, type RateLimit } from '@shared/protocol';
+import { DEFAULT_ACCOUNT, type AccountInfo, type RateLimit } from '@shared/protocol';
 import { clock } from '@/features/usage/format';
 import { limitTitle, useSessionLimits } from '@/features/usage/scope';
 import { Icon } from '@/icons';
@@ -23,10 +23,6 @@ const stateOf = (l: RateLimit) => (l.percent >= 100 ? 'reached' : `at ${Math.rou
 export function SessionAccount({ sessionId }: { sessionId: string }) {
   const provider = useStore((s) => s.sessions[sessionId]?.provider);
   const accountId = useStore((s) => s.sessions[sessionId]?.accountId ?? DEFAULT_ACCOUNT);
-  const busy = useStore((s) => {
-    const st = s.sessions[sessionId]?.status;
-    return st === 'running' || st === 'awaiting' || st === 'starting';
-  });
   const accounts = useStore((s) => (provider ? s.providers[provider]?.accounts : undefined));
   const [moving, setMoving] = useState<string | null>(null);
   const lim = useSessionLimits(sessionId);
@@ -39,6 +35,7 @@ export function SessionAccount({ sessionId }: { sessionId: string }) {
   const goesOn = !!lim?.model && lim.level !== 'cap' && lim.other.some((l) => l.percent >= 100);
   const said = rows.map((l) => `${limitTitle(l.label)} ${stateOf(l)}`).join(', ');
   const tip = said ? `${name}: ${said}${goesOn ? `. ${lim!.model} is not limited` : ''}` : name;
+  const menu = { sessionId, provider, accountId, accounts, lim, rows, goesOn, name, moving, setMoving };
 
   return (
     <RM.Root modal={false}>
@@ -54,6 +51,38 @@ export function SessionAccount({ sessionId }: { sessionId: string }) {
       </Tip>
       <RM.Portal>
         <RM.Content className="pop sa-pop" data-spot side="bottom" align="start" sideOffset={6} collisionPadding={10} style={{ width: 300 }} loop>
+          <SessionAccountMenu {...menu} />
+        </RM.Content>
+      </RM.Portal>
+    </RM.Root>
+  );
+}
+
+type MenuProps = {
+  sessionId: string;
+  provider: NonNullable<ReturnType<typeof useSessionLimits>>['provider'] & string;
+  accountId: string;
+  accounts: AccountInfo[];
+  lim: ReturnType<typeof useSessionLimits>;
+  rows: RateLimit[];
+  goesOn: boolean;
+  name: string;
+  moving: string | null;
+  setMoving: (id: string | null) => void;
+};
+
+/**
+ * The menu's rows, built only while it is open: the trigger re-renders with the session (a turn
+ * starting or ending), and its closed menu should cost nothing then. Whether a turn runs is read
+ * here for the same reason.
+ */
+function SessionAccountMenu({ sessionId, provider, accountId, accounts, lim, rows, goesOn, name, moving, setMoving }: MenuProps) {
+  const busy = useStore((s) => {
+    const st = s.sessions[sessionId]?.status;
+    return st === 'running' || st === 'awaiting' || st === 'starting';
+  });
+  return (
+    <>
           {rows.length > 0 && (
             <>
               <div className="sa-limits" role="group" aria-label={`Limits of ${name}`}>
@@ -106,8 +135,6 @@ export function SessionAccount({ sessionId }: { sessionId: string }) {
             <Icon name="settings" size={16} />
             <span className="grow">Manage accounts</span>
           </RM.Item>
-        </RM.Content>
-      </RM.Portal>
-    </RM.Root>
+    </>
   );
 }

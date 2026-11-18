@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, type ChangeEvent, type KeyboardEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { DropdownMenu as RM } from 'radix-ui';
 import type { Attachment, QueuedMessage } from '@shared/protocol';
@@ -89,7 +89,9 @@ let dropSeq = 0;
 
 function useStageDrop(card: RefObject<HTMLElement | null>, onFiles: (files: File[]) => void) {
   const [over, setOver] = useState(false);
-  const [host, setHost] = useState<HTMLElement | null>(null);
+  // Read only while a file is over the stage (that render comes from setOver): a ref, so mounting
+  // the composer does not render it twice.
+  const host = useRef<HTMLElement | null>(null);
   const take = useRef(onFiles);
   take.current = onFiles;
   useEffect(() => {
@@ -97,7 +99,7 @@ function useStageDrop(card: RefObject<HTMLElement | null>, onFiles: (files: File
     dropOwners.push(me);
     const stage = card.current?.closest('.stage') ?? document.querySelector('.stage');
     const target: EventTarget = stage ?? window;
-    setHost((stage as HTMLElement | null) ?? null);
+    host.current = (stage as HTMLElement | null) ?? null;
     let t = 0;
     const mine = () => dropOwners[dropOwners.length - 1] === me;
     const files = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
@@ -136,7 +138,7 @@ function useStageDrop(card: RefObject<HTMLElement | null>, onFiles: (files: File
       window.removeEventListener('drop', guard);
     };
   }, [card]);
-  return { over, host };
+  return { over, host: host.current };
 }
 
 /** One calm drop state over the whole stage. */
@@ -150,6 +152,34 @@ const StageDrop = memo(function StageDrop({ host, images }: { host: HTMLElement 
       </div>
     </div>,
     host,
+  );
+});
+
+/** The attach button and its menu: memoized, so the composer's renders (each keystroke, a status change) skip it. */
+const AttachMenu = memo(function AttachMenu({ images, side, onAdd, onMention }: { images: boolean; side: 'top' | 'bottom'; onAdd: () => void; onMention: () => void }) {
+  return (
+    <RM.Root modal={false}>
+      <Tip label={images ? 'Attach files or images' : 'Attach files'} side="top">
+        <RM.Trigger asChild>
+          <button type="button" className="cmp-attach" aria-label="Attach">
+            <PlusGlyph />
+          </button>
+        </RM.Trigger>
+      </Tip>
+      <RM.Portal>
+        <RM.Content className="pop cm-pop" data-spot side={side} align="start" sideOffset={8} collisionPadding={10} style={{ width: 220 }} onCloseAutoFocus={(e) => e.preventDefault()}>
+          <RM.Item className="menu-item" onSelect={onAdd}>
+            <Icon name={images ? 'image' : 'file-plus'} size={15} />
+            <span className="grow">{images ? 'Add files or images' : 'Add files'}</span>
+          </RM.Item>
+          <RM.Item className="menu-item" onSelect={onMention}>
+            <Icon name="at" size={15} />
+            <span className="grow">Mention a file</span>
+            <Kbd combo="@" />
+          </RM.Item>
+        </RM.Content>
+      </RM.Portal>
+    </RM.Root>
   );
 });
 
@@ -214,7 +244,11 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
   const listId = useId();
 
   const [caret, setCaret] = useState(0);
-  const [focused, setFocused] = useState(false);
+  // Whether the field has focus matters only to an open typeahead: kept in a ref, and a render is
+  // asked for only when there is a trigger to show or hide (focus moving on mount or on a send
+  // renders nothing).
+  const focusedRef = useRef(false);
+  const [, bumpFocus] = useReducer((n: number) => n + 1, 0);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [active, setActive] = useState(0);
   const [files, setFiles] = useState<FileHit[]>([]);
@@ -261,7 +295,9 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
     if (pos == null || !ta) return;
     pendingCaret.current = null;
     ta.setSelectionRange(pos, pos);
-    setCaret(pos);
+    // An empty field has no trigger for the caret to find: the render this would ask for (after
+    // every send, in the send's busiest frames) is left out; typing sets the caret again.
+    if (text) setCaret(pos);
   }, [text]);
 
   // ── auto-grow: measure a hidden twin so the visible field can animate its height ──
@@ -382,6 +418,7 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
   // "$" invokes a skill only for an agent that uses it (Codex) and has skills to offer.
   const trigger = shell ? null : findTrigger(text, caret, caps?.skillTrigger === '$' && !!caps.skills.length);
   const trigKey = trigger ? `${trigger.kind}:${trigger.start}` : null;
+  const focused = focusedRef.current;
   const wantMenu = !!trigger && focused && dismissed !== trigKey && (trigger.kind !== 'mention' || !!cwd);
 
   useEffect(() => {
@@ -501,6 +538,11 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
     setDismissed(null);
     window.requestAnimationFrame(focus);
   };
+  // Stable for the memoized attach menu: it renders once, not with every keystroke.
+  const mentionRef = useRef(mention);
+  mentionRef.current = mention;
+  const mentionStable = useCallback(() => mentionRef.current(), []);
+  const pickFiles = useCallback(() => fileInput.current?.click(), []);
 
   // ── sending ──
 
@@ -589,7 +631,7 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
     const steering = steer && busy && steerable;
     const ta = ref.current;
     const flew = !!ta && !!body && !reducedMotion();
-    if (flew) launchFlight({ el: ta, text: body }, { dest: sessionId && busy && !steering ? 'tray' : 'timeline', steer: steering, first: !sessionId });
+    const flight = flew ? launchFlight({ el: ta, text: body }, { dest: sessionId && busy && !steering ? 'tray' : 'timeline', steer: steering, first: !sessionId }) : null;
     if (variant === 'session') launchKey(card.current);
     // In a session the next placeholder is always the queueing one: the turn is running (or about to).
     // A queued message's words rise through the field into the tray: the placeholder waits for them.
@@ -611,13 +653,27 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
       pendingCaret.current = 0;
     } else if (now?.attachments === draft.attachments) setDraft(key, { attachments: [] });
     setRecall(null);
+    // Refused: the words fly back into the field and are put back there (before anything typed since).
+    const putBack = async () => {
+      await flight?.settle(false);
+      // The next placeholder may still be rising under the words.
+      card.current?.querySelector('.cmp-roll')?.remove();
+      card.current?.removeAttribute('data-rolling');
+      const cur = useStore.getState().drafts[key]?.text ?? '';
+      setDraft(key, { text: cur.trim() ? `${draft.text}
+${cur}` : draft.text, attachments: draft.attachments });
+      pendingCaret.current = draft.text.length;
+    };
     if (sessionId) {
-      await sendMessage(sessionId, out.text, out.attachments, steer && busy ? { steer: true } : {});
+      const res = await sendMessage(sessionId, out.text, out.attachments, steer && busy ? { steer: true } : {});
+      if (res.ok) void flight?.settle(true);
+      else await putBack();
       return;
     }
-    if (!(await startFromHome(out.text, out.attachments))) {
+    if (await startFromHome(out.text, out.attachments)) void flight?.settle(true);
+    else {
       cancelHandoff();
-      setDraft(key, draft);
+      await putBack();
     }
   };
   const submitRef = useRef(submit);
@@ -846,8 +902,14 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
               e.preventDefault();
               void addFiles(list);
             }}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
+            onFocus={() => {
+              focusedRef.current = true;
+              if (trigger) bumpFocus();
+            }}
+            onBlur={() => {
+              focusedRef.current = false;
+              if (trigger) bumpFocus();
+            }}
           />
           <textarea ref={mirror} className="cmp-input cmp-mirror" rows={1} tabIndex={-1} readOnly aria-hidden />
           {ghost && (
@@ -872,28 +934,7 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
               </span>
             ) : (
               <>
-                <RM.Root modal={false}>
-                  <Tip label={images ? 'Attach files or images' : 'Attach files'} side="top">
-                    <RM.Trigger asChild>
-                      <button type="button" className="cmp-attach" aria-label="Attach">
-                        <PlusGlyph />
-                      </button>
-                    </RM.Trigger>
-                  </Tip>
-                  <RM.Portal>
-                    <RM.Content className="pop cm-pop" data-spot side={popSide} align="start" sideOffset={8} collisionPadding={10} style={{ width: 220 }} onCloseAutoFocus={(e) => e.preventDefault()}>
-                      <RM.Item className="menu-item" onSelect={() => fileInput.current?.click()}>
-                        <Icon name={images ? 'image' : 'file-plus'} size={15} />
-                        <span className="grow">{images ? 'Add files or images' : 'Add files'}</span>
-                      </RM.Item>
-                      <RM.Item className="menu-item" onSelect={mention}>
-                        <Icon name="at" size={15} />
-                        <span className="grow">Mention a file</span>
-                        <Kbd combo="@" />
-                      </RM.Item>
-                    </RM.Content>
-                  </RM.Portal>
-                </RM.Root>
+                <AttachMenu images={images} side={popSide} onAdd={pickFiles} onMention={mentionStable} />
                 <ModeMenu choice={choice} side={popSide} onClosed={focus} />
               </>
             )}

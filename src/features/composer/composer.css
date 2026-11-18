@@ -243,6 +243,20 @@
   text-overflow: ellipsis;
 }
 
+/* A sent message whose row is late (flight.ts): a hairline that fills slowly along the bubble's
+   lower edge, between its corners, while it waits; it finishes on the row as they swap. */
+.send-wait {
+  position: absolute;
+  left: 16px;
+  right: 9px;
+  bottom: 0;
+  height: 1px;
+  background-color: color-mix(in srgb, var(--text) 50%, transparent);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  pointer-events: none;
+}
+
 /* The send key's launch (Composer.launchKey): a copy of the disc over the real one for a moment. */
 .sk-launch {
   position: fixed;

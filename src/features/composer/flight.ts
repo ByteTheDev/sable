@@ -1,4 +1,5 @@
 import { EASE_OUT, play, reducedMotion, uiZoom } from '@/lib/motion';
+import { holdSend } from './settle';
 
 /**
  * A sent message leaves the composer as what it is about to be: its bubble. On send the words are
@@ -20,6 +21,11 @@ import { EASE_OUT, play, reducedMotion, uiZoom } from '@/lib/motion';
  * - The first message from home flies to the top of the column and waits there as the finished
  *   bubble until the session's own row takes over under it.
  * - A message queued while a turn runs is not a bubble: its words fly into the tray row as text.
+ * - When its row is late (a loaded machine, a slow bridge), the bubble rests where it arrived and
+ *   says so: it steps back to the waiting tone and a hairline fills slowly along its lower edge,
+ *   both on the compositor, so they move while the main thread is busy mounting. It holds until
+ *   the row is there (or the bridge refuses the message: then it flies back into the field with
+ *   its words), and the line finishes on the row as they swap.
  * - The whole path is stepped ahead of time and handed to the compositor as one transform
  *   animation, so a busy main thread (a session mounting, a turn starting) cannot make it stutter.
  * Under reduced motion there are no clones: the items fade in as before.
@@ -68,6 +74,25 @@ interface Flight {
   ending: boolean;
   /** Runs as the real message takes over (the steer's wire). */
   onLand?: () => void;
+  /** Lands the send for `settle.ts` (the chrome waiting on it goes on). */
+  done: () => void;
+  /** The waiting state (the tone and the hairline), set to start once the path has been flown. */
+  wait: Animation[];
+  line: HTMLElement | null;
+  /** When it left, and the bridge's answer about the message (see bubbleHold). */
+  t0: number;
+  answer: HoldAnswer;
+  answeredAt: number;
+}
+
+/** What the composer keeps of a launch: the bridge's answer decides how the wait ends. */
+export interface FlightHandle {
+  /**
+   * The bridge took the message (`true`: its row has a little while left to appear, then the bubble
+   * lets go) or refused it (`false`: the bubble flies back into the field; resolves once it is there,
+   * for the words to be put back).
+   */
+  settle(ok: boolean): Promise<void>;
 }
 
 const pending: Flight[] = [];
@@ -82,10 +107,45 @@ const matches = (flightKey: string, text: string) => {
 
 /** Lines the words for the tray fly with. */
 const MAX_LINES = 4;
-/** A clone nothing has claimed fades after this long (a bubble waits longer: a new session may still be starting); none outlives the last. */
+/** Words for the tray that nothing has claimed fade after this long; none outlives the last. */
 const NO_CLAIM_MS = 1400;
-const NO_CLAIM_BUBBLE_MS = 4000;
 const MAX_LIFE_MS = 6000;
+/**
+ * A bubble holds for its row: at most this long while the bridge has not answered (a new session
+ * may still be starting on a loaded machine), and this long once it has taken the message (its row
+ * is in the store by then; one that does not show is in a view no longer on screen).
+ */
+export const HOLD_MS = 15000;
+export const ACKED_MS = 3000;
+
+/** What the bridge has said about a sent message so far. */
+export type HoldAnswer = 'pending' | 'taken' | 'refused';
+
+/**
+ * What a bubble in the air does about its row, decided again whenever something changes. It never
+ * fades for being late: it lands once its row is there, flies back into the field when the bridge
+ * refused the message, and lets go only when the row has not shown `ACKED_MS` after the bridge took
+ * the message (it is in a view no longer on screen) or after `HOLD_MS` without any answer. Pure, so
+ * the hold can be tested.
+ */
+export function bubbleHold(s: { row: boolean; answer: HoldAnswer; sinceLaunch: number; sinceAnswer: number }): 'land' | 'hold' | 'back' | 'release' {
+  if (s.row) return 'land';
+  if (s.answer === 'refused') return 'back';
+  if (s.answer === 'taken' && s.sinceAnswer >= ACKED_MS) return 'release';
+  if (s.sinceLaunch >= HOLD_MS) return 'release';
+  return 'hold';
+}
+
+/** When the waiting state begins, in ms after the key, for a path flown in `pathEnd` ms. */
+export const waitStart = (pathEnd: number) => Math.max(WAIT_MIN, pathEnd + WAIT_AFTER);
+/** The waiting state starts this long after the path has been flown, and never before `WAIT_MIN` after the key. */
+const WAIT_AFTER = 120;
+const WAIT_MIN = 380;
+/** The waiting tone (a queued or steered message's, timeline.css `.user[data-queued] .user-card`). */
+const WAIT_TONE = 0.6;
+/** The hairline's slow fill: quick at first, then ever slower, never quite to the end on its own. */
+const WAIT_FILL = 9000;
+const WAIT_REACH = 0.94;
 /** Where a queued message's row will be, from the field's text: the tray's last row, just above the card. */
 const TRAY_GUESS = { x: 21, y: -46 };
 
@@ -242,11 +302,11 @@ function makeBubble({ el, text }: Source): { clone: HTMLDivElement; left: number
  * Lifts `text` out of `source` (the composer's field, or a queue row's text) and keeps it in the
  * air until something with the same text claims it. Call before the field is cleared.
  */
-export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: boolean; first?: boolean }) {
-  if (reducedMotion() || !source.text.trim()) return;
+export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: boolean; first?: boolean }): FlightHandle | null {
+  if (reducedMotion() || !source.text.trim()) return null;
   const bubble = opts.dest === 'timeline';
   const made = bubble ? makeBubble(source) : makeWords(source);
-  if (!made) return;
+  if (!made) return null;
   const { clone, left, top, s0 } = made;
   document.body.appendChild(clone);
   const now = performance.now();
@@ -271,6 +331,12 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
     fixing: false,
     row: null,
     ending: false,
+    done: holdSend(),
+    wait: [],
+    line: null,
+    t0: now,
+    answer: 'pending',
+    answeredAt: 0,
   };
   pending.push(f);
   // The card's surface forms around the words while the key gives.
@@ -279,10 +345,15 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
   // A queued message leaves the field for the tray just above the card, before its row exists.
   const guess = opts.dest === 'tray' ? TRAY_GUESS : guessLanding(f, source.el, !!opts.first);
   f.guessed = bubble && !!guess;
-  run(f, fly(f, { t: 0, x: 0, y: 0, vx: 0, vy: 0 }, guess?.x ?? 0, guess?.y ?? -18), () => rest(f));
-  f.timer = window.setTimeout(() => !f.target && abort(f), bubble ? NO_CLAIM_BUBBLE_MS : NO_CLAIM_MS);
+  const path = fly(f, { t: 0, x: 0, y: 0, vx: 0, vy: 0 }, guess?.x ?? 0, guess?.y ?? -18);
+  run(f, path, () => rest(f));
+  // The waiting state is set now, to begin once the path has been flown: on the compositor, it
+  // shows on time even while the main thread is busy mounting the row it waits for.
+  if (bubble) waitFrom(f, waitStart(path[path.length - 1].t));
+  if (bubble) review(f);
+  else f.timer = window.setTimeout(() => !f.target && abort(f), NO_CLAIM_MS);
   // Whatever happens on the way, no clone outlives this: the real message always shows.
-  window.setTimeout(() => abort(f), MAX_LIFE_MS);
+  window.setTimeout(() => abort(f), bubble ? HOLD_MS + 2000 : MAX_LIFE_MS);
   // A conversation row that mounted first (the bridge answered before this row left the tray).
   if (opts.dest === 'timeline') {
     const i = unclaimed.findIndex((u) => now - u.at < 400 && u.root.isConnected && matches(f.key, u.key));
@@ -291,6 +362,135 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
       landInTimeline(u.root, u.key, { steer, late: true });
     }
   }
+  return { settle: (ok) => settle(f, ok) };
+}
+
+/** The waiting state, from `at` ms after the launch: the bubble at the waiting tone, a hairline filling along its lower edge. */
+function waitFrom(f: Flight, at: number) {
+  const inner = f.el.firstElementChild as HTMLElement | null;
+  if (!inner) return;
+  inner.style.position = 'relative';
+  const line = document.createElement('i');
+  line.className = 'send-wait';
+  line.setAttribute('aria-hidden', 'true');
+  inner.appendChild(line);
+  f.line = line;
+  const tone = inner.animate([{ opacity: 1 }, { opacity: WAIT_TONE }], { duration: 260, delay: at, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'forwards' });
+  const fill = line.animate(
+    [
+      { transform: 'scaleX(0)', opacity: 0 },
+      { transform: `scaleX(${(WAIT_REACH * 0.03).toFixed(3)})`, opacity: 1, offset: 0.015 },
+      { transform: `scaleX(${WAIT_REACH})`, opacity: 1 },
+    ],
+    { duration: WAIT_FILL, delay: at, easing: 'cubic-bezier(0.2, 0.7, 0.3, 1)', fill: 'forwards' },
+  );
+  f.wait = [tone, fill];
+}
+
+/** Whether the waiting state has begun (its animations are past their delay). */
+const waiting = (f: Flight) => f.wait.length > 0 && f.wait[0].effect?.getComputedTiming().progress != null;
+
+function endWait(f: Flight) {
+  for (const a of f.wait) a.cancel();
+  f.wait = [];
+}
+
+/**
+ * The swap after a wait: the row takes the bubble's tone and steps up to its own, and the hairline
+ * runs to the end along the row's edge and fades, so the wait visibly completes as the message lands.
+ */
+function finishWait(f: Flight, card: HTMLElement) {
+  const inner = f.el.firstElementChild as HTMLElement | null;
+  const tone = inner ? parseFloat(getComputedStyle(inner).opacity) || WAIT_TONE : WAIT_TONE;
+  const scale = f.line ? new DOMMatrixReadOnly(getComputedStyle(f.line).transform).a : 0;
+  play(card, [{ opacity: tone }, { opacity: 1 }], { duration: 200, easing: EASE_OUT });
+  const line = document.createElement('i');
+  line.className = 'send-wait';
+  line.setAttribute('aria-hidden', 'true');
+  card.appendChild(line);
+  // It runs to the end (the first half), then lets go (the second).
+  const run = play(
+    line,
+    [
+      { transform: `scaleX(${scale.toFixed(4)})`, opacity: 1, easing: 'cubic-bezier(0.3, 0, 0.2, 1)' },
+      { transform: 'scaleX(1)', opacity: 1, offset: 0.5, easing: 'cubic-bezier(0.4, 0, 1, 1)' },
+      { transform: 'scaleX(1)', opacity: 0 },
+    ],
+    { duration: 380, easing: 'linear', fill: 'forwards' },
+  );
+  const gone = () => line.remove();
+  if (run) run.finished.then(gone, gone);
+  else gone();
+}
+
+/** A bubble's hold, decided now and again when it could next change (see bubbleHold). */
+function review(f: Flight) {
+  window.clearTimeout(f.timer);
+  if (f.ending || f.target) return;
+  const now = performance.now();
+  const sinceLaunch = now - f.t0;
+  const sinceAnswer = f.answer === 'pending' ? 0 : now - f.answeredAt;
+  const next = bubbleHold({ row: false, answer: f.answer, sinceLaunch, sinceAnswer });
+  if (next === 'release') return abort(f);
+  if (next === 'back') return void goBack(f);
+  const wait = f.answer === 'taken' ? Math.min(ACKED_MS - sinceAnswer, HOLD_MS - sinceLaunch) : HOLD_MS - sinceLaunch;
+  f.timer = window.setTimeout(() => review(f), Math.max(16, wait));
+}
+
+/** The bridge's answer (see FlightHandle). */
+function settle(f: Flight, ok: boolean): Promise<void> {
+  if (f.ending) return Promise.resolve();
+  if (!ok) {
+    f.answer = 'refused';
+    return goBack(f);
+  }
+  f.answer = 'taken';
+  f.answeredAt = performance.now();
+  if (f.dest === 'timeline') review(f);
+  return Promise.resolve();
+}
+
+/**
+ * Refused: the bubble flies back to where its words stood in the field, shrinking to the field's
+ * type while its surface dissolves, and is gone as the words are put back (the caller does that
+ * when this resolves).
+ */
+function goBack(f: Flight): Promise<void> {
+  f.ending = true;
+  window.clearTimeout(f.timer);
+  drop(f);
+  const shown = f.row ?? f.target;
+  if (shown) shown.style.opacity = '';
+  const from = whereNow(f);
+  const inner = f.el.firstElementChild as HTMLElement | null;
+  const tone = inner ? parseFloat(getComputedStyle(inner).opacity) || 1 : 1;
+  endWait(f);
+  f.line?.remove();
+  const fix = f.fix;
+  f.fix = { x: 0, y: 0 };
+  for (const a of inner?.getAnimations() ?? []) a.cancel();
+  // The inner layer's correction is folded into the path back.
+  const path = springPath({ ...from, x: from.x + fix.x, y: from.y + fix.y, t: 0 }, 0, 0, { sideways: f.sideways });
+  const end = path[path.length - 1].t || 1;
+  const frames: Keyframe[] = path.map((p) => {
+    const u = p.t / end;
+    return { offset: Math.min(1, u), transform: `translate3d(${p.x.toFixed(2)}px, ${p.y.toFixed(2)}px, 0) scale(${(1 + (f.s0 - 1) * Math.min(1, u * 1.4)).toFixed(4)})` };
+  });
+  frames[frames.length - 1].offset = 1;
+  f.anim?.cancel();
+  const back = play(f.el, frames, { duration: end, easing: 'linear', fill: 'forwards' });
+  if (inner && tone < 1) play(inner, [{ opacity: tone }, { opacity: 1 }], { duration: 160, easing: EASE_OUT, fill: 'forwards' });
+  // The surface goes as the words settle back into the field.
+  play(f.el.querySelector('.user-card'), [{ opacity: 1 }, { opacity: 0 }], { duration: Math.min(end, 220), delay: Math.max(0, end - 220), easing: 'linear', pseudoElement: '::before', fill: 'forwards' });
+  return new Promise((resolve) => {
+    const gone = () => {
+      f.el.remove();
+      f.done();
+      resolve();
+    };
+    if (back) back.finished.then(gone, gone);
+    else gone();
+  });
 }
 
 /** The springs (stiffness, damping): the axis that leads and the one that follows. Both settle with the smallest overshoot. */
@@ -442,6 +642,8 @@ function land(f: Flight) {
   window.clearTimeout(f.timer);
   const shown = f.row ?? f.target;
   if (shown) shown.style.opacity = '';
+  if (f.dest === 'timeline' && f.target && waiting(f)) finishWait(f, f.target);
+  endWait(f);
   if (to && shown) {
     const dx = end.x + f.fix.x - to.x;
     const dy = end.y + f.fix.y - to.y;
@@ -458,6 +660,7 @@ function land(f: Flight) {
   f.onLand?.();
   f.el.remove();
   drop(f);
+  f.done();
 }
 
 function abort(f: Flight) {
@@ -471,6 +674,7 @@ function abort(f: Flight) {
   if (a) a.finished.then(done, done);
   else done();
   drop(f);
+  f.done();
 }
 
 function drop(f: Flight) {
@@ -573,6 +777,8 @@ export function landInTimeline(root: HTMLElement, text: string, opts: { steer?: 
   f.el.style.width = `${(r.width / z).toFixed(2)}px`;
   f.el.style.maxWidth = 'none';
   (f.el.firstElementChild ?? f.el).replaceChildren(copy);
+  // The waiting hairline stays on its edge (its fill goes on where it was).
+  if (f.line) f.el.firstElementChild?.appendChild(f.line);
   f.target = card;
   f.row = root;
   root.style.opacity = '0';

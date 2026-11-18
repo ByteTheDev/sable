@@ -8,6 +8,7 @@ import { useStore } from '@/state/store';
 import { IconButton, Popover, PopoverClose, PopoverContent, PopoverTrigger, Switch } from '@/ui';
 import { fieldBeat } from '@/art/events';
 import { landInTimeline } from '@/features/composer/flight';
+import { afterSend, sendInAir } from '@/features/composer/settle';
 import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
 import { MessageAgain } from './Again';
 import { useTimeline } from './ctx';
@@ -28,6 +29,10 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
   const [restore, setRestore] = useState(true);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // The hover actions (time, copy, again, rewind) are not part of the frames a sent message lands
+  // in: a row that mounts while a send is in the air builds them once it has landed.
+  const [actions, setActions] = useState(() => !sendInAir());
+  useEffect(() => (actions ? undefined : afterSend(() => setActions(true))), [actions]);
 
   const queued = item.state === 'queued';
   const images = item.attachments?.filter((a) => a.kind === 'image' && a.dataUrl) ?? [];
@@ -78,40 +83,42 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
           <i />
         </span>
       )}
-      <div className="user-actions">
-        {!queued && <Stamp ts={item.ts} prefix={item.steered ? 'Steered' : undefined} className="user-stamp" />}
-        {item.text && <CopyButton text={item.text} label="Copy message" />}
-        <MessageAgain item={item} />
-        {canRewind && idle && !queued && (
-          <Popover open={open} onOpenChange={setOpen}>
-            <PopoverTrigger asChild>
-              <IconButton icon="rewind" label="Rewind to here" size={14} tipSide="top" />
-            </PopoverTrigger>
-            <PopoverContent align="end" side="bottom" width={288} className="pop-pad rewind">
-              <div className="rewind-title">Rewind to here</div>
-              <p className="rewind-desc">The conversation goes back to just before this message. Everything after it is removed.</p>
-              <label className="rewind-opt">
-                <span className="grow">
-                  <span className="rewind-opt-name">Restore files</span>
-                  <span className="rewind-opt-hint">Undo edits made after this point</span>
-                </span>
-                <Switch checked={restore} onChange={setRestore} label="Restore files" />
-              </label>
-              <div className="rewind-foot">
-                <PopoverClose asChild>
-                  <button type="button" className="btn btn-sm btn-ghost">
-                    Cancel
+      {actions && (
+        <div className="user-actions">
+          {!queued && <Stamp ts={item.ts} prefix={item.steered ? 'Steered' : undefined} className="user-stamp" />}
+          {item.text && <CopyButton text={item.text} label="Copy message" />}
+          <MessageAgain item={item} />
+          {canRewind && idle && !queued && (
+            <Popover open={open} onOpenChange={setOpen}>
+              <PopoverTrigger asChild>
+                <IconButton icon="rewind" label="Rewind to here" size={14} tipSide="top" />
+              </PopoverTrigger>
+              <PopoverContent align="end" side="bottom" width={288} className="pop-pad rewind">
+                <div className="rewind-title">Rewind to here</div>
+                <p className="rewind-desc">The conversation goes back to just before this message. Everything after it is removed.</p>
+                <label className="rewind-opt">
+                  <span className="grow">
+                    <span className="rewind-opt-name">Restore files</span>
+                    <span className="rewind-opt-hint">Undo edits made after this point</span>
+                  </span>
+                  <Switch checked={restore} onChange={setRestore} label="Restore files" />
+                </label>
+                <div className="rewind-foot">
+                  <PopoverClose asChild>
+                    <button type="button" className="btn btn-sm btn-ghost">
+                      Cancel
+                    </button>
+                  </PopoverClose>
+                  <button type="button" className="btn btn-sm" onClick={rewind} disabled={busy}>
+                    <Icon name="rewind" size={13} />
+                    Rewind
                   </button>
-                </PopoverClose>
-                <button type="button" className="btn btn-sm" onClick={rewind} disabled={busy}>
-                  <Icon name="rewind" size={13} />
-                  Rewind
-                </button>
-              </div>
-            </PopoverContent>
-          </Popover>
-        )}
-      </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
+        </div>
+      )}
       <div className="user-card">
         {item.steered ? (
           // Steered into a running turn: marked in place, answered right below.

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 import type { ProviderId } from '@shared/protocol';
 import { loadSessionView } from '@/app/views';
 import { Backdrop } from '@/art/Backdrop';
@@ -57,14 +57,16 @@ function useArrival(mark: RefObject<HTMLDivElement | null>, title: RefObject<HTM
   }, [mark, title, composer]);
 }
 
-/** The empty stage: the mark, one question, one composer, light across the whole stage. */
-export function Home() {
+/** The empty stage: the mark, one question, one composer, light across the whole stage. Memoized: the shell re-renders as a session mounts over it. */
+export const Home = memo(function Home() {
   // Latched: once the first message has left, the home screen stays emptied while it fades out
   // (the flight lands before the view has gone, and its headline must not come back meanwhile).
   const flying = useSyncExternalStore(subscribeHandoff, handoffPhase, handoffPhase) === 'flying';
   const [left, setLeft] = useState(false);
-  // A send that started no session (cancelled flight) brings the home screen back.
-  const opened = useStore((s) => s.ui.activeSessionId != null);
+  // A send that started no session (cancelled flight) brings the home screen back. Read when the
+  // flight's phase changes (that renders this), not subscribed: the session mounting over home
+  // must not render it again in the same task.
+  const opened = useStore.getState().ui.activeSessionId != null;
   if (flying && !left) setLeft(true);
   else if (!flying && left && !opened) setLeft(false);
   const leaving = flying || left;
@@ -111,4 +113,4 @@ export function Home() {
       </div>
     </div>
   );
-}
+});

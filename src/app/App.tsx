@@ -1,11 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react';
 import { AnimatePresence, cancelFrame, frame, motion, MotionConfig, type Variants } from 'motion/react';
 import { Launch, launchPlays } from '@/art/LaunchLayer';
 import { LogoMark, ProviderMark } from '@/art/Logo';
 import { veil, VEIL_SWAP, VEIL_SWAP_AT } from '@/art/veil';
 import { reducedMotion, uiZoom } from '@/lib/motion';
 import { Home } from '@/features/home/Home';
-import { handoffActive } from '@/features/home/handoff';
+import { handoffActive, handoffPhase, subscribeHandoff } from '@/features/home/handoff';
+import { afterSend } from '@/features/composer/settle';
 import { useOnboarding } from '@/features/onboarding/useOnboarding';
 import { Sidebar } from '@/features/sidebar/Sidebar';
 import { Icon } from '@/icons';
@@ -14,11 +15,12 @@ import { baseName, formatTokens } from '@/lib/format';
 import { goHome, openSettings, renameSession } from '@/state/actions';
 import { useActiveProvider, useHotkey } from '@/state/hooks';
 import { SessionAccount } from '@/features/accounts';
-import { useShallow } from 'zustand/react/shallow';
+import { shallow } from 'zustand/shallow';
+import { useLaggedStore } from '@/lib/lagged';
 import { useStore, type RailTab } from '@/state/store';
 import { IconButton, Tip, TipProvider, Toasts } from '@/ui';
 import { CapabilitiesButton } from './Capabilities';
-import { loadSessionView } from './views';
+import { loadSessionView, sessionViewNow } from './views';
 import { WindowControls } from './WindowControls';
 import './app.css';
 
@@ -36,9 +38,31 @@ const History = lazy(() => loadHistory().then((m) => ({ default: m.History })));
 const Settings = lazy(() => loadSettings().then((m) => ({ default: m.Settings })));
 const ProjectPicker = lazy(() => loadPicker().then((m) => ({ default: m.ProjectPicker })));
 const Rail = lazy(() => loadRail().then((m) => ({ default: m.Rail })));
-const SessionView = lazy(() => loadSessionView().then((m) => ({ default: m.SessionView })));
-const SessionDock = lazy(() => loadSessionView().then((m) => ({ default: m.SessionDock })));
-const SessionLight = lazy(() => loadSessionView().then((m) => ({ default: m.SessionLight })));
+const LAZY_PART = {
+  SessionView: lazy(() => loadSessionView().then((m) => ({ default: m.SessionView }))),
+  SessionDock: lazy(() => loadSessionView().then((m) => ({ default: m.SessionDock }))),
+  SessionLight: lazy(() => loadSessionView().then((m) => ({ default: m.SessionLight }))),
+};
+
+/**
+ * A part of the session view. Its chunk is warmed on home, and once it has loaded the part mounts
+ * in the same render: through React.lazy its first render would suspend even then, and a suspended
+ * boundary is revealed up to 300 ms later (the first message from home would wait for it). Decided
+ * once per mount, so a part never switches between the two.
+ */
+function SessionPart({ part, sessionId }: { part: keyof typeof LAZY_PART; sessionId: string }) {
+  const [mod] = useState(sessionViewNow);
+  if (mod) {
+    const Now = mod[part];
+    return <Now sessionId={sessionId} />;
+  }
+  const Later = LAZY_PART[part];
+  return (
+    <Suspense fallback={null}>
+      <Later sessionId={sessionId} />
+    </Suspense>
+  );
+}
 const Onboarding = lazy(() => import('@/features/onboarding/Onboarding').then((m) => ({ default: m.Onboarding })));
 
 /**
@@ -157,7 +181,10 @@ export function App() {
   const stageBody = useRef<HTMLDivElement>(null);
   const viewKey = booting || onboarding ? null : (sessionId ?? 'home');
   const viewMode = useViewMode(viewKey, stageBody);
-  const railShown = railOpen && !!sessionId;
+  // The panel waits while the first message's composer glides to the dock: the session mounts
+  // first, the panel opens once the card has landed (only read while the panel is meant to be open).
+  const handingOff = useSyncExternalStore(subscribeHandoff, () => railOpen && handoffPhase() === 'flying');
+  const railShown = railOpen && !!sessionId && !handingOff;
   useRailMotion(railShown);
 
   useEffect(() => {
@@ -227,9 +254,7 @@ export function App() {
               <AnimatePresence initial={false} custom={viewMode}>
                 {viewKey != null && sessionId && (
                   <motion.div key="light" className="stage-view stage-light" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
-                    <Suspense fallback={null}>
-                      <SessionLight sessionId={sessionId} />
-                    </Suspense>
+                    <SessionPart part="SessionLight" sessionId={sessionId} />
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -238,9 +263,7 @@ export function App() {
                 {viewKey == null ? null : (
                   <motion.div key={viewKey} className="stage-view" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
                     {sessionId ? (
-                      <Suspense fallback={null}>
-                        <SessionView sessionId={sessionId} />
-                      </Suspense>
+                      <SessionPart part="SessionView" sessionId={sessionId} />
                     ) : (
                       <Home />
                     )}
@@ -252,9 +275,7 @@ export function App() {
               <AnimatePresence initial={false} custom={viewMode}>
                 {viewKey != null && sessionId && (
                   <motion.div key="dock" className="stage-dock" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
-                    <Suspense fallback={null}>
-                      <SessionDock sessionId={sessionId} />
-                    </Suspense>
+                    <SessionPart part="SessionDock" sessionId={sessionId} />
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -537,18 +558,23 @@ function toggleSidebar(shown: boolean) {
   else setUi({ sidebarOpen: true });
 }
 
+/** What the bar shows of the open session (usage ticks while streaming change the session, not these). */
+function selectBarSession(s: ReturnType<typeof useStore.getState>) {
+  const id = s.ui.activeSessionId;
+  const m = id ? s.sessions[id] : undefined;
+  return m ? { id: m.id, provider: m.provider, accountId: m.accountId, title: m.title, cwd: m.cwd, branch: m.branch } : undefined;
+}
+
+/** The bar follows the stage a task behind, and after a sent message has landed (see useLaggedStore). */
+const BAR_LAG = { gate: afterSend };
+
 function Topbar() {
-  const activeId = useStore((s) => s.ui.activeSessionId);
   const sidebarOpen = useSidebarShown();
   const railOpen = useStore((s) => s.ui.railOpen);
   const setUi = useStore((s) => s.setUi);
-  // Shallow: usage ticks while streaming change the session, not what the bar shows (the meter subscribes itself).
-  const session = useStore(
-    useShallow((s) => {
-      const m = activeId ? s.sessions[activeId] : undefined;
-      return m ? { id: m.id, provider: m.provider, accountId: m.accountId, title: m.title, cwd: m.cwd, branch: m.branch } : undefined;
-    }),
-  );
+  // A session mounting does not build the bar's crumbs, account and switches in the same task, and
+  // the first message from home lands before they are drawn (the meter subscribes itself).
+  const session = useLaggedStore(selectBarSession, shallow, BAR_LAG);
   return (
     <header className="topbar">
       <IconButton icon="sidebar" label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} keys="mod+b" onClick={() => toggleSidebar(sidebarOpen)} />

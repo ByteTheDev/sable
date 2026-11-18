@@ -9,6 +9,7 @@ import { type Choice } from './choice';
 import { ChipSkeleton, MENU_EVENT } from './Controls';
 import { headerLevel, step, stopAt, TRACK_KEYS, type TrackEvent, type TrackState } from './effort-track';
 import { paidConfirmed, confirmPaid, takePaidAsk } from './paid-speed';
+import { Later } from './later';
 
 /** The landed bar's detent. */
 const SETTLE_MS = 220;
@@ -392,17 +393,23 @@ export const Thinking = memo(function Thinking({ efforts, value, onChange, ultra
             onClosed();
           }}
         >
-          {efforts.length > 0 && <Track efforts={efforts} level={committedLevel} onPreview={setPreview} onCommit={commit} onDone={() => setOpen(false)} trackRef={track} burst={burst && isUltraEffort(shown)} />}
-          {efforts.length > 0 && ultraOffered && <div className="menu-sep th-sep" role="separator" />}
-          {ultraOffered && (
-            <label className="th-uc-row" data-on={ucOn || undefined} data-burst={(burst && ucOn) || undefined}>
-              <UltraMark className="th-uc-mark" />
-              <span className="grow">Ultracode</span>
-              <Switch checked={ucOn} onChange={onUltracode} label="Ultracode" />
-            </label>
-          )}
-          {hasSpeed && (efforts.length > 0 || ultraOffered) && <div className="menu-sep th-sep" role="separator" />}
-          {hasSpeed && <SpeedRow speeds={speeds} speed={speed} onSpeed={onSpeed!} sessionId={sessionId} ask={ask} onAsk={setAsk} />}
+          <Later>
+            {() => (
+              <>
+                {efforts.length > 0 && <Track efforts={efforts} level={committedLevel} onPreview={setPreview} onCommit={commit} onDone={() => setOpen(false)} trackRef={track} burst={burst && isUltraEffort(shown)} />}
+                {efforts.length > 0 && ultraOffered && <div className="menu-sep th-sep" role="separator" />}
+                {ultraOffered && (
+                  <label className="th-uc-row" data-on={ucOn || undefined} data-burst={(burst && ucOn) || undefined}>
+                    <UltraMark className="th-uc-mark" />
+                    <span className="grow">Ultracode</span>
+                    <Switch checked={ucOn} onChange={onUltracode} label="Ultracode" />
+                  </label>
+                )}
+                {hasSpeed && (efforts.length > 0 || ultraOffered) && <div className="menu-sep th-sep" role="separator" />}
+                {hasSpeed && <SpeedRow speeds={speeds} speed={speed} onSpeed={onSpeed!} sessionId={sessionId} ask={ask} onAsk={setAsk} />}
+              </>
+            )}
+          </Later>
         </RP.Content>
       </RP.Portal>
     </RP.Root>

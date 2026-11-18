@@ -1,4 +1,5 @@
-import { RELEASE } from '@/features/composer/flight';
+import { HOLD_MS, RELEASE } from '@/features/composer/flight';
+import { holdSend } from '@/features/composer/settle';
 import { reducedMotion, uiZoom } from '@/lib/motion';
 
 /**
@@ -50,6 +51,8 @@ interface Flight {
   fixes: number;
   timer: number;
   ending: boolean;
+  /** Lands the send for `settle.ts`. */
+  done: () => void;
 }
 
 let flight: Flight | null = null;
@@ -75,8 +78,8 @@ export const handoffActive = () => phase === 'flying';
 const STIFF = 440;
 const DAMP = 40;
 const LINE = 32;
-/** No session after this long (the bridge is slow or the send failed silently): give up quietly. */
-const GIVE_UP = 8000;
+/** No session after this long (the bridge is very slow or the send failed silently): give up quietly. As long as a sent bubble holds for its row. */
+const GIVE_UP = HOLD_MS;
 
 /** Where the docked composer will be, from the stage's geometry (see session.css `.dock`). */
 function predictDock(height: number): { left: number; top: number; width: number } | null {
@@ -252,7 +255,7 @@ export function beginHandoff(card: HTMLElement | null) {
     clear.push(el.animate([{ opacity: 1, transform: 'translateY(0px)' }, { opacity: 0, transform: 'translateY(-6px)' }], { duration: 80, easing: 'linear', fill: 'forwards' }));
   }
 
-  const f: Flight = { ghost, source: card, start, dock: null, path: [], move: null, size: null, clear, fixes: 0, timer: 0, ending: false };
+  const f: Flight = { ghost, source: card, start, dock: null, path: [], move: null, size: null, clear, fixes: 0, timer: 0, ending: false, done: holdSend() };
   flight = f;
   set('flying');
   run(f, glide({ t: 0, x: 0, y: 0, w: start.width, vx: 0, vy: 0, vw: 0 }, target.left - start.left, target.top - start.top, target.width), () => arrived(f));
@@ -269,6 +272,7 @@ function land() {
   fadeOut(f, 90);
   flight = null;
   set('idle');
+  f.done();
 }
 
 function fadeOut(f: Flight, duration: number) {
@@ -324,4 +328,5 @@ export function cancelHandoff() {
   fadeOut(f, 140);
   flight = null;
   set('idle');
+  f.done();
 }

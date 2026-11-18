@@ -7,6 +7,8 @@ import { Icon } from '@/icons';
 import { QuickSwitch } from '@/features/session/QuickSwitch';
 import { pathForFile } from '@/lib/desktop';
 import { dissolve } from '@/lib/dissolve';
+import { useLaggedStore } from '@/lib/lagged';
+import { afterSend } from '@/features/composer/settle';
 import { reducedMotion } from '@/lib/motion';
 import { addFolders, closeSession, goHome, pinProject, removeProject, reorderFolders } from '@/state/actions';
 import { useStore } from '@/state/store';
@@ -112,13 +114,17 @@ const SidebarTop = memo(function SidebarTop() {
 });
 
 const selectGroups = createGroupsSelector();
+const LAG = { gate: afterSend };
 
 /** Props and ref come from the context menu trigger wrapping it. */
 function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDivElement> }) {
-  const groups = useStore(selectGroups);
+  // A task behind the store, and after a sent message has landed: a new session's row, the re-sort
+  // and its slide are drawn once the send's frames are over, never in them (and a burst of updates
+  // sorts once). Rows show their own status at once (they subscribe themselves).
+  const groups = useLaggedStore(selectGroups, Object.is, LAG);
   const ready = useStore((s) => s.ready);
   // The open session's folder, not its id: switching sessions within a folder does not re-render the list.
-  const activeKey = useStore(selectActiveKey);
+  const activeKey = useLaggedStore(selectActiveKey, Object.is, LAG);
   const setUi = useStore((s) => s.setUi);
   const [collapsed, setCollapsed] = useState(loadCollapsed);
 

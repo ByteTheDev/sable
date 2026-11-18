@@ -282,6 +282,7 @@ function flightFrames(events) {
   };
   let long = 0;
   let longMs = 0;
+  let maxTask = 0;
   const spans = [];
   for (const e of events) {
     if (e.ph !== 'X' || e.pid !== pid || e.tid !== mainTid) continue;
@@ -290,6 +291,7 @@ function flightFrames(events) {
     const b = Math.min(e.ts + e.dur, t1);
     if (b <= a) continue;
     spans.push([a, b]);
+    maxTask = Math.max(maxTask, e.dur / 1000);
     if (e.dur > 50_000) (long++, (longMs += e.dur / 1000));
   }
   // Busy: the union of the tasks (they nest).
@@ -318,7 +320,57 @@ function flightFrames(events) {
     mainBusy: Math.round(busy / 1000),
     long,
     longMs: Math.round(longMs),
+    maxTask: Math.round(maxTask),
   };
+}
+
+/**
+ * PERF_PROFILE=1: a sampled JS profile of the run, limited to the flight (between the trace marks
+ * `sable:send` and `sable:land`) when there is one: self time per file, and the time inside each
+ * of the app's own functions (inclusive: its hooks and what it calls, not the children React renders).
+ */
+function profileSummary(p, events) {
+  const mark = (m) => events.find((e) => e.name === 'TimeStamp' && (e.args?.data?.message === m || e.args?.data?.name === m));
+  const s = mark('sable:send');
+  const l = mark('sable:land');
+  const from = s ? s.ts : -Infinity;
+  const to = l ? l.ts : s ? s.ts + 8_000_000 : Infinity;
+  const nodes = new Map(p.nodes.map((n) => [n.id, n]));
+  const parent = new Map();
+  for (const n of p.nodes) for (const c of n.children ?? []) parent.set(c, n.id);
+  const file = (n) => String(n.callFrame.url).split('?')[0].split('/').slice(-2).join('/') || `(${n.callFrame.functionName || 'program'})`;
+  const self = {};
+  const incl = {};
+  let t = p.startTime;
+  let total = 0;
+  for (let i = 0; i < p.samples.length; i++) {
+    t += p.timeDeltas[i];
+    if (t < from || t > to) continue;
+    const dt = (p.timeDeltas[i + 1] ?? 0) / 1000;
+    const n = nodes.get(p.samples[i]);
+    if (!n || n.callFrame.functionName === '(idle)') continue;
+    total += dt;
+    const k = file(n);
+    self[k] = (self[k] ?? 0) + dt;
+    const seen = new Set();
+    for (let id = n.id; id != null; id = parent.get(id)) {
+      const f = nodes.get(id).callFrame;
+      if (!/\/src\//.test(f.url) || !f.functionName) continue;
+      const key = `${f.functionName} ${f.url.split('?')[0].split('/').pop()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      incl[key] = (incl[key] ?? 0) + dt;
+    }
+  }
+  const top = (o, n) =>
+    Object.entries(o)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, n)
+      .map(([k, v]) => `${k} ${v.toFixed(0)}`)
+      .join(', ');
+  console.log(`    profile ${total.toFixed(0)}ms${s ? ' (flight)' : ''}`);
+  console.log(`    self by file: ${top(self, 18)}`);
+  console.log(`    app functions: ${top(incl, 30)}`);
 }
 
 // ── harness ──
@@ -362,11 +414,17 @@ if (process.env.PERF_RENDERS)
     // Skipped subtrees keep stale flags from their last render, so a fiber counts only when it also
     // started work after the previous commit (dev builds time every unit of work).
     let since = 0;
+    // Per commit: the time each component took to render itself (selfBaseDuration), for the flight's
+    // commit log (window.__commits: when, total ms, the costliest components).
+    window.__commits = [];
+    let cost = {};
     const walk = (f) => {
       while (f) {
         if (f.flags & 1 && (f.actualStartTime ?? Infinity) > since) {
           const n = nameOf(f);
           if (n) window.__renders[n] = (window.__renders[n] ?? 0) + 1;
+          const k = n ?? (typeof f.type === 'string' ? 'host' : 'other');
+          cost[k] = (cost[k] ?? 0) + (f.selfBaseDuration ?? 0);
         }
         if (f.child) walk(f.child);
         f = f.sibling;
@@ -379,10 +437,21 @@ if (process.env.PERF_RENDERS)
         return 1;
       },
       onCommitFiberRoot(_id, root) {
+        cost = {};
         try {
           walk(root.current.child);
         } catch {
           /* ignore */
+        }
+        const F = window.__flight;
+        if (F?.t0 && !F.land) {
+          const all = Object.values(cost).reduce((a, b) => a + b, 0);
+          const top = Object.entries(cost)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, all > 40 ? 40 : 6)
+            .map(([k, v]) => `${k} ${v.toFixed(1)}`)
+            .join(', ');
+          window.__commits.push(`@${Math.round(performance.now() - F.t0)} ${all.toFixed(1)}ms: ${top}`);
         }
         since = performance.now();
       },
@@ -495,16 +564,24 @@ async function measure(name, run) {
     });
     window.__flightMo.observe(document.body, { childList: true });
   });
-  await page.evaluate(() => (window.__renders = {}));
+  await page.evaluate(() => ((window.__renders = {}), (window.__commits = [])));
   const m0 = await metrics();
+  if (process.env.PERF_PROFILE) {
+    await cdp.send('Profiler.enable');
+    await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
+    await cdp.send('Profiler.start');
+  }
   await browser.startTracing(page, { categories: CATEGORIES });
   const t0 = Date.now();
   await run();
   const wall = Date.now() - t0;
   const buf = await browser.stopTracing();
+  const prof = process.env.PERF_PROFILE ? (await cdp.send('Profiler.stop')).profile : null;
   const m1 = await metrics();
   const trace = JSON.parse(buf.toString());
   if (process.env.PERF_TRACE) writeFileSync(path.resolve(`scratch/speed/${label}-${name}-${++traceN}.trace.json`), buf);
+  if (prof) profileSummary(prof, trace.traceEvents ?? trace);
+  if (prof && process.env.PERF_TRACE) writeFileSync(path.resolve(`scratch/speed/${label}-${name}-${traceN}.cpuprofile`), JSON.stringify(prof));
   const a = analyse(trace.traceEvents ?? trace);
   const flight = await page.evaluate(() => {
     const F = window.__flight;
@@ -548,6 +625,8 @@ async function measure(name, run) {
   if (process.env.PERF_DETAIL) for (const l of page2.loafInfo.slice(0, 8)) console.log(`    loaf ${l}`);
   delete page2.loafInfo;
   if (process.env.PERF_RENDERS) {
+    const commits = await page.evaluate(() => window.__commits ?? []);
+    for (const c of commits.filter((x) => parseFloat(x.split(' ')[1]) >= Number(process.env.PERF_COMMIT_MIN ?? 2))) console.log(`    commit ${c}`);
     const r = await page.evaluate(() => window.__renders);
     const top = Object.entries(r ?? {})
       .sort((x, y) => y[1] - x[1])
@@ -835,6 +914,8 @@ const results = [];
 try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.sable?.store.getState().ready, null, { timeout: 30_000 });
+  // A build error elsewhere in the tree (another lazy chunk) puts Vite's overlay over the page: out of the way.
+  await page.addStyleTag({ content: 'vite-error-overlay { display: none !important; }' });
   // The backdrop as a new install has it (DEFAULT_BACKDROP), set locally only: backdropLive is never saved by itself.
   const bd = opt('backdrop', 'default');
   await page.evaluate((mode) => {
@@ -888,7 +969,7 @@ try {
               `raf ${f.frames} frames, dropped ${f.dropped}, worst ${f.worst}ms, first ${f.first}ms`,
               f.cc ? `cc all ${f.cc.all} partial ${f.cc.partial} dropped ${f.cc.dropped} gap ${f.cc.gap}ms` : 'cc -',
               `draws ${f.draws} gap ${f.drawGap}ms`,
-              `main busy ${f.mainBusy}ms long ${f.long}/${f.longMs}ms`,
+              `main busy ${f.mainBusy}ms long ${f.long}/${f.longMs}ms max ${f.maxTask}ms`,
               f.log,
             ].join(' | '),
           );
