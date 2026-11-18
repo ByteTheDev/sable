@@ -55,6 +55,36 @@ describe('a slow agent start', () => {
     await app.dispose();
   });
 
+  it('shows a message at once in a restored session whose agent starts with it', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'sable-slow-'));
+    homes.push(home);
+    const first = new App({ home, providers: [(ctx) => new DemoProvider(ctx, { speed: 0 })], quiet: true });
+    const made = await first.call('session.create', { provider: 'demo', cwd: home });
+    await first.dispose();
+
+    // After a restart the session is back without its agent: the next message starts it.
+    const app = new App({ home, providers: [(ctx) => new SlowDemo(ctx, { speed: 0 })], quiet: true });
+    let opens = 0;
+    const provider = app.provider('demo') as SlowDemo;
+    const open = provider.open.bind(provider);
+    provider.open = (rt, opts) => (opens++, open(rt, opts));
+    const id = made.session.id;
+    const sending = app.call('session.send', { sessionId: id, text: 'hi' });
+    await sleep(50);
+    const rt = app.runtime(id);
+    expect(rt.handle).toBeUndefined();
+    expect(rt.items.some((i) => i.type === 'user' && i.text === 'hi')).toBe(true);
+    expect(rt.meta.status).toBe('starting');
+    // A second message while the agent starts waits for the same start.
+    const second = app.call('session.send', { sessionId: id, text: 'and this' });
+    await Promise.all([sending, second]);
+    expect(opens).toBe(1);
+    for (let i = 0; i < 100 && !rt.items.some((x) => x.type === 'turn'); i++) await sleep(50);
+    expect(rt.items.some((x) => x.type === 'turn')).toBe(true);
+    expect(rt.items.filter((x) => x.type === 'user').map((u) => (u as { text: string }).text)).toEqual(['hi', 'and this']);
+    await app.dispose();
+  });
+
   it('does not start the agent for a session closed while it was starting', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'sable-slow-'));
     homes.push(home);

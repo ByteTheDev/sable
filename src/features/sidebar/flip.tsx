@@ -14,6 +14,8 @@ interface Props {
   order: string;
   className?: string;
   role?: string;
+  /** Runs after the DOM took the new order, before the new places are measured (a drag drops its transforms here). */
+  beforeMeasure?: () => void;
   children: ReactNode;
 }
 
@@ -42,6 +44,7 @@ export class Flip extends Component<Props> {
   }
 
   componentDidUpdate(_prev: Props, _state: unknown, snap: Snap) {
+    this.props.beforeMeasure?.();
     if (!snap?.tops.size) return;
     const z = uiZoom();
     const moves: [HTMLElement, number][] = [];
@@ -61,7 +64,8 @@ export class Flip extends Component<Props> {
       if (Math.abs(dy) < 0.5) return;
       // A long jump (a row to the top of its folder, a folder to the top of the list) would slide
       // its text across its neighbours': it arrives in place instead, a short drop and a fade.
-      const far = Math.abs(dy) > Math.min((rects[i].height / z) * 1.6, 60);
+      // A folder just dropped by hand always slides home from where it was let go.
+      const far = !item.hasAttribute('data-dropped') && Math.abs(dy) > Math.min((rects[i].height / z) * 1.6, 60);
       const a = far
         ? play(item, [{ opacity: 0, transform: `translateY(${Math.sign(dy) * 6}px)` }, { opacity: 1, transform: 'translateY(0)' }], { duration: MOVE.duration, easing: MOVE.easing, delay: 40, fill: 'backwards' })
         : play(item, [{ transform: `translateY(${dy}px)` }, { transform: 'translateY(0)' }], { duration: MOVE.duration, easing: MOVE.easing, delay, fill: 'backwards' });

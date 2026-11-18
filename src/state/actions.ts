@@ -254,6 +254,27 @@ export async function addProject(path: string) {
 
 export const removeProject = (path: string) => bridge.call('project.remove', { path }).catch(fail);
 
+/**
+ * The manual folder order (the sidebar's drag): `paths` in their new order. Applied to the store at
+ * once so the list moves under the hand; `projects.updated` confirms it. A drag while the sidebar
+ * sorts by recency or name switches it to the manual order it just made.
+ */
+export function reorderFolders(paths: string[]) {
+  const s = useStore.getState();
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const place = new Map(paths.map((p, i) => [norm(p), i]));
+  const rest = paths.length;
+  useStore.setState({ projects: s.projects.map((p) => ({ ...p, order: place.get(norm(p.path)) ?? rest + (p.order ?? 0) })) });
+  if ((s.settings.folderOrder ?? 'manual') !== 'manual') void setSettings({ folderOrder: 'manual' });
+  return bridge.call('project.reorder', { paths }).catch(fail);
+}
+
+/** Folders dropped onto the sidebar: each becomes a project (files and missing folders are left out). Resolves how many were added. */
+export async function addFolders(paths: string[]): Promise<number> {
+  const results = await Promise.all(paths.map((path) => bridge.call('project.add', { path }).then(() => true, () => false)));
+  return results.filter(Boolean).length;
+}
+
 export const pinProject = (path: string, pinned: boolean) => bridge.call('project.pin', { path, pinned }).catch(fail);
 
 export async function setSettings(patch: Partial<import('@shared/protocol').AppSettings>) {

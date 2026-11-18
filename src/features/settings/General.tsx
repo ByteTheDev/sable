@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ProviderId, SessionOptions } from '@shared/protocol';
+import type { FolderOrder, ProviderId, SessionOptions } from '@shared/protocol';
 import { Icon } from '@/icons';
 import { setDefaultSessionOptions, setSettings } from '@/state/actions';
 import { useStore } from '@/state/store';
@@ -23,6 +23,18 @@ export function General() {
             />
           </Row>
         )}
+        <Row label="Folder order" help={(settings.folderOrder ?? 'manual') === 'manual' ? 'Drag folders in the sidebar to arrange them.' : undefined}>
+          <Segmented<FolderOrder>
+            id="set-folder-order"
+            value={settings.folderOrder ?? 'manual'}
+            onChange={(folderOrder) => setSettings({ folderOrder })}
+            options={[
+              { value: 'manual', label: 'Manual' },
+              { value: 'recent', label: 'Recent' },
+              { value: 'name', label: 'Name' },
+            ]}
+          />
+        </Row>
         <Row
           label="Send with Enter"
           help={

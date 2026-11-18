@@ -8,9 +8,8 @@ import { openSettings, refreshLimits } from '@/state/actions';
 import { useFocusAccount } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { IconButton } from '@/ui';
+import { useLimitsTicker } from '@/features/usage/ticker';
 import './footer.css';
-
-const REFRESH_MS = 4 * 60_000;
 
 /**
  * One quiet row: who is signed in (it opens the accounts, each with its limits) and Settings.
@@ -36,26 +35,11 @@ function useLimitRefresh() {
     return !!(a ? a.auth.loggedIn : accountId === DEFAULT_ACCOUNT && p?.auth.loggedIn);
   });
 
+  const on = ready && connected;
   useEffect(() => {
-    if (!ready || !connected) return;
-    const refresh = () => void refreshLimits(provider, accountId);
-    refresh();
-    let timer = 0;
-    const arm = () => {
-      window.clearInterval(timer);
-      if (document.visibilityState === 'visible') timer = window.setInterval(refresh, REFRESH_MS);
-    };
-    const onVis = () => {
-      if (document.visibilityState === 'visible') refresh();
-      arm();
-    };
-    arm();
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVis);
-    };
-  }, [provider, accountId, ready, connected]);
+    if (on) void refreshLimits(provider, accountId);
+  }, [provider, accountId, on]);
+  useLimitsTicker(on, () => void refreshLimits(provider, accountId));
 }
 
 function Account() {

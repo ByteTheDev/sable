@@ -134,6 +134,7 @@ export class App {
       meta.capState = undefined;
       this.sessions.set(meta.id, this.makeRuntime(meta, true));
     }
+    this.seedFolderOrder();
     this.registerCore();
   }
 
@@ -497,6 +498,8 @@ export class App {
       if (rt.meta.titleSource === 'auto' && !rt.items.some((i) => i.type === 'user')) {
         rt.update({ title: autoTitle(text) });
       }
+      // The chat just used goes to the top of its folder at once.
+      rt.touch();
       return rt.add<UserItem>({
         type: 'user',
         text,
@@ -505,9 +508,11 @@ export class App {
         ...(rt.turnActive ? { steered: true } : {}),
       });
     };
-    // The agent is still starting: show the message now, send it once the agent is there.
+    // The agent is not there yet (a new session still starting, or a restored one whose agent
+    // starts with this message; Codex can take most of a minute): show the message now, send it
+    // once the agent is there.
     let early: UserItem | undefined;
-    if (this.opening.has(rt.id)) {
+    if (this.opening.has(rt.id) || !rt.handle) {
       early = addUser();
       this.delivering.add(rt.id);
       this.earlyWaiting.set(rt.id, [...(this.earlyWaiting.get(rt.id) ?? []), early.id]);
@@ -744,9 +749,24 @@ export class App {
     }
     if (rt.handle) return rt.handle;
     this.hydrate(rt);
-    rt.handle = await this.provider(rt.meta.provider, rt.meta.accountId).open(rt, { loadTranscript: false });
-    this.seedCaps(rt);
-    return rt.handle;
+    // One start per session: a second message sent while the agent starts waits for the same one.
+    const opened = this.provider(rt.meta.provider, rt.meta.accountId)
+      .open(rt, { loadTranscript: false })
+      .then((handle) => {
+        if (this.sessions.get(rt.id) !== rt) {
+          void Promise.resolve(handle.close()).catch(() => {});
+          throw new Error('The session was closed while the agent was starting.');
+        }
+        rt.handle = handle;
+        this.seedCaps(rt);
+      });
+    this.opening.set(rt.id, opened);
+    try {
+      await opened;
+    } finally {
+      if (this.opening.get(rt.id) === opened) this.opening.delete(rt.id);
+    }
+    return rt.handle!;
   }
 
   /** Shows what the agent offers right away from the cache; the adapter's own answer replaces it. */
@@ -766,17 +786,66 @@ export class App {
     this.store.saveState();
   }
 
+  private findProject(dir: string): Project | undefined {
+    const key = path.resolve(dir).toLowerCase();
+    return this.store.state.projects.find((x) => path.resolve(x.path).toLowerCase() === key);
+  }
+
+  /** A folder opened or used: known from now on, back in the sidebar if it was removed, a new one on top of the manual order. */
   private touchProject(dir: string): Project {
     const projects = this.store.state.projects;
     const key = path.resolve(dir);
-    let p = projects.find((x) => path.resolve(x.path).toLowerCase() === key.toLowerCase());
+    let p = this.findProject(key);
     if (!p) {
-      p = { path: key, name: path.basename(key) || key, lastOpened: Date.now() };
+      p = { path: key, name: path.basename(key) || key, lastOpened: Date.now(), order: topOrder(projects) };
       projects.push(p);
-    } else p.lastOpened = Date.now();
+    } else {
+      p.lastOpened = Date.now();
+      // Opened again after it was removed: it comes back with its sessions, on top.
+      if (p.hidden) {
+        delete p.hidden;
+        p.order = topOrder(projects);
+      }
+    }
     this.store.saveState();
     this.emit({ type: 'projects.updated', projects });
     return p;
+  }
+
+  /** A folder known only through its sessions, made a project (no event: the caller sends one). */
+  private touchProjectQuiet(dir: string): Project {
+    const key = path.resolve(dir);
+    const p: Project = { path: key, name: path.basename(key) || key, lastOpened: 0 };
+    this.store.state.projects.push(p);
+    return p;
+  }
+
+  /**
+   * Gives every folder a place in the manual order the first time (profiles from before it):
+   * the order the sidebar showed until now, pinned first, then by last activity.
+   */
+  private seedFolderOrder() {
+    const projects = this.store.state.projects;
+    const seen = new Set(projects.map((p) => path.resolve(p.path).toLowerCase()));
+    // Folders known only through their sessions become projects, so they can be ordered and removed.
+    for (const s of this.store.state.sessions) {
+      const key = path.resolve(s.cwd);
+      if (seen.has(key.toLowerCase())) continue;
+      seen.add(key.toLowerCase());
+      projects.push({ path: key, name: path.basename(key) || key, lastOpened: 0 });
+    }
+    if (projects.every((p) => typeof p.order === 'number')) return;
+    const last = new Map<string, number>();
+    for (const s of this.store.state.sessions) {
+      if (s.archived) continue;
+      const k = path.resolve(s.cwd).toLowerCase();
+      last.set(k, Math.max(last.get(k) ?? 0, s.updatedAt));
+    }
+    const activity = (p: Project) => Math.max(p.lastOpened, last.get(path.resolve(p.path).toLowerCase()) ?? 0);
+    const ordered = projects.filter((p) => typeof p.order === 'number').sort((a, b) => a.order! - b.order!);
+    const fresh = projects.filter((p) => typeof p.order !== 'number').sort((a, b) => (a.pinned !== b.pinned ? (a.pinned ? -1 : 1) : activity(b) - activity(a)));
+    [...ordered, ...fresh].forEach((p, i) => (p.order = i));
+    this.store.saveState();
   }
 
   async state(): Promise<AppState> {
@@ -973,9 +1042,28 @@ export class App {
     });
 
     // ── projects ──
-    this.register('project.add', ({ path: dir }) => this.touchProject(dir));
+    this.register('project.add', ({ path: dir }) => {
+      if (!isDir(path.resolve(dir))) throw new Error(`Not a folder: ${path.resolve(dir)}`);
+      return this.touchProject(dir);
+    });
+    // A folder with sessions is hidden with them (nothing is deleted); one without any is forgotten.
     this.register('project.remove', ({ path: dir }) => {
-      this.store.state.projects = this.store.state.projects.filter((p) => p.path !== dir);
+      const key = path.resolve(dir).toLowerCase();
+      const used = [...this.sessions.values()].some((r) => path.resolve(r.meta.cwd).toLowerCase() === key);
+      const p = this.findProject(dir);
+      if (used) {
+        if (p) p.hidden = true;
+        else this.store.state.projects.push({ path: path.resolve(dir), name: path.basename(dir) || dir, lastOpened: 0, hidden: true });
+      } else if (p) this.store.state.projects = this.store.state.projects.filter((x) => x !== p);
+      this.store.saveState();
+      this.emit({ type: 'projects.updated', projects: this.store.state.projects });
+      return { ok: true };
+    });
+    this.register('project.reorder', ({ paths }) => {
+      const list = Array.isArray(paths) ? paths.filter((x): x is string => typeof x === 'string') : [];
+      const named = list.map((dir) => this.findProject(dir) ?? this.touchProjectQuiet(dir));
+      const rest = this.store.state.projects.filter((p) => !named.includes(p)).sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
+      [...named, ...rest].forEach((p, i) => (p.order = i));
       this.store.saveState();
       this.emit({ type: 'projects.updated', projects: this.store.state.projects });
       return { ok: true };
@@ -1045,7 +1133,7 @@ export class App {
       );
       this.opening.set(rt.id, opened);
       void opened.finally(() => {
-        this.opening.delete(rt.id);
+        if (this.opening.get(rt.id) === opened) this.opening.delete(rt.id);
         this.persistSessions();
       });
       // A slow start answers early (status "starting"): the UI opens the session and the first
@@ -1317,6 +1405,13 @@ function isDir(dir: string) {
   } catch {
     return false;
   }
+}
+
+/** A place above every folder in the manual order (where a new or returning folder goes). */
+function topOrder(projects: Project[]): number {
+  let min = Infinity;
+  for (const p of projects) if (typeof p.order === 'number' && p.order < min) min = p.order;
+  return Number.isFinite(min) ? min - 1 : 0;
 }
 
 const sameDir = (a: string, b: string) => path.resolve(a).replace(/[\\/]+$/, '').toLowerCase() === path.resolve(b).replace(/[\\/]+$/, '').toLowerCase();

@@ -28,6 +28,27 @@ describe('sidebar groups', () => {
     expect(g.projects[0].attention).toBe('awaiting');
   });
 
+  it('keeps folders in their manual order while chats inside go newest first', () => {
+    const sessions = map(s('a', { updatedAt: 9 }), s('b', { updatedAt: 3 }), s('c', { cwd: 'D:/code/other', updatedAt: 1 }));
+    const projects = [
+      { path: 'D:/code/app', name: 'app', lastOpened: 0, order: 1 },
+      { path: 'D:/code/other', name: 'other', lastOpened: 0, order: 0 },
+      { path: 'D:/code/zeta', name: 'zeta', lastOpened: 0, order: 2, pinned: true },
+    ];
+    const manual = buildGroups(sessions, projects);
+    expect(manual.projects.map((p) => p.name)).toEqual(['zeta', 'other', 'app']);
+    expect(manual.projects[2].sessions.map((x) => x.id)).toEqual(['a', 'b']);
+    expect(buildGroups(sessions, projects, 'recent').projects.map((p) => p.name)).toEqual(['zeta', 'app', 'other']);
+    expect(buildGroups(sessions, projects, 'name').projects.map((p) => p.name)).toEqual(['zeta', 'app', 'other']);
+  });
+
+  it('leaves a removed folder out with its chats, pinned chats stay pinned', () => {
+    const sessions = map(s('a'), s('b', { pinned: true }), s('c', { cwd: 'D:/code/other' }));
+    const g = buildGroups(sessions, [{ path: 'D:\\code\\app', name: 'app', lastOpened: 0, hidden: true }]);
+    expect(g.projects.map((p) => p.name)).toEqual(['other']);
+    expect(g.pinned.map((x) => x.id)).toEqual(['b']);
+  });
+
   it('keeps the same groups while only what rows show changes', () => {
     const select = createGroupsSelector();
     const projects: never[] = [];

@@ -144,11 +144,13 @@
   height: 0;
 }
 
+/* Exactly the visible height (set when the scroll starts): any taller and it would lengthen the list
+   it sits in, so a short list could scroll on into empty ground while the shield is up. */
 .side-shield::before {
   content: '';
   position: absolute;
   inset: 0 -4px auto -2px;
-  height: 200vh;
+  height: var(--shield-h, 0px);
 }
 
 .side-list[data-scrolling] > .side-shield {
@@ -214,6 +216,36 @@
 
 .sgroup + .sgroup {
   margin-top: 12px;
+}
+
+/* A folder in the hand (folder-drag.ts): one step above the ground, opaque over the folders it
+   passes, one soft shadow. Only transform moves it; the others slide out of its way. */
+.sgroup[data-dragging] {
+  position: relative;
+  z-index: 4;
+  border-radius: var(--r-md);
+  background-color: var(--row-hover);
+  box-shadow: var(--shadow-pop);
+  will-change: transform;
+}
+
+.sgroup[data-dropped] {
+  position: relative;
+  z-index: 4;
+}
+
+.side-list[data-dragging] {
+  cursor: grabbing;
+}
+
+.side-list[data-dragging] > .side-shield {
+  display: block;
+}
+
+/* Folders held over the sidebar from the file manager: the list answers with a soft ivory edge. */
+.side[data-drop] .side-list {
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 0 0 1px var(--focus-field);
 }
 
 .sgroup-head {

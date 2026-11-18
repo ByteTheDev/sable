@@ -624,7 +624,14 @@ export interface Project {
   name: string;
   lastOpened: number;
   pinned?: boolean;
+  /** Place in the sidebar's manual folder order (lower first). Set with `project.reorder`; a new folder goes on top. */
+  order?: number;
+  /** Removed from the sidebar with its sessions (nothing deleted); opening the folder again brings both back. */
+  hidden?: boolean;
 }
+
+/** How the sidebar orders folders (chats inside a folder are always newest first). */
+export type FolderOrder = 'manual' | 'recent' | 'name';
 
 export interface DirEntry {
   name: string;
@@ -898,6 +905,8 @@ export interface AppSettings {
   returnToPreferred?: boolean;
   /** The speed new sessions start with, per agent (a `SpeedInfo` id); absent means standard. */
   defaultSpeeds?: Partial<Record<ProviderId, string>>;
+  /** How the sidebar orders folders; absent means manual (dragged into place). */
+  folderOrder?: FolderOrder;
 }
 
 /** One permission rule set from an agent's settings file (read-only view). */
@@ -1066,6 +1075,8 @@ export interface RpcMethods {
   'project.add': { params: { path: string }; result: Project };
   'project.remove': { params: { path: string }; result: { ok: boolean } };
   'project.pin': { params: { path: string; pinned: boolean }; result: { ok: boolean } };
+  /** The manual folder order: `paths` first, in that order (folders known only through their sessions become projects); the rest keep theirs after them. */
+  'project.reorder': { params: { paths: string[] }; result: { ok: boolean } };
 
   'session.create': {
     params: {

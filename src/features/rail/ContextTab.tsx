@@ -8,6 +8,7 @@ import { useNow } from '@/lib/useNow';
 import { WindowRow } from '@/features/usage';
 import { useLimitsReport } from '@/state/hooks';
 import { openUsage, readLimitsNow, refreshLimits, sendMessage } from '@/state/actions';
+import { useLimitsTicker } from '@/features/usage/ticker';
 import { accountKey, useStore } from '@/state/store';
 import { IconButton } from '@/ui';
 
@@ -54,6 +55,7 @@ export function ContextTab({ sessionId, active }: { sessionId: string; active: b
   useEffect(() => {
     if (active && provider) void refreshLimits(provider, session?.accountId);
   }, [active, provider, session?.accountId]);
+  useLimitsTicker(active && !!provider, () => provider && void refreshLimits(provider, session?.accountId));
 
   const usage = session?.usage;
   const view = useMemo(() => {

@@ -1,16 +1,18 @@
-import { memo, useCallback, useEffect, useMemo, useState, type ComponentType, type FocusEvent, type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState, type ComponentType, type DragEvent, type FocusEvent, type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { ContextMenu as RC, DropdownMenu as RM } from 'radix-ui';
 import type { ProviderId, SessionMeta } from '@shared/protocol';
 import { LogoMark, StatusGlyph, Wordmark } from '@/art/Logo';
 import { Icon } from '@/icons';
 import { QuickSwitch } from '@/features/session/QuickSwitch';
+import { pathForFile } from '@/lib/desktop';
 import { dissolve } from '@/lib/dissolve';
 import { reducedMotion } from '@/lib/motion';
-import { closeSession, goHome, pinProject, removeProject } from '@/state/actions';
+import { addFolders, closeSession, goHome, pinProject, removeProject, reorderFolders } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { IconButton, Modal, Tip } from '@/ui';
 import { Flip } from './flip';
+import { nudgeFolder, pressFolder, releaseFolderDrag } from './folder-drag';
 import { SideResize } from './Resize';
 import { createGroupsSelector, idsOf, loadCollapsed, pathKey, saveCollapsed, type Mix, type ProjectGroup } from './groups';
 import { RowContextMenu, SessionRow, SidebarRowContext, setRenaming, type RowCtx } from './SessionRow';
@@ -24,9 +26,10 @@ export const Sidebar = memo(function Sidebar() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const ctx = useMemo<RowCtx>(() => ({ setRenaming, askDelete: setDeleting }), []);
   useStageFreeze();
+  const drop = useFolderDrop();
 
   return (
-    <nav className="side" aria-label="Sessions">
+    <nav className="side" aria-label="Sessions" data-drop={drop.over || undefined} {...drop.handlers}>
       <SidebarTop />
       <SidebarRowContext.Provider value={ctx}>
         {/* The shared row menu wraps the list from outside, so list renders do not re-render the menu. */}
@@ -42,6 +45,44 @@ export const Sidebar = memo(function Sidebar() {
     </nav>
   );
 });
+
+/**
+ * Folders dragged in from the file manager land in the sidebar: each one becomes a folder in it
+ * (on top of the manual order). Files in the same drop are left out; only the desktop app knows
+ * a dropped item's path.
+ */
+function useFolderDrop() {
+  const [over, setOver] = useState(false);
+  const handlers = useMemo(() => {
+    let t = 0;
+    const files = (e: DragEvent) => [...e.dataTransfer.types].includes('Files');
+    const onOver = (e: DragEvent) => {
+      if (!files(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      setOver(true);
+      window.clearTimeout(t);
+      // dragover repeats while something is held over the sidebar; silence means it left.
+      t = window.setTimeout(() => setOver(false), 180);
+    };
+    return {
+      onDragEnter: onOver,
+      onDragOver: onOver,
+      onDrop: (e: DragEvent) => {
+        if (!files(e)) return;
+        e.preventDefault();
+        window.clearTimeout(t);
+        setOver(false);
+        const paths = [...e.dataTransfer.files].map((f) => pathForFile(f)).filter((p): p is string => !!p);
+        if (!paths.length) return void useStore.getState().toast('Folders can be dropped here in the desktop app', 'info');
+        void addFolders(paths).then((n) => {
+          if (!n) useStore.getState().toast(paths.length > 1 ? 'None of these is a folder' : 'That is not a folder', 'info');
+        });
+      },
+    };
+  }, []);
+  return { over, handlers };
+}
 
 /** The brand, then one row: a new session, search and history. Nothing here depends on sessions. */
 const SidebarTop = memo(function SidebarTop() {
@@ -130,7 +171,7 @@ function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDiv
       ) : (
         <MotionConfig reducedMotion="user">
           <div className="side-shield" aria-hidden />
-          <Flip order={order} className="side-rows">
+          <Flip order={order} className="side-rows" beforeMeasure={releaseFolderDrag}>
             {groups.pinned.length > 0 && (
               <section className="sgroup" data-flip="pinned" aria-label="Pinned">
                 <div className="sgroup-head sgroup-head-static">
@@ -265,7 +306,7 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
   const ids = idsOf(group.sessions);
 
   return (
-    <section className="sgroup" data-flip={group.key} aria-label={group.name}>
+    <section className="sgroup" data-flip={group.key} data-folder={group.key} data-pinned={group.pinned || undefined} aria-label={group.name}>
       <RC.Root>
         <RC.Trigger asChild>
           <div className="sgroup-head" data-collapsed={!open || undefined} data-current={current || undefined} data-menu={menuOpen || undefined}>
@@ -276,8 +317,16 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
               data-folder={group.key}
               tabIndex={-1}
               aria-expanded={hasSessions ? open : undefined}
+              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
               title={group.path}
               onClick={() => (hasSessions ? onToggle(group.key) : goHome(group.path))}
+              onPointerDown={(e) => pressFolder(e, group.key, moveFolders)}
+              onKeyDown={(e) => {
+                if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+                e.preventDefault();
+                e.stopPropagation();
+                nudge(group, e.key === 'ArrowUp' ? -1 : 1);
+              }}
             >
               <span className="sgroup-icon">
                 <Icon name={open ? 'folder-open' : 'folder'} size={15} />
@@ -377,13 +426,49 @@ function ProjectItems({ group, hasSessions, Item, Separator }: { group: ProjectG
         <span className="grow">Copy path</span>
       </Item>
       <Separator className="menu-sep" />
-      <Item className="menu-item sgroup-remove" disabled={hasSessions} onSelect={() => void removeProject(group.path)}>
+      {/* With its sessions, nothing deleted: opening the folder again brings them back. */}
+      <Item className="menu-item sgroup-remove" onSelect={() => removeFolder(group.key, group.path)}>
         <Icon name="x" size={16} />
         <span className="grow">Remove from sidebar</span>
-        {hasSessions && <span className="hint">Has sessions</span>}
       </Item>
     </>
   );
+}
+
+/** The folder dissolves where it stood, then leaves the list with its sessions. */
+function removeFolder(key: string, path: string) {
+  const el = document.querySelector<HTMLElement>(`section.sgroup[data-folder="${CSS.escape(key)}"]`);
+  const head = el?.querySelector<HTMLElement>('.sgroup-head');
+  if (head) dissolve(head);
+  if (el) el.style.visibility = 'hidden';
+  void removeProject(path).finally(() => el?.isConnected && (el.style.visibility = ''));
+}
+
+// ── the manual folder order ──
+
+/** The folders in the order shown, with one block (pinned or not) in a new order. */
+function moveFolders(blockKeys: string[]) {
+  const s = useStore.getState();
+  const { projects } = selectGroups(s);
+  const moved = new Set(blockKeys);
+  const byKey = new Map(projects.map((g) => [g.key, g]));
+  const others = projects.filter((g) => !moved.has(g.key));
+  const pinnedBlock = projects.some((g) => moved.has(g.key) && g.pinned);
+  const ordered = pinnedBlock
+    ? [...blockKeys.map((k) => byKey.get(k)!), ...others]
+    : [...others.filter((g) => g.pinned), ...blockKeys.map((k) => byKey.get(k)!), ...others.filter((g) => !g.pinned)];
+  void reorderFolders(ordered.filter(Boolean).map((g) => g.path));
+}
+
+/** Alt+Up / Alt+Down: one place within its block, the focus staying on the folder. */
+function nudge(group: ProjectGroup, by: -1 | 1) {
+  const block = selectGroups(useStore.getState()).projects.filter((g) => g.pinned === group.pinned);
+  const next = nudgeFolder(
+    block.map((g) => g.key),
+    group.key,
+    by,
+  );
+  if (next) moveFolders(next);
 }
 
 // ── scrolling: rows passing under a still pointer do not hover ──
@@ -395,7 +480,10 @@ function ProjectItems({ group, hasSessions, Item, Separator }: { group: ProjectG
 let scrollIdle = 0;
 function onListScroll(e: { currentTarget: HTMLElement }) {
   const list = e.currentTarget;
-  if (!scrollIdle) list.dataset.scrolling = '';
+  if (!scrollIdle) {
+    list.style.setProperty('--shield-h', `${list.clientHeight}px`);
+    list.dataset.scrolling = '';
+  }
   window.clearTimeout(scrollIdle);
   scrollIdle = window.setTimeout(() => {
     scrollIdle = 0;
