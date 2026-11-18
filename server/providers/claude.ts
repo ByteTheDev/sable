@@ -40,6 +40,7 @@ import type {
   TimelineItem,
   Todo,
   ToolItem,
+  AgentStats,
   TurnItem,
   UserItem,
 } from '../../shared/protocol';
@@ -1867,6 +1868,16 @@ function resultLabel(subtype?: string): string {
 function fmtTokens(n?: number) {
   if (!n) return '0';
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n);
+}
+
+/** The figures a task event carries (`usage` of task_progress and task_notification), only those it has. */
+export function taskFigures(usage: unknown): AgentStats {
+  const u = (usage && typeof usage === 'object' ? usage : {}) as Obj;
+  const out: AgentStats = {};
+  if (typeof u.total_tokens === 'number') out.tokens = u.total_tokens;
+  if (typeof u.tool_uses === 'number') out.steps = u.tool_uses;
+  if (typeof u.duration_ms === 'number') out.durationMs = u.duration_ms;
+  return out;
 }
 
 /**

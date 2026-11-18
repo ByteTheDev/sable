@@ -535,6 +535,18 @@ export interface ToolResult {
   images?: string[];
   answers?: Record<string, string[]>;
   truncated?: boolean;
+  /**
+   * A sub-agent's own figures, only as the agent reported them (Claude Code: the Agent tool's result
+   * and its task notifications). `background`: it was started in the background, and where it stands.
+   */
+  agent?: AgentStats;
+}
+
+export interface AgentStats {
+  tokens?: number;
+  steps?: number;
+  durationMs?: number;
+  background?: 'running' | 'done' | 'failed' | 'stopped';
 }
 
 export interface ToolItem extends BaseItem {

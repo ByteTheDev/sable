@@ -1,14 +1,13 @@
 import { memo, useState, type ReactNode } from 'react';
-import type { TimelineItem, ToolItem } from '@shared/protocol';
+import type { ToolItem } from '@shared/protocol';
 import { Collapse } from '@/components/Collapse';
 import { Markdown } from '@/components/Markdown';
 import { Icon, TOOL_ICON } from '@/icons';
 import { formatDuration, plural, relPath } from '@/lib/format';
 import { useNow } from '@/lib/view-hooks';
-import { useStore } from '@/state/store';
 import { PathLabel } from '@/ui';
-import { EMPTY, useTimeline } from './ctx';
-import { ItemList } from './items';
+import { AgentBlock } from './Agent';
+import { useTimeline } from './ctx';
 import { ToolDetails, hasDetails } from './ToolDetails';
 import { isActive, partialJsonString, shortDuration } from './util';
 
@@ -186,96 +185,6 @@ function ToolRow({ item }: { item: ToolItem }) {
   );
 }
 
-// ───────────────────────────────── sub-agent ─────────────────────────────────
-
-/** What a sub-agent is doing right now, and how many steps it has taken: `${steps}|${line}`. */
-function agentSummary(sessionId: string, id: string) {
-  return (s: ReturnType<typeof useStore.getState>): string => {
-    const data = s.data[sessionId];
-    const ids = data?.children[id];
-    if (!data || !ids?.length) return '0|';
-    let tools = 0;
-    let latest: TimelineItem | undefined;
-    for (const cid of ids) {
-      const it = data.items[cid];
-      if (!it) continue;
-      if (it.type === 'tool') tools++;
-      latest = it;
-    }
-    const line = !latest ? '' : latest.type === 'tool' ? latest.title : latest.type === 'thinking' ? 'Thinking' : latest.type === 'text' ? 'Writing the report' : '';
-    return `${tools}|${line}`;
-  };
-}
-
-/** A sub-agent: one line with its own count, opening to its trail and its report. */
-function AgentRow({ item }: { item: ToolItem }) {
-  const { sessionId } = useTimeline();
-  const [open, setOpen] = useState(false);
-  const children = useStore((s) => s.data[sessionId]?.children[item.id]) ?? EMPTY;
-  const summary = useStore(agentSummary(sessionId, item.id));
-  const cut = summary.indexOf('|');
-  const tools = Number(summary.slice(0, cut));
-  const line = summary.slice(cut + 1);
-  const active = isActive(item);
-  const failed = item.status === 'error';
-  const report = item.result?.text?.trim();
-  // The report usually repeats the agent's last message; show it once.
-  const lastText = useStore((s) => {
-    const d = s.data[sessionId];
-    const last = d?.items[children[children.length - 1]];
-    return last?.type === 'text' ? last.text.trim() : '';
-  });
-  const showReport = !!report && report !== lastText;
-  const title = item.detail.description || item.title;
-
-  return (
-    <div className="agent" data-status={item.status} data-open={open || undefined}>
-      <button type="button" className="row-btn tool-row agent-row" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <span className="tool-icon">
-          <Icon name="robot" size={14} />
-        </span>
-        <span className="tool-title truncate">{title}</span>
-        {active ? <span className="tool-sub agent-now shimmer truncate">{item.status === 'awaiting' ? '' : line || 'Starting'}</span> : tools > 0 && <span className="tool-sub num">{plural(tools, 'step')}</span>}
-        <span className="tool-meta">
-          {item.status === 'awaiting' ? (
-            <span>Needs your approval</span>
-          ) : active ? (
-            <>
-              {tools > 0 && <span className="num">{plural(tools, 'step')}</span>}
-              <Elapsed since={item.ts} />
-            </>
-          ) : failed ? (
-            <span className="tool-fail">Failed</span>
-          ) : item.status === 'denied' ? (
-            <span>Denied</span>
-          ) : item.status === 'cancelled' ? (
-            <span>Interrupted</span>
-          ) : item.endedAt ? (
-            <span className="num">{shortDuration(ownMs(item))}</span>
-          ) : null}
-        </span>
-        <Icon name="caret-right" size={10} className="row-caret" />
-      </button>
-      <Collapse open={open}>
-        <div className="agent-body">
-          {item.detail.prompt && <p className="agent-prompt">{item.detail.prompt}</p>}
-          {children.length > 0 && (
-            <div className="agent-thread">
-              <ItemList ids={children} nested />
-            </div>
-          )}
-          {showReport && (
-            <div className="agent-report">
-              <Markdown text={report} />
-            </div>
-          )}
-          {failed && !report && item.result?.stderr && <pre className="tool-error">{item.result.stderr}</pre>}
-        </div>
-      </Collapse>
-    </div>
-  );
-}
-
 // ─────────────────────────────────── plan ───────────────────────────────────
 
 function PlanCard({ item }: { item: ToolItem }) {
@@ -316,7 +225,7 @@ function PlanCard({ item }: { item: ToolItem }) {
 
 /** Any tool call. Plans are cards; everything else, sub-agents included, is one compact row. */
 export const ToolView = memo(function ToolView({ item }: { item: ToolItem }) {
-  if (item.kind === 'agent') return <AgentRow item={item} />;
+  if (item.kind === 'agent') return <AgentBlock item={item} />;
   if (item.kind === 'plan') return <PlanCard item={item} />;
   return <ToolRow item={item} />;
 });

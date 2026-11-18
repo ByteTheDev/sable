@@ -1660,10 +1660,10 @@ textarea.field.ch-commit-field {
 }
 
 /* ───────────── agents ─────────────
-   One card per sub-agent: what it is, what it does now, how long and how many steps, then (while
-   it works) the last few steps as a trail and (when it is done) the start of its report. The head
-   takes the reader to the agent in the conversation; the caret opens the brief, every step and the
-   whole report. */
+   One card per sub-agent, holding the conversation's own block (features/timeline/Agent.tsx): the
+   kind and the task, its latest steps while it works, one settled line when it is done; a click
+   opens the task it was given, every step and the whole report. The small button goes to it in
+   the conversation. */
 
 .agc-list {
   display: flex;
@@ -1674,191 +1674,44 @@ textarea.field.ch-commit-field {
 
 .agc {
   position: relative;
+  min-width: 0;
+  padding: 7px 12px 8px;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background-color: var(--panel);
   animation: rise-in var(--d-3) var(--ease-out) backwards;
 }
 
-.agc-head {
-  display: flex;
-  align-items: stretch;
-}
-
-.agc-go {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
-  min-height: 52px;
-  padding: 8px 6px 8px 10px;
-  border-radius: calc(var(--r-lg) - 1px);
-  text-align: left;
-  transition: background-color var(--d-1) var(--ease);
-}
-
-.agc-go:hover {
-  background-color: var(--fill-1);
-}
-
-.agc-go:active {
-  background-color: var(--fill-2);
-}
-
-.agc-go:focus-visible,
-.agc-fold:focus-visible {
-  outline-offset: var(--focus-inset);
-}
-
-.agc-mark {
-  display: grid;
-  place-items: center;
+/* Detail on demand: shown with the pointer on the card or the focus in it. */
+.agc-reveal {
   flex-shrink: 0;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--r-sm);
-  background-color: var(--fill-2);
-  color: var(--text-2);
+  opacity: 0;
+  transition:
+    opacity 90ms var(--ease),
+    background-color 90ms var(--ease),
+    color 90ms var(--ease);
 }
 
-.agc[data-live] .agc-mark {
-  color: var(--text);
+.agc:hover .agc-reveal,
+.agc:focus-within .agc-reveal {
+  opacity: 1;
 }
 
-.agc-titles {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  gap: 1px;
+/* The button takes the caret's place: a click on the line opens it either way. */
+.agc .agent-row > .row-caret {
+  display: none;
 }
 
-.agc-title {
-  font-weight: var(--w-medium);
-  color: var(--text);
+.agc .agent-row > .tool-meta:empty {
+  display: none;
 }
 
-.agc-state {
-  font-size: var(--t-small);
-  color: var(--text-3);
-}
-
-.agc-state[data-tone='waiting'] {
-  color: var(--amber);
-}
-
-.agc-state[data-tone='error'] {
-  color: var(--red);
-}
-
-.agc-meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
-  flex-shrink: 0;
-  font-size: var(--t-micro);
-  color: var(--text-3);
-}
-
-.agc-fold {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 30px;
-  border-radius: calc(var(--r-lg) - 1px);
-  transition: background-color var(--d-1) var(--ease);
-}
-
-.agc-fold:hover {
-  background-color: var(--fill-1);
-}
-
-.agc-fold:hover .ch-caret {
-  color: var(--text-2);
-}
-
-.agc-prompt {
-  margin: 0 14px 10px 46px;
-  font-size: var(--t-small);
-  line-height: 1.55;
-  color: var(--text-2);
-  white-space: pre-wrap;
-  max-height: 180px;
-  overflow: auto;
-}
-
-/* The trail: one line per step, hung on a hairline under the mark. */
-.agc-trail {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin: 0 12px 10px 22px;
-  padding-left: 16px;
-  border-left: 1px solid var(--line-2);
-  font-size: var(--t-small);
-  color: var(--text-3);
-}
-
-.agc-step {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  height: 22px;
-  animation: fade-in var(--d-2) var(--ease) backwards;
-}
-
-.agc-step > svg {
-  flex-shrink: 0;
-  opacity: 0.8;
-}
-
-/* The newest step is the one being read: one step brighter than those behind it. */
-.agc[data-live] .agc-step:last-child {
-  color: var(--text-2);
-}
-
-.agc-step[data-status='error'] {
-  color: color-mix(in oklab, var(--red) 70%, var(--text-2));
-}
-
-.agc-earlier {
-  height: 22px;
-  line-height: 22px;
-  font-size: var(--t-micro);
-  color: var(--text-4);
-}
-
-.agc-report {
-  margin: 0 12px 11px 46px;
-  font-size: var(--t-small);
-  color: var(--text-2);
-}
-
-.agc-excerpt {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
-  line-height: 1.55;
-}
-
-.agc-report[data-open] {
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-  animation: fade-in var(--d-2) var(--ease);
-}
-
-.agc-report .md {
+.agc .agent-report .md {
   font-size: var(--t-small);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agc,
-  .agc-step {
+  .agc {
     animation: none;
   }
 }

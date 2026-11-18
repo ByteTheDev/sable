@@ -331,15 +331,19 @@ function liveSelector(sessionId: string, seg: Segment) {
     if (!d || !meta) return '0|Working';
     let waiting = meta.status === 'awaiting' || d.permissions.length > 0 || d.questions.length > 0;
     let title = '';
+    let agents = 0;
     const answer = seg.answer ? d.items[seg.answer] : undefined;
     for (let i = seg.work.length - 1, n = 0; i >= 0 && n < 60; i--, n++) {
       const it = d.items[seg.work[i]];
       if (!it) continue;
       if (it.type === 'tool' && (it.status === 'running' || it.status === 'pending' || it.status === 'awaiting')) {
         if (it.status === 'awaiting') waiting = true;
+        if (it.kind === 'agent') agents++;
         if (!title) title = it.title;
       } else if (it.type === 'thinking' && it.streaming && !title) title = 'Thinking';
     }
+    // Several sub-agents at once: the line counts them, each one says its own task below.
+    if (agents > 1) title = `Running ${agents} sub-agents`;
     for (const id of seg.shown) {
       const it = d.items[id];
       if (!title && it?.type === 'tool' && (it.status === 'pending' || it.status === 'running')) title = it.title;

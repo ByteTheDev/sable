@@ -1,4 +1,4 @@
-import type { FileDiff, Question, Todo, ToolDetail, ToolKind, ToolResult } from '../../shared/protocol';
+import type { AgentStats, FileDiff, Question, Todo, ToolDetail, ToolKind, ToolResult } from '../../shared/protocol';
 import { countChanges, makeFileDiff } from '../../shared/diff';
 import { WIDGET_SERVER, WIDGET_TOOL_ID, describeWidget } from './widget-tool';
 import { browserOp, describeBrowser } from './browser-tool';
@@ -237,6 +237,30 @@ export function previewDiff(name: string, input: Obj, currentFile?: string | nul
   return undefined;
 }
 
+const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
+
+/**
+ * Splits a sub-agent's result text into the report and the figures Claude Code appends for the model
+ * (`agentId: …` and `<usage>total_tokens: …, tool_uses: …, duration_ms: …</usage>`). A stored
+ * transcript keeps only this text, so it is where a loaded conversation gets its figures from.
+ */
+export function splitAgentUsage(text: string): { text: string; stats: AgentStats } {
+  const m = /\n*(?:agentId:[^\n]*\n+)?<usage>([\s\S]*?)<\/usage>\s*$/.exec(text);
+  if (!m) return { text, stats: {} };
+  const read = (key: string) => {
+    const hit = new RegExp(`${key}:\\s*(\\d+)`).exec(m[1]);
+    return hit ? Number(hit[1]) : undefined;
+  };
+  const stats: AgentStats = {};
+  const tokens = read('total_tokens');
+  const steps = read('tool_uses');
+  const durationMs = read('duration_ms');
+  if (tokens !== undefined) stats.tokens = tokens;
+  if (steps !== undefined) stats.steps = steps;
+  if (durationMs !== undefined) stats.durationMs = durationMs;
+  return { text: text.slice(0, m.index).trimEnd(), stats };
+}
+
 export function mapResult(name: string, input: Obj, structured: unknown, content: unknown, isError: boolean): ToolResult {
   const flat = flattenContent(content);
   const r: Obj = structured && typeof structured === 'object' ? (structured as Obj) : {};
@@ -321,8 +345,17 @@ export function mapResult(name: string, input: Obj, structured: unknown, content
     }
     case 'Task':
     case 'Agent': {
-      const text = Array.isArray(r.content) ? flattenContent(r.content).text : flat.text;
-      Object.assign(out, clip(text));
+      // The text the model reads ends with the agent's id and a usage block: figures, not part of the report.
+      const tail = splitAgentUsage(flat.text);
+      const agent: AgentStats = { ...tail.stats };
+      if (num(r.totalTokens) !== undefined) agent.tokens = num(r.totalTokens);
+      if (num(r.totalToolUseCount) !== undefined) agent.steps = num(r.totalToolUseCount);
+      if (num(r.totalDurationMs) !== undefined) agent.durationMs = num(r.totalDurationMs);
+      // Started in the background: the call returns at once with a placeholder, the agent works on.
+      const launched = r.status === 'async_launched' || r.status === 'remote_launched';
+      if (launched) agent.background = 'running';
+      if (Object.keys(agent).length) out.agent = agent;
+      if (!launched) Object.assign(out, clip(Array.isArray(r.content) ? flattenContent(r.content).text : tail.text));
       return out;
     }
     case 'AskUserQuestion': {

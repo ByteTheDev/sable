@@ -340,15 +340,14 @@ button:hover > .row-caret {
   color: var(--del);
 }
 
-.tool[data-status='error'] .tool-icon,
-.agent[data-status='error'] .tool-icon {
+.tool[data-status='error'] .tool-icon {
   color: var(--red);
 }
 
 .tool[data-status='denied'] .tool-icon,
 .tool[data-status='cancelled'] .tool-icon,
-.agent[data-status='denied'] .tool-icon,
-.agent[data-status='cancelled'] .tool-icon {
+.agent[data-status='denied'] > .agent-head .tool-icon,
+.agent[data-status='cancelled'] > .agent-head .tool-icon {
   color: var(--text-4);
 }
 
@@ -359,7 +358,7 @@ button:hover > .row-caret {
 
 /* The running step: its icon steps up while the title carries the shimmer. */
 .tool:is([data-status='running'], [data-status='pending']) .tool-icon,
-.agent:is([data-status='running'], [data-status='pending']) .tool-icon {
+.agent:is([data-status='running'], [data-status='pending']) > .agent-head .tool-icon {
   color: var(--text);
 }
 
@@ -1146,9 +1145,138 @@ button:hover > .row-caret {
 
 /* ───────────── sub-agent ───────────── */
 
-/* One line like any step, with its own count; it opens to its own trail and its report. */
+/* One line: the kind of agent and its task. Under it, on a hairline, its latest steps while it
+   works and one settled line when it is done; opened, the task it was given, every step, its report. */
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 -6px;
+}
+
+.agent-head > .row-btn {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.agent-type {
+  flex-shrink: 0;
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.agent-dot {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.agent-row .agent-dot {
+  margin: 0 -3px;
+}
+
+.agent-task {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--text-2);
+  transition: color var(--d-2) var(--ease);
+}
+
+/* With no kind to lead the line, the task is its name. */
+.tool-icon + .agent-task {
+  color: var(--text);
+}
+
+.agent-row:hover .agent-task {
+  color: var(--text);
+}
+
+.agent .tool-icon .provider-mark {
+  color: var(--text-2);
+}
+
+/* The hairline drops from the middle of the icon; what hangs on it starts where the line's words start. */
+.agent-under {
+  margin-left: 7px;
+  padding-left: 16px;
+  border-left: 1px solid var(--line-2);
+}
+
+.agent-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.agent-error {
+  margin: 2px 0 6px;
+}
+
+.agent-trail {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 2px;
+}
+
+/* The conversation's step rows, a size down; the newest one is the one being read. */
+.agent-trail .row-btn {
+  min-height: 22px;
+  padding-block: 1px;
+  font-size: 12px;
+}
+
+/* The icons start exactly where the line's words do, as the plain lines beside them. */
+.agent-trail .tool-icon {
+  width: 13px;
+  justify-items: start;
+}
+
+.agent-trail .tool-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-trail .agent-step:not(:last-child) :is(.tool-title, .tool-target) {
+  color: var(--text-3);
+}
+
+.agent-step {
+  animation: rise-in var(--d-3) var(--ease-out) backwards;
+}
+
+.agent-more,
 .agent-now {
-  color: transparent;
+  display: flex;
+  align-items: center;
+  height: 22px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.agent-more {
+  color: var(--text-4);
+}
+
+.agent-now {
+  animation: rise-in var(--d-3) var(--ease-out) backwards;
+}
+
+/* Several sub-agents started together sit as one group, a little apart from the steps around them. */
+.tl-sub[data-k='agent'] {
+  padding: 2px 0;
+}
+
+:is(.tl-sub, .story-text):not([data-k='agent']) + .tl-sub[data-k='agent'] {
+  padding-top: 4px;
+}
+
+.tl-sub[data-k='agent']:has(+ .tl-sub:not([data-k='agent'])) {
+  padding-bottom: 4px;
 }
 
 .agent-icon {
@@ -1161,20 +1289,32 @@ button:hover > .row-caret {
 }
 
 .agent-body {
-  margin: 2px 0 8px 7px;
-  padding: 2px 0 2px 16px;
-  border-left: 1px solid var(--line-2);
+  padding: 2px 0 8px;
 }
 
+/* The task it was given: a few lines, the whole of it on a click. */
 .agent-prompt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  width: 100%;
   margin: 2px 0 8px;
+  text-align: left;
   font-size: var(--t-small);
   line-height: 1.55;
   color: var(--text-3);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  border-radius: var(--r-ctl-sm);
+  transition: color var(--d-1) var(--ease);
+}
+
+.agent-prompt:hover {
+  color: var(--text-2);
+}
+
+.agent-prompt[aria-expanded='true'] {
+  display: block;
+  white-space: pre-wrap;
 }
 
 .agent-thread {
@@ -2040,6 +2180,8 @@ button:hover > .row-caret {
 
 @media (prefers-reduced-motion: reduce) {
   .tl-item[data-fresh] > *,
+  .agent-step,
+  .agent-now,
   .tl-sub[data-fresh] > * {
     animation: none;
   }

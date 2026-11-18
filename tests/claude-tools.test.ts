@@ -173,7 +173,7 @@ describe('mapResult', () => {
   });
 
   it('Agent reads its structured content; AskUserQuestion its answers; mcp tools their text', () => {
-    expect(mapResult('Agent', {}, { content: [{ type: 'text', text: 'Found 2 gaps' }], totalToolUseCount: 4 }, '', false)).toEqual({ text: 'Found 2 gaps' });
+    expect(mapResult('Agent', {}, { content: [{ type: 'text', text: 'Found 2 gaps' }], totalToolUseCount: 4 }, '', false)).toEqual({ text: 'Found 2 gaps', agent: { steps: 4 } });
     expect(mapResult('AskUserQuestion', {}, { answers: { 'Which logger?': 'pino', 'Extras?': ['a', 'b'] } }, '', false)).toEqual({
       answers: { 'Which logger?': ['pino'], 'Extras?': ['a', 'b'] },
     });

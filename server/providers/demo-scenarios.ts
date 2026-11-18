@@ -542,7 +542,7 @@ const agents: Scenario = async ({ s }) => {
     );
     const report = content('agents-report-a', lines);
     await s.say(report, a);
-    s.complete(a, { text: report });
+    s.complete(a, { text: report, agent: { tokens: 18_400, steps: 5 } });
   };
 
   const runB = async () => {
@@ -554,7 +554,7 @@ const agents: Scenario = async ({ s }) => {
     await s.read('tests/routes.test.ts', C.ROUTES_TEST_TS, o);
     const report = content('agents-report-b');
     await s.say(report, b);
-    s.complete(b, { text: report });
+    s.complete(b, { text: report, agent: { tokens: 12_900, steps: 4 } });
   };
 
   await Promise.all([runA(), runB()]);
@@ -564,6 +564,88 @@ const agents: Scenario = async ({ s }) => {
   );
   await s.say(content('agents-synthesis', lines));
   s.finish({ suggestion: 'Map TokenError to a 401 in errorHandler and add the missing auth tests' });
+};
+
+// ─────────────────────── 4b. a crew: every state a sub-agent can be in ───────────────────────
+
+/**
+ * Four sub-agents started together: one of the agent's own kinds that finishes with figures, one
+ * handed to the other agent (Codex, whose command asks for approval outside bypass), one that
+ * fails, and one sent to the background that is still working when the others are done.
+ */
+const crew: Scenario = async ({ s }) => {
+  await s.say('Four things can run side by side here: a map of the auth errors, a second opinion from Codex on the token refresh, a reproduction of the webhook failure, and a migration plan in the background.');
+  const spec = (subagent: string, description: string, prompt: string, extra: Record<string, unknown> = {}) => ({ subagent, description, prompt, ...extra });
+  const specs = [
+    spec('Explore', 'Map auth error responses', 'Find every place in src/ where an authentication or authorization failure becomes an HTTP response. For each one, report file:line, status code and response body shape. Call out inconsistencies.'),
+    spec('Codex', 'Review the token refresh', 'Review src/auth/session.ts for races in the token refresh: two requests that refresh at once, a refresh that fails halfway, and what the tests cover. Run the auth tests. Report concrete findings with file:line.'),
+    spec('general-purpose', 'Reproduce the webhook failure', 'Reproduce the 500 from the webhook endpoint when the signature is wrong. Report the exact request and the stack trace.'),
+    spec('Plan', 'Draft the session store migration', 'Draft a step by step plan to move sessions from memory to the database without logging anyone out.', { background: true }),
+  ];
+  s.activity('Running 4 agents');
+  const ids: string[] = [];
+  for (const [i, sp] of specs.entries()) {
+    const delegate = i === 1;
+    ids.push(
+      await s.tool({
+        name: delegate ? 'mcp__sable__delegate_to_codex' : 'Agent',
+        kind: 'agent',
+        title: sp.description,
+        detail: sp,
+        input: delegate ? { description: sp.description, prompt: sp.prompt } : { subagent_type: sp.subagent, description: sp.description, prompt: sp.prompt, ...(i === 3 ? { run_in_background: true } : {}) },
+      }),
+    );
+  }
+  const [a, b, c, d] = ids;
+  for (const id of ids) s.start(id);
+  // Sent to the background: its call returns at once, and it works on.
+  s.complete(d, { agent: { background: 'running' } });
+
+  const runA = async () => {
+    const o = { parentId: a };
+    await s.think('Start with explicit status codes, then look for thrown errors that reach the error handler without a mapping.', a);
+    await s.grep('status\\((401|403)\\)', C.grep(/status\((401|403)\)/, 'src/'), { ...o, path: 'src' });
+    await s.read('src/server/admin.ts', C.ADMIN_TS, o);
+    await s.grep('TokenError|verifyToken', C.grep(/TokenError|verifyToken/, 'src/'), { ...o, path: 'src' });
+    await s.read('src/server/webhooks.ts', C.WEBHOOKS_TS, o);
+    await s.read('src/server/errors.ts', C.ERRORS_TS, o);
+    await s.read('src/auth/middleware.ts', C.MIDDLEWARE_TS, o);
+    const report = content('agents-report-a', { mwLine: C.lineOf(C.MIDDLEWARE_TS, 'res.status(401)'), routesLine: C.lineOf(C.ROUTES_TS, 'invalid_credentials'), adminLine: C.lineOf(C.ADMIN_TS, 'status(403)'), webhookLine: C.lineOf(C.WEBHOOKS_TS, 'verifyToken(') });
+    await s.say(report, a);
+    s.complete(a, { text: report, agent: { tokens: 41_200, steps: 6 } });
+  };
+
+  const runB = async () => {
+    const o = { parentId: b };
+    await s.pause(200, 400);
+    await s.read('src/auth/middleware.ts', C.MIDDLEWARE_TS, o);
+    await s.grep('refresh', C.grep(/refresh|verifyToken/, 'src/'), { ...o, path: 'src' });
+    await s.bash('npm test -- auth', { ...o, description: 'Run the auth tests', lines: ['> vitest run auth', '', ' ✓ tests/auth.test.ts (7)', '', ' Test Files  1 passed (1)', '      Tests  7 passed (7)'], key: 'npm test' });
+    const report = 'The refresh has one real race: two requests that arrive with an expired token both call `refresh()`, and the second one invalidates the token the first just received.\n\n- `src/auth/middleware.ts`: no lock around the refresh\n- The 7 auth tests pass, none of them sends two requests at once\n\nA single in-flight promise per session fixes it.';
+    await s.say(report, b);
+    s.complete(b, { text: report });
+  };
+
+  const runC = async () => {
+    const o = { parentId: c };
+    await s.pause(300, 600);
+    await s.read('src/server/webhooks.ts', C.WEBHOOKS_TS, o);
+    await s.bash('curl -s -X POST localhost:3000/webhooks -H "x-signature: bad"', { ...o, description: 'Send a webhook with a bad signature', readonly: true, exitCode: 7, stderr: 'curl: (7) Failed to connect to localhost port 3000: Connection refused' });
+    s.complete(c, { text: 'The server is not running on port 3000, so the request could not be sent.\nStart it with npm run dev and run this again.', isError: true }, 'error');
+  };
+
+  const runD = async () => {
+    const o = { parentId: d };
+    await s.pause(500, 900);
+    await s.glob('src/auth/**/*.ts', C.globFiles('src/'), o);
+    await s.read('src/auth/middleware.ts', C.MIDDLEWARE_TS, o);
+    s.patchTool(d, { result: { agent: { background: 'running', tokens: 9_300, steps: 2 } } });
+  };
+
+  await Promise.all([runA(), runB(), runC(), runD()]);
+  s.activity('Synthesizing findings');
+  await s.say('Three of the four are back. The auth map found the inconsistent admin body, Codex found a race in the token refresh, and the webhook reproduction could not reach the server. The migration plan is still being drafted in the background.');
+  s.finish({ suggestion: 'Start the dev server and reproduce the webhook failure again' });
 };
 
 // ──────────────────────────────────── 5. web search ─────────────────────────────
@@ -1172,6 +1254,7 @@ export const SCENARIOS = {
   plan,
   questions,
   agents,
+  crew,
   search,
   markdown,
   errors,
@@ -1219,6 +1302,7 @@ const KEYWORDS: [RegExp, ScenarioId][] = [
   [/\b(long|stress)\b/i, 'long'],
   [/\b(markdown|showcase)\b/i, 'markdown'],
   [/\bmcp\b/i, 'mcp'],
+  [/\b(crew|delegate)\b/i, 'crew'],
   [/\b(agents?|sub-?agents?|parallel|research)\b/i, 'agents'],
   [/\b(search|web|docs?|documentation)\b/i, 'search'],
   [/\b(questions?|ask|choose)\b/i, 'questions'],
