@@ -23,7 +23,7 @@ export function General() {
             />
           </Row>
         )}
-        <Row label="Folder order" help={(settings.folderOrder ?? 'manual') === 'manual' ? 'Drag folders in the sidebar to arrange them.' : undefined}>
+        <Row label="Folder order">
           <Segmented<FolderOrder>
             id="set-folder-order"
             value={settings.folderOrder ?? 'manual'}
