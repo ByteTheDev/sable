@@ -524,18 +524,8 @@ export class ClaudeProvider implements Provider {
         this.ctx.log('claude: no plan limits in the usage answer', u?.rate_limits_available, u?.subscription_type ?? 'no subscription');
         return this.limitsCache;
       }
-      const rows: RateLimit[] = [];
-      const add = (id: string, label: string, w: Obj | null | undefined, windowMins: number) => {
-        if (!w || w.utilization == null) return;
-        const resetsAt = w.resets_at ? Date.parse(w.resets_at) : NaN;
-        rows.push({ id, label, percent: Math.max(0, Math.min(100, Math.round(Number(w.utilization)))), resetsAt: Number.isFinite(resetsAt) ? resetsAt : undefined, windowMins });
-      };
-      add('five_hour', '5-hour limit', rl.five_hour, 300);
-      add('seven_day', 'Weekly · all models', rl.seven_day, 10_080);
-      add('seven_day_opus', 'Weekly · Opus', rl.seven_day_opus, 10_080);
-      add('seven_day_sonnet', 'Weekly · Sonnet', rl.seven_day_sonnet, 10_080);
-      for (const m of (rl.model_scoped as Obj[] | undefined) ?? []) add(`model_${m.display_name}`, `Weekly · ${m.display_name}`, m, 10_080);
-      const meta: LimitsMeta = {};
+      const { rows, partial } = usageWindows(rl, this.limitsCache);
+      const meta: LimitsMeta = partial ? { partial: true } : {};
       const ex = rl.extra_usage as Obj | null | undefined;
       if (ex) {
         meta.extra = { enabled: !!ex.is_enabled };
@@ -573,10 +563,18 @@ export class ClaudeProvider implements Provider {
     const now = Date.now();
     const rows = new Map(this.limitsCache.map((l) => [l.id, rolledOver(l, now)]));
     let changed = this.limitsCache.some((l) => l !== rows.get(l.id));
-    const put = (id: string, utilization: unknown, resetsAt: unknown, full = false) => {
-      const known = LIMIT_WINDOWS[id] ?? unnamedWindow(id);
-      if (!known) return;
+    // The event's id for a window, as the rows name it: its per-model weekly window is the usage
+    // answer's `model_<name>` row (the only one the account has), Fable's when none is known yet.
+    const rowId = (id: string) => {
+      if (id !== OVERAGE_INCLUDED) return id;
+      const own = [...rows.keys()].filter(isModelWindow);
+      return own.length === 1 ? own[0] : MODEL_WINDOW_DEFAULT;
+    };
+    const put = (eventId: string, utilization: unknown, resetsAt: unknown, full = false) => {
+      const id = rowId(eventId);
       const prev = rows.get(id);
+      const known = isModelWindow(id) ? { label: prev?.label ?? modelWindowLabel(id), mins: 10_080 } : (LIMIT_WINDOWS[id] ?? unnamedWindow(id));
+      if (!known) return;
       const pct = full ? 100 : typeof utilization === 'number' ? Math.round(Math.max(0, Math.min(1, utilization)) * 100) : prev?.percent;
       if (pct === undefined) return;
       const reset = epochMs(resetsAt) ?? prev?.resetsAt;
@@ -588,8 +586,9 @@ export class ClaudeProvider implements Provider {
     const type = info.rateLimitType ? String(info.rateLimitType) : undefined;
     const rejected = info.status === 'rejected';
     if (type) put(type, info.utilization, info.resetsAt, rejected);
-    // Past a window, the account may carry on with extra usage (its own setting decides).
-    const meta: LimitsMeta = { planLimits: true };
+    // Past a window, the account may carry on with extra usage (its own setting decides). An event
+    // carries only the windows the reply's headers had: the others stay as last known.
+    const meta: LimitsMeta = { planLimits: true, partial: true };
     const over = info.isUsingOverage ?? info.overageInUse;
     // Only an account with extra usage on (or already known) gets a record of it.
     if (over || (info.overageStatus && info.overageStatus !== 'rejected') || this.extraCache) {
@@ -599,13 +598,12 @@ export class ClaudeProvider implements Provider {
       this.extraCache = meta.extra = extra;
     }
     if (changed) {
-      const rank = (id: string) => LIMIT_ORDER.indexOf(id) + 1 || (id.startsWith('five_hour') ? 10 : 20);
-      this.limitsCache = [...rows.values()].sort((a, b) => rank(a.id) - rank(b.id));
+      this.limitsCache = sortWindows([...rows.values()]);
       this.limitsAt = Date.now();
       this.ctx.emit({ type: 'limits.updated', provider: 'claude', limits: this.limitsCache, meta });
     }
     if (!rejected) return undefined;
-    const row = type ? rows.get(type) : undefined;
+    const row = type ? rows.get(rowId(type)) : undefined;
     return { resetsAt: row?.resetsAt ?? epochMs(info.resetsAt), window: row?.label };
   }
 
@@ -693,6 +691,53 @@ const LIMIT_WINDOWS: Record<string, { label: string; mins: number }> = {
   seven_day_sonnet: { label: 'Weekly · Sonnet', mins: 10_080 },
 };
 const LIMIT_ORDER = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'];
+/** The fixed windows of the usage answer, with their rows. */
+const USAGE_WINDOWS = LIMIT_ORDER.map((id) => [id, LIMIT_WINDOWS[id]] as const);
+/**
+ * The event's name for the per-model weekly window ("overage-included" models: the CLI calls it
+ * the Fable limit). The usage answer lists the same window under `model_scoped` by its model.
+ */
+const OVERAGE_INCLUDED = 'seven_day_overage_included';
+const MODEL_WINDOW_DEFAULT = 'model_Fable';
+const isModelWindow = (id: string) => id.startsWith('model_');
+const modelWindowLabel = (id: string) => `Weekly · ${id.slice('model_'.length)}`;
+
+/** The 5-hour window, the weekly one, Opus and Sonnet, then the per-model ones and anything else. */
+export function sortWindows(rows: RateLimit[]): RateLimit[] {
+  const rank = (id: string) => LIMIT_ORDER.indexOf(id) + 1 || (id.startsWith('five_hour') ? 10 : isModelWindow(id) ? 15 : 20);
+  return rows.sort((a, b) => rank(a.id) - rank(b.id));
+}
+
+/**
+ * The rows of a usage answer's `rate_limits`, over the windows known so far. What the answer says
+ * nothing about is kept as last known (rolled over when its reset passed): a fixed window whose
+ * key is missing, and the per-model weekly windows (Fable) when `model_scoped` is absent, which the
+ * CLI does for an answer served from cached data or before its model allowlist has loaded. A key
+ * that is there, even null, and a `model_scoped` list, even empty, are the account's own word.
+ * `partial` when anything was kept that way.
+ */
+export function usageWindows(rl: Obj, known: RateLimit[], now = Date.now()): { rows: RateLimit[]; partial: boolean } {
+  const rows: RateLimit[] = [];
+  let partial = false;
+  const keep = (test: (id: string) => boolean) => {
+    partial = true;
+    for (const l of known) if (test(l.id)) rows.push(rolledOver(l, now));
+  };
+  const add = (id: string, label: string, w: Obj | null | undefined, windowMins: number) => {
+    if (!w || w.utilization == null) return;
+    const resetsAt = w.resets_at ? Date.parse(w.resets_at) : NaN;
+    rows.push({ id, label, percent: Math.max(0, Math.min(100, Math.round(Number(w.utilization)))), resetsAt: Number.isFinite(resetsAt) ? resetsAt : undefined, windowMins });
+  };
+  for (const [id, w] of USAGE_WINDOWS) {
+    if (id in rl) add(id, w.label, rl[id], w.mins);
+    else keep((x) => x === id);
+  }
+  const scoped = rl.model_scoped as Obj[] | undefined;
+  if (Array.isArray(scoped)) {
+    for (const m of scoped) if (m?.display_name) add(`model_${m.display_name}`, `Weekly · ${m.display_name}`, m, 10_080);
+  } else keep(isModelWindow);
+  return { rows: sortWindows(rows), partial };
+}
 
 /** A window whose reset has passed: empty, with no reset until the next message starts it. */
 export function rolledOver(l: RateLimit, now: number): RateLimit {

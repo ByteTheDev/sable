@@ -2,14 +2,40 @@
 
 /* ───────────── limits ───────────── */
 
+/*
+ * Settings > Usage lays every limit out in one set of columns, so figures line up from the totals
+ * through the accounts to an opened account's windows: mark, name, the 5-hour cell, the weekly
+ * cell, the time to the reset, the caret. A window line spans both cells with one meter, which
+ * starts where the 5-hour meter starts and ends where the weekly one ends.
+ */
+.ult,
+.ulo,
+.ul-account {
+  --ul-cell: clamp(112px, 24%, 144px);
+  --ul-gap: 12px;
+  --ul-cols: 16px minmax(0, 1fr) var(--ul-cell) var(--ul-cell) 64px 12px;
+  /* Inside a cell: its length, the meter, the percent. */
+  --ul-cell-cols: 20px minmax(0, 1fr) 34px;
+  --ul-cell-gap: 7px;
+}
+
 .ul-accounts {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.ul-account {
-  padding: 13px 16px 16px;
+.ul-account.card {
+  padding: 6px 6px 8px;
+}
+
+.ul-account.card > * {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.ul-account.card > .ulw-msg {
+  padding-left: calc(10px + 16px + var(--ul-gap));
 }
 
 .ul-account-head,
@@ -22,11 +48,22 @@
 }
 
 .ul-account-head {
-  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: var(--ul-cols);
+  column-gap: var(--ul-gap);
+  height: 36px;
 }
 
-.ul-account-head:has(+ .ul-note) {
-  margin-bottom: 8px;
+.ul-account-mark {
+  justify-self: center;
+}
+
+.ul-account-who {
+  grid-column: 2 / 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .ul-account-name {
@@ -37,9 +74,176 @@
 }
 
 .ul-account-plan {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
   font-size: var(--t-small);
   color: var(--text-3);
+}
+
+.ul-account-asof {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.ul-account-col {
+  grid-column: 5;
+  font-size: var(--t-micro);
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+/* ── one window as a line in the columns (WindowLine) ── */
+
+.ulw {
+  display: grid;
+  grid-template-columns: var(--ul-cols);
+  column-gap: var(--ul-gap);
+  align-items: center;
+  min-height: 30px;
+}
+
+.ulw-label {
+  grid-column: 2;
+  min-width: 0;
+  font-size: var(--t-ui);
+  color: var(--text-2);
+}
+
+.ulw-bar {
+  grid-column: 3 / 5;
+  display: grid;
+  grid-template-columns: var(--ul-cell-cols);
+  column-gap: var(--ul-cell-gap);
+  align-items: center;
+}
+
+.ulw-meter {
+  grid-column: 2;
+  height: 3px;
+}
+
+.ulw-pct,
+.ulw-value {
+  font-size: var(--t-small);
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.ulw-pct {
+  grid-column: 3;
+}
+
+.ulw-value {
+  grid-column: 2 / 4;
+}
+
+.ulw[data-level='amber'] .ulw-pct {
+  color: var(--amber);
+}
+
+.ulw[data-level='red'] .ulw-pct {
+  color: var(--red);
+}
+
+.ulw[data-past] .ulw-label {
+  color: var(--text-3);
+}
+
+.ulw-reset {
+  grid-column: 5;
+  justify-self: end;
+  border-radius: 4px;
+  font-size: var(--t-small);
+  white-space: nowrap;
+  color: var(--text-3);
+  cursor: default;
+}
+
+.ulw-reset:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+/* Where the pace leads: one quiet line under the meter, from where the meter starts. */
+.ulw-note {
+  grid-column: 3 / 6;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin-top: -5px;
+  padding: 0 0 7px calc(20px + var(--ul-cell-gap));
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.ulw-note[data-warn] {
+  color: var(--text-2);
+}
+
+/* A reset to use, extra usage, the credits switch: under the line they belong to. */
+.ulw-sub {
+  display: grid;
+  grid-template-columns: var(--ul-cols);
+  column-gap: var(--ul-gap);
+  padding: 2px 0 8px;
+}
+
+.ulw-sub > * {
+  grid-column: 3 / 6;
+  margin: 0;
+  padding-left: calc(20px + var(--ul-cell-gap));
+}
+
+.ulw-sub > .ul-resets {
+  margin-top: 0;
+}
+
+.ulw-sub-wide {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.ulw-sub-wide > * {
+  grid-column: 2 / 6;
+  padding-left: 0;
+}
+
+.ulw-msg {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  margin: 0;
+  padding-left: calc(16px + var(--ul-gap));
+  font-size: var(--t-ui);
+  color: var(--text-3);
+}
+
+.ulw-skel-label {
+  grid-column: 2;
+  display: block;
+  height: 9px;
+}
+
+.ulw-skel-meter {
+  grid-column: 2 / 4;
+  display: block;
+  height: 3px;
+}
+
+/* An opened account in the overview: its lines straight under its row, in the row's columns. */
+.ul-account[data-inline] {
+  padding: 0 10px 8px;
+}
+
+.ulw-asof {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px calc(12px + var(--ul-gap)) 0 0;
 }
 
 .ul-asof {
@@ -794,9 +998,9 @@
 
 .ulo-row {
   display: grid;
-  grid-template-columns: 16px minmax(120px, 1fr) auto 64px 12px;
+  grid-template-columns: var(--ul-cols);
   align-items: center;
-  column-gap: 12px;
+  column-gap: var(--ul-gap);
   width: 100%;
   height: 34px;
   padding: 0 10px;
@@ -806,9 +1010,22 @@
   transition: background-color var(--d-1) var(--ease);
 }
 
-.ulo-row:hover,
-.ulo-item[data-open] > .ulo-row {
+.ulo-row:hover {
   background-color: var(--fill-1);
+}
+
+/* An opened account: its row and its windows as one quiet block. */
+.ulo-item {
+  border-radius: var(--r-sm);
+  transition: background-color var(--d-2) var(--ease);
+}
+
+.ulo-item[data-open] {
+  background-color: var(--fill-1);
+}
+
+.ulo-item[data-open] > .ulo-row:hover {
+  background-color: transparent;
 }
 
 .ulo-row:focus-visible {
@@ -843,24 +1060,24 @@
 /* The one account to reach for: a small ivory mark beside its name, nothing more. */
 .ulo-best {
   flex-shrink: 0;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
   background-color: var(--accent);
-}
-
-.ulo-windows {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 18px;
 }
 
 .ulo-cell {
   display: grid;
-  grid-template-columns: 20px 76px 34px;
+  grid-template-columns: var(--ul-cell-cols);
   align-items: center;
-  column-gap: 7px;
+  column-gap: var(--ul-cell-gap);
+  min-width: 0;
+}
+
+.ulo-cell-tip {
+  display: grid;
+  min-width: 0;
+  outline: none;
 }
 
 .ulo-win {
@@ -888,11 +1105,14 @@
 }
 
 .ulo-none {
+  grid-column: 3 / 5;
   font-size: var(--t-small);
+  text-align: right;
   color: var(--text-3);
 }
 
 .ulo-reset {
+  grid-column: 5;
   font-size: var(--t-small);
   text-align: right;
   white-space: nowrap;
@@ -938,47 +1158,73 @@
   overflow: hidden;
 }
 
-.ulo-detail > .ul-account {
-  margin: 0;
-  padding: 12px 10px 16px 38px;
-  border: 0;
-  background: none;
-}
-
-.ulo-detail > .ul-account::before {
-  display: none;
-}
-
-.ulo-detail .ul-account-head:not(:has(.ul-asof)) {
-  display: none;
-}
-
-.ulo-detail .ul-account-head > :not(.ul-asof) {
-  display: none;
-}
-
 .ulo-cols {
   display: grid;
-  grid-template-columns: minmax(148px, 1fr) auto 64px 12px;
-  column-gap: 12px;
+  grid-template-columns: var(--ul-cols);
+  column-gap: var(--ul-gap);
   padding: 2px 10px 6px;
   font-size: var(--t-micro);
   color: var(--text-3);
 }
 
+.ulo-cols > :nth-child(1) {
+  grid-column: 1 / 3;
+}
+
 .ulo-cols > :nth-child(2) {
-  padding-right: 0;
+  grid-column: 3 / 5;
   text-align: right;
 }
 
 .ulo-cols > :nth-child(3) {
+  grid-column: 5;
   text-align: right;
+  white-space: nowrap;
 }
 
-.ulo-best {
-  border-radius: 1px;
-  width: 6px;
-  height: 6px;
+/* ── left across accounts, per agent, above the accounts and in their columns ── */
+
+.ult {
+  margin-bottom: 10px;
+  padding: 6px;
+}
+
+.ult-row {
+  display: grid;
+  grid-template-columns: var(--ul-cols);
+  align-items: center;
+  column-gap: var(--ul-gap);
+  height: 46px;
+  padding: 0 10px;
+}
+
+.ult-row + .ult-row {
+  border-top: 1px solid var(--line);
+}
+
+.ult-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ult-left {
+  align-self: flex-start;
+  max-width: 100%;
+  border-radius: 4px;
+  font-size: var(--t-small);
+  color: var(--text-2);
+  cursor: default;
+}
+
+.ult-figure {
+  color: var(--text);
+}
+
+.ult-left:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-offset);
 }
 
 /* Use credits at a limit: the switch, and one line on who decides (with the billing link). */

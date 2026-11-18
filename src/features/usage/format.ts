@@ -63,6 +63,18 @@ export function windowLevel(l: RateLimit, now = Date.now()): 'amber' | 'red' | u
   return undefined;
 }
 
+/** A window that one model, or one part of the plan, has (Opus, Fable, a Codex model's own limit). */
+export const isScopedWindow = (l: RateLimit) => /^model_|^(five_hour|seven_day)_/.test(l.id) || (l.id.includes(':') && !l.id.startsWith('codex:'));
+
+/** The 5-hour window first, then the week of the whole plan, then the week of each model; as given otherwise. */
+export function orderWindows(limits: RateLimit[]): RateLimit[] {
+  const rank = (l: RateLimit) => ((l.windowMins ?? 0) >= 1440 ? 2 : 0) + (isScopedWindow(l) ? 1 : 0);
+  return limits
+    .map((l, i) => ({ l, i }))
+    .sort((a, b) => rank(a.l) - rank(b.l) || a.i - b.i)
+    .map((x) => x.l);
+}
+
 /** The plan to show next to an account: the agent's own name for it, or the Demo's. */
 export function planText(auth: AuthState | undefined): string | undefined {
   return planLabel(auth) ?? (auth?.loggedIn && auth.method === 'local' ? auth.plan : undefined);

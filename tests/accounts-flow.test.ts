@@ -559,7 +559,7 @@ describe('Claude plan limits from the turn itself', () => {
       { id: 'five_hour', label: '5-hour limit', percent: 81, resetsAt: reset5 * 1000, windowMins: 300 },
       { id: 'seven_day', label: 'Weekly · all models', percent: 40, resetsAt: resetW * 1000, windowMins: 10_080 },
     ]);
-    expect(last?.type === 'limits.updated' && last.meta).toEqual({ planLimits: true });
+    expect(last?.type === 'limits.updated' && last.meta).toEqual({ planLimits: true, partial: true });
     // The same numbers again are not news.
     p.onRateLimit({ status: 'allowed_warning', rateLimitType: 'five_hour', utilization: 0.81, resetsAt: reset5 });
     expect(events).toHaveLength(0);

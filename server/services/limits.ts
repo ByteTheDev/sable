@@ -55,7 +55,7 @@ export class LimitsBook {
     const prev = this.data.accounts[key];
     // An empty read without news (no session to ask, or a failed read) keeps what was known.
     if (!limits.length && meta.planLimits !== false && prev?.limits.length) return this.report(provider, accountId, now);
-    const entry: Entry = { history: { ...prev?.history }, limits, readAt: now };
+    const entry: Entry = { history: { ...prev?.history }, limits: meta.partial ? mergeWindows(prev?.limits ?? [], limits) : limits, readAt: now };
     for (const k of ['planLimits', 'extra', 'credits', 'resets'] as const) {
       const v = meta[k] ?? prev?.[k];
       if (v !== undefined) (entry as unknown as Record<string, unknown>)[k] = v;
@@ -126,6 +126,24 @@ export class LimitsBook {
 }
 
 const clampPct = (p: number) => Math.max(0, Math.min(100, Number.isFinite(p) ? p : 0));
+
+/**
+ * Ids older builds gave a window that now has another: Claude's per-model weekly window came from
+ * turn events as `seven_day_overage_included` before it was known to be the usage answer's
+ * `model_<name>` row. A merge drops them; the next read brings the window back under its own id.
+ */
+const RETIRED_IDS = new Set(['seven_day_overage_included']);
+
+/**
+ * A read that names only some windows, laid over the ones known: each window it names is replaced
+ * in place, the others stay as they were, and windows new to the account go at the end.
+ */
+export function mergeWindows(known: RateLimit[], read: RateLimit[]): RateLimit[] {
+  const fresh = new Map(read.map((l) => [l.id, l]));
+  const out = known.filter((l) => !RETIRED_IDS.has(l.id) || fresh.has(l.id)).map((l) => fresh.get(l.id) ?? l);
+  for (const l of read) if (!known.some((k) => k.id === l.id)) out.push(l);
+  return out;
+}
 
 function addSample(list: Sample[], s: Sample, limit: RateLimit, now: number): Sample[] {
   const last = list[list.length - 1];

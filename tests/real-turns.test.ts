@@ -120,7 +120,7 @@ describe('Claude: plan limits from rate_limit_event', () => {
     expect(p.onRateLimit(live)).toBeUndefined();
     const up = events.find((e) => e.type === 'limits.updated') as Extract<BridgeEvent, { type: 'limits.updated' }>;
     expect(up.limits).toEqual([{ id: 'seven_day', label: 'Weekly · all models', percent: 21, resetsAt: 1795302000_000, windowMins: 10_080 }]);
-    expect(up.meta).toEqual({ planLimits: true });
+    expect(up.meta).toEqual({ planLimits: true, partial: true });
   });
 
   it('keeps windows it has no name for, labelled by their length', () => {

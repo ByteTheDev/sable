@@ -674,6 +674,11 @@ export interface RateLimit {
 export interface LimitsMeta {
   /** False when plan limits do not apply to this account (API key, cloud provider). */
   planLimits?: boolean;
+  /**
+   * The read names only some of the account's windows (a turn's rate-limit event, a usage answer
+   * without its per-model rows): windows it does not name are kept as last known.
+   */
+  partial?: boolean;
   /** Paid usage beyond the plan (Claude extra usage), when the agent reports it. Amounts in minor units of `currency`. */
   extra?: { enabled: boolean; percent?: number; used?: number; limit?: number; currency?: string; inUse?: boolean; resetsAt?: number };
   /** Credits the agent reports (Codex). */

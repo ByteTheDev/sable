@@ -7,9 +7,10 @@ import { useNow } from '@/lib/useNow';
 import { accountName } from '@/state/hooks';
 import { accountKey, useStore } from '@/state/store';
 import { Segmented, Tip } from '@/ui';
-import { duration, exactTime, isApiKey, planText } from './format';
+import { duration, exactTime, isApiKey, isScopedWindow } from './format';
 import { AccountLimits, type AccountRef } from './Limits';
-import { livePercent, overview, type RoomInput, type RoomRow, type SortBy } from './room';
+import { planShort, poolTotals, units, type PoolInput, type PoolPart, type PoolTotal } from './plans';
+import { livePercent, NEAR_AT, overview, type RoomInput, type RoomRow, type SortBy } from './room';
 
 const SORT_KEY = 'sable.usage.sort';
 const SORTS: { value: SortBy; label: string }[] = [
@@ -27,7 +28,7 @@ function readSort(): SortBy {
   }
 }
 
-interface Entry extends RoomInput {
+interface Entry extends RoomInput, PoolInput {
   ref: AccountRef;
   /** An API key or an account the agent reports no plan windows for. */
   unmetered: boolean;
@@ -50,6 +51,7 @@ export function useRoomInputs(refs: AccountRef[]): Entry[] {
           name: multi ? accountName(ref.account) : PROVIDER_NAME[ref.provider],
           usable: !!ref.info?.installed && ref.account.auth.loggedIn,
           limits: known?.length ? known : live[key],
+          auth: ref.account.auth,
           unmetered: reports[key]?.planLimits === false || isApiKey(ref.account.auth),
         };
       }),
@@ -66,17 +68,24 @@ export function windowShort(l: RateLimit): string {
   return `${Math.round(m / 1440)}d`;
 }
 
-/** At most two windows per row: the shortest and the longest (the session and the week). */
-function cells(limits: RateLimit[] | undefined): RateLimit[] {
-  const sorted = [...(limits ?? [])].sort((a, b) => (a.windowMins ?? 0) - (b.windowMins ?? 0));
-  return sorted.length > 2 ? [sorted[0], sorted[sorted.length - 1]] : sorted;
+/**
+ * The two cells of a row: the session window (under a day) and the week. Of several weekly
+ * windows (the whole plan, Opus, Fable) the one used most, which is the one that stops the account.
+ */
+function cells(limits: RateLimit[] | undefined, now: number): [RateLimit | undefined, RateLimit | undefined] {
+  const list = limits ?? [];
+  const isWeek = (l: RateLimit) => (l.windowMins ?? 0) >= 1440;
+  const short = list.find((l) => !isWeek(l) && !isScopedWindow(l)) ?? list.find((l) => !isWeek(l));
+  let week: RateLimit | undefined;
+  for (const l of list.filter(isWeek)) if (!week || livePercent(l, now) > livePercent(week, now)) week = l;
+  return [short, week];
 }
 
 /**
  * Settings > Usage with many accounts: every account as one line (agent, name, each window as a
  * thin meter with its figure, time to the reset), ordered by room left, by reset or by agent. The
  * accounts at or near a cap sit apart; the one with the most room carries one small mark. A line
- * opens that account's windows in full.
+ * opens that account's windows in full, in the same columns.
  */
 export function LimitsOverview({ refs, pending }: { refs: AccountRef[]; pending: ReadonlySet<string> }) {
   const inputs = useRoomInputs(refs);
@@ -136,8 +145,8 @@ export function LimitsOverview({ refs, pending }: { refs: AccountRef[]; pending:
 const OverviewRow = memo(function OverviewRow({ row, now, best, open, pending, onToggle }: { row: RoomRow<Entry>; now: number; best: boolean; open: boolean; pending: boolean; onToggle: () => void }) {
   const { input, state, resetsAt } = row;
   const { ref } = input;
-  const plan = planText(ref.account.auth);
-  const windows = cells(input.limits);
+  const plan = planShort(ref.account.auth);
+  const [short, week] = cells(input.limits, now);
   const label = `${PROVIDER_NAME[input.provider as ProviderId]}, ${input.name}${row.room !== undefined ? `, ${row.room}% left` : ''}${best ? ', most room right now' : ''}`;
   return (
     <div className="ulo-item" role="listitem" data-state={state} data-open={open || undefined}>
@@ -152,15 +161,16 @@ const OverviewRow = memo(function OverviewRow({ row, now, best, open, pending, o
             </Tip>
           )}
         </span>
-        <span className="ulo-windows">
-          {state === 'off' ? (
-            <span className="ulo-none">{ref.info?.installed ? 'Not signed in' : 'Not installed'}</span>
-          ) : windows.length ? (
-            windows.map((l) => <Cell key={l.id} limit={l} now={now} />)
-          ) : (
-            <span className="ulo-none">{input.unmetered ? 'No plan limits' : pending ? 'Reading' : 'No figures yet'}</span>
-          )}
-        </span>
+        {state === 'off' ? (
+          <span className="ulo-none">{ref.info?.installed ? 'Not signed in' : 'Not installed'}</span>
+        ) : short || week ? (
+          <>
+            {short ? <Cell limit={short} now={now} /> : <span />}
+            {week ? <Cell limit={week} now={now} /> : <span />}
+          </>
+        ) : (
+          <span className="ulo-none">{input.unmetered ? 'No plan limits' : pending ? 'Reading' : 'No figures yet'}</span>
+        )}
         <span className="ulo-reset num" title={resetsAt ? exactTime(resetsAt) : undefined}>
           {resetsAt ? duration(resetsAt - now) : ''}
         </span>
@@ -169,7 +179,7 @@ const OverviewRow = memo(function OverviewRow({ row, now, best, open, pending, o
       <AnimatePresence initial={false}>
         {open && (
           <motion.div className="ulo-detail" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: 'spring', stiffness: 460, damping: 40 }}>
-            <AccountLimits refs={ref} pending={pending} />
+            <AccountLimits refs={ref} pending={pending} inline />
           </motion.div>
         )}
       </AnimatePresence>
@@ -177,18 +187,74 @@ const OverviewRow = memo(function OverviewRow({ row, now, best, open, pending, o
   );
 });
 
-function Cell({ limit, now }: { limit: RateLimit; now: number }) {
-  const pct = Math.round(livePercent(limit, now));
-  const level = pct >= 100 ? 'red' : pct >= 80 ? 'amber' : undefined;
+const level = (pct: number) => (pct >= 100 ? 'red' : pct >= NEAR_AT ? 'amber' : undefined);
+
+/** One window in a row: its length, a thin meter and the percent used. */
+function Meter({ tag, pct, label }: { tag: string; pct: number; label: string }) {
+  const lv = level(pct);
   return (
-    <span className="ulo-cell" title={limit.label}>
-      <span className="ulo-win">{windowShort(limit)}</span>
-      <span className="meter ulo-meter" data-level={level} role="progressbar" aria-label={limit.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+    <span className="ulo-cell">
+      <span className="ulo-win">{tag}</span>
+      <span className="meter ulo-meter" data-level={lv} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
         <span className="meter-fill" style={{ '--p': Math.max(pct, pct > 0 ? 3 : 0) / 100 } as CSSProperties} />
       </span>
-      <span className="ulo-pct num" data-level={level}>
+      <span className="ulo-pct num" data-level={lv}>
         {pct}%
       </span>
     </span>
+  );
+}
+
+function Cell({ limit, now }: { limit: RateLimit; now: number }) {
+  const pct = Math.round(livePercent(limit, now));
+  // A week that is one model's (Fable, Opus) says so on hover.
+  return isScopedWindow(limit) ? (
+    <Tip label={limit.label}>
+      <span className="ulo-cell-tip">
+        <Meter tag={windowShort(limit)} pct={pct} label={limit.label} />
+      </span>
+    </Tip>
+  ) : (
+    <Meter tag={windowShort(limit)} pct={pct} label={limit.label} />
+  );
+}
+
+/**
+ * What is left across each agent's accounts, weighted by plan, above the accounts and in their
+ * columns: the agent, how many weeks of its largest plan are left of how many, and the 5-hour and
+ * weekly windows of all its accounts together as used. Agents with one account have none.
+ */
+export function LimitsTotals({ refs }: { refs: AccountRef[] }) {
+  const inputs = useRoomInputs(refs);
+  const now = useNow();
+  const totals = useMemo(() => poolTotals(inputs, now), [inputs, now]);
+  if (!totals.length) return null;
+  return (
+    <div className="ult card" data-spot role="list" aria-label="Left across accounts">
+      {totals.map((t) => (
+        <TotalRow key={t.provider} total={t} />
+      ))}
+    </div>
+  );
+}
+
+function TotalRow({ total: t }: { total: PoolTotal }) {
+  const left = `${units(t.week.left)} of ${units(t.week.size)} ${t.unit} weeks left`;
+  const mix = t.plans.map((p) => `${p.count} ${p.name}`).join(', ');
+  const used = (p: PoolPart) => Math.min(100, Math.round(p.used));
+  return (
+    <div className="ult-row" role="listitem" aria-label={`${PROVIDER_NAME[t.provider]}: ${left}`}>
+      <ProviderMark provider={t.provider} size={14} className="ulo-mark" />
+      <span className="ult-who">
+        <span className="ulo-name truncate">{PROVIDER_NAME[t.provider]}</span>
+        <Tip label={mix}>
+          <span className="ult-left num truncate" tabIndex={0}>
+            <span className="ult-figure">{units(t.week.left)}</span> of {units(t.week.size)} {t.unit} weeks left
+          </span>
+        </Tip>
+      </span>
+      {t.short ? <Meter tag="5h" pct={used(t.short)} label={`5-hour limits of ${t.accounts} accounts`} /> : <span />}
+      <Meter tag="7d" pct={used(t.week)} label={`Weekly limits of ${t.accounts} accounts`} />
+    </div>
   );
 }
