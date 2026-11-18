@@ -125,7 +125,7 @@
   position: relative;
   flex: 1;
   min-height: 0;
-  /* No bottom padding: the bottom fade below is the list's own last 22px (see there). */
+  /* No bottom padding: the bottom fade below is the list's own last 30px (see there). */
   padding: 0 4px 0 2px;
   outline: none;
   /* Opaque, so the scroller gets its own layer even at 1x (where a transparent one keeps LCD text by
@@ -174,12 +174,13 @@
   background: linear-gradient(to bottom, var(--side-bg), transparent);
 }
 
-/* The bottom fade takes its own 22px after the last row instead of lying over it: at the end of the
+/* The bottom fade takes its own 30px after the last row instead of lying over it: at the end of the
    list (or in a list too short to scroll) it covers only empty ground, so the last row keeps its
-   tone; while more rows are below, it sticks to the bottom edge and they pass under it. */
+   tone; while more rows are below, it sticks to the bottom edge and they pass under it, a whole
+   row's height, so no half-read title sits against the footer. */
 .side-list::after {
   bottom: 0;
-  height: 22px;
+  height: 30px;
   background: linear-gradient(to top, var(--side-bg), transparent);
 }
 
@@ -468,13 +469,15 @@
   }
 }
 
-/* The selected row: one flat step of light. It slides between rows (ActivePill). */
+/* The selected row: one flat step of light with a hairline edge at the strength of the composer's.
+   It slides between rows (ActivePill). */
 .srow-pill {
   position: absolute;
   inset: 0;
   z-index: -1;
   border-radius: inherit;
   background-color: var(--fill-3);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
 }
 
 /* The row's contents skip style, layout and paint while scrolled out of view: 500 rows cost what 30 do.
@@ -500,25 +503,21 @@
   pointer-events: none;
 }
 
-/* A quieter ring on rows you are not looking at. */
-.srow-mark .ring {
-  color: var(--text-2);
-}
-
-.srow[data-active] .srow-mark .ring,
-.srow:hover .srow-mark .ring {
-  color: var(--text);
-}
-
-/* A folder that mixes agents: whose session it is, quietly, where an idle row has no mark. */
+/* Whose session it is, on every row: the agent's own mark (the one colour in the list), a step
+   back at rest and whole on the row you point at or have open. */
 .srow-agent {
-  opacity: 0.5;
+  opacity: 0.72;
   transition: opacity var(--d-1) var(--ease);
 }
 
 .srow:hover .srow-agent,
+.srow:focus-within .srow-agent,
 .srow[data-active] .srow-agent {
-  opacity: 0.9;
+  opacity: 1;
+}
+
+.srow-archived .srow-agent {
+  opacity: 0.4;
 }
 
 .srow-main {
@@ -558,7 +557,8 @@
   color: var(--text-3);
 }
 
-/* The right end: the time at rest, the tools over it on hover (they cover the title's end, nothing moves). */
+/* The right end: the time at rest, or the session's state in its place; the tools over either on
+   hover (they cover the title's end, nothing moves). */
 .srow-end {
   position: absolute;
   inset: 0 0 0 auto;
@@ -577,6 +577,26 @@
 .srow[data-active] .srow-time,
 .srow[data-unread] .srow-time {
   color: var(--text-3);
+}
+
+/* A ring while it works, a dot when it wants you: on the time's right edge. */
+.srow-state {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  margin-right: 10px;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+/* A quieter ring on rows you are not looking at. */
+.srow-state .ring {
+  color: var(--text-2);
+}
+
+.srow[data-active] .srow-state .ring,
+.srow:hover .srow-state .ring {
+  color: var(--text);
 }
 
 .srow-acts {
@@ -601,14 +621,15 @@
   pointer-events: auto;
 }
 
-.srow:hover .srow-time,
-.srow:focus-within .srow-time,
-.srow[data-menu] .srow-time {
+.srow:hover :is(.srow-time, .srow-state),
+.srow:focus-within :is(.srow-time, .srow-state),
+.srow[data-menu] :is(.srow-time, .srow-state) {
   opacity: 0;
 }
 
 
-.srow-rename {
+.srow-rename,
+.sgroup-rename {
   flex: 1;
   min-width: 0;
   height: 24px;
@@ -622,8 +643,28 @@
   user-select: text;
 }
 
-.srow-rename:focus {
+.srow-rename:focus,
+.sgroup-rename:focus {
   outline: none;
+}
+
+/* The folder's name as a field: its words stay where the name stood. */
+.sgroup-rename {
+  margin: 0 -4px 0 -7px;
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+}
+
+.sgroup-rename::placeholder {
+  color: var(--text-4);
+}
+
+.sgroup-head[data-renaming] {
+  background: none;
+}
+
+.sgroup-head[data-renaming] .sgroup-tools {
+  display: none;
 }
 
 /* ── archived toggle ── */

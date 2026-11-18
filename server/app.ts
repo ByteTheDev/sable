@@ -1122,6 +1122,17 @@ export class App {
       this.emit({ type: 'projects.updated', projects: this.store.state.projects });
       return { ok: true };
     });
+    // Only the name the sidebar shows changes; the folder on disk keeps its own, which an empty name brings back.
+    this.register('project.rename', ({ path: dir, name }) => {
+      if (typeof dir !== 'string' || !dir) throw new Error('Missing folder');
+      const own = path.basename(path.resolve(dir)) || path.resolve(dir);
+      const wanted = typeof name === 'string' ? name.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+      const p = this.findProject(dir) ?? this.touchProjectQuiet(dir);
+      p.name = wanted || own;
+      this.store.saveState();
+      this.emit({ type: 'projects.updated', projects: this.store.state.projects });
+      return { ok: true, name: p.name };
+    });
     this.register('project.pin', ({ path: dir, pinned }) => {
       // A folder known only through its sessions becomes a project when pinned.
       const p = this.store.state.projects.find((x) => x.path === dir) ?? (pinned ? this.touchProject(dir) : undefined);

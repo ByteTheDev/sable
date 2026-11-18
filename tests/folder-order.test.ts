@@ -1,5 +1,5 @@
 /** The sidebar's manual folder order and removing a folder with its sessions, at the bridge. */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -39,6 +39,26 @@ describe('folder order', () => {
     // Using a folder does not move it.
     await app.call('session.create', { provider: 'demo', cwd: dirs[1] });
     expect(names(app)).toEqual(['one', 'three', 'two']);
+    await app.dispose();
+  });
+
+  it('renames a folder in Sable only, and an empty name gives it its own back', async () => {
+    const { dirs, app: make } = setup();
+    const app = make();
+    for (const d of dirs) await app.call('project.add', { path: d });
+    const events: string[] = [];
+    app.subscribe((e) => e.type === 'projects.updated' && events.push(e.projects.find((p) => p.path === dirs[1])?.name ?? ''));
+    const r = await app.call('project.rename', { path: dirs[1], name: '  Client   work ' });
+    expect(r).toEqual({ ok: true, name: 'Client work' });
+    expect(names(app)).toEqual(['three', 'Client work', 'one']);
+    expect(events).toEqual(['Client work']);
+    // The folder on disk keeps its name, and opening it again keeps Sable's.
+    expect(existsSync(dirs[1])).toBe(true);
+    await app.call('project.add', { path: dirs[1] });
+    expect(names(app)).toContain('Client work');
+    const back = await app.call('project.rename', { path: dirs[1], name: '   ' });
+    expect(back.name).toBe('two');
+    expect(names(app)).toContain('two');
     await app.dispose();
   });
 

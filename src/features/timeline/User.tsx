@@ -13,11 +13,9 @@ import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
 import { MessageAgain } from './Again';
 import { useTimeline } from './ctx';
 import { Stamp } from './Stamp';
+import { isLongMessage } from './user-card';
 
-const LONG_CHARS = 1400;
-const LONG_LINES = 18;
-
-/** The person's message: their words in the reading column behind a hairline rule, with its time, copy and rewind on hover. */
+/** The person's message: their words on the right in the composer's material, with its time, copy and rewind on hover. */
 export const UserMessage = memo(function UserMessage({ item }: { item: UserItem }) {
   const { sessionId } = useTimeline();
   const canRewind = useStore((s) => !!s.data[sessionId]?.caps?.features.rewind);
@@ -37,7 +35,7 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
   const queued = item.state === 'queued';
   const images = item.attachments?.filter((a) => a.kind === 'image' && a.dataUrl) ?? [];
   const files = item.attachments?.filter((a) => !(a.kind === 'image' && a.dataUrl)) ?? [];
-  const long = item.text.length > LONG_CHARS || item.text.split('\n').length > LONG_LINES;
+  const long = isLongMessage(item.text);
 
   // The message sent from the composer (or a queue row) lands here: it flies in as this bubble and the two swap.
   const root = useRef<HTMLDivElement>(null);
@@ -151,6 +149,7 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
         {long && (
           <button type="button" className="user-more" onClick={() => setExpanded((e) => !e)} aria-expanded={expanded}>
             {expanded ? 'Show less' : 'Show more'}
+            <Icon name={expanded ? 'caret-up' : 'caret-down'} size={11} weight="bold" />
           </button>
         )}
         {files.length > 0 && (

@@ -1,4 +1,5 @@
 import { EASE_OUT, play, reducedMotion, uiZoom } from '@/lib/motion';
+import { CARD_FONT, CARD_LINE, CARD_PAD_TOP, CARD_PAD_X, isLongMessage } from '@/features/timeline/user-card';
 import { holdSend } from './settle';
 
 /**
@@ -149,11 +150,6 @@ const WAIT_REACH = 0.94;
 /** Where a queued message's row will be, from the field's text: the tray's last row, just above the card. */
 const TRAY_GUESS = { x: 21, y: -46 };
 
-/** A message card's type and padding (timeline.css `.user-card`). */
-const CARD_FONT = 15;
-const CARD_LINE = CARD_FONT * 1.55;
-const TEXT_INSET = 15;
-const CARD_PAD_TOP = 9;
 /** The widest a card grows: this share of the reading column. */
 const CARD_SHARE = 0.8;
 /** The first message's card sits this far under the top of the stage (the conversation's top padding). */
@@ -266,13 +262,13 @@ function makeWords({ el, text }: Source): { clone: HTMLDivElement; left: number;
 
 /**
  * The words as their bubble: the conversation's own card, placed and scaled so its text stands
- * exactly on the words in the source (the field is 14 px, a message 15).
+ * exactly on the words in the source (the field and a message share their type size).
  */
 function makeBubble({ el, text }: Source): { clone: HTMLDivElement; left: number; top: number; s0: number } | null {
   const m = measure(el);
   if (!m) return null;
   const s0 = Math.min(1, m.size / CARD_FONT);
-  const left = m.left - TEXT_INSET * s0;
+  const left = m.left - CARD_PAD_X * s0;
   const top = m.top - CARD_PAD_TOP * s0 + (m.line - CARD_LINE * s0) / 2;
   const z = uiZoom();
   const stage = document.querySelector('.stage-body')?.getBoundingClientRect();
@@ -289,8 +285,8 @@ function makeBubble({ el, text }: Source): { clone: HTMLDivElement; left: number
   card.style.cssText = 'flex:1 1 auto;max-width:none;';
   const words = document.createElement('div');
   words.className = 'user-text';
-  // A long message is clipped in the conversation too (timeline.css `.user-text[data-clipped]`).
-  words.style.cssText = 'max-height:232px;overflow:hidden;';
+  // A long message is clipped in the conversation too, at the same line (timeline.css `.user-text[data-clipped]`).
+  if (isLongMessage(text)) words.setAttribute('data-clipped', '');
   words.textContent = text;
   card.appendChild(words);
   inner.appendChild(card);

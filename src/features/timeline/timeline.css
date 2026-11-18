@@ -845,9 +845,12 @@ button:hover > .row-caret {
 
 /* ───────────── user message ───────────── */
 
-/* The person's words sit on the right in the composer's own material: a card of frosted ink with
-   its grain and an inner hairline, so a message reads as what left the composer. Type one step
-   larger than the answer's. Time and actions appear above its right end on hover. */
+/* The person's words sit on the right in the composer's own material: dark ink with its grain, the
+   same faint inner hairline and soft shadow, so a message reads as what left the composer. No
+   backdrop blur (a long conversation holds hundreds of these): the ink is a little denser instead,
+   so the field's light passes through only as a tint. The words are set like the answer's
+   (markdown.css `.md`). Time and actions appear above its right end on hover. Its numbers are
+   shared with the bubble that flies here from the composer (user-card.ts). */
 .user {
   position: relative;
   display: flex;
@@ -860,9 +863,9 @@ button:hover > .row-caret {
   flex: 0 1 auto;
   min-width: 0;
   max-width: 80%;
-  padding: 9px 15px 10px;
-  font-size: 15px;
-  line-height: 1.55;
+  padding: 10px 16px;
+  font-size: var(--t-body);
+  line-height: 1.62;
   letter-spacing: -0.003em;
   color: var(--text);
   transition: opacity var(--d-3) var(--ease);
@@ -875,11 +878,13 @@ button:hover > .row-caret {
   position: absolute;
   inset: 0;
   z-index: -1;
-  border-radius: 16px 16px 6px 16px;
-  background-color: rgb(30 30 35 / 0.82);
+  border-radius: 18px 18px 6px 18px;
+  background-color: rgb(18 18 21 / 0.9);
   background-image: var(--grain);
   background-size: var(--grain-size);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.075);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.07),
+    var(--shadow-composer);
   pointer-events: none;
 }
 
@@ -888,31 +893,54 @@ button:hover > .row-caret {
   overflow-wrap: anywhere;
 }
 
+/* A long message (user-card.ts) stops at its tenth whole line, which ends in an ellipsis: no
+   fade, nothing laid over the words. */
 .user-text[data-clipped] {
-  position: relative;
-  max-height: 232px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 10;
+  line-clamp: 10;
   overflow: hidden;
 }
 
-.user-text[data-clipped]::after {
-  content: '';
-  position: absolute;
-  inset: 62% 0 0;
-  background: linear-gradient(to bottom, transparent, var(--sheet));
-  pointer-events: none;
-}
-
+/* A quiet link under the words, on their left edge (its padding hangs into the card's). */
 .user-more {
-  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  margin: 4px 0 -2px -7px;
+  padding: 0 7px;
+  border-radius: var(--r-ctl-xs);
   font-size: var(--t-small);
   font-weight: var(--w-medium);
+  color: var(--text-2);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.user-more svg {
   color: var(--text-3);
-  border-radius: 4px;
   transition: color var(--d-1) var(--ease);
 }
 
 .user-more:hover {
+  background-color: var(--fill-2);
   color: var(--text);
+}
+
+.user-more:hover svg {
+  color: var(--text);
+}
+
+.user-more:active {
+  background-color: var(--fill-3);
+}
+
+.user-more:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
 }
 
 .user[data-queued] .user-card {
@@ -1015,15 +1043,16 @@ button:hover > .row-caret {
   padding: 0 7px 0 4px;
 }
 
+/* Attachments stand on the words' left edge, as far in from the card's edges as the words are from its side. */
 .user-images {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 1px -6px 9px;
+  margin: 6px 0 10px;
 }
 
 .user-images:last-child {
-  margin-bottom: 0;
+  margin-bottom: 6px;
 }
 
 .user-thumb {
@@ -1051,11 +1080,11 @@ button:hover > .row-caret {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 9px -4px 1px;
+  margin: 10px 0 3px;
 }
 
 .user-files:first-child {
-  margin-top: 1px;
+  margin-top: 3px;
 }
 
 .user-file {

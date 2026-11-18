@@ -285,6 +285,18 @@ export async function addFolders(paths: string[]): Promise<number> {
 
 export const pinProject = (path: string, pinned: boolean) => bridge.call('project.pin', { path, pinned }).catch(fail);
 
+/**
+ * The folder's name in the sidebar (the folder on disk is not renamed); empty restores the folder's
+ * own name. Shown at once; `projects.updated` confirms it.
+ */
+export function renameProject(path: string, name: string) {
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const key = norm(path);
+  const wanted = name.replace(/\s+/g, ' ').trim();
+  if (wanted) useStore.setState((s) => ({ projects: s.projects.map((p) => (norm(p.path) === key ? { ...p, name: wanted } : p)) }));
+  return bridge.call('project.rename', { path, name }).catch(fail);
+}
+
 export async function setSettings(patch: Partial<import('@shared/protocol').AppSettings>) {
   try {
     await bridge.call('app.setSettings', { patch });

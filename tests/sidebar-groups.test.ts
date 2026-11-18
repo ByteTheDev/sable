@@ -14,13 +14,12 @@ describe('sidebar groups', () => {
     expect(g.projects[0].sessions.map((x) => x.id)).toEqual(['b', 'a']);
   });
 
-  it('marks only a folder that mixes agents, and names the agent most rows run', () => {
+  it('tells a folder that mixes agents from one that mixes accounts', () => {
     const g = buildGroups(map(s('a'), s('b'), s('c', { provider: 'codex' })), []);
     expect(g.projects[0].mix).toBe('agent');
-    expect(g.projects[0].major).toBe('claude');
     const one = buildGroups(map(s('a'), s('b', { accountId: 'work' })), []);
     expect(one.projects[0].mix).toBe('account');
-    expect(one.projects[0].major).toBeUndefined();
+    expect(buildGroups(map(s('a'), s('b')), []).projects[0].mix).toBeUndefined();
   });
 
   it('puts the most pressing state on a folder', () => {
@@ -47,6 +46,17 @@ describe('sidebar groups', () => {
     const g = buildGroups(sessions, [{ path: 'D:\\code\\app', name: 'app', lastOpened: 0, hidden: true }]);
     expect(g.projects.map((p) => p.name)).toEqual(['other']);
     expect(g.pinned.map((x) => x.id)).toEqual(['b']);
+  });
+
+  it('shows a folder by the name it was given in Sable', () => {
+    const g = buildGroups(map(s('a')), [{ path: 'D:/code/app', name: 'Client work', lastOpened: 0 }]);
+    expect(g.projects.map((p) => [p.name, p.path])).toEqual([['Client work', 'D:/code/app']]);
+    const select = createGroupsSelector();
+    const sessions = map(s('a'));
+    const before = select({ sessions, projects: [{ path: 'D:/code/app', name: 'app', lastOpened: 0 }] });
+    const after = select({ sessions, projects: [{ path: 'D:/code/app', name: 'Client work', lastOpened: 0 }] });
+    expect(after).not.toBe(before);
+    expect(after.projects[0].name).toBe('Client work');
   });
 
   it('keeps the same groups while only what rows show changes', () => {

@@ -1181,6 +1181,8 @@ export interface RpcMethods {
   'project.add': { params: { path: string }; result: Project };
   'project.remove': { params: { path: string }; result: { ok: boolean } };
   'project.pin': { params: { path: string; pinned: boolean }; result: { ok: boolean } };
+  /** The folder's name in Sable (the folder on disk keeps its own); an empty name gives the folder's own name back. */
+  'project.rename': { params: { path: string; name: string }; result: { ok: boolean; name: string } };
   /** The manual folder order: `paths` first, in that order (folders known only through their sessions become projects); the rest keep theirs after them. */
   'project.reorder': { params: { paths: string[] }; result: { ok: boolean } };
 

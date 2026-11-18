@@ -1,6 +1,6 @@
 import { createContext, memo, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 import { ContextMenu as RC, DropdownMenu as RM } from 'radix-ui';
-import type { ProviderId, SessionMeta } from '@shared/protocol';
+import type { SessionMeta } from '@shared/protocol';
 import { PROVIDER_NAME, ProviderMark, StatusGlyph, type StatusTone } from '@/art/Logo';
 import { Icon, type IconName } from '@/icons';
 import { timeAgo } from '@/lib/format';
@@ -229,11 +229,11 @@ function rowActions(s: SessionMeta, ctx: RowCtx): MenuAction[] {
 
 /** Keeps focus where the action wants it (the rename field) instead of the trigger. */
 let keepFocus = false;
-const holdFocus = (fn: () => void) => () => {
+export const holdFocus = (fn: () => void) => () => {
   keepFocus = true;
   fn();
 };
-const onCloseAutoFocus = (e: Event) => {
+export const onCloseAutoFocus = (e: Event) => {
   if (keepFocus) {
     e.preventDefault();
     keepFocus = false;
@@ -336,12 +336,13 @@ function whoLabel(s: SessionMeta, mix: RowMix): string | null {
 }
 
 /**
- * A sidebar row: one line, the status mark at the folder icon's column, the title, a quiet time
- * that the hover actions replace. It reads its own session and active state from the store, so
- * a status change in one session re-renders only that row. `enter` is read once: rows added after
- * the list first drew rise in (plain CSS), the first paint does not animate.
+ * A sidebar row: one line, the agent's mark at the folder icon's column, the title, and at the
+ * right end a quiet time, or the session's state in its place (a ring while it works, a dot when
+ * it wants you), both of which the hover actions cover. It reads its own session and active state
+ * from the store, so a status change in one session re-renders only that row. `enter` is read
+ * once: rows added after the list first drew rise in (plain CSS), the first paint does not animate.
  */
-export const SessionRow = memo(function SessionRow({ id, enter, mix, major }: { id: string; enter?: boolean; mix?: RowMix; major?: ProviderId }) {
+export const SessionRow = memo(function SessionRow({ id, enter, mix }: { id: string; enter?: boolean; mix?: RowMix }) {
   const { session, active } = useRowView(id);
   const renaming = useRenaming(id);
   const ctx = useContext(SidebarRowContext);
@@ -397,7 +398,7 @@ export const SessionRow = memo(function SessionRow({ id, enter, mix, major }: { 
       {active && <ActivePill />}
       <div className="srow-in">
         <span className="srow-mark">
-          {tone === 'idle' && mix === 'agent' && session.provider !== major ? <ProviderMark provider={session.provider} size={12} className="srow-agent" /> : <StatusGlyph tone={tone} />}
+          <ProviderMark provider={session.provider} size={12} className="srow-agent" />
         </span>
         {renaming ? (
           <RenameField session={session} onDone={() => ctx.setRenaming(null)} />
@@ -420,7 +421,13 @@ export const SessionRow = memo(function SessionRow({ id, enter, mix, major }: { 
         )}
         {!renaming && (
           <span className="srow-end">
-            <RowTime ts={session.updatedAt} />
+            {tone === 'idle' ? (
+              <RowTime ts={session.updatedAt} />
+            ) : (
+              <span className="srow-state" data-tone={tone}>
+                <StatusGlyph tone={tone} />
+              </span>
+            )}
             {armed && (
               <span className="srow-acts">
                 <button type="button" className="srow-act" tabIndex={-1} aria-label={session.pinned ? 'Unpin' : 'Pin'} onClick={() => togglePin(session)}>
@@ -448,7 +455,7 @@ export const SessionRow = memo(function SessionRow({ id, enter, mix, major }: { 
       </div>
     </div>
   );
-}, (a, b) => a.id === b.id && a.mix === b.mix && a.major === b.major);
+}, (a, b) => a.id === b.id && a.mix === b.mix);
 
 /**
  * One context menu for every row in the list (a context menu per row costs more than the row).

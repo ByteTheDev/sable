@@ -1,10 +1,10 @@
-import type { FolderOrder, Project, ProviderId, SessionMeta } from '@shared/protocol';
+import type { FolderOrder, Project, SessionMeta } from '@shared/protocol';
 import { baseName } from '@/lib/format';
 
 /** Case- and slash-insensitive key for a folder path. */
 export const pathKey = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
-/** How a folder's rows tell sessions apart: by agent, by account, or not at all (all alike). */
+/** Whether a folder's sessions differ by agent or by account (rows then name who in their tooltip), or are all alike. */
 export type Mix = 'agent' | 'account' | undefined;
 
 /** What a collapsed folder shows in place of its count: the most pressing state inside it. */
@@ -22,15 +22,12 @@ export interface ProjectGroup {
   sessions: SessionMeta[];
   archived: SessionMeta[];
   mix: Mix;
-  /** With a mix of agents: the one most sessions run (the others carry its mark). */
-  major: ProviderId | undefined;
   attention: Attention;
 }
 
 export interface SidebarGroups {
   pinned: SessionMeta[];
   pinnedMix: Mix;
-  pinnedMajor: ProviderId | undefined;
   projects: ProjectGroup[];
 }
 
@@ -44,18 +41,6 @@ function mixOf(list: SessionMeta[]): Mix {
     if ((s.accountId ?? 'default') !== a) accounts = true;
   }
   return accounts ? 'account' : undefined;
-}
-
-/** The agent most of a folder's sessions run: only the others carry a mark. */
-function majorOf(list: SessionMeta[]): ProviderId | undefined {
-  const n = new Map<ProviderId, number>();
-  let best: ProviderId | undefined;
-  for (const s of list) {
-    const c = (n.get(s.provider) ?? 0) + 1;
-    n.set(s.provider, c);
-    if (!best || c > n.get(best)!) best = s.provider;
-  }
-  return best;
 }
 
 const RANK: Record<Exclude<Attention, undefined>, number> = { awaiting: 4, error: 3, working: 2, unread: 1 };
@@ -84,7 +69,7 @@ export function buildGroups(sessions: Record<string, SessionMeta>, projects: Pro
     const key = pathKey(path);
     let g = byKey.get(key);
     if (!g) {
-      g = { key, path, name: baseName(path) || path, pinned: false, last: 0, order: Infinity, sessions: [], archived: [], mix: undefined, major: undefined, attention: undefined };
+      g = { key, path, name: baseName(path) || path, pinned: false, last: 0, order: Infinity, sessions: [], archived: [], mix: undefined, attention: undefined };
       byKey.set(key, g);
     }
     return g;
@@ -126,7 +111,6 @@ export function buildGroups(sessions: Record<string, SessionMeta>, projects: Pro
     g.archived.sort(recent);
     if (!g.last) g.last = g.archived[0]?.updatedAt ?? 0;
     g.mix = mixOf(g.sessions);
-    g.major = g.mix === 'agent' ? majorOf(g.sessions) : undefined;
     g.attention = attentionOf(g.sessions);
   }
   const within =
@@ -136,16 +120,15 @@ export function buildGroups(sessions: Record<string, SessionMeta>, projects: Pro
         ? (a: ProjectGroup, b: ProjectGroup) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || b.last - a.last
         : (a: ProjectGroup, b: ProjectGroup) => (a.order === b.order ? b.last - a.last : a.order - b.order);
   list.sort((a, b) => (a.pinned !== b.pinned ? (a.pinned ? -1 : 1) : within(a, b)));
-  const pinnedMix = mixOf(pinned);
-  return { pinned, pinnedMix, pinnedMajor: pinnedMix === 'agent' ? majorOf(pinned) : undefined, projects: list };
+  return { pinned, pinnedMix: mixOf(pinned), projects: list };
 }
 
 export const idsOf = (list: SessionMeta[]) => list.map((s) => s.id).join(' ');
 
 /** Everything the list's structure shows: order, membership, names, marks. Rows show the rest themselves. */
 export function groupsSignature(g: SidebarGroups): string {
-  let sig = `P${g.pinnedMix ?? ''}${g.pinnedMajor ?? ''}:${idsOf(g.pinned)}`;
-  for (const p of g.projects) sig += `\n${p.key}|${p.name}|${p.path}|${p.pinned ? 1 : 0}|${p.mix ?? ''}${p.major ?? ''}|${p.attention ?? ''}|${idsOf(p.sessions)}|${idsOf(p.archived)}`;
+  let sig = `P${g.pinnedMix ?? ''}:${idsOf(g.pinned)}`;
+  for (const p of g.projects) sig += `\n${p.key}|${p.name}|${p.path}|${p.pinned ? 1 : 0}|${p.mix ?? ''}|${p.attention ?? ''}|${idsOf(p.sessions)}|${idsOf(p.archived)}`;
   return sig;
 }
 
@@ -159,7 +142,7 @@ export function createGroupsSelector() {
   let seenProjects: Project[] | undefined;
   let seenSort: FolderOrder | undefined;
   let sig = '';
-  let groups: SidebarGroups = { pinned: [], pinnedMix: undefined, pinnedMajor: undefined, projects: [] };
+  let groups: SidebarGroups = { pinned: [], pinnedMix: undefined, projects: [] };
   return (s: { sessions: Record<string, SessionMeta>; projects: Project[]; settings?: { folderOrder?: FolderOrder } }): SidebarGroups => {
     const sort = s.settings?.folderOrder ?? 'manual';
     if (s.sessions === seenSessions && s.projects === seenProjects && sort === seenSort) return groups;

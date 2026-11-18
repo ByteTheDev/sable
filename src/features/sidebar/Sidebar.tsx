@@ -1,7 +1,7 @@
-import { memo, useCallback, useEffect, useMemo, useState, type ComponentType, type DragEvent, type FocusEvent, type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type DragEvent, type FocusEvent, type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { ContextMenu as RC, DropdownMenu as RM } from 'radix-ui';
-import type { ProviderId, SessionMeta } from '@shared/protocol';
+import type { SessionMeta } from '@shared/protocol';
 import { LogoMark, StatusGlyph, Wordmark } from '@/art/Logo';
 import { Icon } from '@/icons';
 import { QuickSwitch } from '@/features/session/QuickSwitch';
@@ -10,14 +10,15 @@ import { dissolve } from '@/lib/dissolve';
 import { useLaggedStore } from '@/lib/lagged';
 import { afterSend } from '@/features/composer/settle';
 import { reducedMotion } from '@/lib/motion';
-import { addFolders, closeSession, goHome, pinProject, removeProject, reorderFolders } from '@/state/actions';
+import { baseName } from '@/lib/format';
+import { addFolders, closeSession, goHome, pinProject, removeProject, renameProject, reorderFolders } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { IconButton, Modal, Tip } from '@/ui';
 import { Flip } from './flip';
 import { nudgeFolder, pressFolder, releaseFolderDrag } from './folder-drag';
 import { SideResize } from './Resize';
 import { createGroupsSelector, idsOf, loadCollapsed, pathKey, saveCollapsed, type Mix, type ProjectGroup } from './groups';
-import { RowContextMenu, SessionRow, SidebarRowContext, setRenaming, type RowCtx } from './SessionRow';
+import { RowContextMenu, SessionRow, SidebarRowContext, holdFocus, onCloseAutoFocus, setRenaming, type RowCtx } from './SessionRow';
 import { SidebarFooter } from './SidebarFooter';
 import './sidebar.css';
 
@@ -186,7 +187,7 @@ function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDiv
                   </span>
                   <span className="sgroup-name">Pinned</span>
                 </div>
-                <SessionList ids={idsOf(groups.pinned)} mix={groups.pinnedMix} major={groups.pinnedMajor} />
+                <SessionList ids={idsOf(groups.pinned)} mix={groups.pinnedMix} />
               </section>
             )}
             {groups.projects.map((g) => (
@@ -271,13 +272,13 @@ function selectActiveKey(s: { ui: { activeSessionId: string | null }; sessions: 
 }
 
 /** Rows by id (a space-joined string, so the list re-renders only when membership or order changes). */
-const SessionList = memo(function SessionList({ ids, mix, major }: { ids: string; mix: Mix; major?: ProviderId }) {
+const SessionList = memo(function SessionList({ ids, mix }: { ids: string; mix: Mix }) {
   // Rows that arrive after the first paint animate in; the first paint does not.
   const [drawnAt] = useState(() => performance.now());
   const enter = performance.now() - drawnAt > 400;
   return (
     <Flip order={ids} className="srows" role="list">
-      {ids ? ids.split(' ').map((id) => <SessionRow key={id} id={id} enter={enter} mix={mix} major={major} />) : null}
+      {ids ? ids.split(' ').map((id) => <SessionRow key={id} id={id} enter={enter} mix={mix} />) : null}
     </Flip>
   );
 });
@@ -298,7 +299,6 @@ const sameGroup = (a: ProjectGroup, b: ProjectGroup) =>
     a.path === b.path &&
     a.pinned === b.pinned &&
     a.mix === b.mix &&
-    a.major === b.major &&
     a.attention === b.attention &&
     idsOf(a.sessions) === idsOf(b.sessions) &&
     idsOf(a.archived) === idsOf(b.archived));
@@ -307,6 +307,8 @@ const sameSection = (a: SectionProps, b: SectionProps) => a.collapsed === b.coll
 const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle, current }: SectionProps) {
   const [showArchived, setShowArchived] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenamingFolder] = useState(false);
+  const rename = useCallback(() => setRenamingFolder(true), []);
   const hasSessions = group.sessions.length > 0 || group.archived.length > 0;
   const open = hasSessions && !collapsed;
   const ids = idsOf(group.sessions);
@@ -315,43 +317,67 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
     <section className="sgroup" data-flip={group.key} data-folder={group.key} data-pinned={group.pinned || undefined} aria-label={group.name}>
       <RC.Root>
         <RC.Trigger asChild>
-          <div className="sgroup-head" data-collapsed={!open || undefined} data-current={current || undefined} data-menu={menuOpen || undefined}>
-            <button
-              type="button"
-              className="sgroup-toggle"
-              data-nav
-              data-folder={group.key}
-              tabIndex={-1}
-              aria-expanded={hasSessions ? open : undefined}
-              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-              title={group.path}
-              onClick={() => (hasSessions ? onToggle(group.key) : goHome(group.path))}
-              onPointerDown={(e) => pressFolder(e, group.key, moveFolders)}
-              onKeyDown={(e) => {
-                if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
-                e.preventDefault();
-                e.stopPropagation();
-                nudge(group, e.key === 'ArrowUp' ? -1 : 1);
-              }}
-            >
-              <span className="sgroup-icon">
-                <Icon name={open ? 'folder-open' : 'folder'} size={15} />
-              </span>
-              <span className="sgroup-name truncate">{group.name}</span>
-              {collapsed && hasSessions && (
-                <span className="sgroup-end">
-                  {group.attention ? <StatusGlyph tone={group.attention} /> : <span className="sgroup-count num">{group.sessions.length || ''}</span>}
+          <div className="sgroup-head" data-collapsed={!open || undefined} data-current={current || undefined} data-menu={menuOpen || undefined} data-renaming={renaming || undefined}>
+            {renaming ? (
+              <div className="sgroup-toggle">
+                <span className="sgroup-icon">
+                  <Icon name={open ? 'folder-open' : 'folder'} size={15} />
                 </span>
-              )}
-            </button>
+                <FolderRename group={group} onDone={() => setRenamingFolder(false)} />
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="sgroup-toggle"
+                data-nav
+                data-folder={group.key}
+                tabIndex={-1}
+                aria-expanded={hasSessions ? open : undefined}
+                aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown F2"
+                title={group.path}
+                onClick={(e) => {
+                  // The second click of a double-click on the name renames: it takes back the first one's toggle.
+                  if (e.detail === 2 && (e.target as HTMLElement).closest('.sgroup-name')) {
+                    if (hasSessions) onToggle(group.key);
+                    rename();
+                    return;
+                  }
+                  if (e.detail > 2) return;
+                  if (hasSessions) onToggle(group.key);
+                  else goHome(group.path);
+                }}
+                onPointerDown={(e) => pressFolder(e, group.key, moveFolders)}
+                onKeyDown={(e) => {
+                  if (e.key === 'F2') {
+                    e.preventDefault();
+                    rename();
+                    return;
+                  }
+                  if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  nudge(group, e.key === 'ArrowUp' ? -1 : 1);
+                }}
+              >
+                <span className="sgroup-icon">
+                  <Icon name={open ? 'folder-open' : 'folder'} size={15} />
+                </span>
+                <span className="sgroup-name truncate">{group.name}</span>
+                {collapsed && hasSessions && (
+                  <span className="sgroup-end">
+                    {group.attention ? <StatusGlyph tone={group.attention} /> : <span className="sgroup-count num">{group.sessions.length || ''}</span>}
+                  </span>
+                )}
+              </button>
+            )}
             <span className="sgroup-tools">
               <RM.Root modal={false} open={menuOpen} onOpenChange={setMenuOpen}>
                 <RM.Trigger className="sgroup-tool" tabIndex={-1} aria-label={`Actions for ${group.name}`}>
                   <Icon name="dots" size={15} />
                 </RM.Trigger>
                 <RM.Portal>
-                  <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 220 }}>
-                    <ProjectItems group={group} hasSessions={hasSessions} Item={RM.Item} Separator={RM.Separator} />
+                  <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 220 }} onCloseAutoFocus={onCloseAutoFocus}>
+                    <ProjectItems group={group} onRename={rename} Item={RM.Item} Separator={RM.Separator} />
                   </RM.Content>
                 </RM.Portal>
               </RM.Root>
@@ -364,8 +390,8 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
           </div>
         </RC.Trigger>
         <RC.Portal>
-          <RC.Content className="pop" collisionPadding={10} style={{ minWidth: 220 }}>
-            <ProjectItems group={group} hasSessions={hasSessions} Item={RC.Item} Separator={RC.Separator} />
+          <RC.Content className="pop" collisionPadding={10} style={{ minWidth: 220 }} onCloseAutoFocus={onCloseAutoFocus}>
+            <ProjectItems group={group} onRename={rename} Item={RC.Item} Separator={RC.Separator} />
           </RC.Content>
         </RC.Portal>
       </RC.Root>
@@ -380,7 +406,7 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
             exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
             transition={{ height: { duration: 0.26, ease: EASE }, opacity: { duration: 0.18, ease: EASE } }}
           >
-            <SessionList ids={ids} mix={group.mix} major={group.major} />
+            <SessionList ids={ids} mix={group.mix} />
             {group.archived.length > 0 && (
               <>
                 <button type="button" className="sarchived" data-nav tabIndex={-1} aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>
@@ -416,12 +442,16 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
 type MenuItemPart = ComponentType<{ className?: string; disabled?: boolean; onSelect?: () => void; children?: ReactNode }>;
 
 /** The project header's actions, shared by its "…" menu and its context menu. */
-function ProjectItems({ group, hasSessions, Item, Separator }: { group: ProjectGroup; hasSessions: boolean; Item: MenuItemPart; Separator: ComponentType<{ className?: string }> }) {
+function ProjectItems({ group, onRename, Item, Separator }: { group: ProjectGroup; onRename: () => void; Item: MenuItemPart; Separator: ComponentType<{ className?: string }> }) {
   return (
     <>
       <Item className="menu-item" onSelect={() => goHome(group.path)}>
         <Icon name="compose" size={16} />
         <span className="grow">New session here</span>
+      </Item>
+      <Item className="menu-item" onSelect={holdFocus(onRename)}>
+        <Icon name="pencil" size={16} />
+        <span className="grow">Rename</span>
       </Item>
       <Item className="menu-item" onSelect={() => void pinProject(group.path, !group.pinned)}>
         <Icon name={group.pinned ? 'pin-off' : 'pin'} size={16} />
@@ -438,6 +468,59 @@ function ProjectItems({ group, hasSessions, Item, Separator }: { group: ProjectG
         <span className="grow">Remove from sidebar</span>
       </Item>
     </>
+  );
+}
+
+/**
+ * The folder's name in place, as a field: Enter or leaving it keeps the name, Escape keeps the old
+ * one, and an empty field gives the folder its own name back (the placeholder shows it). Only
+ * Sable's name for the folder changes; the folder on disk keeps its own.
+ */
+function FolderRename({ group, onDone }: { group: ProjectGroup; onDone: () => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [value, setValue] = useState(group.name);
+  const done = useRef(false);
+  const own = baseName(group.path) || group.path;
+
+  useEffect(() => {
+    // After a menu has finished closing, so focus lands here and stays.
+    const t = window.setTimeout(() => {
+      ref.current?.focus();
+      ref.current?.select();
+    }, 20);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  const commit = (save: boolean) => {
+    if (done.current) return;
+    done.current = true;
+    const name = value.replace(/\s+/g, ' ').trim();
+    if (save && name !== group.name && (name || group.name !== own)) void renameProject(group.path, name);
+    onDone();
+    // Back to the folder, so the keys carry on from where they were.
+    if (ref.current === document.activeElement)
+      requestAnimationFrame(() => document.querySelector<HTMLElement>(`.sgroup-toggle[data-folder="${CSS.escape(group.key)}"]`)?.focus());
+  };
+
+  return (
+    <input
+      ref={ref}
+      className="sgroup-rename"
+      value={value}
+      placeholder={own}
+      aria-label="Folder name"
+      spellCheck={false}
+      onChange={(e) => setValue(e.target.value)}
+      // The header's own menu and drag stay out of the way: the field keeps the native menu (paste).
+      onContextMenu={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') commit(true);
+        else if (e.key === 'Escape') commit(false);
+      }}
+      onBlur={() => commit(true)}
+    />
   );
 }
 
