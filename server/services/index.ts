@@ -1,6 +1,7 @@
 import type { App } from '../app';
 import { registerBackdrop } from './backdrop';
 import { registerConfig } from './config';
+import { registerFiles } from './files';
 import { registerFs } from './fs';
 import { registerGit } from './git';
 import { registerMemory } from './memory';
@@ -15,6 +16,7 @@ export interface ServiceOptions {
 /** Registers workspace services (files, git, terminal, memory) on the app. */
 export function registerServices(app: App, opts: ServiceOptions = {}) {
   registerFs(app, { home: opts.userHome });
+  registerFiles(app);
   registerGit(app);
   registerTerm(app);
   registerMemory(app, { home: opts.userHome });

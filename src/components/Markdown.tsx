@@ -1,6 +1,7 @@
 import { memo, useRef, type ReactNode } from 'react';
 import type { Token, Tokens } from 'marked';
 import { Icon } from '@/icons';
+import { FileProse, FileWord } from '@/lib/file-links';
 import { onLinkClick } from '@/lib/links';
 import { PENDING_HREF, lexBlocks, repairTail, type LexState } from '@/lib/md';
 import { FenceWidget, MermaidBlock, WIDGET_FENCE } from '@/features/genui/blocks';
@@ -50,7 +51,8 @@ function inline(tokens: Token[] | undefined, live: boolean, path: string): React
       case 'text': {
         const tt = t as Tokens.Text;
         if (tt.tokens?.length) return inline(tt.tokens, live, `${key}.`);
-        return decode(tt.text);
+        // Settled prose: files it names become links (when the answer knows of any).
+        return live ? decode(tt.text) : <FileProse key={key} text={decode(tt.text)} />;
       }
       case 'escape':
         return decode((t as Tokens.Escape).text);
@@ -60,12 +62,18 @@ function inline(tokens: Token[] | undefined, live: boolean, path: string): React
         return <em key={key}>{inline((t as Tokens.Em).tokens, live, `${key}.`)}</em>;
       case 'del':
         return <del key={key}>{inline((t as Tokens.Del).tokens, live, `${key}.`)}</del>;
-      case 'codespan':
-        return (
+      case 'codespan': {
+        const text = decode((t as Tokens.Codespan).text);
+        return live ? (
           <code key={key} className="md-code">
-            {decode((t as Tokens.Codespan).text)}
+            {text}
           </code>
+        ) : (
+          <FileWord key={key} word={text} code>
+            {text}
+          </FileWord>
         );
+      }
       case 'br':
         return <br key={key} />;
       case 'link': {

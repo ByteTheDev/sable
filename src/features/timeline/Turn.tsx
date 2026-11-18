@@ -84,13 +84,13 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
         </div>
       )}
       <div className="turn-line">
+        {/* One page: "Preview" and its address. Several: each named by its address alone. */}
         {previews.map((p) => (
           <LazyTip key={p.url} label={`Opens in the Browser tab. ${isMac ? 'Cmd' : 'Ctrl'}+click opens your browser`} side="top">
             <button type="button" className="preview-btn" onClick={(e) => openPreview(p.url, e.ctrlKey || e.metaKey)} aria-label={`Preview ${p.label}`}>
-              <span className="preview-dot" aria-hidden />
-              <span className="preview-name">Preview</span>
-              <span className="preview-host num">{p.label}</span>
-              <Icon name="arrow-right" size={11} className="preview-arrow" />
+              <Icon name="browser" size={14} className="preview-icon" />
+              {previews.length === 1 && <span className="preview-name">Preview</span>}
+              <span className={previews.length === 1 ? 'preview-host truncate' : 'preview-name truncate'}>{p.label}</span>
             </button>
           </LazyTip>
         ))}

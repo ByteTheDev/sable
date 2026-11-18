@@ -5,6 +5,7 @@ import { Markdown } from '@/components/Markdown';
 import { cachedHeight } from '@/features/genui/near';
 import { WidgetBlock } from '@/features/genui/WidgetBlock';
 import { Icon } from '@/icons';
+import { FileLinksProvider, useResolvedFiles } from '@/lib/file-links';
 import { plural } from '@/lib/format';
 import { useStore } from '@/state/store';
 import { useFresh, useItem, useTimeline } from './ctx';
@@ -165,7 +166,14 @@ export const LiveText = memo(function LiveText({ text, streaming, id }: { text: 
     t = window.setTimeout(check, REST_AFTER_MS);
     return () => window.clearTimeout(t);
   }, [live, resting]);
-  return <Markdown text={live ? steadyTail(text.slice(0, len)) : text} streaming={live} head={live ? (resting ? 'rest' : 'live') : leaving ? 'out' : undefined} />;
+  // Once settled, the files the answer names become links.
+  const { cwd } = useTimeline();
+  const files = useResolvedFiles(text, cwd || undefined, !live);
+  return (
+    <FileLinksProvider value={files}>
+      <Markdown text={live ? steadyTail(text.slice(0, len)) : text} streaming={live} head={live ? (resting ? 'rest' : 'live') : leaving ? 'out' : undefined} />
+    </FileLinksProvider>
+  );
 });
 
 /** One item, subscribed to itself only. `answer`: the reply a turn segment ends with. */

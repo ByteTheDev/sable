@@ -1845,62 +1845,70 @@ button:hover > .row-caret {
   margin-bottom: 10px;
 }
 
-/* Preview: the one clear control under an answer. Ink one step up, light on the edge as you near it. */
+/* Preview: a quiet control under an answer, one fill step with an almost invisible hairline, like
+   any button. The page's address names it; one page also says "Preview" ahead of the address. */
 .preview-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
+  max-width: 280px;
   height: 28px;
-  padding: 0 10px 0 10px;
-  border: 1px solid var(--line-2);
+  padding: 0 11px 0 9px;
+  border: 0;
   border-radius: var(--r-sm);
-  font-size: 12.5px;
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
   color: var(--text);
-  background-color: var(--panel-2);
+  background-color: var(--fill-1);
   transition:
     background-color var(--d-1) var(--ease),
     scale var(--d-2) var(--spring);
 }
 
 .preview-btn:hover {
-  border-color: var(--line-3);
-  background-color: var(--panel-3);
+  background-color: var(--fill-2);
 }
 
 .preview-btn:active {
-  background-color: var(--panel-4);
+  background-color: var(--fill-3);
   scale: var(--press);
   transition-duration: var(--d-1), 70ms;
 }
 
-.preview-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+.preview-btn:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+.preview-icon {
   flex-shrink: 0;
-  background-color: var(--text-2);
+  color: var(--text-2);
+  transition: color 90ms var(--ease);
+}
+
+.preview-btn:hover .preview-icon {
+  color: var(--text);
+}
+
+.preview-name {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.preview-name.truncate {
+  flex-shrink: 1;
 }
 
 .preview-host {
-  font-size: 12px;
+  min-width: 0;
+  font-weight: var(--w-regular);
   color: var(--text-3);
   transition: color 90ms var(--ease);
 }
 
 .preview-btn:hover .preview-host {
   color: var(--text-2);
-}
-
-.preview-arrow {
-  color: var(--text-3);
-  transition:
-    transform 120ms var(--ease-out),
-    color 90ms var(--ease);
-}
-
-.preview-btn:hover .preview-arrow {
-  color: var(--text);
-  transform: translateX(2px);
 }
 
 /* ───────────── the working line (before a turn has a message to hang from) ───────────── */

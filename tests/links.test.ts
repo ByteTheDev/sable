@@ -27,12 +27,16 @@ describe('previewTargets', () => {
     expect(out).toEqual([
       { url: 'http://localhost:5173/', label: 'localhost:5173' },
       { url: 'http://localhost:3000/', label: 'localhost:3000' },
-      { url: 'http://[::1]:8080/x', label: '[::1]:8080' },
+      { url: 'http://[::1]:8080/x', label: 'localhost:8080/x' },
     ]);
     expect(previewTargets(['http://127.0.0.1:4000).', 'http://shop.localhost/cart'], 5)).toEqual([
-      { url: 'http://127.0.0.1:4000/', label: '127.0.0.1:4000' },
-      { url: 'http://shop.localhost/cart', label: 'shop.localhost' },
+      { url: 'http://127.0.0.1:4000/', label: 'localhost:4000' },
+      { url: 'http://shop.localhost/cart', label: 'shop.localhost/cart' },
     ]);
+  });
+
+  it('counts localhost and 127.0.0.1 on one port as one page', () => {
+    expect(previewTargets(['Open http://localhost:5176/', 'Server at http://127.0.0.1:5176/'])).toEqual([{ url: 'http://localhost:5176/', label: 'localhost:5176' }]);
   });
 
   it('ignores remote and portless addresses', () => {

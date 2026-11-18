@@ -146,6 +146,31 @@
   background: var(--fill-4);
 }
 
+/* A file the answer names (lib/file-links.tsx): in prose a dotted underline, as a code chip the
+   firmer ring of a linked chip. Click previews it, Ctrl+click opens it. */
+a.md-file {
+  cursor: pointer;
+}
+
+a.md-link.md-file {
+  text-decoration-style: dotted;
+}
+
+a.md-code.md-file {
+  text-decoration: none;
+  box-shadow: inset 0 0 0 1px var(--line-3);
+  transition: background-color var(--d-1) var(--ease);
+}
+
+a.md-code.md-file:hover {
+  background: var(--fill-4);
+}
+
+a.md-file:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
 .md-img {
   display: inline-block;
   max-width: 100%;

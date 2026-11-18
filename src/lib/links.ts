@@ -15,6 +15,12 @@ export function isLocalHost(hostname: string): boolean {
   return h === 'localhost' || h.endsWith('.localhost') || h === '[::1]' || h === '::1' || /^127(\.\d{1,3}){3}$/.test(h);
 }
 
+/** The names of this machine's own loopback address (not *.localhost, which can be another site). */
+const loopback = (hostname: string) => {
+  const h = hostname.toLowerCase();
+  return h === 'localhost' || h === '[::1]' || h === '::1' || h === '0.0.0.0' || /^127(\.\d{1,3}){3}$/.test(h);
+};
+
 /** An http(s) URL that points at this machine. */
 export function isLocalUrl(url: string): boolean {
   try {
@@ -146,9 +152,12 @@ export function previewTargets(texts: readonly (string | undefined)[], max = 3):
       }
       if (!u.port && !u.hostname.endsWith('.localhost')) continue;
       raw = u.href;
-      if (seen.has(u.host)) continue;
-      seen.add(u.host);
-      out.push({ url: raw, label: u.host });
+      // localhost, 127.0.0.1 and [::1] are the same server: one control, named localhost.
+      const host = loopback(u.hostname) ? `localhost${u.port ? `:${u.port}` : ''}` : u.host;
+      if (seen.has(host)) continue;
+      seen.add(host);
+      const path = decode(u.pathname).replace(/\/+$/, '');
+      out.push({ url: raw, label: path ? `${host}${path}` : host });
       if (out.length >= max) return out;
     }
   }

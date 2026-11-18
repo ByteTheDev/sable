@@ -1146,6 +1146,12 @@ export interface RpcMethods {
   'fs.list': { params: { path: string }; result: { path: string; parent: string | null; entries: DirEntry[] } };
   'fs.read': { params: { path: string; maxBytes?: number }; result: { path: string; content: string; truncated: boolean; size: number; binary: boolean } };
   'fs.search': { params: { cwd: string; query: string; limit?: number }; result: { path: string; rel: string; dir: boolean }[] };
+  /** Which of `names` (file-like words from an answer) are files: as a path from `cwd`, else by a clear name match inside it. Maps each found name to its absolute path. */
+  'fs.resolve': { params: { cwd: string; names: string[] }; result: Record<string, string> };
+  /** A URL for the Browser tab that shows the file (served apart from the app, its folder or `root` shared under a random token). */
+  'fs.share': { params: { path: string; root?: string }; result: { url: string } };
+  /** Opens the file with the system's default app, or with `reveal` shows it in the file manager. */
+  'fs.open': { params: { path: string; reveal?: boolean }; result: { ok: boolean } };
   'fs.roots': { params: Record<string, never>; result: { roots: DirEntry[]; home: string } };
 
   'git.status': { params: { cwd: string }; result: GitStatus };
