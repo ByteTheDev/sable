@@ -40,6 +40,7 @@ import type {
   TimelineItem,
   Todo,
   ToolItem,
+  WorkflowRun,
   AgentStats,
   TurnItem,
   UserItem,
@@ -47,7 +48,7 @@ import type {
 import type { SessionRuntime } from '../core/runtime';
 import { claudeForkPoint, cutAt } from '../core/fork';
 import { killTree, runCli, spawnCli } from '../util/proc';
-import { baseName, describeTool, flattenContent, mapResult, normalizeTodos, peekPartialInput, previewDiff } from './claude-tools';
+import { baseName, describeTool, flattenContent, mapResult, mergeWorkflow, normalizeTodos, peekPartialInput, previewDiff, workflowStart } from './claude-tools';
 import type { Provider, ProviderContext, ProviderSession, WarmChoice } from './types';
 import { claudePlan } from './plans';
 import { carryClaudeConversation } from '../accounts/handover';
@@ -625,6 +626,13 @@ export class ClaudeProvider implements Provider {
     if (!rejected) return undefined;
     const row = type ? rows.get(rowId(type)) : undefined;
     return { resetsAt: row?.resetsAt ?? epochMs(info.resetsAt), window: row?.label };
+  }
+
+  /** The reset of a window as last known, by its row label ("Weekly · Fable"). */
+  windowReset(label: string): number | undefined {
+    const want = label.toLowerCase();
+    const row = this.limitsCache.find((l) => l.label.toLowerCase() === want);
+    return row?.resetsAt && row.resetsAt > Date.now() ? row.resetsAt : undefined;
   }
 
   /**
@@ -1460,6 +1468,7 @@ class ClaudeSession implements ProviderSession {
     const patch: Partial<ToolItem> = { input, title: view.title, detail: view.detail, kind: view.kind, inputText: undefined };
     if (item.status === 'pending') patch.status = 'running';
     if ((name === 'Edit' || name === 'Write') && !item.result) patch.result = { diff: previewDiff(name, input) };
+    if (name === 'Workflow' && !item.workflow) patch.workflow = workflowStart(input);
     rt.patch<ToolItem>(id, patch);
     if (name === 'TodoWrite') rt.setTodos(normalizeTodos(input.todos));
     if (!item.parentId) rt.update({ activity: view.title });
@@ -1546,6 +1555,11 @@ class ClaudeSession implements ProviderSession {
       // Keep answers / preview diff when the result itself carries less.
       const merged = { ...item.result, ...result, diff: result.diff ?? item.result?.diff, answers: result.answers ?? item.result?.answers };
       if (status === 'denied') merged.diff = item.result?.diff;
+      const limit = merged.agent?.limit;
+      if (limit && !limit.resetsAt) {
+        const resetsAt = this.provider.windowReset(limit.window) ?? (this.limitHit?.window === limit.window ? this.limitHit.resetsAt : undefined);
+        if (resetsAt) merged.agent = { ...merged.agent, limit: { ...limit, resetsAt } };
+      }
       rt.patch<ToolItem>(item.id, { status, result: merged, endedAt: Date.now() });
       this.trackTasks(item, m.tool_use_result);
     }
@@ -1572,8 +1586,20 @@ class ClaudeSession implements ProviderSession {
     this.rt.setTodos([...this.tasks.values()]);
   }
 
+  /** Messages the CLI has answered for (`uuids`, or all sent so far): taken, even when no replay said so. */
+  private takeUsers(uuids?: readonly unknown[]) {
+    for (const uuid of uuids ?? [...this.pendingUsers.keys()]) {
+      const itemId = typeof uuid === 'string' ? this.pendingUsers.get(uuid) : undefined;
+      if (!itemId) continue;
+      this.pendingUsers.delete(uuid as string);
+      if (this.rt.get<UserItem>(itemId)?.state === 'queued') this.rt.taken(itemId);
+    }
+  }
+
   private onResult(m: Obj) {
     const rt = this.rt;
+    // The messages this result answers for (a steer folded into the turn is one of them).
+    if (Array.isArray(m.user_message_uuids)) this.takeUsers(m.user_message_uuids);
     const merged = Array.isArray(m.user_message_uuids) ? m.user_message_uuids.length : 1;
     this.outstanding = Math.max(0, this.outstanding - Math.max(1, merged));
     const total = Number(m.total_cost_usd ?? 0);
@@ -1631,6 +1657,9 @@ class ClaudeSession implements ProviderSession {
     this.limitNoticeId = undefined;
     rt.settle(interrupted ? 'cancelled' : error ? 'error' : 'cancelled');
     if (interrupted) rt.notice('interrupted', 'Interrupted');
+    // Every message sent has had its result: a steer whose replay never came (or came under
+    // another uuid) was taken all the same. After an interrupt the bridge takes untaken ones back.
+    else this.takeUsers();
     rt.endTurn(error);
     this.scheduleIdleClose();
     if (this.restartPending) setTimeout(() => !this.rt.turnActive && this.restartPending && this.restart(), 0);
@@ -1686,6 +1715,10 @@ class ClaudeSession implements ProviderSession {
       }
       case 'task_progress': {
         const item = m.tool_use_id ? rt.get<ToolItem>(m.tool_use_id) : undefined;
+        if (item?.workflow) {
+          rt.patch<ToolItem>(item.id, { workflow: workflowProgress(item.workflow, m) });
+          break;
+        }
         if (item && m.summary) rt.patch<ToolItem>(item.id, { output: String(m.summary) });
         // A background sub-agent has its (placeholder) result already: its figures keep counting on it.
         if (item?.kind === 'agent' && item.result?.agent?.background === 'running') {
@@ -1697,13 +1730,23 @@ class ClaudeSession implements ProviderSession {
         // Every live background task (replace, not merge): the process is kept open while any runs.
         this.liveTasks = new Set(((m.tasks as Obj[] | undefined) ?? []).map((t) => String(t.task_id)));
         break;
-      case 'task_started':
+      case 'task_started': {
         if (m.task_id) this.liveTasks.add(String(m.task_id));
+        const item = m.tool_use_id ? rt.get<ToolItem>(m.tool_use_id) : undefined;
+        if (item?.workflow && m.workflow_name && !item.workflow.name) rt.patch<ToolItem>(item.id, { workflow: { ...item.workflow, name: String(m.workflow_name) } });
         break;
+      }
       case 'task_notification': {
         if (m.task_id) this.liveTasks.delete(String(m.task_id));
         // How a sub-agent ended, with its own figures. For one started in the background this is the only word of it.
         const item = m.tool_use_id ? rt.get<ToolItem>(m.tool_use_id) : undefined;
+        if (item?.workflow) {
+          const run = workflowProgress(item.workflow, m);
+          run.status = m.status === 'completed' ? 'done' : m.status === 'failed' ? 'failed' : 'stopped';
+          if (typeof m.usage?.duration_ms === 'number') run.durationMs = m.usage.duration_ms;
+          delete run.limitWait;
+          rt.patch<ToolItem>(item.id, { workflow: run });
+        }
         if (item?.kind !== 'agent' || !item.result) break;
         const agent = { ...item.result.agent, ...taskFigures(m.usage) };
         if (agent.background) agent.background = m.status === 'completed' ? 'done' : m.status === 'failed' ? 'failed' : 'stopped';
@@ -1765,6 +1808,7 @@ class ClaudeSession implements ProviderSession {
             const view = describeTool(b.name, input);
             const t = push({ id: b.id, type: 'tool', name: b.name, ...view, input, status: 'done', parentId }) as ToolItem;
             if (b.name === 'Edit' || b.name === 'Write') t.result = { diff: previewDiff(b.name, input) };
+            if (b.name === 'Workflow') t.workflow = { ...workflowStart(input), status: 'done' };
             tools.set(b.id, t);
           }
         }
@@ -1868,6 +1912,24 @@ function resultLabel(subtype?: string): string {
 function fmtTokens(n?: number) {
   if (!n) return '0';
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n);
+}
+
+/**
+ * A workflow's task_progress or task_notification folded into its run: the CLI's rows (phases and
+ * agents), its totals, and whether it waits for a plan limit to reset.
+ */
+export function workflowProgress(run: WorkflowRun, m: Obj): WorkflowRun {
+  const next = mergeWorkflow(run, m.workflow_progress);
+  const u = (m.usage ?? {}) as Obj;
+  const out: WorkflowRun = { ...next };
+  if (typeof u.total_tokens === 'number') out.tokens = u.total_tokens;
+  if (typeof u.tool_uses === 'number') out.steps = u.tool_uses;
+  const wait = m.usage_limit_wait as Obj | undefined;
+  if (wait && typeof wait === 'object') {
+    const at = Number(wait.resets_at ?? wait.resetsAt ?? wait.resume_at_ms ?? wait.resumeAtMs);
+    out.limitWait = Number.isFinite(at) && at > 0 ? { resetsAt: at < 1e12 ? at * 1000 : at } : {};
+  } else if (m.subtype === 'task_progress') delete out.limitWait;
+  return out;
 }
 
 /** The figures a task event carries (`usage` of task_progress and task_notification), only those it has. */

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { DropdownMenu as RM } from 'radix-ui';
-import type { Attachment } from '@shared/protocol';
+import type { Attachment, BrowserConsoleLine } from '@shared/protocol';
 import { Icon, type IconName } from '@/icons';
 import { addressParts, isLocalUrl, normalizeAddress, willSearch } from '@/lib/links';
 import * as actions from '@/state/actions';
@@ -10,15 +10,69 @@ import { useStore } from '@/state/store';
 import { IconButton, Kbd, Menu, MenuContent, MenuItem, MenuSep, MenuTrigger, Spinner, Tip } from '@/ui';
 import { readScript, registerPage } from './browser-agent';
 import { parseKey, pickCancelScript, pickScript, type Picked } from './browser-scripts';
-import { DEVICES, forgetVisit, getLog, getPage, logFailed, logLine, noteVisit, pushHistory, resetLog, setPage, stepHistory, touchVisit, useLogVersion, usePage, usePreviews, useRecent, type AgentWork, type Device, type FeedEntry } from './browser-store';
+import {
+  activeTab,
+  closeTab,
+  DEVICES,
+  failedDropped,
+  flushSoon,
+  forgetVisit,
+  getLog,
+  getPage,
+  getTabs,
+  logDropped,
+  logFailed,
+  logLine,
+  moveTab,
+  noteVisit,
+  openTab,
+  pushHistory,
+  reopenTab,
+  resetLog,
+  selectTab,
+  setPage,
+  setPageSoon,
+  SOON_MS,
+  stepHistory,
+  TABS_MAX,
+  touchVisit,
+  useLogVersion,
+  usePage,
+  usePreviews,
+  useRecent,
+  useTabs,
+  type AgentWork,
+  type Device,
+  type FeedEntry,
+} from './browser-store';
 import './browser.css';
 
 /**
- * The panel's Browser tab: the page an agent is building, next to the conversation. A real browser
- * view (<webview>) in the desktop app, a sandboxed frame in the web build. A toolbar (history,
- * reload or stop, the address, a menu), a progress line, and states of its own: a start view,
- * a failed load, a crashed page. The page can be checked at tablet and phone width.
+ * The panel's Browser tab: the pages an agent is building, next to the conversation. Several pages
+ * in tabs, each a real browser view (<webview>) in the desktop app, a sandboxed frame in the web
+ * build. A tab strip, a toolbar (history, reload or stop, the address, a menu), a progress line,
+ * and states of its own: a start view, a failed load, a page that hangs or crashed. The page can be
+ * checked at tablet and phone width.
+ *
+ * A heavy page must never slow the app: the app never waits on a page without a time limit, what
+ * a page reports many times a second is gathered and applied a few times a second, its console and
+ * failed requests arrive from the shell in capped batches, and only the page in front runs at full
+ * speed (the shell mutes and slows down the others).
  */
+
+interface BrowserEvent {
+  type: string;
+  name?: string;
+  id?: number;
+  url?: string;
+  method?: string;
+  status?: number;
+  error?: string;
+  key?: string;
+  on?: boolean;
+  count?: number;
+  lines?: { level: string; text: string; source?: string }[];
+}
 
 interface DesktopApi {
   platform: string;
@@ -26,7 +80,9 @@ interface DesktopApi {
   browser?: {
     capture(webContentsId: number, opts?: { forAgent?: boolean }): Promise<string>;
     clearData(): Promise<void>;
-    onEvent(cb: (e: { type: string; name?: string; id?: number; url?: string; method?: string; status?: number; error?: string }) => void): () => void;
+    /** Missing on older shells. */
+    setShown?(webContentsId: number, shown: boolean): void;
+    onEvent(cb: (e: BrowserEvent) => void): () => void;
   };
 }
 
@@ -53,8 +109,33 @@ interface WebviewEl extends HTMLElement {
   sendInputEvent?(event: { type: 'keyDown' | 'keyUp' | 'char'; keyCode: string; modifiers?: string[] }): Promise<void> | void;
 }
 
+/** One tab's page view in the desktop app. */
+interface View {
+  tabId: string;
+  el: WebviewEl;
+  /** The page's view is attached and its document started: calls into it can be made. */
+  ready: boolean;
+  /** The guest's webContents id, once attached (events from the shell carry it). */
+  wcId: number;
+  /** What the shell was last told: in front or not. */
+  shown?: boolean;
+  /** Reload after a hang: the old process's crash report that follows must not show. */
+  restarting?: boolean;
+  navTimer?: ReturnType<typeof setTimeout>;
+  visitTimer?: ReturnType<typeof setTimeout>;
+  unregister: () => void;
+}
+
 /** Key names as the shell's input events spell them. */
 const INPUT_KEY: Record<string, string> = { ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Escape: 'Escape', ' ': 'Space' };
+
+/** How long the app waits on a page for anything before it gives up (a page can hang). */
+const PAGE_MS = 10_000;
+
+function within<T>(p: Promise<T>, ms = PAGE_MS): Promise<T> {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([p, new Promise<T>((_, no) => (t = setTimeout(() => no(new Error('The page did not answer in time.')), ms)))]).finally(() => clearTimeout(t));
+}
 
 type WebviewEvent = Event & {
   url?: string;
@@ -65,11 +146,6 @@ type WebviewEvent = Event & {
   errorDescription?: string;
   validatedURL?: string;
   result?: { activeMatchOrdinal: number; matches: number };
-  /** console-message: a number (0 verbose … 3 error) in older shells, a word in newer ones. */
-  level?: number | string;
-  message?: string;
-  line?: number;
-  sourceId?: string;
 };
 
 /** Chromium's zoom steps. */
@@ -96,6 +172,11 @@ function failure(code: number | undefined, url: string): string {
   return `${host} did not load`;
 }
 
+/** A console level from the shell, in the log's words. */
+function levelOf(lv: string): BrowserConsoleLine['level'] {
+  return lv === 'error' ? 'error' : lv === 'warning' ? 'warning' : lv === 'debug' || lv === 'verbose' ? 'debug' : lv === 'info' ? 'info' : 'log';
+}
+
 const desktop = (window as { sableDesktop?: DesktopApi }).sableDesktop;
 const native = !!desktop?.browser;
 const PARTITION = 'persist:sable-browser';
@@ -119,116 +200,183 @@ const isAppOrigin = (url: string) => {
 const dataUrlBytes = (url: string) => Math.round(((url.length - url.indexOf(',') - 1) * 3) / 4);
 
 export function BrowserTab({ sessionId, active }: { sessionId: string; active: boolean }) {
-  const page = usePage(sessionId);
+  const tabs = useTabs(sessionId);
+  const tabId = tabs.active;
+  const page = usePage(tabId);
   const host = useRef<HTMLDivElement>(null);
-  const view = useRef<WebviewEl | null>(null);
-  const ready = useRef(false);
-  const unregister = useRef<(() => void) | null>(null);
+  const views = useRef(new Map<string, View>());
   const input = useRef<HTMLInputElement>(null);
   const toast = useStore((s) => s.toast);
   const [finding, setFinding] = useState(false);
   const [found, setFound] = useState<{ active: number; total: number } | null>(null);
 
-  /* ── desktop: one webview per mount, created on the first page ── */
+  /* ── desktop: one webview per tab, created when the tab first shows a page ── */
 
-  const nav = () => {
-    const el = view.current;
-    if (!el || !ready.current) return {};
-    try {
-      return { canBack: el.canGoBack(), canForward: el.canGoForward() };
-    } catch {
-      return {};
+  /** The view of the tab in front, when its page can take calls. */
+  const live = (): View | undefined => {
+    const v = views.current.get(activeTab(sessionId));
+    return v?.ready ? v : undefined;
+  };
+
+  /** Back and forward availability, asked of the shell a few times a second at most (each ask waits on it). */
+  const refreshNav = (v: View) => {
+    if (v.navTimer) return;
+    v.navTimer = setTimeout(() => {
+      v.navTimer = undefined;
+      if (!v.ready) return;
+      try {
+        setPage(v.tabId, { canBack: v.el.canGoBack(), canForward: v.el.canGoForward() });
+      } catch {
+        /* the page went away */
+      }
+    }, SOON_MS);
+  };
+
+  /** The page's title and icon into the recent list, once they settle (it is written to storage). */
+  const noteSoon = (v: View) => {
+    clearTimeout(v.visitTimer);
+    v.visitTimer = setTimeout(() => {
+      const p = getPage(v.tabId);
+      touchVisit(p.url, { title: p.title, ...(p.favicon ? { favicon: p.favicon } : {}) });
+    }, 800);
+  };
+
+  /** Which view is in front: the others are hidden (no painting) and the shell mutes and slows them. */
+  const syncShown = () => {
+    const front = activeTab(sessionId);
+    for (const v of views.current.values()) {
+      const inFront = v.tabId === front;
+      v.el.toggleAttribute('data-hidden', !inFront);
+      const shown = inFront && activeRef.current;
+      if (!v.wcId || v.shown === shown) continue;
+      v.shown = shown;
+      desktop?.browser?.setShown?.(v.wcId, shown);
     }
+  };
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  const dispose = (v: View) => {
+    clearTimeout(v.navTimer);
+    clearTimeout(v.visitTimer);
+    v.unregister();
+    v.ready = false;
+    v.el.remove();
+    views.current.delete(v.tabId);
   };
 
   const ensureView = useCallback(
-    (url: string) => {
-      if (view.current || !host.current) return false;
+    (tid: string, url: string) => {
+      if (views.current.has(tid) || !host.current) return false;
       const el = document.createElement('webview') as WebviewEl;
       el.setAttribute('partition', PARTITION);
       el.setAttribute('src', url);
       // Lets window.open and target=_blank reach the shell, which loads them in this view (never a new window).
       el.setAttribute('allowpopups', '');
       el.className = 'bw-webview';
+      if (tid !== activeTab(sessionId)) el.setAttribute('data-hidden', '');
+      const v: View = { tabId: tid, el, ready: false, wcId: 0, unregister: () => {} };
       const on = (type: string, fn: (e: WebviewEvent) => void) => el.addEventListener(type, fn as EventListener);
+      const learnId = () => {
+        if (v.wcId) return;
+        try {
+          v.wcId = el.getWebContentsId();
+        } catch {
+          /* not attached yet */
+        }
+        if (v.wcId) syncShown();
+      };
+      on('did-attach', learnId);
       on('dom-ready', () => {
-        ready.current = true;
-        let zoom = getPage(sessionId).zoom;
+        v.ready = true;
+        v.restarting = false;
+        learnId();
+        let zoom = getPage(tid).zoom;
         try {
           // Chromium keeps zoom per site: the page tells us what it is now.
           zoom = el.getZoomFactor();
         } catch {
           /* keep ours */
         }
-        setPage(sessionId, { ...nav(), zoom, ...(getPage(sessionId).loading ? { phase: 3 as const } : {}) });
+        setPage(tid, { zoom, ...(getPage(tid).loading ? { phase: 3 as const } : {}) });
+        refreshNav(v);
       });
       // Set by a failed main-frame load: the engine then commits its own error page and reports
       // did-finish-load for it, which must not clear the failure.
       let failed = false;
       on('did-start-loading', () => {
         failed = false;
-        setPage(sessionId, { loading: true, phase: 1, crashed: undefined });
+        setPage(tid, { loading: true, phase: 1, crashed: undefined, flooded: undefined });
       });
-      on('did-stop-loading', () => setPage(sessionId, { loading: false, ...nav() }));
+      on('did-stop-loading', () => {
+        setPage(tid, { loading: false });
+        refreshNav(v);
+      });
       // A failed load keeps its view until a load succeeds, so Retry does not flash the engine's own error page.
       on('did-finish-load', () => {
         if (failed) return;
-        const p = getPage(sessionId);
-        setPage(sessionId, { error: undefined, errorCode: undefined });
+        flushSoon();
+        const p = getPage(tid);
+        setPage(tid, { error: undefined, errorCode: undefined });
         noteVisit(p.url, p.title, p.favicon);
       });
       on('did-navigate', (e) => {
         if (!e.url) return;
+        // What the old document reported last lands before the new one starts.
+        flushSoon();
         // A new document: the agent's view of its console and failed requests starts empty.
-        resetLog(sessionId);
+        resetLog(tid);
         // A reload of the same address keeps its title and icon: the engine reports them again only when they change.
-        const same = getPage(sessionId).url === e.url;
-        setPage(sessionId, { url: e.url, ...(same ? {} : { title: '', favicon: undefined }), phase: 2, ...nav() });
-        setFound(null);
+        const same = getPage(tid).url === e.url;
+        setPage(tid, { url: e.url, ...(same ? {} : { title: '', favicon: undefined }), phase: 2 });
+        refreshNav(v);
+        if (tid === activeTab(sessionId)) setFound(null);
       });
-      // What the page logs, for the drawer and the agent (errors and warnings also go with browser_read); bounded in the store.
-      on('console-message', (e) => {
-        const lv = e.level;
-        const level = lv === 3 || lv === 'error' ? 'error' : lv === 2 || lv === 'warning' ? 'warning' : lv === 0 || lv === 'debug' || lv === 'verbose' ? 'debug' : lv === 'info' ? 'info' : 'log';
-        if (!e.message) return;
-        logLine(sessionId, { level, text: e.message, source: e.sourceId ? `${e.sourceId.replace(/[?#].*$/, '')}${e.line ? `:${e.line}` : ''}` : undefined });
+      // A script can change the address, the title and the icon in a loop: these are gathered (setPageSoon).
+      on('did-navigate-in-page', (e) => {
+        if (!e.isMainFrame || !e.url) return;
+        setPageSoon(tid, { url: e.url });
+        refreshNav(v);
       });
-      on('did-navigate-in-page', (e) => e.isMainFrame && e.url && setPage(sessionId, { url: e.url, ...nav() }));
       on('page-title-updated', (e) => {
-        const title = e.title ?? '';
-        setPage(sessionId, { title });
-        touchVisit(getPage(sessionId).url, { title });
+        setPageSoon(tid, { title: (e.title ?? '').slice(0, 300) });
+        noteSoon(v);
       });
       on('page-favicon-updated', (e) => {
-        const favicon = e.favicons?.find((f) => /^(https:|data:image\/)/.test(f));
-        setPage(sessionId, { favicon });
-        if (favicon) touchVisit(getPage(sessionId).url, { favicon });
+        setPageSoon(tid, { favicon: e.favicons?.find((f) => /^(https:|data:image\/)/.test(f) && f.length < 100_000) });
+        noteSoon(v);
       });
       on('did-fail-load', (e) => {
         // -3 is an aborted load (a new navigation replaced it).
         if (!e.isMainFrame || e.errorCode === -3) return;
         failed = true;
-        setPage(sessionId, { loading: false, error: e.errorDescription || 'ERR_FAILED', errorCode: e.errorCode, url: e.validatedURL || getPage(sessionId).url, ...nav() });
+        flushSoon();
+        setPage(tid, { loading: false, error: e.errorDescription || 'ERR_FAILED', errorCode: e.errorCode, url: e.validatedURL || getPage(tid).url });
+        refreshNav(v);
       });
-      on('render-process-gone', () => setPage(sessionId, { crashed: true, loading: false }));
-      on('found-in-page', (e) => e.result && setFound({ active: e.result.activeMatchOrdinal, total: e.result.matches }));
+      on('render-process-gone', () => {
+        v.ready = false;
+        if (v.restarting) return;
+        setPage(tid, { crashed: true, hung: undefined, loading: false });
+      });
+      on('found-in-page', (e) => e.result && tid === activeTab(sessionId) && setFound({ active: e.result.activeMatchOrdinal, total: e.result.matches }));
       host.current.appendChild(el);
-      view.current = el;
-      resetLog(sessionId);
-      // The agent's browser tools reach the page through this (browser-agent.ts).
-      unregister.current?.();
-      unregister.current = registerPage({
+      views.current.set(tid, v);
+      resetLog(tid);
+      // The agent's browser tools reach the page through this (browser-agent.ts); every call has a time limit.
+      v.unregister = registerPage({
         sessionId,
+        tabId: tid,
         url: () => {
           try {
-            return ready.current ? el.getURL() : getPage(sessionId).url;
+            return v.ready ? el.getURL() : getPage(tid).url;
           } catch {
-            return getPage(sessionId).url;
+            return getPage(tid).url;
           }
         },
         read: async (selector, max) => {
-          if (!ready.current) throw new Error('The page is still starting.');
-          const r = (await el.executeJavaScript(readScript(selector, max))) as { title?: unknown; text?: unknown; length?: unknown; missing?: boolean; badSelector?: boolean } | null;
+          if (!v.ready) throw new Error('The page is still starting.');
+          const r = (await within(el.executeJavaScript(readScript(selector, max)))) as { title?: unknown; text?: unknown; length?: unknown; missing?: boolean; badSelector?: boolean } | null;
           return {
             title: typeof r?.title === 'string' ? r.title : '',
             text: typeof r?.text === 'string' ? r.text : '',
@@ -238,27 +386,29 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
           };
         },
         capture: async () => {
-          if (!ready.current || !desktop?.browser) throw new Error('The page is still starting.');
-          return desktop.browser.capture(el.getWebContentsId(), { forAgent: true });
+          if (!v.ready || !desktop?.browser) throw new Error('The page is still starting.');
+          return within(desktop.browser.capture(el.getWebContentsId(), { forAgent: true }));
         },
         run: async (script) => {
-          if (!ready.current) throw new Error('The page is still starting.');
-          return el.executeJavaScript(script);
+          if (!v.ready) throw new Error('The page is still starting.');
+          // Callers give their own, shorter limits; this one only makes sure nothing waits forever.
+          return within(el.executeJavaScript(script), 60_000);
         },
         key: async (combo) => {
-          if (!ready.current || typeof el.sendInputEvent !== 'function') return false;
+          if (!v.ready || typeof el.sendInputEvent !== 'function') return false;
           const { key, mods } = parseKey(combo);
           const keyCode = INPUT_KEY[key] ?? key;
           const ch = key === 'Space' ? ' ' : key;
           const typed = ch.length === 1 && !mods.some((m) => m !== 'shift');
-          await el.sendInputEvent({ type: 'keyDown', keyCode, modifiers: mods });
-          if (typed) await el.sendInputEvent({ type: 'char', keyCode: ch, modifiers: mods });
-          else if (key === 'Enter' && !mods.length) await el.sendInputEvent({ type: 'char', keyCode: '\u000d' });
-          await el.sendInputEvent({ type: 'keyUp', keyCode, modifiers: mods });
+          const send = (ev: Parameters<NonNullable<WebviewEl['sendInputEvent']>>[0]) => within(Promise.resolve(el.sendInputEvent!(ev)), 5_000);
+          await send({ type: 'keyDown', keyCode, modifiers: mods });
+          if (typed) await send({ type: 'char', keyCode: ch, modifiers: mods });
+          else if (key === 'Enter' && !mods.length) await send({ type: 'char', keyCode: '\u000d' });
+          await send({ type: 'keyUp', keyCode, modifiers: mods });
           return true;
         },
         history: (action) => {
-          if (!ready.current) return false;
+          if (!v.ready) return false;
           try {
             if (action === 'back') {
               if (!el.canGoBack()) return false;
@@ -279,30 +429,70 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
     [sessionId],
   );
 
+  // Keys typed inside a page reach the app only through the shell: the same keys as in the tab's own bar.
+  const guestKey = useRef<(key: string) => void>(() => {});
+
   useEffect(() => {
     if (!native) return;
-    const url = getPage(sessionId).url;
-    if (url) {
-      setPage(sessionId, { loading: true, phase: 1, canBack: false, canForward: false, crashed: undefined });
-      ensureView(url);
-    }
+    const byWc = (id?: number) => {
+      if (!id) return undefined;
+      for (const v of views.current.values()) if (v.wcId === id) return v;
+      return undefined;
+    };
     const off = desktop?.browser?.onEvent((e) => {
-      if (e.type === 'download-blocked') useStore.getState().toast(`Downloads are off in the panel browser${e.name ? ` (${e.name})` : ''}. Open the page in your browser to download.`);
-      // Ctrl+F typed inside this page (the shell forwards it; keys in the page never reach the app).
-      if (e.type === 'find' && view.current && ready.current && e.id === view.current.getWebContentsId()) openFind();
+      if (e.type === 'download-blocked') {
+        useStore.getState().toast(`Downloads are off in the panel browser${e.name ? ` (${e.name})` : ''}. Open the page in your browser to download.`);
+        return;
+      }
+      const v = byWc(e.id);
+      if (!v) return;
+      if (e.type === 'find') guestKey.current('f');
+      else if (e.type === 'key' && e.key && v.tabId === activeTab(sessionId)) guestKey.current(e.key);
       // A request of this page failed (the shell sends the address without its query, and the status or error).
-      if (e.type === 'net' && e.url && view.current && ready.current && e.id === view.current.getWebContentsId()) logFailed(sessionId, { url: e.url, method: e.method, status: e.status, error: e.error });
+      else if (e.type === 'net' && e.url) logFailed(v.tabId, { url: e.url, method: e.method, status: e.status, error: e.error });
+      else if (e.type === 'net-dropped') failedDropped(v.tabId, e.count ?? 0);
+      // What the page logged, in capped batches; errors and warnings also go with browser_read.
+      else if (e.type === 'console') {
+        for (const l of e.lines ?? []) if (l.text) logLine(v.tabId, { level: levelOf(l.level), text: l.text, source: l.source });
+        logDropped(v.tabId, e.count ?? 0);
+      } else if (e.type === 'hang') setPage(v.tabId, { hung: e.on ? true : undefined });
+      else if (e.type === 'flood') setPage(v.tabId, { flooded: true });
     });
+    const all = views.current;
     return () => {
       off?.();
-      unregister.current?.();
-      unregister.current = null;
-      view.current?.remove();
-      view.current = null;
-      ready.current = false;
-      setPage(sessionId, { loading: false });
+      for (const v of [...all.values()]) dispose(v);
+      for (const id of getTabs(sessionId).ids) setPage(id, { loading: false, hung: undefined });
     };
-  }, [sessionId, ensureView]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  // The tab in front gets its view when it has a page and none yet (a new tab, a reopened one, or the panel opened again).
+  useEffect(() => {
+    if (!native) return;
+    const p = getPage(tabId);
+    if (!p.url || views.current.has(tabId)) return;
+    setPage(tabId, { loading: true, phase: 1, canBack: false, canForward: false, crashed: undefined, hung: undefined });
+    ensureView(tabId, p.url);
+  }, [tabId, page.url, ensureView]);
+
+  // Closed tabs lose their view; the one in front shows and runs, the rest are hidden and slowed.
+  useEffect(() => {
+    for (const v of [...views.current.values()]) if (!tabs.ids.includes(v.tabId)) dispose(v);
+    syncShown();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs.ids, tabId, active]);
+
+  // Another tab came to the front: what belonged to the last one's page closes.
+  const shownTab = useRef(tabId);
+  useEffect(() => {
+    if (shownTab.current === tabId) return;
+    shownTab.current = tabId;
+    setFinding(false);
+    setFound(null);
+    setRegion(false);
+    setPicking(false);
+  }, [tabId]);
 
   /* ── navigation ── */
 
@@ -313,15 +503,16 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
         toast('Only web addresses open here');
         return false;
       }
+      const tid = activeTab(sessionId);
       if (native) {
         if (isAppOrigin(url)) {
           toast('Sable itself does not open in the panel browser');
           return false;
         }
-        setPage(sessionId, { url, title: '', favicon: undefined, error: undefined, errorCode: undefined, crashed: undefined, loading: true, phase: 1 });
-        if (!ensureView(url)) load(url);
+        setPage(tid, { url, title: '', favicon: undefined, error: undefined, errorCode: undefined, crashed: undefined, hung: undefined, loading: true, phase: 1 });
+        if (!ensureView(tid, url)) load(tid, url);
       } else {
-        pushHistory(sessionId, url);
+        pushHistory(tid, url);
       }
       // A page asked for from elsewhere replaces whatever was half-typed in the address field.
       input.current?.blur();
@@ -331,36 +522,44 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
     [sessionId, ensureView, toast],
   );
 
-  /** Loads an address in the existing view. */
-  function load(url: string) {
-    const el = view.current;
-    if (!el) return;
-    if (ready.current) el.loadURL(url).catch(() => {});
-    else el.setAttribute('src', url);
+  /** Loads an address in a tab's existing view. */
+  function load(tid: string, url: string) {
+    const v = views.current.get(tid);
+    if (!v) return;
+    if (v.ready) v.el.loadURL(url).catch(() => {});
+    else v.el.setAttribute('src', url);
   }
 
   /** Runs a call on the page's view, if it is there and alive. */
   const withView = (fn: (el: WebviewEl) => void) => {
-    const el = view.current;
-    if (!el || !ready.current) return;
+    const v = live();
+    if (!v) return;
     try {
-      fn(el);
+      fn(v.el);
     } catch {
       /* the page went away between the check and the call */
     }
   };
 
-  const back = () => (native ? withView((el) => el.goBack()) : stepHistory(sessionId, -1));
-  const forward = () => (native ? withView((el) => el.goForward()) : stepHistory(sessionId, 1));
+  const back = () => (native ? withView((el) => el.goBack()) : stepHistory(tabId, -1));
+  const forward = () => (native ? withView((el) => el.goForward()) : stepHistory(tabId, 1));
   const reload = (hard = false) => {
     if (!native) {
-      setPage(sessionId, { nonce: page.nonce + 1, loading: true, phase: 1 });
+      setPage(tabId, { nonce: page.nonce + 1, loading: true, phase: 1 });
+      return;
+    }
+    const v = views.current.get(tabId);
+    // A page that hangs cannot reload itself: its view starts over in a fresh one.
+    if (page.hung && v) {
+      dispose(v);
+      setPage(tabId, { hung: undefined, crashed: undefined, loading: true, phase: 1 });
+      ensureView(tabId, page.url);
       return;
     }
     // After a crash or a failed load, load the address again rather than reloading the engine's error page.
     if (page.crashed || page.error) {
-      setPage(sessionId, { crashed: undefined, loading: true, phase: 1 });
-      load(page.url);
+      setPage(tabId, { crashed: undefined, flooded: undefined, loading: true, phase: 1 });
+      load(tabId, page.url);
     } else withView((el) => (hard ? el.reloadIgnoringCache() : el.reload()));
   };
   const stop = () => withView((el) => el.stop());
@@ -368,14 +567,29 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
   const zoomTo = (zoom: number) =>
     withView((el) => {
       el.setZoomFactor(zoom);
-      setPage(sessionId, { zoom });
+      setPage(tabId, { zoom });
     });
   const zoomStep = (dir: 1 | -1) => {
     const next = dir > 0 ? ZOOMS.find((z) => z > page.zoom + 0.001) : [...ZOOMS].reverse().find((z) => z < page.zoom - 0.001);
     if (next) zoomTo(next);
   };
   const devTools = () => withView((el) => (el.isDevToolsOpened() ? el.closeDevTools() : el.openDevTools()));
-  const setDevice = (device: Device) => setPage(sessionId, { device });
+  const setDevice = (device: Device) => setPage(tabId, { device });
+
+  /* ── tabs ── */
+
+  const newTab = () => {
+    if (!openTab(sessionId)) {
+      toast(`Up to ${TABS_MAX} tabs`);
+      return;
+    }
+    requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
+  };
+  const closeActive = () => closeTab(sessionId, activeTab(sessionId));
+  const reopen = () => {
+    if (!getTabs(sessionId).closed.length) return;
+    if (!reopenTab(sessionId)) toast(`Up to ${TABS_MAX} tabs`);
+  };
 
   /* ── find in page ── */
 
@@ -429,13 +643,13 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
   }, [wanted, go]);
 
   useEffect(() => {
-    if (!active || getPage(sessionId).url) return;
+    if (!active || getPage(tabId).url) return;
     const raf = requestAnimationFrame(() => {
       // A page may have been asked for in the meantime: then the address field stays at rest.
-      if (!getPage(sessionId).url) input.current?.focus({ preventScroll: true });
+      if (!getPage(activeTab(sessionId)).url) input.current?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(raf);
-  }, [active, sessionId]);
+  }, [active, sessionId, tabId]);
 
   /* ── page actions ── */
 
@@ -450,7 +664,7 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
   const acceptsImages = () => useStore.getState().data[sessionId]?.caps?.features.images !== false;
   const siteName = () => {
     try {
-      return new URL(getPage(sessionId).url).host || 'page';
+      return new URL(getPage(activeTab(sessionId)).url).host || 'page';
     } catch {
       return 'page';
     }
@@ -469,14 +683,14 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
   };
 
   const attachShot = async () => {
-    const el = view.current;
-    if (!el || !desktop?.browser || !ready.current) return;
+    const v = live();
+    if (!v || !desktop?.browser) return;
     if (!acceptsImages()) {
       toast('This agent does not accept images');
       return;
     }
     try {
-      const dataUrl = await desktop.browser.capture(el.getWebContentsId());
+      const dataUrl = await within(desktop.browser.capture(v.el.getWebContentsId()));
       if (!attach(dataUrl, `Screenshot of ${siteName()}.png`)) return;
       toast('Screenshot attached to your message', 'success');
       focusComposer();
@@ -488,34 +702,40 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
   /* ── pick an element: hover outlines it in the page, a click puts a reference to it in the message ── */
 
   const [picking, setPicking] = useState(false);
+  const pickRun = useRef(0);
   const pick = async () => {
-    const el = view.current;
-    if (!el || !ready.current || !desktop?.browser || page.error || page.crashed) return;
+    const v = live();
+    if (!v || !desktop?.browser || page.error || page.crashed || page.hung) return;
+    const el = v.el;
     if (picking) {
-      void el.executeJavaScript(pickCancelScript).catch(() => {});
+      // A page that hangs never answers the cancel: the bar lets go of it either way.
+      pickRun.current++;
+      setPicking(false);
+      void within(el.executeJavaScript(pickCancelScript), 3_000).catch(() => {});
       return;
     }
     setRegion(false);
     setPicking(true);
+    const run = ++pickRun.current;
     try {
       // Keys go to the page while picking, so Escape ends it there.
       el.focus();
       const r = (await el.executeJavaScript(pickScript)) as Picked | null;
-      if (!r || typeof r.selector !== 'string' || !r.rect) return;
+      if (run !== pickRun.current || !r || typeof r.selector !== 'string' || !r.rect) return;
       if (acceptsImages() && r.rect.w >= 1 && r.rect.h >= 1) {
         try {
-          const full = await desktop.browser.capture(el.getWebContentsId());
+          const full = await within(desktop.browser.capture(el.getWebContentsId()));
           const shot = await cropImage(full, r.rect, r.vw, 8);
           attach(shot, `${r.tag} on ${siteName()}.png`);
         } catch {
           /* the reference still goes in, without its picture */
         }
       }
-      focusComposer(`${pickedText(r, getPage(sessionId).url)} `, { append: true });
+      focusComposer(`${pickedText(r, getPage(v.tabId).url)} `, { append: true });
     } catch {
-      toast('Could not pick an element on this page', 'error');
+      if (run === pickRun.current) toast('Could not pick an element on this page', 'error');
     } finally {
-      setPicking(false);
+      if (run === pickRun.current) setPicking(false);
     }
   };
 
@@ -523,24 +743,29 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
 
   const [region, setRegion] = useState(false);
   const startRegion = () => {
-    if (!view.current || !ready.current || !desktop?.browser) return;
+    const v = live();
+    if (!v || !desktop?.browser) return;
     if (!acceptsImages()) {
       toast('This agent does not accept images');
       return;
     }
-    if (picking) void view.current.executeJavaScript(pickCancelScript).catch(() => {});
+    if (picking) {
+      pickRun.current++;
+      setPicking(false);
+      void within(v.el.executeJavaScript(pickCancelScript), 3_000).catch(() => {});
+    }
     setRegion(true);
   };
   const takeRegion = async (r: { x: number; y: number; w: number; h: number } | null) => {
     setRegion(false);
-    const el = view.current;
-    if (!r || !el || !desktop?.browser || !ready.current) return;
+    const v = live();
+    if (!r || !v || !desktop?.browser) return;
     try {
       // The view as laid out (a device size scales it): the picture maps onto this box.
-      const box = el.getBoundingClientRect();
+      const box = v.el.getBoundingClientRect();
       const frame = viewBox.current?.getBoundingClientRect();
       if (!frame || box.width < 1) return;
-      const full = await desktop.browser.capture(el.getWebContentsId());
+      const full = await within(desktop.browser.capture(v.el.getWebContentsId()));
       const shot = await cropImage(full, { x: r.x + frame.left - box.left, y: r.y + frame.top - box.top, w: r.w, h: r.h }, box.width, 0);
       if (!attach(shot, `Part of ${siteName()}.png`)) return;
       toast('Picture attached to your message', 'success');
@@ -567,36 +792,39 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
   const canBack = native ? page.canBack : page.index > 0;
   const canForward = native ? page.canForward : page.index < page.history.length - 1;
   const showNote = !native && !!page.url && !isLocalUrl(page.url);
-  const frameUrl = native ? '' : page.history[page.index] ?? '';
   const busy = page.loading && !page.error;
 
-  const onKey = (e: React.KeyboardEvent) => {
-    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-    const k = e.key.toLowerCase();
-    if (e.shiftKey) {
-      // The tools, on the keys developer tools use for the same things.
-      if (!native || !page.url || (k !== 'c' && k !== 's' && k !== 'j')) return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (k === 'c') void pick();
-      else if (k === 's') startRegion();
-      else setDrawer((d) => !d);
-      return;
-    }
-    if (k === 'l') {
-      e.preventDefault();
-      e.stopPropagation();
+  /** The Browser's own keys: tabs, the address, find, and the tools on the keys developer tools use. */
+  const key = (k: string): boolean => {
+    if (k === 't') newTab();
+    else if (k === 'w') closeActive();
+    else if (k === 'shift+t') reopen();
+    else if (k === 'l') {
       input.current?.focus();
       input.current?.select();
-    } else if (k === 'f' && native && page.url) {
-      e.preventDefault();
-      e.stopPropagation();
-      openFind();
-    }
+    } else if (k === 'f' && native && page.url) openFind();
+    else if (native && page.url && (k === 'shift+c' || k === 'shift+s' || k === 'shift+j')) {
+      if (k === 'shift+c') void pick();
+      else if (k === 'shift+s') startRegion();
+      else setDrawer((d) => !d);
+    } else return false;
+    return true;
+  };
+  guestKey.current = (k) => void key(k);
+
+  const onKey = (e: React.KeyboardEvent) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    if (e.altKey) return;
+    const k = e.key.toLowerCase();
+    const combo = e.shiftKey ? `shift+${k}` : k;
+    if (!key(combo)) return;
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   return (
     <div className="rail-col bw" onKeyDown={onKey}>
+      <TabStrip sessionId={sessionId} ids={tabs.ids} active={tabId} onNew={newTab} />
       <div className="bw-bar">
         <IconButton icon="arrow-left" label="Back" size={15} disabled={!canBack} onClick={back} />
         <IconButton icon="arrow-right" label="Forward" size={15} disabled={!canForward} onClick={forward} />
@@ -607,17 +835,17 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
             aria-label={native && page.loading ? 'Stop' : 'Reload'}
             data-loading={(native && page.loading) || undefined}
             disabled={!page.url}
-            onClick={() => (native && page.loading ? stop() : reload())}
+            onClick={() => (native && page.loading && !page.hung ? stop() : reload())}
           >
             <Icon name="reload" size={15} className="bw-reload-a" />
             <Icon name="x" size={14} className="bw-reload-b" />
           </button>
         </Tip>
-        <AddressField url={page.url} title={page.title} favicon={page.favicon} zoom={page.zoom} agent={page.agent} picking={picking} onResetZoom={() => zoomTo(1)} inputRef={input} onGo={go} />
+        <AddressField key={`addr:${tabId}`} url={page.url} title={page.title} favicon={page.favicon} zoom={page.zoom} agent={page.agent} picking={picking} onResetZoom={() => zoomTo(1)} inputRef={input} onGo={go} />
         {native && (
           <>
-            <IconButton icon="cursor-click" label={picking ? 'Stop picking' : 'Pick an element'} keys="mod+shift+c" size={15} active={picking} disabled={!page.url || !!page.error || !!page.crashed} onClick={() => void pick()} />
-            <LogToggle sessionId={sessionId} open={drawer} disabled={!page.url} onToggle={() => setDrawer((d) => !d)} />
+            <IconButton icon="cursor-click" label={picking ? 'Stop picking' : 'Pick an element'} keys="mod+shift+c" size={15} active={picking} disabled={!page.url || !!page.error || !!page.crashed || !!page.hung} onClick={() => void pick()} />
+            <LogToggle tabId={tabId} open={drawer} disabled={!page.url} onToggle={() => setDrawer((d) => !d)} />
           </>
         )}
         <Menu>
@@ -678,7 +906,7 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
             )}
           </MenuContent>
         </Menu>
-        <LoadLine loading={busy} phase={page.phase} />
+        <LoadLine key={`load:${tabId}`} loading={busy} phase={page.phase} />
       </div>
 
       <AnimatePresence initial={false}>
@@ -708,29 +936,23 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
           </div>
         )}
         <div className="bw-host" ref={host} style={stage}>
-          {!native && frameUrl && (
-            <iframe
-              key={`${page.index}:${page.nonce}:${frameUrl}`}
-              className="bw-frame"
-              src={frameUrl}
-              title={prettyUrl(frameUrl)}
-              // The app's own origin runs without allow-same-origin, so a page there cannot reach the app.
-              sandbox={isAppOrigin(frameUrl) ? 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox' : 'allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox'}
-              referrerPolicy="no-referrer"
-              onLoad={(e) => {
-                e.currentTarget.dataset.loaded = '';
-                setPage(sessionId, { loading: false });
-                // A frame reports a load even when the site refused to be embedded: only local pages count as visited.
-                if (isLocalUrl(frameUrl)) noteVisit(frameUrl, '');
-              }}
-            />
-          )}
+          {!native && tabs.ids.map((id) => <TabFrame key={id} tabId={id} shown={id === tabId} />)}
         </div>
         {native && page.url && page.crashed ? (
-          <PageState title="This page stopped working" detail={addressParts(page.url).host}>
+          <PageState title={page.flooded ? 'This page was stopped' : 'This page stopped working'} detail={page.flooded ? 'It logged faster than Sable can keep up' : addressParts(page.url).host}>
             <button type="button" className="btn btn-sm" onClick={() => reload()}>
               <Icon name="reload" size={14} />
               Reload
+            </button>
+          </PageState>
+        ) : native && page.url && page.hung ? (
+          <PageState title="This page is not responding" detail={addressParts(page.url).host}>
+            <button type="button" className="btn btn-sm" onClick={() => reload()}>
+              <Icon name="reload" size={14} />
+              Reload
+            </button>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setPage(tabId, { hung: undefined })}>
+              Wait
             </button>
           </PageState>
         ) : native && page.url && page.error ? (
@@ -750,7 +972,125 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
         {region && native && page.url && <RegionPick onDone={(r) => void takeRegion(r)} />}
       </div>
 
-      <AnimatePresence initial={false}>{drawer && native && page.url && <LogDrawer key="log" sessionId={sessionId} url={page.url} onClose={() => setDrawer(false)} />}</AnimatePresence>
+      <AnimatePresence initial={false}>{drawer && native && page.url && <LogDrawer key="log" tabId={tabId} url={page.url} onClose={() => setDrawer(false)} />}</AnimatePresence>
+    </div>
+  );
+}
+
+/** Web build: one sandboxed frame per tab; only the tab in front is shown. */
+function TabFrame({ tabId, shown }: { tabId: string; shown: boolean }) {
+  const page = usePage(tabId);
+  const frameUrl = page.history[page.index] ?? '';
+  if (!frameUrl) return null;
+  return (
+    <iframe
+      key={`${page.index}:${page.nonce}:${frameUrl}`}
+      className="bw-frame"
+      data-hidden={!shown || undefined}
+      src={frameUrl}
+      title={prettyUrl(frameUrl)}
+      // The app's own origin runs without allow-same-origin, so a page there cannot reach the app.
+      sandbox={isAppOrigin(frameUrl) ? 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox' : 'allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox'}
+      referrerPolicy="no-referrer"
+      onLoad={(e) => {
+        e.currentTarget.dataset.loaded = '';
+        setPage(tabId, { loading: false });
+        // A frame reports a load even when the site refused to be embedded: only local pages count as visited.
+        if (isLocalUrl(frameUrl)) noteVisit(frameUrl, '');
+      }}
+    />
+  );
+}
+
+/**
+ * The tab strip: each page with its icon (a spinner while it loads) and title, the one in front a
+ * step lighter, a close mark on hover. Middle-click closes, dragging reorders, the last button
+ * opens a new tab.
+ */
+function TabStrip({ sessionId, ids, active, onNew }: { sessionId: string; ids: string[]; active: string; onNew: () => void }) {
+  const drag = useRef<string | null>(null);
+  return (
+    <div className="bw-tabs" role="tablist" aria-label="Pages">
+      {ids.map((id, i) => (
+        <PageTab
+          key={id}
+          sessionId={sessionId}
+          tabId={id}
+          active={id === active}
+          only={ids.length === 1}
+          onDragStart={() => (drag.current = id)}
+          onDragEnter={() => drag.current && drag.current !== id && moveTab(sessionId, drag.current, i)}
+          onDragEnd={() => (drag.current = null)}
+        />
+      ))}
+      <IconButton icon="plus" label="New tab" keys="mod+t" size={14} className="bw-tab-new" disabled={ids.length >= TABS_MAX} onClick={onNew} />
+    </div>
+  );
+}
+
+function PageTab({
+  sessionId,
+  tabId,
+  active,
+  only,
+  onDragStart,
+  onDragEnter,
+  onDragEnd,
+}: {
+  sessionId: string;
+  tabId: string;
+  active: boolean;
+  only: boolean;
+  onDragStart: () => void;
+  onDragEnter: () => void;
+  onDragEnd: () => void;
+}) {
+  const p = usePage(tabId);
+  const parts = p.url ? addressParts(p.url) : null;
+  const name = p.title || parts?.search || parts?.host || 'New tab';
+  const close = () => closeTab(sessionId, tabId);
+  return (
+    <div
+      className="bw-tab"
+      data-active={active || undefined}
+      draggable={!only}
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', p.url || name);
+        onDragStart();
+      }}
+      onDragEnter={onDragEnter}
+      onDragOver={(e) => e.preventDefault()}
+      onDragEnd={onDragEnd}
+      onMouseDown={(e) => {
+        // The middle button would start the page's auto-scroll.
+        if (e.button === 1) e.preventDefault();
+      }}
+      onAuxClick={(e) => {
+        if (e.button !== 1) return;
+        e.preventDefault();
+        close();
+      }}
+    >
+      <button type="button" role="tab" aria-selected={active} className="bw-tab-main" title={p.url ? `${name}\n${prettyUrl(p.url)}` : undefined} onClick={() => selectTab(sessionId, tabId)}>
+        <span className="bw-tab-icon" aria-hidden>
+          {p.loading && !p.error && p.url ? (
+            <Spinner size={11} />
+          ) : p.crashed || p.hung ? (
+            <Icon name="warning" size={13} className="bw-site-icon" />
+          ) : p.url ? (
+            <SiteIcon src={p.favicon} fallback={siteFallback(p.url)} size={13} />
+          ) : (
+            <Icon name="globe" size={13} className="bw-site-icon" />
+          )}
+        </span>
+        <span className="bw-tab-name">{name}</span>
+      </button>
+      {!(only && !p.url) && (
+        <button type="button" className="bw-tab-close" aria-label={`Close ${name}`} tabIndex={active ? 0 : -1} onClick={close}>
+          <Icon name="x" size={11} />
+        </button>
+      )}
     </div>
   );
 }
@@ -844,9 +1184,9 @@ function RegionPick({ onDone }: { onDone: (r: { x: number; y: number; w: number;
 }
 
 /** The drawer's switch in the toolbar; a count shows only while the page has errors. */
-function LogToggle({ sessionId, open, disabled, onToggle }: { sessionId: string; open: boolean; disabled: boolean; onToggle: () => void }) {
-  useLogVersion(sessionId);
-  const errors = disabled ? 0 : getLog(sessionId).feed.reduce((n, f) => n + (f.level === 'error' ? 1 : 0), 0);
+function LogToggle({ tabId, open, disabled, onToggle }: { tabId: string; open: boolean; disabled: boolean; onToggle: () => void }) {
+  useLogVersion(tabId);
+  const errors = disabled ? 0 : getLog(tabId).feed.reduce((n, f) => n + (f.level === 'error' ? 1 : 0), 0);
   const label = open ? 'Hide console' : 'Show console';
   return (
     <Tip label={errors ? `${label} (${errors} error${errors === 1 ? '' : 's'})` : label} keys="mod+shift+j">
@@ -871,9 +1211,9 @@ const fileOf = (source?: string) => {
 const feedLine = (f: FeedEntry) => `${f.request ? 'request' : f.level}: ${f.text.length > 300 ? `${f.text.slice(0, 299)}…` : f.text}${f.source ? ` (${fileOf(f.source)})` : ''}`;
 
 /** The page's console lines and failed requests since it loaded, newest last; any line, or all of them, goes to the message. */
-function LogDrawer({ sessionId, url, onClose }: { sessionId: string; url: string; onClose: () => void }) {
-  const v = useLogVersion(sessionId);
-  const log = getLog(sessionId);
+function LogDrawer({ tabId, url, onClose }: { tabId: string; url: string; onClose: () => void }) {
+  const v = useLogVersion(tabId);
+  const log = getLog(tabId);
   const feed = log.feed;
   const list = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -905,7 +1245,7 @@ function LogDrawer({ sessionId, url, onClose }: { sessionId: string; url: string
           <Icon name="chat" size={14} />
           Send to chat
         </button>
-        <IconButton icon="broom" label="Clear" size={14} disabled={!feed.length} onClick={() => resetLog(sessionId)} />
+        <IconButton icon="broom" label="Clear" size={14} disabled={!feed.length} onClick={() => resetLog(tabId)} />
         <IconButton icon="x" label="Hide console" size={13} onClick={onClose} />
       </div>
       <div

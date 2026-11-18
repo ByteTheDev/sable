@@ -10,11 +10,12 @@ import { accountName, useLimitLevel } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { Spinner } from '@/ui';
 import { DATE_LOCALE, timeOf } from '@/features/usage/format';
+import { limitTitle } from '@/features/usage/scope';
 
-/** "5-hour limit" stays as it is; any weekly window reads "weekly limit". */
+/** "5-hour limit" stays as it is; a model's week reads "Fable weekly limit", the whole plan's "weekly limit". */
 function windowName(window?: string) {
-  if (!window) return 'plan limit';
-  return /^weekly/i.test(window) ? 'weekly limit' : window.replace(/^(\S)/, (c) => c.toLowerCase());
+  const title = limitTitle(window);
+  return /^weekly/i.test(title) || /^(5-hour|plan)/i.test(title) ? title.replace(/^(\S)/, (c) => c.toLowerCase()) : title;
 }
 
 /** When a window resets, as a clock time (with the day when it is not today) and how long until then. */
@@ -102,7 +103,7 @@ export const LimitNotice = memo(function LimitNotice({ item, sessionId }: { item
       <Icon name="hourglass" size={16} className="lim-icon" />
       <div className="lim-body">
         <div className="lim-text">
-          {who} {limit.continuedWith ? 'reached' : 'is at'} its {windowName(limit.window)}
+          {limitTitle(limit.window)} reached on {who}
         </div>
         {(resetNote || reset || item.detail) && <div className="lim-detail">{resetNote ?? reset ?? item.detail}</div>}
       </div>

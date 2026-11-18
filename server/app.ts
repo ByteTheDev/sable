@@ -514,6 +514,8 @@ export class App {
     const file = this.store.loadSession(rt.id);
     rt.load(file.items, file.todos, file.queue ?? []);
     rt.settle('cancelled');
+    // Messages still waiting for the agent when Sable closed (a steer not taken yet) would wait forever: back to the queue.
+    rt.returnUntaken({ all: true, reason: 'closed' });
   }
 
   /**
@@ -563,9 +565,17 @@ export class App {
     // Stopped while the agent was starting: the message stays where it was sent, and is not sent later.
     if (early && this.stoppedEarly.delete(early.id)) return;
     const item = early ?? addUser();
+    const runningSince = item.steered ? rt.turnStartedAt : undefined;
     try {
       await handle.send(this.withBrowserPage(rt, this.withHandover(rt, item)));
     } catch (err) {
+      // A steer the agent could not take: the turn it was meant for goes on, and the message waits in the queue.
+      if (item.steered && rt.turnActive && rt.turnStartedAt === runningSince && rt.get<UserItem>(item.id)?.state === 'queued') {
+        this.log('steer failed; back to the queue', (err as Error).message);
+        rt.remove(item.id);
+        rt.requeue([{ id: item.id, text: item.text, attachments: item.attachments, createdAt: item.ts }]);
+        return;
+      }
       rt.notice('error', 'Could not send the message', (err as Error).message);
       rt.endTurn((err as Error).message);
     }
@@ -771,17 +781,15 @@ export class App {
     else if (!error) void this.onCredits(rt).catch((err) => this.log('credits follow-up failed', (err as Error).message));
     if (error || rt.stopRequested) {
       // Steered messages the agent never took go back to the queue, to send or edit again.
-      const untaken = rt.items.filter((i): i is UserItem => i.type === 'user' && !!i.steered && i.state === 'queued' && !i.parentId);
-      if (untaken.length) {
-        for (const u of untaken) rt.remove(u.id);
-        rt.requeue(untaken.map((u) => ({ id: u.id, text: u.text, attachments: u.attachments, createdAt: u.ts })));
-      }
+      rt.returnUntaken({ reason: error ? 'failed' : 'stopped' });
       return;
     }
-    if (!rt.queue.length) return;
-    // Let the adapter finish its own bookkeeping (it may start a turn of its own first).
+    // Let the adapter finish its own bookkeeping (it may start a turn of its own first, with a
+    // steered message the turn ended before taking).
     setTimeout(() => {
       if (rt.turnActive || rt.stopRequested || this.sessions.get(rt.id) !== rt) return;
+      // A steered message no turn took and no adapter carried on is never left waiting: it goes out first.
+      rt.returnUntaken();
       const next = rt.takeQueued();
       if (next) void this.deliver(rt, next.text, next.attachments).catch((err) => this.log('queued send failed', (err as Error).message));
     }, 0);

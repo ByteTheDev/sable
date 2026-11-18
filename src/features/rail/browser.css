@@ -4,6 +4,143 @@
   position: relative;
 }
 
+/* ── tabs ── */
+
+/* A quiet strip above the toolbar: 28 px tabs that share the width, the one in front a step lighter,
+   a close mark that shows on hover. */
+.bw-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 4px 7px 0;
+  overflow: hidden;
+}
+
+.bw-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 1 184px;
+  min-width: 46px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+  animation: bw-tab-in var(--d-3) var(--ease-out);
+}
+
+.bw-tab:hover {
+  background-color: var(--fill-1);
+  color: var(--text);
+}
+
+.bw-tab[data-active] {
+  background-color: var(--fill-2);
+  color: var(--text);
+}
+
+@keyframes bw-tab-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+.bw-tab-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 9px;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-small);
+  text-align: left;
+  cursor: default;
+}
+
+.bw-tab-main:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
+}
+
+.bw-tab-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.bw-tab-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bw-tab-close {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-right: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-3);
+  opacity: 0;
+  transition:
+    opacity var(--d-1) var(--ease),
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    transform var(--d-1) var(--ease);
+}
+
+.bw-tab:hover .bw-tab-close,
+.bw-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.bw-tab-close:hover {
+  background-color: var(--fill-3);
+  color: var(--text);
+}
+
+.bw-tab-close:active {
+  transform: scale(0.9);
+}
+
+.bw-tab-close:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 0;
+}
+
+/* A narrow tab keeps its icon; the close mark takes the name's place on hover. */
+.bw-tabs .bw-tab-new {
+  --ib: 28px;
+  flex-shrink: 0;
+  border-radius: var(--r-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bw-tab {
+    animation: none;
+  }
+}
+
 /* ── toolbar ── */
 
 /* One 40 px row like every pane's bar: three history controls, the address, the menu. The hairline
@@ -398,6 +535,12 @@
 .bw-webview {
   display: flex;
   background: #fff;
+}
+
+/* Pages of the other tabs stay loaded but are not painted (the shell also mutes and slows them). */
+.bw-webview[data-hidden],
+.bw-frame[data-hidden] {
+  visibility: hidden;
 }
 
 /* ── device sizes ── */

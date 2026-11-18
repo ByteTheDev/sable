@@ -585,3 +585,42 @@
 .acs-room .acs-left {
   font-size: var(--t-micro);
 }
+
+/* ── The session's account: the limits that matter, at the top of its menu ──
+   One line per window at or near its cap ("Fable weekly limit reached", its reset at the end).
+   Amber and red only for windows that hold back this chat's model; another model's is a ring. */
+
+.sa-limits {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px 6px;
+}
+
+.sa-limit {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 0;
+  line-height: 16px;
+  font-size: var(--t-small);
+  color: var(--text);
+}
+
+.sa-limit-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.sa-limit-reset {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.sa-limit-note {
+  padding: 2px 0 2px 14px;
+  font-size: var(--t-small);
+  line-height: 1.4;
+  color: var(--text-3);
+}

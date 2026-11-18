@@ -9,6 +9,7 @@ import path from 'node:path';
 import type { SessionRuntime } from '../core/runtime';
 import type {
   FileDiff,
+  RateLimit,
   NoticeItem,
   PermissionOption,
   PermissionRequest,
@@ -137,6 +138,8 @@ export interface ScriptEnv {
   allowed: Set<string>;
   /** Whether thinking blocks are shown (off at minimal effort). */
   thinking: boolean;
+  /** A plan window this account just reached (a sub-agent on another model hit its weekly limit). */
+  onLimit?: (limit: RateLimit) => void;
 }
 
 export interface ToolSpec {
@@ -246,6 +249,12 @@ export class Script {
   notice(variant: NoticeItem['variant'], text: string, detail?: string, parentId?: string) {
     this.check();
     return this.rt.notice(variant, text, detail, parentId);
+  }
+
+  /** This account reached a plan window (said like a turn's rate-limit event). */
+  limitReached(limit: RateLimit) {
+    this.check();
+    this.env.onLimit?.(limit);
   }
 
   patchTool(id: string, patch: Partial<ToolItem>) {

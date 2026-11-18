@@ -215,6 +215,65 @@ function reportWindowState(w: BrowserWindow) {
   for (const ev of ['maximize', 'unmaximize', 'restore', 'focus', 'blur', 'enter-full-screen', 'leave-full-screen'] as const) w.on(ev as 'focus', push);
 }
 
+/*
+ * What a panel page tells the app goes out in small batches: a page that logs in a loop, fires
+ * thousands of failing requests or hangs must never flood the app's window (or this process, which
+ * also runs the bridge) with one message per line. At most EVENT_LINES console lines and
+ * EVENT_NET failed requests per page per beat are passed on; the rest are counted.
+ */
+const EVENT_BEAT = 200;
+const EVENT_LINES = 60;
+const EVENT_NET = 30;
+
+type BrowserEvent = { type: string; id?: number; [k: string]: unknown };
+const outbox: BrowserEvent[] = [];
+let outboxTimer: ReturnType<typeof setTimeout> | undefined;
+const consoleBuf = new Map<number, { lines: { level: string; text: string; source?: string }[]; dropped: number }>();
+const netBuf = new Map<number, { list: BrowserEvent[]; dropped: number }>();
+
+function flushBrowserEvents() {
+  outboxTimer = undefined;
+  for (const [id, b] of consoleBuf) outbox.push({ type: 'console', id, lines: b.lines, dropped: b.dropped });
+  consoleBuf.clear();
+  for (const [id, b] of netBuf) {
+    outbox.push(...b.list);
+    if (b.dropped) outbox.push({ type: 'net-dropped', id, count: b.dropped });
+  }
+  netBuf.clear();
+  const batch = outbox.splice(0);
+  if (batch.length && win && !win.isDestroyed()) win.webContents.send('sable:browser-event', batch);
+}
+
+/** Queues one event for the app's window; sent with the next beat. */
+function toApp(ev: BrowserEvent) {
+  outbox.push(ev);
+  outboxTimer ??= setTimeout(flushBrowserEvents, EVENT_BEAT);
+}
+
+function queueConsole(id: number, line: { level: string; text: string; source?: string }) {
+  let b = consoleBuf.get(id);
+  if (!b) consoleBuf.set(id, (b = { lines: [], dropped: 0 }));
+  if (b.lines.length >= EVENT_LINES) b.dropped++;
+  else b.lines.push(line);
+  outboxTimer ??= setTimeout(flushBrowserEvents, EVENT_BEAT);
+}
+
+function queueNet(ev: BrowserEvent & { id: number }) {
+  let b = netBuf.get(ev.id);
+  if (!b) netBuf.set(ev.id, (b = { list: [], dropped: 0 }));
+  if (b.list.length >= EVENT_NET) b.dropped++;
+  else b.list.push(ev);
+  outboxTimer ??= setTimeout(flushBrowserEvents, EVENT_BEAT);
+}
+
+/** The keys the Browser tab answers while focus is inside its page (keys typed there never reach the app). */
+function guestKey(input: Electron.Input): string | undefined {
+  if (input.type !== 'keyDown' || !(input.control || input.meta) || input.alt) return undefined;
+  const k = input.key.toLowerCase();
+  if (input.shift) return k === 't' ? 'shift+t' : undefined;
+  return k === 'f' || k === 't' || k === 'w' || k === 'l' ? k : undefined;
+}
+
 /** Pages inside the panel browser (<webview> guests): web navigation only, popups stay in the view. */
 function guardGuest(contents: WebContents) {
   const guard = (e: { url: string; preventDefault(): void }) => {
@@ -223,18 +282,183 @@ function guardGuest(contents: WebContents) {
   contents.on('will-navigate', guard);
   contents.on('will-redirect', guard);
   contents.on('will-attach-webview', (e) => e.preventDefault());
-  // Keys typed in the page go to the guest, not the app: Ctrl+F there opens the panel's find bar.
-  contents.on('before-input-event', (e, input) => {
-    if (input.type !== 'keyDown' || !(input.control || input.meta) || input.alt || input.shift || input.key.toLowerCase() !== 'f') return;
+  const ours = () => {
     const host = contents.hostWebContents;
-    if (!host || host !== win?.webContents) return;
+    return !!host && host === win?.webContents;
+  };
+  contents.on('before-input-event', (e, input) => {
+    const key = guestKey(input);
+    if (!key || !ours()) return;
     e.preventDefault();
-    host.send('sable:browser-event', { type: 'find', id: contents.id });
+    toApp({ type: 'key', id: contents.id, key });
+    flushBrowserEvents();
+  });
+  // A page that stops answering (a busy loop) gets a calm state in its tab; it may come back by itself.
+  const hang = (on: boolean) => () => {
+    if (ours()) toApp({ type: 'hang', id: contents.id, on });
+  };
+  (contents as unknown as NodeJS.EventEmitter).on('unresponsive', hang(true));
+  (contents as unknown as NodeJS.EventEmitter).on('responsive', hang(false));
+  contents.once('destroyed', () => {
+    consoleBuf.delete(contents.id);
+    netBuf.delete(contents.id);
+    hidden.delete(contents.id);
   });
   contents.setWindowOpenHandler(({ url }) => {
     if (isViewable(url) && url !== 'about:blank') void contents.loadURL(url).catch(() => {});
     return { action: 'deny' };
   });
+}
+
+/**
+ * The <webview> element forwards every console line of its page to the app's window as a message of
+ * its own; a page logging in a loop would bury the app in them. Once the guest is attached (its
+ * forwarding is in place), that is replaced by the batched, capped feed.
+ */
+function batchConsole(guest: WebContents) {
+  guest.removeAllListeners('console-message');
+  const rate = { n: 0, since: Date.now(), strikes: 0 };
+  guest.on('console-message', (d) => {
+    // Every line reaches this process one by one, whatever happens after: a flood is calmed in the page itself.
+    const now = Date.now();
+    rate.n++;
+    if (now - rate.since >= 1000) {
+      const perSecond = (rate.n * 1000) / (now - rate.since);
+      rate.n = 0;
+      rate.since = now;
+      if (perSecond > FLOOD_STOP) {
+        if (++rate.strikes >= 2) stopFlood(guest);
+      } else rate.strikes = 0;
+      if (perSecond > FLOOD_TAME) void guest.executeJavaScript(TAME_CONSOLE).catch(() => {});
+    }
+    const msg = typeof d.message === 'string' ? d.message : '';
+    if (!msg) return;
+    const source = d.sourceId ? `${d.sourceId.replace(/[?#].*$/, '').slice(0, 280)}${d.lineNumber ? `:${d.lineNumber}` : ''}` : undefined;
+    queueConsole(guest.id, { level: d.level, text: msg.slice(0, 1000), source });
+  });
+}
+
+/*
+ * Console floods. Each line a page logs costs this process (which also runs the bridge) an event,
+ * before anything can drop it: a page logging tens of thousands of lines a second would freeze
+ * the app and finally run it out of memory. Above FLOOD_TAME lines a second the page's console is
+ * limited in the page itself (200 lines a second, with a note of how many were left out; a page
+ * that logs less keeps its untouched console and true source lines). A page that keeps flooding
+ * above FLOOD_STOP for two seconds (it never yields, so it cannot be calmed) is stopped: its tab
+ * shows that, with Reload.
+ */
+const FLOOD_TAME = 1500;
+const FLOOD_STOP = 4_000;
+const TAME_CONSOLE = `(() => {
+  if (window.__sableConsoleLimit) return;
+  window.__sableConsoleLimit = true;
+  const c = console;
+  const info = c.info;
+  let n = 0, since = 0, left = 0;
+  const pass = () => {
+    const now = performance.now();
+    if (now - since >= 1000) {
+      if (left) info.call(c, 'Sable left out ' + left + ' console lines (the page logged too fast)');
+      since = now; n = 0; left = 0;
+    }
+    if (++n <= 200) return true;
+    left++;
+    return false;
+  };
+  for (const k of ['log', 'info', 'warn', 'error', 'debug', 'trace', 'dir', 'dirxml', 'table', 'count', 'assert', 'timeLog', 'group', 'groupCollapsed']) {
+    const f = c[k];
+    if (typeof f === 'function') c[k] = function () { if (pass()) return f.apply(this, arguments); };
+  }
+  addEventListener('error', (e) => { if (!pass()) e.preventDefault(); }, true);
+  addEventListener('unhandledrejection', (e) => { if (!pass()) e.preventDefault(); }, true);
+})()`;
+
+function stopFlood(guest: WebContents) {
+  if (guest.isDestroyed()) return;
+  toApp({ type: 'flood', id: guest.id });
+  flushBrowserEvents();
+  try {
+    guest.forcefullyCrashRenderer();
+  } catch {
+    /* already gone */
+  }
+}
+
+/*
+ * Request floods. The network service is shared with the app itself (its own page and the bridge's
+ * socket), so a page firing thousands of requests a second can stall Sable. Every finished or failed
+ * request of a panel page is counted per page; one that keeps above REQ_STOP a second for two
+ * seconds in a row is stopped like a console flood (its tab shows that, with Reload).
+ */
+const REQ_STOP = 1_200;
+const reqCount = new Map<number, { since: number; n: number; over: number }>();
+
+function countRequest(id: number | undefined) {
+  if (typeof id !== 'number') return;
+  const now = Date.now();
+  let c = reqCount.get(id);
+  if (!c) reqCount.set(id, (c = { since: now, n: 0, over: 0 }));
+  if (now - c.since >= 1000) {
+    c.over = c.n > REQ_STOP ? c.over + 1 : 0;
+    c.since = now;
+    c.n = 0;
+    if (c.over >= 2) {
+      reqCount.delete(id);
+      const guest = webContents.fromId(id);
+      if (guest && !guest.isDestroyed() && guest.getType() === 'webview') stopFlood(guest);
+      return;
+    }
+  }
+  c.n++;
+}
+
+/*
+ * A page the user is not looking at (another tab, or the panel showing another pane) is muted and
+ * its process slowed down, so a busy page in the background costs a fraction of a core instead of
+ * a whole one. Never the page in front: it runs at full speed.
+ */
+const hidden = new Set<number>();
+const HIDDEN_CPU_RATE = 10;
+
+function setGuestShown(guest: WebContents, shown: boolean) {
+  if (shown) hidden.delete(guest.id);
+  else hidden.add(guest.id);
+  try {
+    guest.setAudioMuted(!shown);
+  } catch {
+    /* gone */
+  }
+  // Two tabs of one site can share a process: slow it only when no page in it is shown.
+  let pid = 0;
+  try {
+    pid = guest.getOSProcessId();
+  } catch {
+    return;
+  }
+  const peers = webContents.getAllWebContents().filter((w) => w.getType() === 'webview' && !w.isDestroyed() && w.hostWebContents === win?.webContents && safePid(w) === pid);
+  const slow = peers.every((w) => hidden.has(w.id));
+  for (const w of peers) throttle(w, slow && hidden.has(w.id) ? HIDDEN_CPU_RATE : 1);
+}
+
+const safePid = (w: WebContents) => {
+  try {
+    return w.getOSProcessId();
+  } catch {
+    return -1;
+  }
+};
+
+function throttle(guest: WebContents, rate: number) {
+  const dbg = guest.debugger;
+  try {
+    if (!dbg.isAttached()) {
+      if (rate === 1) return;
+      dbg.attach('1.3');
+    }
+    void dbg.sendCommand('Emulation.setCPUThrottlingRate', { rate }).catch(() => {});
+  } catch {
+    /* another debugger holds the page, or it is gone: it runs as it is */
+  }
 }
 
 function hardenBrowser() {
@@ -253,7 +477,8 @@ function hardenBrowser() {
     if (!fromApp(e)) throw new Error('Not allowed');
     const guest = webContents.fromId(Number(id));
     if (!guest || guest.getType() !== 'webview' || guest.hostWebContents !== e.sender) throw new Error('That page is gone');
-    const image = await guest.capturePage();
+    // A page that hangs may never paint again: the capture gives up rather than keep the caller waiting.
+    const image = await Promise.race([guest.capturePage(), sleep(8000).then(() => Promise.reject(new Error('The page did not answer in time')))]);
     const { width, height } = image.getSize();
     const side = Math.max(width, height);
     // For the agent: at most 1568 px on the long side (what models look at in full) and JPEG, so it stays small.
@@ -275,15 +500,24 @@ function hardenBrowser() {
     } catch {
       return;
     }
-    win.webContents.send('sable:browser-event', { type: 'net', id: d.webContentsId, url: url.slice(0, 300), method: d.method, status: d.statusCode, error: d.error?.slice(0, 80) });
+    queueNet({ type: 'net', id: d.webContentsId, url: url.slice(0, 300), method: d.method, status: d.statusCode, error: d.error?.slice(0, 80) });
   };
   ses.webRequest.onCompleted((d) => {
+    countRequest(d.webContentsId);
     if (d.statusCode >= 400) reportNet({ webContentsId: d.webContentsId, url: d.url, method: d.method, statusCode: d.statusCode });
   });
   ses.webRequest.onErrorOccurred((d) => {
+    countRequest(d.webContentsId);
     // An aborted request (a navigation away, a cancelled fetch) is not a failure worth reporting.
     if (d.error === 'net::ERR_ABORTED') return;
     reportNet({ webContentsId: d.webContentsId, url: d.url, method: d.method, error: d.error });
+  });
+  // The Browser tab says which of its pages is in front; the others are muted and slowed down.
+  ipcMain.on('sable:browser-shown', (e, id: unknown, shown: unknown) => {
+    if (!fromApp(e)) return;
+    const guest = webContents.fromId(Number(id));
+    if (!guest || guest.isDestroyed() || guest.getType() !== 'webview' || guest.hostWebContents !== e.sender) return;
+    setGuestShown(guest, shown === true);
   });
   ipcMain.handle('sable:browser-clear', async (e) => {
     if (!fromApp(e)) throw new Error('Not allowed');
@@ -327,6 +561,9 @@ function harden() {
       // allowpopups only lets window.open reach guardGuest's handler, which never opens a window.
       delete params.preload;
       params.partition = BROWSER_PARTITION;
+    });
+    contents.on('did-attach-webview', (_e, guest) => {
+      if (contents === win?.webContents) batchConsole(guest);
     });
     contents.setWindowOpenHandler(({ url }) => {
       openOutside(url);

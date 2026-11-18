@@ -11,6 +11,7 @@ import { accountName } from '@/state/hooks';
 import { accountKey, useStore } from '@/state/store';
 import { Tip } from '@/ui';
 import { accountsOf, planWord } from './model';
+import { appliesTo } from '@/features/usage/scope';
 
 /** From this many accounts on, the switcher filters, groups and orders by room left. */
 export const MANY_ACCOUNTS = 8;
@@ -267,14 +268,15 @@ export function UsedCell({ limit, now }: { limit: RateLimit | undefined; now: nu
 }
 
 /** UsedCell for one account, read from the store. */
-export function AccountUsed({ provider, accountId }: { provider: ProviderId; accountId: string }) {
+export function AccountUsed({ provider, accountId, model }: { provider: ProviderId; accountId: string; model?: { id?: string; name?: string } }) {
   const limits = useStore((s) => {
     const key = accountKey(provider, accountId);
     const known = s.limitReports[key]?.limits;
     return known?.length ? known : s.limits[key];
   });
   const now = useNow();
-  return <UsedCell limit={tightest(limits, now)} now={now} />;
+  // For a session, only the windows that hold back its model: another model's full week is not this chat's.
+  return <UsedCell limit={tightest(model ? limits?.filter((l) => appliesTo(l, model)) : limits, now)} now={now} />;
 }
 
 /** "51% left": an agent's weeks left across its accounts, weighted by plan; amber near the end (as its used meter on the Usage page), red at it. */

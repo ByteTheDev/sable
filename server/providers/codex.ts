@@ -1101,7 +1101,9 @@ class CodexSession implements ProviderSession {
 
   private async steerOrQueue(item: UserItem, input: UserInput[]) {
     if (this.turnStarting) await this.turnStarting.catch(() => {});
-    if (this.turnId && this.rt.turnActive && this.loaded) {
+    // A turn the user is stopping drops input steered into it: the message waits instead (the bridge
+    // hands it back to the queue when the turn ends).
+    if (this.turnId && this.rt.turnActive && this.loaded && !this.rt.stopRequested) {
       try {
         const rpc = await this.provider.client();
         await rpc.request('turn/steer', { threadId: this.threadId, input, expectedTurnId: this.turnId }, 30_000);
@@ -1111,13 +1113,22 @@ class CodexSession implements ProviderSession {
         this.log('turn/steer failed; queueing', errMsg(err));
       }
     }
+    // The bridge took it back in the meantime (the turn ended first): it goes out from the queue.
+    if (this.takenBack(item)) return;
     if (!this.rt.turnActive) return this.startTurn([item], input);
     this.queue.push({ item, input });
   }
 
+  /** A message that waited in the timeline and is gone from it: the bridge put it back in its queue (or it was deleted). */
+  private takenBack(item: UserItem) {
+    return item.state === 'queued' && !this.rt.get(item.id);
+  }
+
   private drainQueue() {
     if (!this.queue.length || this.rt.turnActive || this.closed) return;
-    const q = this.queue.splice(0);
+    // Messages the bridge took back (the turn was stopped or failed before they were taken) go out from its queue, not twice.
+    const q = this.queue.splice(0).filter((x) => !this.takenBack(x.item));
+    if (!q.length) return;
     void this.startTurn(
       q.map((x) => x.item),
       q.flatMap((x) => x.input),

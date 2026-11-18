@@ -1,16 +1,21 @@
 import { Fragment, memo, useMemo, useState, type ReactNode } from 'react';
-import type { ToolItem } from '@shared/protocol';
+import type { ToolItem, WorkflowAgent, WorkflowRun } from '@shared/protocol';
 import { ProviderMark } from '@/art/Logo';
 import { Collapse } from '@/components/Collapse';
 import { Markdown } from '@/components/Markdown';
+import { clock } from '@/features/usage/format';
+import { useSessionLimits } from '@/features/usage/scope';
 import { Icon } from '@/icons';
-import { plural } from '@/lib/format';
+import { formatTokens, plural } from '@/lib/format';
+import { accountName } from '@/state/hooks';
 import { useStore } from '@/state/store';
-import { agentLine, agentProvider, agentTask, agentTrail, agentType, isAgentLive, readTrail } from './agent-line';
+import { Spinner } from '@/ui';
+import { agentLine, agentProvider, agentTask, agentTrail, agentType, isAgentLive, readTrail, workflowGlance, workflowProgressText } from './agent-line';
 import { EMPTY, useItem, useTimeline } from './ctx';
 import { foldKey, useFold } from './fold';
 import { ItemList } from './items';
 import { Elapsed, ToolView } from './Tool';
+import { shortDuration } from './util';
 
 /** How many of its latest steps a working sub-agent shows under its line. */
 const TAIL = 3;
@@ -24,7 +29,11 @@ type Store = ReturnType<typeof useStore.getState>;
  * it was given, every step and its report.
  */
 /** `scope`: where it is shown, so the conversation and the Agents tab each remember what the reader opened. */
-export const AgentBlock = memo(function AgentBlock({ item, tail = TAIL, extra, scope = 'agent' }: { item: ToolItem; tail?: number; extra?: ReactNode; scope?: string }) {
+export const AgentBlock = memo(function AgentBlock(props: { item: ToolItem; tail?: number; extra?: ReactNode; scope?: string }) {
+  return props.item.workflow ? <WorkflowBlock {...props} run={props.item.workflow} /> : <SubAgentBlock {...props} />;
+});
+
+const SubAgentBlock = memo(function SubAgentBlock({ item, tail = TAIL, extra, scope = 'agent' }: { item: ToolItem; tail?: number; extra?: ReactNode; scope?: string }) {
   const { sessionId } = useTimeline();
   const [open, setOpen] = useFold(foldKey(sessionId, item.id, scope), false);
   const live = isAgentLive(item);
@@ -71,7 +80,7 @@ export const AgentBlock = memo(function AgentBlock({ item, tail = TAIL, extra, s
         <Collapse open={!!line}>
           {line && (
             <div className="agent-line num">
-              <span className={line.tone === 'error' ? 'tool-fail' : undefined}>{line.state}</span>
+              <span className={line.why ? 'agent-why' : line.tone === 'error' ? 'tool-fail' : undefined}>{line.why ? `${line.state}: ${line.why}` : line.state}</span>
               {line.parts.map((p) => (
                 <Fragment key={p}>
                   <span className="agent-dot" aria-hidden>
@@ -82,7 +91,8 @@ export const AgentBlock = memo(function AgentBlock({ item, tail = TAIL, extra, s
               ))}
             </div>
           )}
-          {error && <pre className="tool-error agent-error">{error}</pre>}
+          {error && !line?.why && <pre className="tool-error agent-error">{error}</pre>}
+          {line?.why && scope === 'agent' && <GoesOn sessionId={sessionId} />}
         </Collapse>
         <Collapse open={live && !open && shown > 0}>
           <div className="agent-trail" aria-label="Latest steps">
@@ -159,6 +169,208 @@ function AgentBody({ item, live }: { item: ToolItem; live: boolean }) {
       {report && (
         <div className="agent-report">
           <Markdown text={report} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Under a sub-agent the plan stopped, in the conversation: one quiet line, only when it is true,
+ * that the chat itself can go on (its own model is not held back) and under which account.
+ */
+function GoesOn({ sessionId }: { sessionId: string }) {
+  const lim = useSessionLimits(sessionId);
+  const several = useStore((s) => (lim?.provider ? (s.providers[lim.provider]?.accounts?.length ?? 0) > 1 : false));
+  const account = useStore((s) => (lim?.provider ? s.providers[lim.provider]?.accounts?.find((a) => a.id === lim.accountId) : undefined));
+  if (!lim?.model || lim.level === 'cap') return null;
+  return (
+    <div className="agent-goes-on">
+      {lim.model} is not limited, so this chat goes on{several && account ? ` under ${accountName(account)}` : ''}.
+    </div>
+  );
+}
+
+// ── workflows ──
+
+/**
+ * A workflow (Claude Code's Workflow tool): one line with its name, how far it is (phase of phases,
+ * agents done of agents started) and the time it has run. While it works a segmented bar shows the
+ * phases and the agents that run now hang under it; when it is done it gathers into one line.
+ * Opening it lists every phase with its agents.
+ */
+const WorkflowBlock = memo(function WorkflowBlock({ item, run, tail = TAIL, extra, scope = 'agent' }: { item: ToolItem; run: WorkflowRun; tail?: number; extra?: ReactNode; scope?: string }) {
+  const { sessionId } = useTimeline();
+  const [open, setOpen] = useFold(foldKey(sessionId, item.id, scope), false);
+  const live = isAgentLive(item);
+  const g = workflowGlance(run);
+  const progress = workflowProgressText(run);
+  const line = live ? null : agentLine(item, 0);
+  const now = run.agents.filter((a) => a.state === 'running');
+  const shown = now.slice(-tail);
+
+  return (
+    <div className="agent wf" data-status={live ? 'running' : item.status} data-live={live || undefined} data-open={open || undefined}>
+      <div className="agent-head">
+        <button type="button" className="row-btn tool-row agent-row" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <span className="tool-icon">
+            <Icon name="tree" size={14} />
+          </span>
+          <span className="agent-type">Workflow</span>
+          <span className="agent-dot" aria-hidden>
+            ·
+          </span>
+          <span className="agent-task truncate">{agentTask(item)}</span>
+          <span className="tool-meta">{live && <Elapsed since={item.ts} />}</span>
+          <Icon name="caret-right" size={10} className="row-caret" />
+        </button>
+        {extra}
+      </div>
+      <div className="agent-under">
+        <Collapse open={!!line}>
+          {line && (
+            <div className="agent-line num">
+              <span className={line.tone === 'error' ? 'tool-fail' : undefined}>{line.state}</span>
+              {line.parts.map((p) => (
+                <Fragment key={p}>
+                  <span className="agent-dot" aria-hidden>
+                    ·
+                  </span>
+                  <span>{p}</span>
+                </Fragment>
+              ))}
+            </div>
+          )}
+        </Collapse>
+        <Collapse open={live}>
+          <div className="wf-live">
+            <PhaseBar run={run} />
+            <div className="wf-progress num">
+              <span className="truncate">
+                {progress[0] ?? 'Starting'}
+                {g.current && g.phases > 1 ? <span className="wf-phase-name"> · {g.current}</span> : null}
+              </span>
+              {progress[1] && <span className="wf-count">{progress[1]}</span>}
+            </div>
+            {run.limitWait && (
+              <div className="wf-wait">
+                Waiting for a plan limit{run.limitWait.resetsAt ? ` · resets ${clock(run.limitWait.resetsAt)}` : ''}
+              </div>
+            )}
+            {!open && shown.length > 0 && (
+              <div className="wf-now" aria-label="Agents working now">
+                {now.length > shown.length && <div className="agent-more num">+{now.length - shown.length} more working</div>}
+                {shown.map((a) => (
+                  <WorkflowAgentRow key={a.index} agent={a} />
+                ))}
+              </div>
+            )}
+          </div>
+        </Collapse>
+        <Collapse open={open}>
+          <WorkflowBody run={run} />
+        </Collapse>
+      </div>
+    </div>
+  );
+});
+
+/**
+ * The phases as segments: done ones full, the one that runs filled by its agents done of started,
+ * the ones to come empty. Only what is known: a phase without agents yet shows no fill.
+ */
+function PhaseBar({ run }: { run: WorkflowRun }) {
+  const g = workflowGlance(run);
+  const count = Math.max(1, g.phases);
+  return (
+    <div className="wf-bar" role="img" aria-label={g.phases > 1 ? `Phase ${g.phase} of ${g.phases}` : 'One phase'}>
+      {Array.from({ length: count }, (_, i) => {
+        const index = i + 1;
+        const state = run.status !== 'running' || index < g.phase ? 'done' : index === g.phase || (count === 1 && g.agents > 0) ? 'now' : 'next';
+        const mine = run.agents.filter((a) => (a.phase ?? 1) === index);
+        const fill = state === 'done' ? 1 : state === 'now' && mine.length ? mine.filter((a) => a.state === 'done' || a.state === 'error').length / mine.length : 0;
+        return (
+          <span key={index} className="wf-seg" data-state={state}>
+            <span className="wf-seg-fill" style={{ transform: `scaleX(${fill})` }} />
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** "survey:middleware" reads as a dim "survey" and the name. */
+function AgentLabel({ label }: { label: string }) {
+  const i = label.lastIndexOf(':');
+  if (i <= 0) return <span className="wf-label truncate">{label}</span>;
+  return (
+    <span className="wf-label truncate">
+      <span className="wf-label-dim">{label.slice(0, i)} </span>
+      {label.slice(i + 1)}
+    </span>
+  );
+}
+
+function agentFigures(a: WorkflowAgent): string {
+  const parts: string[] = [];
+  if (a.steps) parts.push(plural(a.steps, 'step'));
+  if (a.tokens) parts.push(formatTokens(a.tokens));
+  return parts.join(' · ');
+}
+
+/** One agent of a workflow: its state, its label, what it does (or said last), its figures. */
+const WorkflowAgentRow = memo(function WorkflowAgentRow({ agent: a }: { agent: WorkflowAgent }) {
+  const running = a.state === 'running';
+  const figures = agentFigures(a);
+  return (
+    <div className="wf-agent" data-state={a.state}>
+      <span className="wf-agent-mark" aria-hidden>
+        {running ? <Spinner size={10} /> : a.state === 'done' ? <Icon name="check" size={11} /> : a.state === 'error' ? <Icon name="x" size={11} /> : <span className="wf-queued" />}
+      </span>
+      <AgentLabel label={a.label} />
+      <span className={running ? 'wf-agent-now truncate shimmer' : 'wf-agent-now truncate'}>{a.state === 'error' ? (a.error ?? 'Failed') : a.state === 'queued' ? 'Waiting to start' : (a.activity ?? '')}</span>
+      <span className="wf-agent-meta num">
+        {figures && <span>{figures}</span>}
+        {running && a.startedAt ? <Elapsed since={a.startedAt} /> : a.durationMs && a.durationMs >= 1000 ? <span>{shortDuration(a.durationMs)}</span> : null}
+      </span>
+    </div>
+  );
+});
+
+/** Opened: every phase in order with its agents under it. */
+function WorkflowBody({ run }: { run: WorkflowRun }) {
+  const g = workflowGlance(run);
+  const count = Math.max(g.phases, 1);
+  const loose = run.agents.filter((a) => !a.phase);
+  return (
+    <div className="wf-body">
+      {Array.from({ length: count }, (_, i) => {
+        const index = i + 1;
+        const phase = run.phases[i];
+        const agents = run.agents.filter((a) => a.phase === index || (count === 1 && !a.phase));
+        const state = run.status !== 'running' || index < g.phase ? 'done' : index === g.phase ? 'now' : 'next';
+        return (
+          <div key={index} className="wf-phase" data-state={state}>
+            <div className="wf-phase-head">
+              <span className="wf-phase-index num">{index}</span>
+              <span className="wf-phase-title truncate">{phase?.title ?? `Phase ${index}`}</span>
+              <span className="wf-phase-meta num">{agents.length ? plural(agents.length, 'agent') : state === 'next' ? 'Not started' : ''}</span>
+            </div>
+            {agents.length > 0 && (
+              <div className="wf-phase-agents">
+                {agents.map((a) => (
+                  <WorkflowAgentRow key={a.index} agent={a} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {count > 1 && loose.length > 0 && (
+        <div className="wf-phase-agents">
+          {loose.map((a) => (
+            <WorkflowAgentRow key={a.index} agent={a} />
+          ))}
         </div>
       )}
     </div>

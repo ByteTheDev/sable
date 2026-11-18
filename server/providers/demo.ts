@@ -331,6 +331,12 @@ class DemoSession implements ProviderSession {
       pricing: PRICING[model] ?? PRICING[DEFAULT_MODEL],
       allowed: this.allowed,
       thinking: effort !== 'minimal',
+      // Said like a turn's rate-limit event: every window as known, this one at its cap.
+      onLimit: (limit) => {
+        const profile = this.limitProfile();
+        const known = profile ? rateLimits(Date.now(), profile).filter((l) => l.id !== limit.id) : [];
+        this.ctx.emit({ type: 'limits.updated', provider: 'demo', limits: [...known, limit], meta: { planLimits: true } });
+      },
     });
     this.script = s;
     // The line Sable adds about the Browser tab is not the user's words: it never picks a scenario.
@@ -383,6 +389,8 @@ class DemoSession implements ProviderSession {
     this.script = undefined;
     this.queue.unshift(...left);
     this.rt.endTurn(error);
+    // After a stop or a failure the bridge takes waiting messages back to its queue: those are not sent twice.
+    this.queue = this.queue.filter((u) => this.rt.get<UserItem>(u.id)?.state === 'queued');
     const next = this.queue.shift();
     if (next) this.start(next);
   }

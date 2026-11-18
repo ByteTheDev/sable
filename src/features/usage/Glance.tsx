@@ -10,6 +10,7 @@ import { cx } from '@/ui';
 import { isApiKey, STALE_MS } from './format';
 import { AsOf, LimitsBody, useAccountWindows } from './Limits';
 import { planShort } from './plans';
+import { modelLimits } from './scope';
 import { useLimitsTicker } from './ticker';
 
 /**
@@ -92,6 +93,11 @@ export function LimitsGlance({ provider, accountId = DEFAULT_ACCOUNT, read = tru
  */
 export function LimitDot({ provider, accountId, className }: { provider: ProviderId; accountId?: string; className?: string }) {
   const level = useLimitLevel(provider, accountId);
+  const { limits } = useAccountWindows(provider, accountId ?? DEFAULT_ACCOUNT);
   if (!level) return null;
-  return <span className={cx('limit-dot', className)} data-level={level === 'cap' ? 'red' : 'amber'} role="img" aria-label={level === 'cap' ? 'A plan limit is used up' : 'Near a plan limit'} />;
+  // A window of one model (Fable's week) at its cap leaves the other models free: a quiet ring, not red.
+  const all = level === 'cap' ? modelLimits(limits, {}) : undefined;
+  const tone = level !== 'cap' ? 'amber' : all?.level === 'cap' ? 'red' : all?.level === 'near' ? 'amber' : 'other';
+  const label = tone === 'red' ? 'A plan limit is used up' : tone === 'other' ? 'One model is at its limit' : 'Near a plan limit';
+  return <span className={cx('limit-dot', className)} data-level={tone} role="img" aria-label={label} />;
 }

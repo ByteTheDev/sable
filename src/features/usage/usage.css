@@ -398,6 +398,12 @@
   background-color: var(--red);
 }
 
+/* Another model's window at its cap (Fable's week while the chat runs Opus): said, not alarmed. */
+.limit-dot[data-level='other'] {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1.25px var(--text-3);
+}
+
 /* The side panel's Plan limits header: both buttons at the end. */
 .ul-rail-actions {
   display: flex;

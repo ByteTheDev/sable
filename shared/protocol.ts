@@ -219,6 +219,8 @@ export interface BrowserRequest {
   /** state: address and title only; read: the page's text and logs; screenshot: a picture; open: load `url` and wait. */
   op: 'state' | 'read' | 'screenshot' | 'open' | 'snapshot' | 'click' | 'type' | 'press' | 'scroll' | 'eval' | 'logs' | 'wait' | 'navigate';
   url?: string;
+  /** open: in a new tab rather than the one in front. Every other op works on the tab in front. */
+  newTab?: boolean;
   selector?: string;
   /** read and screenshot: refuse when the page moved to another origin since it was checked. */
   expectOrigin?: string;
@@ -547,6 +549,46 @@ export interface AgentStats {
   steps?: number;
   durationMs?: number;
   background?: 'running' | 'done' | 'failed' | 'stopped';
+  /** It stopped at a plan limit (its own model's window, e.g. Fable's weekly one): which window, and its reset when known. */
+  limit?: { window: string; resetsAt?: number };
+}
+
+/**
+ * A Claude Code workflow (the Workflow tool) as it runs in the background: the phases its script
+ * declares, and every agent it started, from the CLI's own progress rows. Kept on the tool item.
+ */
+export interface WorkflowRun {
+  /** The script's meta.name. */
+  name?: string;
+  /** Phases in order: those the script declares, then any the run named that it did not. */
+  phases: { title: string; detail?: string }[];
+  /** How many phases have started (1-based index of the latest), 0 before the first. */
+  phase: number;
+  agents: WorkflowAgent[];
+  status: 'running' | 'done' | 'failed' | 'stopped';
+  /** Totals over its agents, as the CLI counts them. */
+  tokens?: number;
+  steps?: number;
+  /** Set when it finished. */
+  durationMs?: number;
+  /** Waiting for a plan limit to reset before its agents go on. */
+  limitWait?: { resetsAt?: number };
+}
+
+export interface WorkflowAgent {
+  index: number;
+  label: string;
+  /** 1-based phase it runs in, when the script put it in one. */
+  phase?: number;
+  state: 'queued' | 'running' | 'done' | 'error';
+  model?: string;
+  startedAt?: number;
+  tokens?: number;
+  steps?: number;
+  durationMs?: number;
+  /** What it does now, or what it said last. */
+  activity?: string;
+  error?: string;
 }
 
 export interface ToolItem extends BaseItem {
@@ -570,6 +612,8 @@ export interface ToolItem extends BaseItem {
    * this call's own or earlier calls' in the same batch): not part of the step's own running time.
    */
   waitedMs?: number;
+  /** A Workflow call: its phases and agents while it runs in the background and once it is done. */
+  workflow?: WorkflowRun;
 }
 
 export interface NoticeItem extends BaseItem {

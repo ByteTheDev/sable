@@ -131,6 +131,25 @@ export class SessionRuntime {
     this.queueChanged();
   }
 
+  /**
+   * Messages in the timeline no agent took (steered into a turn that ended first; with `all`, any
+   * left waiting, as after a restart) go back to the front of the queue in the order they were
+   * sent, so none is lost. With `reason`, one quiet line in the timeline says so. Returns how many.
+   */
+  returnUntaken(opts: { all?: boolean; reason?: 'stopped' | 'failed' | 'closed' } = {}): number {
+    const untaken = this.items.filter((i): i is UserItem => i.type === 'user' && !i.parentId && i.state === 'queued' && (opts.all || !!i.steered));
+    if (!untaken.length) return 0;
+    for (const u of untaken) this.remove(u.id);
+    this.requeue(untaken.map((u) => ({ id: u.id, text: u.text, attachments: u.attachments, createdAt: u.ts })));
+    if (opts.reason) {
+      const one = untaken.length === 1;
+      const it = one ? 'it' : 'them';
+      const why = opts.reason === 'closed' ? `Sable closed before the agent took ${it}.` : opts.reason === 'failed' ? `The turn failed before the agent took ${it}.` : `The turn stopped before the agent took ${it}.`;
+      this.notice('info', one ? 'Your message is back in the queue' : `${untaken.length} messages are back in the queue`, why);
+    }
+    return untaken.length;
+  }
+
   /** Takes a message out of the queue (the first one without an id). */
   takeQueued(id?: string): QueuedMessage | undefined {
     const at = id ? this.queue.findIndex((x) => x.id === id) : this.queue.length ? 0 : -1;

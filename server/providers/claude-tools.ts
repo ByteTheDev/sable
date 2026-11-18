@@ -1,4 +1,4 @@
-import type { AgentStats, FileDiff, Question, Todo, ToolDetail, ToolKind, ToolResult } from '../../shared/protocol';
+import type { AgentStats, FileDiff, Question, Todo, ToolDetail, ToolKind, ToolResult, WorkflowAgent, WorkflowRun } from '../../shared/protocol';
 import { countChanges, makeFileDiff } from '../../shared/diff';
 import { WIDGET_SERVER, WIDGET_TOOL_ID, describeWidget } from './widget-tool';
 import { browserOp, describeBrowser } from './browser-tool';
@@ -104,6 +104,13 @@ export function describeTool(name: string, input: Obj = {}): ToolView {
         // A background agent (run_in_background, or a remote one, which always runs in the background) keeps working after the call returns.
         detail: { subagent: input.subagent_type, description: input.description, prompt: input.prompt, ...(input.run_in_background || input.isolation === 'remote' ? { background: true } : {}) },
       };
+    case 'Workflow': {
+      // Multi-agent orchestration in the background: shown as one agent block with its phases and agents.
+      const meta = workflowMeta(input.script);
+      const name = meta.name ?? (typeof input.name === 'string' ? input.name : undefined);
+      const label = meta.description || (name ? humanName(name) : undefined);
+      return { kind: 'agent', title: label || 'Run a workflow', detail: { subagent: 'Workflow', description: label, background: true } };
+    }
     case 'TodoWrite':
       return { kind: 'todo', title: 'Update the task list', detail: { todos: normalizeTodos(input.todos) } };
     case 'TaskCreate':
@@ -270,6 +277,10 @@ export function mapResult(name: string, input: Obj, structured: unknown, content
 
   if (isError) {
     Object.assign(out, clip(flat.text || (typeof structured === 'string' ? structured : '')));
+    if (name === 'Task' || name === 'Agent') {
+      const limit = agentLimitOf(out.text);
+      if (limit) out.agent = { limit };
+    }
     const code = flat.text.match(/Exit code (\d+)/);
     if (code) out.exitCode = Number(code[1]);
     return out;
@@ -354,8 +365,18 @@ export function mapResult(name: string, input: Obj, structured: unknown, content
       // Started in the background: the call returns at once with a placeholder, the agent works on.
       const launched = r.status === 'async_launched' || r.status === 'remote_launched';
       if (launched) agent.background = 'running';
+      const limit = launched ? undefined : agentLimitOf(Array.isArray(r.content) ? flattenContent(r.content).text : tail.text);
+      if (limit) agent.limit = limit;
       if (Object.keys(agent).length) out.agent = agent;
       if (!launched) Object.assign(out, clip(Array.isArray(r.content) ? flattenContent(r.content).text : tail.text));
+      return out;
+    }
+    case 'Workflow': {
+      // Launched: the call returns at once, the run goes on in the background.
+      const launched = r.status === 'async_launched' || r.status === 'remote_launched';
+      if (launched) out.agent = { background: 'running' };
+      if (typeof r.error === 'string' && r.error) Object.assign(out, clip(r.error));
+      else if (!launched) Object.assign(out, clip(flat.text));
       return out;
     }
     case 'AskUserQuestion': {
@@ -389,4 +410,160 @@ export function peekPartialInput(json: string): Obj {
     }
   }
   return out;
+}
+
+// ── sub-agents at a plan limit ──
+
+/**
+ * A sub-agent the plan stopped: Claude Code ends it with "You've hit your Fable limit · resets
+ * Nov 22, 12am" (or "…your weekly limit…", or the older "Claude AI usage limit reached|<epoch>").
+ * Returns the window as the limit rows name it ("Weekly · Fable", "5-hour limit") and its reset
+ * when the text gives one; undefined for any other text.
+ */
+export function agentLimitOf(text: string | undefined, now = Date.now()): { window: string; resetsAt?: number } | undefined {
+  const t = (text ?? '').trim();
+  if (!t || t.length > 600) return undefined;
+  const hit = /(?:you(?:'|’)ve|you have) (?:hit|reached) your ([\w .-]*?)\s*(?:usage )?limit(?:\s*[·•|-]\s*resets\s+([^\n]+?))?\s*\.?\s*$/im.exec(t);
+  const old = /usage limit reached\|(\d{9,13})/i.exec(t);
+  if (!hit && !old) return undefined;
+  const what = (hit?.[1] ?? '').trim().replace(/^the\s+/i, '');
+  let window: string;
+  if (/^(5|five)[- ]?hour$/i.test(what)) window = '5-hour limit';
+  else if (/^(weekly|week)$/i.test(what)) window = 'Weekly · all models';
+  else if (!what || /^(usage|plan)$/i.test(what)) window = 'Plan limit';
+  else window = `Weekly · ${what.replace(/^weekly\s+/i, '').replace(/^\w/, (c) => c.toUpperCase())}`;
+  const resetsAt = old ? epochOf(Number(old[1])) : hit?.[2] ? resetFromText(hit[2], now) : undefined;
+  return resetsAt ? { window, resetsAt } : { window };
+}
+
+const epochOf = (n: number) => (n < 1e12 ? n * 1000 : n);
+
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/** "Nov 22, 12am", "Nov 22 at 3:30pm", "3pm": the next such local time after `now`. */
+export function resetFromText(text: string, now = Date.now()): number | undefined {
+  const t = text.toLowerCase().replace(/\(.*?\)/g, ' ');
+  const time = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/.exec(t);
+  const date = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b/.exec(t);
+  if (!time && !date) return undefined;
+  const d = new Date(now);
+  let h = time ? Number(time[1]) % 12 : 0;
+  if (time?.[3] === 'pm') h += 12;
+  const at = new Date(d.getFullYear(), date ? MONTHS.indexOf(date[1]) : d.getMonth(), date ? Number(date[2]) : d.getDate(), h, time?.[2] ? Number(time[2]) : 0);
+  // The next one: a date already past is next year's, a time already past today is tomorrow's.
+  if (at.getTime() <= now) {
+    if (date) at.setFullYear(at.getFullYear() + 1);
+    else at.setDate(at.getDate() + 1);
+  }
+  return at.getTime();
+}
+
+// ── workflows ──
+
+function humanName(name: string): string {
+  const words = name.replace(/[-_]+/g, ' ').trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : name;
+}
+
+type WorkflowMeta = { name?: string; description?: string; phases: { title: string; detail?: string }[] };
+
+/** A string value of `key` in a JS object literal's text (single, double or back quotes). */
+function literal(key: string, from: string): string | undefined {
+  const m = new RegExp(`\\b${key}\\s*:\\s*(["'\`])((?:\\\\.|(?!\\1)[^\\\\])*)\\1`).exec(from);
+  return m ? m[2].replace(/\\(.)/g, '$1') : undefined;
+}
+
+/**
+ * The `export const meta = { name, description, phases }` a workflow script begins with (a plain
+ * literal, so it is read as text, nothing runs). Fields it cannot find are left out.
+ */
+export function workflowMeta(script: unknown): WorkflowMeta {
+  const out: WorkflowMeta = { phases: [] };
+  if (typeof script !== 'string') return out;
+  const start = script.search(/export\s+const\s+meta\s*=\s*\{/);
+  if (start < 0) return out;
+  // The literal ends where its braces balance (strings skipped).
+  let depth = 0;
+  let end = -1;
+  let quote = '';
+  for (let i = script.indexOf('{', start); i < script.length; i++) {
+    const c = script[i];
+    if (quote) {
+      if (c === '\\') i++;
+      else if (c === quote) quote = '';
+    } else if (c === '"' || c === "'" || c === '`') quote = c;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  const body = script.slice(start, end < 0 ? Math.min(script.length, start + 4000) : end + 1);
+  const phasesAt = body.search(/\bphases\s*:\s*\[/);
+  const head = phasesAt < 0 ? body : body.slice(0, phasesAt);
+  const name = literal('name', head);
+  const description = literal('description', head);
+  if (name) out.name = name;
+  if (description) out.description = description;
+  if (phasesAt >= 0) {
+    for (const m of body.slice(phasesAt).matchAll(/\{([^{}]*)\}/g)) {
+      const title = literal('title', m[1]);
+      const detail = literal('detail', m[1]);
+      if (title) out.phases.push(detail ? { title, detail } : { title });
+    }
+  }
+  return out;
+}
+
+/** A new run from the Workflow call's input: its phases as the script declares them, none started yet. */
+export function workflowStart(input: Obj): WorkflowRun {
+  const meta = workflowMeta(input.script);
+  const name = meta.name ?? (typeof input.name === 'string' ? input.name : undefined);
+  return { ...(name ? { name } : {}), phases: meta.phases, phase: 0, agents: [], status: 'running' };
+}
+
+const AGENT_STATE: Record<string, WorkflowAgent['state']> = { done: 'done', error: 'error', failed: 'error', queued: 'queued' };
+const count = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
+
+/**
+ * Folds the CLI's `workflow_progress` rows (`workflow_phase` and `workflow_agent`, the latest row
+ * per index; `workflow_log` and anything else ignored) into the run as known so far.
+ */
+export function mergeWorkflow(run: WorkflowRun, rows: unknown): WorkflowRun {
+  if (!Array.isArray(rows) || !rows.length) return run;
+  const phases = [...run.phases];
+  let phase = run.phase;
+  const agents = new Map(run.agents.map((a) => [a.index, a]));
+  for (const r of rows as Obj[]) {
+    if (!r || typeof r !== 'object' || typeof r.index !== 'number') continue;
+    if (r.type === 'workflow_phase') {
+      if (typeof r.title === 'string' && !phases[r.index - 1]) phases[r.index - 1] = { title: r.title };
+      phase = Math.max(phase, r.index);
+    } else if (r.type === 'workflow_agent') {
+      const prev = agents.get(r.index);
+      const a: WorkflowAgent = {
+        ...prev,
+        index: r.index,
+        label: typeof r.label === 'string' && r.label ? r.label : (prev?.label ?? `Agent ${r.index}`),
+        state: AGENT_STATE[String(r.state)] ?? (r.blocked ? 'error' : 'running'),
+      };
+      if (typeof r.phaseIndex === 'number') a.phase = r.phaseIndex;
+      if (typeof r.model === 'string') a.model = r.model;
+      if (count(r.startedAt)) a.startedAt = count(r.startedAt);
+      if (count(r.tokens) !== undefined) a.tokens = count(r.tokens);
+      if (count(r.toolCalls) !== undefined) a.steps = count(r.toolCalls);
+      if (count(r.durationMs) !== undefined) a.durationMs = count(r.durationMs);
+      const said = typeof r.lastToolSummary === 'string' && r.lastToolSummary.trim() ? r.lastToolSummary.trim() : typeof r.lastToolName === 'string' ? r.lastToolName : undefined;
+      if (said) a.activity = said.length > 160 ? said.slice(0, 159) + '…' : said;
+      if (typeof r.error === 'string' && r.error) a.error = r.error.slice(0, 400);
+      agents.set(r.index, a);
+      if (typeof r.phaseIndex === 'number') {
+        phase = Math.max(phase, r.phaseIndex);
+        if (typeof r.phaseTitle === 'string' && !phases[r.phaseIndex - 1]) phases[r.phaseIndex - 1] = { title: r.phaseTitle };
+      }
+    }
+  }
+  // A phase the rows skipped keeps its place under a plain name.
+  for (let i = 0; i < phases.length; i++) phases[i] ??= { title: `Phase ${i + 1}` };
+  return { ...run, phases, phase, agents: [...agents.values()].sort((a, b) => a.index - b.index) };
 }

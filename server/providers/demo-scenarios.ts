@@ -648,6 +648,129 @@ const crew: Scenario = async ({ s }) => {
   s.finish({ suggestion: 'Start the dev server and reproduce the webhook failure again' });
 };
 
+// ─────────────── 4c. a workflow: phases, and agents started in each ───────────────
+
+/**
+ * A Claude Code workflow (the Workflow tool): the call returns at once and the run goes on in the
+ * background, phase by phase, its agents reporting progress rows as the CLI does. Three phases:
+ * three agents survey in parallel, two fix, one verifies (and one survey agent fails).
+ */
+const workflow: Scenario = async ({ s }) => {
+  await s.say('This is three steps with clear hand-offs, so I will run it as a workflow: survey the auth code in parallel, fix what the survey finds, then verify.');
+  const phases = [
+    { title: 'Survey', detail: 'one agent per area maps the auth failures' },
+    { title: 'Fix', detail: 'one agent per finding makes the change' },
+    { title: 'Verify', detail: 'run the tests and review the diff' },
+  ];
+  const script = `export const meta = {\n  name: 'auth-hardening',\n  description: 'Survey, fix and verify the auth error handling',\n  phases: ${JSON.stringify(phases)},\n}\n\nphase('Survey')\nconst found = await parallel(AREAS.map((a) => () => agent(SURVEY(a), { label: 'survey:' + a })))\nphase('Fix')\n...`;
+  const id = await s.tool({ name: 'Workflow', kind: 'agent', title: 'Survey, fix and verify the auth error handling', detail: { subagent: 'Workflow', description: 'Survey, fix and verify the auth error handling', background: true }, input: { script } });
+  s.patchTool(id, { workflow: { name: 'auth-hardening', phases, phase: 0, agents: [], status: 'running' } });
+  s.start(id);
+  await s.pause(300, 500);
+  s.complete(id, { text: 'Workflow launched in the background.', agent: { background: 'running' } });
+  s.activity('Waiting for the workflow');
+
+  type Row = { index: number; label: string; phase: number; state: 'queued' | 'running' | 'done' | 'error'; startedAt?: number; tokens?: number; steps?: number; durationMs?: number; activity?: string; error?: string; model?: string };
+  const rows: Row[] = [];
+  let phase = 0;
+  const t0 = Date.now();
+  const push = (status: 'running' | 'done' = 'running') => {
+    const tokens = rows.reduce((n, r) => n + (r.tokens ?? 0), 0);
+    const steps = rows.reduce((n, r) => n + (r.steps ?? 0), 0);
+    s.patchTool(id, { workflow: { name: 'auth-hardening', phases, phase, agents: rows.map((r) => ({ ...r })), status, tokens, steps, ...(status === 'done' ? { durationMs: Date.now() - t0 } : {}) } });
+  };
+  const work = async (r: Row, acts: string[], end: { tokens: number; error?: string }) => {
+    r.state = 'running';
+    r.startedAt = Date.now();
+    push();
+    for (const [i, a] of acts.entries()) {
+      await s.pause(900, 1600);
+      r.activity = a;
+      r.steps = (r.steps ?? 0) + 1 + (i % 2);
+      r.tokens = Math.round((end.tokens * (i + 1)) / (acts.length + 1));
+      push();
+    }
+    await s.pause(700, 1200);
+    r.tokens = end.tokens;
+    r.durationMs = Date.now() - (r.startedAt ?? Date.now());
+    r.state = end.error ? 'error' : 'done';
+    if (end.error) r.error = end.error;
+    push();
+  };
+  const add = (label: string, p: number): Row => {
+    const r: Row = { index: rows.length + 1, label, phase: p, state: 'queued', model: 'demo-large' };
+    rows.push(r);
+    return r;
+  };
+
+  phase = 1;
+  const survey = [add('survey:middleware', 1), add('survey:routes', 1), add('survey:webhooks', 1)];
+  push();
+  await Promise.all([
+    work(survey[0], ['Read src/auth/middleware.ts', 'Search for status(401)', 'Read src/server/errors.ts'], { tokens: 21_400 }),
+    work(survey[1], ['Read src/server/routes.ts', 'Search for invalid_credentials'], { tokens: 14_800 }),
+    work(survey[2], ['Read src/server/webhooks.ts', 'Run curl against /webhooks'], { tokens: 9_600, error: 'The server is not running on port 3000.' }),
+  ]);
+
+  phase = 2;
+  const fix = [add('fix:token-error', 2), add('fix:admin-body', 2)];
+  push();
+  await Promise.all([
+    work(fix[0], ['Edit src/server/errors.ts', 'Edit src/auth/middleware.ts', 'Run npm test -- auth'], { tokens: 26_300 }),
+    work(fix[1], ['Read src/server/admin.ts', 'Edit src/server/admin.ts'], { tokens: 12_100 }),
+  ]);
+
+  phase = 3;
+  const verify = add('verify:tests', 3);
+  push();
+  await work(verify, ['Run npm test', 'Review the diff'], { tokens: 17_900 });
+  push('done');
+
+  s.activity('Reading the results');
+  await s.say('The workflow is done. TokenError now maps to a 401 and the admin routes return the same error body as the others; the auth tests pass. The webhook survey could not reach the server, so that path is still unchecked.');
+  s.finish({ suggestion: 'Start the dev server and survey the webhooks again' });
+};
+
+// ─────────────── 4d. a sub-agent stopped by its own model's weekly limit ───────────────
+
+/**
+ * Two sub-agents: one on the session's model finishes, one on another model stops at that model's
+ * weekly limit. The account stays the same and the chat itself can go on with its own model.
+ */
+const limited: Scenario = async ({ s, model }) => {
+  await s.say('Two agents: one maps the auth errors, one on Demo Deep reviews the token refresh.');
+  const specA = { subagent: 'Explore', description: 'Map auth error responses', prompt: 'Find every place in src/ where an auth failure becomes an HTTP response.' };
+  const specB = { subagent: 'general-purpose', description: 'Review the token refresh', prompt: 'Review src/auth/session.ts for races in the token refresh. Use the deep model.' };
+  const a = await s.tool({ name: 'Agent', kind: 'agent', title: specA.description, detail: specA, input: { subagent_type: specA.subagent, description: specA.description, prompt: specA.prompt } });
+  const b = await s.tool({ name: 'Agent', kind: 'agent', title: specB.description, detail: specB, input: { subagent_type: specB.subagent, description: specB.description, prompt: specB.prompt, model: 'demo-deep' } });
+  s.start(a);
+  s.start(b);
+  const runA = async () => {
+    const o = { parentId: a };
+    await s.grep('status\\((401|403)\\)', C.grep(/status\((401|403)\)/, 'src/'), { ...o, path: 'src' });
+    await s.read('src/server/admin.ts', C.ADMIN_TS, o);
+    await s.read('src/auth/middleware.ts', C.MIDDLEWARE_TS, o);
+    const report = 'Three places turn an auth failure into a response: the middleware (401), the login route (401) and the admin routes (403, with a different body).';
+    await s.say(report, a);
+    s.complete(a, { text: report, agent: { tokens: 16_200, steps: 3 } });
+  };
+  const runB = async () => {
+    const o = { parentId: b };
+    await s.read('src/auth/middleware.ts', C.MIDDLEWARE_TS, o);
+    await s.pause(600, 900);
+    // The week of Demo Deep is used up: its window says so, the agent's run ends with the CLI's words.
+    const week = new Date();
+    week.setDate(week.getDate() + ((8 - week.getDay()) % 7 || 7));
+    week.setHours(0, 0, 0, 0);
+    s.limitReached({ id: 'model_Demo Deep', label: 'Weekly · Demo Deep', percent: 100, resetsAt: week.getTime(), windowMins: 10_080 });
+    const said = `You've hit your Demo Deep limit · resets ${week.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, 12am`;
+    s.complete(b, { text: said, agent: { steps: 1, tokens: 3_100, limit: { window: 'Weekly · Demo Deep', resetsAt: week.getTime() } } });
+  };
+  await Promise.all([runA(), runB()]);
+  await s.say(`The refresh review stopped at the Demo Deep weekly limit. The map is back: three places answer auth failures, and the admin routes use a different body. I can do the refresh review myself on ${model === 'demo-deep' ? 'this model' : 'this chat’s model'}.`);
+  s.finish({ suggestion: 'Review the token refresh here instead' });
+};
+
 // ──────────────────────────────────── 5. web search ─────────────────────────────
 
 const search: Scenario = async ({ s }) => {
@@ -1255,6 +1378,8 @@ export const SCENARIOS = {
   questions,
   agents,
   crew,
+  workflow,
+  limited,
   search,
   markdown,
   errors,
@@ -1303,6 +1428,8 @@ const KEYWORDS: [RegExp, ScenarioId][] = [
   [/\b(markdown|showcase)\b/i, 'markdown'],
   [/\bmcp\b/i, 'mcp'],
   [/\b(crew|delegate)\b/i, 'crew'],
+  [/\bworkflows?\b/i, 'workflow'],
+  [/\b(fable|limited)\b/i, 'limited'],
   [/\b(agents?|sub-?agents?|parallel|research)\b/i, 'agents'],
   [/\b(search|web|docs?|documentation)\b/i, 'search'],
   [/\b(questions?|ask|choose)\b/i, 'questions'],

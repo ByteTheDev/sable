@@ -3,11 +3,25 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 /**
  * Sandboxed preload: the page gets a few facts about the shell, the native folder dialog, the window
  * commands behind its own minimise / maximise / close buttons, the real path of a dropped or
- * picked file (Electron's webUtils.getPathForFile), and three narrow calls for
- * the panel browser (capture its page, clear its data, hear about blocked downloads), nothing else.
+ * picked file (Electron's webUtils.getPathForFile), and narrow calls for the panel browser
+ * (capture a page, clear its data, say which page is in front, hear its events), nothing else.
  * The app version arrives as an extra argument from the main process.
  */
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+
+interface BrowserEvent {
+  type: string;
+  name?: string;
+  id?: number;
+  url?: string;
+  method?: string;
+  status?: number;
+  error?: string;
+  key?: string;
+  on?: boolean;
+  count?: number;
+  lines?: { level: string; text: string; source?: string }[];
+}
 
 interface WindowState {
   maximized: boolean;
@@ -54,11 +68,21 @@ contextBridge.exposeInMainWorld('sableDesktop', {
     /** `forAgent`: smaller, as JPEG, for the agent's browser_screenshot. */
     capture: (webContentsId: number, opts?: { forAgent?: boolean }): Promise<string> => ipcRenderer.invoke('sable:browser-capture', Number(webContentsId), !!opts?.forAgent),
     clearData: (): Promise<void> => ipcRenderer.invoke('sable:browser-clear'),
-    /** Blocked downloads, Ctrl+F in a page, and failed requests of a page ('net': url without query, method, status or error). */
-    onEvent: (cb: (e: { type: string; name?: string; id?: number; url?: string; method?: string; status?: number; error?: string }) => void) => {
+    /** Which page is in front: the others are muted and slowed down by the shell. */
+    setShown: (webContentsId: number, shown: boolean) => ipcRenderer.send('sable:browser-shown', Number(webContentsId), !!shown),
+    /**
+     * Blocked downloads, keys typed in a page that the tab answers ('key': f, t, w, l, shift+t), failed requests of a page ('net': url without query, method, status or error;
+     * 'net-dropped': how many more), its console in batches ('console': lines and how many were
+     * dropped) and whether it stopped answering ('hang'). The shell sends them in batches.
+     */
+    onEvent: (cb: (e: BrowserEvent) => void) => {
       if (typeof cb !== 'function') return () => {};
       const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
-      const listener = (_e: unknown, msg: { type: string; name?: string; id?: number; url?: string; method?: string; status?: number; error?: string }) =>
+      const lines = (v: unknown) =>
+        Array.isArray(v)
+          ? v.slice(0, 200).map((l: { level?: unknown; text?: unknown; source?: unknown }) => ({ level: String(l?.level ?? 'info'), text: String(l?.text ?? '').slice(0, 1000), source: str(l?.source)?.slice(0, 300) }))
+          : undefined;
+      const one = (msg: Record<string, unknown>) =>
         cb({
           type: String(msg?.type),
           name: msg?.name ? String(msg.name) : undefined,
@@ -67,7 +91,15 @@ contextBridge.exposeInMainWorld('sableDesktop', {
           method: str(msg?.method),
           status: typeof msg?.status === 'number' ? msg.status : undefined,
           error: str(msg?.error),
+          key: str(msg?.key),
+          on: typeof msg?.on === 'boolean' ? msg.on : undefined,
+          count: typeof msg?.count === 'number' ? msg.count : typeof msg?.dropped === 'number' ? msg.dropped : undefined,
+          lines: lines(msg?.lines),
         });
+      const listener = (_e: unknown, msg: unknown) => {
+        if (Array.isArray(msg)) for (const m of msg) one(m);
+        else one(msg as Record<string, unknown>);
+      };
       ipcRenderer.on('sable:browser-event', listener);
       return () => {
         ipcRenderer.removeListener('sable:browser-event', listener);

@@ -1,19 +1,21 @@
 import type { BrowserAnswer, BrowserRequest } from '@shared/protocol';
 import { reportBrowserPage, respondBrowser } from '@/state/actions';
 import { useStore } from '@/state/store';
-import { getLog, getPage, onPages, setPage, type AgentWork } from './browser-store';
+import { activeTab, getLog, getPage, getTabs, onPages, openTab, setPage, type AgentWork } from './browser-store';
 import { clickScript, evalScript, focusedScript, pickCancelScript, keyProbeRead, keyProbeScript, pressScript, requestsScript, scrollScript, snapshotScript, typeScript, waitScript } from './browser-scripts';
 
 /**
  * The window's side of the agent's browser tools (server/providers/browser-tool.ts): the bridge asks
- * with a `browser.request` event, the live Browser tab of that session does the work on its
- * <webview>, and the answer goes back with `browser.respond`. Only text, a picture, the page's
+ * with a `browser.request` event, the live Browser tab of that session does the work on the
+ * <webview> of the page in front (its active tab), and the answer goes back with `browser.respond`. Only text, a picture, the page's
  * console problems and its failed requests ever leave the page: never cookies, storage or headers.
  */
 
-/** What a live Browser tab offers the agent; registered while its <webview> exists. */
+/** What a live page offers the agent; registered while its <webview> exists. */
 export interface PageController {
   sessionId: string;
+  /** The page's tab (browser-store); the agent works on the session's active tab. */
+  tabId: string;
   /** The address the view is on. */
   url(): string;
   /** The page's readable text (or of `selector`), cut at `max` characters. */
@@ -38,12 +40,12 @@ const controllers = new Map<string, PageController>();
 const desktop = (window as { sableDesktop?: { browser?: unknown } }).sableDesktop;
 const native = !!desktop?.browser;
 
-/** The Browser tab of `c.sessionId` has a live page: the agent can look at it. */
+/** A tab of `c.sessionId` has a live page: the agent can look at it while it is in front. */
 export function registerPage(c: PageController): () => void {
-  controllers.set(c.sessionId, c);
+  controllers.set(c.tabId, c);
   schedulePageReport();
   return () => {
-    if (controllers.get(c.sessionId) === c) controllers.delete(c.sessionId);
+    if (controllers.get(c.tabId) === c) controllers.delete(c.tabId);
     schedulePageReport();
   };
 }
@@ -60,9 +62,12 @@ function schedulePageReport() {
 
 function reportPages() {
   const seen = new Set<string>();
-  for (const [sessionId, c] of controllers) {
+  for (const c of controllers.values()) {
+    const { sessionId } = c;
+    // The page in front is the one the agent hears about.
+    if (seen.has(sessionId) || activeTab(sessionId) !== c.tabId) continue;
     seen.add(sessionId);
-    const p = getPage(sessionId);
+    const p = getPage(c.tabId);
     // Settled pages only: a load in flight reports once it is done.
     if (p.loading) continue;
     const url = c.url() || p.url;
@@ -87,8 +92,8 @@ onPages(() => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Waits for `test` to hold on the session's page (checked on every change), or gives up. */
-function waitFor(sessionId: string, test: () => boolean, ms: number): Promise<boolean> {
+/** Waits for `test` to hold on the tab's page (checked on every change), or gives up. */
+function waitFor(tabId: string, test: () => boolean, ms: number): Promise<boolean> {
   return new Promise((resolve) => {
     if (test()) return resolve(true);
     let off = () => {};
@@ -107,7 +112,7 @@ function waitFor(sessionId: string, test: () => boolean, ms: number): Promise<bo
     };
     off = onPages(check);
     const poll = setInterval(check, 150);
-    void sessionId;
+    void tabId;
   });
 }
 
@@ -120,15 +125,15 @@ const originOf = (url: string) => {
 };
 
 /** Shows the agent's work in the bar for its moment (at least long enough to be seen). */
-async function marked<T>(sessionId: string, op: AgentWork, fn: () => Promise<T>): Promise<T> {
+async function marked<T>(tabId: string, op: AgentWork, fn: () => Promise<T>): Promise<T> {
   const started = Date.now();
-  setPage(sessionId, { agent: op });
+  setPage(tabId, { agent: op });
   try {
     return await fn();
   } finally {
     const left = 700 - (Date.now() - started);
     if (left > 0) await sleep(left);
-    if (getPage(sessionId).agent === op) setPage(sessionId, { agent: undefined });
+    if (getPage(tabId).agent === op) setPage(tabId, { agent: undefined });
   }
 }
 
@@ -154,31 +159,36 @@ async function serve(req: BrowserRequest): Promise<BrowserAnswer> {
     const url = req.url ?? '';
     if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'Only http and https addresses open in the Browser tab.' };
     if (originOf(url) === location.origin) return { ok: false, error: 'Sable itself does not open in the Browser tab.' };
-    return marked(sessionId, 'open', async () => {
+    // A new tab when the agent asks for one and the tab in front already shows a page; else the tab in front.
+    const tab = req.newTab && getPage(activeTab(sessionId)).url ? (openTab(sessionId) ?? activeTab(sessionId)) : activeTab(sessionId);
+    return marked(tab, 'open', async () => {
       let sawLoad = false;
-      // The page view may not exist yet (panel closed, or another tab in front): open the panel on it.
+      // The page view may not exist yet (panel closed, or another pane in front): open the panel on it.
       useStore.getState().setUi({ railOpen: true, railTab: 'browser', browserUrl: url });
       const settled = await waitFor(
-        sessionId,
+        tab,
         () => {
-          const p = getPage(sessionId);
+          const p = getPage(tab);
           if (p.loading) sawLoad = true;
-          return !!controllers.get(sessionId) && sawLoad && !p.loading && !!p.url;
+          return !!controllers.get(tab) && sawLoad && !p.loading && !!p.url;
         },
         35_000,
       );
-      const p = getPage(sessionId);
+      const p = getPage(tab);
+      if (!getTabs(sessionId).ids.includes(tab)) return { ok: false, error: 'The user closed the tab before the page loaded.' };
       if (!settled) return p.loading ? { ok: false, error: `The page is still loading after 35 seconds (${p.url || url}).` } : { ok: false, error: 'The Browser tab did not open the page.' };
       if (p.error) return { ok: false, url: p.url, error: `The page did not load: ${loadFailure(p.errorCode, p.url)} (${p.error}).` };
       // The title often arrives just after the load.
-      if (!p.title) await waitFor(sessionId, () => !!getPage(sessionId).title, 800);
-      const now = getPage(sessionId);
-      return { ok: true, url: controllers.get(sessionId)?.url() || now.url, title: now.title };
+      if (!p.title) await waitFor(tab, () => !!getPage(tab).title, 800);
+      const now = getPage(tab);
+      return { ok: true, url: controllers.get(tab)?.url() || now.url, title: now.title };
     });
   }
 
-  const c = controllers.get(sessionId);
-  const p = getPage(sessionId);
+  // Every tool works on the tab in front when the call comes, and stays on that tab until it is done.
+  const tab = activeTab(sessionId);
+  const c = controllers.get(tab);
+  const p = getPage(tab);
   if (!c) {
     return p.url
       ? { ok: false, error: `The Browser tab is closed. Use browser_open to open ${p.url} again.` }
@@ -189,20 +199,21 @@ async function serve(req: BrowserRequest): Promise<BrowserAnswer> {
   if (!/^https?:/i.test(url)) return { ok: false, error: 'Sable reads only web pages (http or https).' };
   if (req.expectOrigin && originOf(url) !== req.expectOrigin) return { ok: false, error: 'The page changed while it was being checked. Try again.' };
   if (p.crashed) return { ok: false, url, error: 'The page stopped working. The user can reload it.' };
+  if (p.hung) return { ok: false, url, error: 'The page is not responding (it may be busy in a loop). The user can reload it.' };
   if (p.error) return { ok: false, url, error: `The page did not load: ${loadFailure(p.errorCode, url)} (${p.error}).` };
   // A load in flight: wait a little for it to settle.
-  if (p.loading) await waitFor(sessionId, () => !getPage(sessionId).loading, 8_000);
+  if (p.loading) await waitFor(tab, () => !getPage(tab).loading, 8_000);
 
   if (req.op === 'read') {
-    return marked(sessionId, 'read', async () => {
+    return marked(tab, 'read', async () => {
       const r = await c.read(req.selector, TEXT_MAX);
       if (r.badSelector) return { ok: false, url, error: `"${req.selector}" is not a valid CSS selector.` };
       if (r.missing) return { ok: false, url, error: `Nothing on the page matches "${req.selector}".` };
-      const log = getLog(sessionId);
+      const log = getLog(tab);
       return {
         ok: true,
         url: c.url() || url,
-        title: r.title || getPage(sessionId).title,
+        title: r.title || getPage(tab).title,
         text: r.text.slice(0, TEXT_MAX),
         truncated: r.length > TEXT_MAX,
         console: log.console.slice(-30),
@@ -212,12 +223,12 @@ async function serve(req: BrowserRequest): Promise<BrowserAnswer> {
     });
   }
 
-  if (req.op !== 'screenshot') return marked(sessionId, req.op, () => work(req, c, url));
+  if (req.op !== 'screenshot') return marked(tab, req.op, () => work(req, c, url));
 
-  return marked(sessionId, 'screenshot', async () => {
+  return marked(tab, 'screenshot', async () => {
     const image = await c.capture();
     const size = await imageSize(image);
-    return { ok: true, url: c.url() || url, title: getPage(sessionId).title, image, ...size };
+    return { ok: true, url: c.url() || url, title: getPage(tab).title, image, ...size };
   });
 }
 
@@ -241,15 +252,16 @@ const text = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, ma
 
 /** The tools that work the page: outline, click, type, press, scroll, script, logs, wait, history. */
 async function work(req: BrowserRequest, c: PageController, url: string): Promise<BrowserAnswer> {
-  const { sessionId } = req;
+  // The tab the call started on, even if another one comes to the front meanwhile.
+  const tab = c.tabId;
   const before = c.url() || url;
   const q = { ref: req.ref, selector: req.selector };
   /** After an action: a load it started is waited for, then where the page is. */
   const after = async (extra: Partial<BrowserAnswer> = {}): Promise<BrowserAnswer> => {
     await sleep(250);
-    if (getPage(sessionId).loading) await waitFor(sessionId, () => !getPage(sessionId).loading, 10_000);
-    const now = c.url() || getPage(sessionId).url;
-    return { ok: true, url: now, title: getPage(sessionId).title, navigated: now.split('#')[0] !== before.split('#')[0] || undefined, ...extra };
+    if (getPage(tab).loading) await waitFor(tab, () => !getPage(tab).loading, 10_000);
+    const now = c.url() || getPage(tab).url;
+    return { ok: true, url: now, title: getPage(tab).title, navigated: now.split('#')[0] !== before.split('#')[0] || undefined, ...extra };
   };
 
   // The person's pick mode swallows clicks and keys in the page: an action of the agent ends it first.
@@ -258,7 +270,7 @@ async function work(req: BrowserRequest, c: PageController, url: string): Promis
   switch (req.op) {
     case 'snapshot': {
       const r = plain(await within(c.run(snapshotScript(SNAPSHOT_MAX)), 8_000));
-      return { ok: true, url: before, title: text(r.title, 300) || getPage(sessionId).title, text: text(r.text, SNAPSHOT_MAX) ?? '', count: Number(r.count) || 0, truncated: r.truncated === true };
+      return { ok: true, url: before, title: text(r.title, 300) || getPage(tab).title, text: text(r.text, SNAPSHOT_MAX) ?? '', count: Number(r.count) || 0, truncated: r.truncated === true };
     }
     case 'click': {
       const r = plain(await within(c.run(clickScript({ ...q, text: req.find })), 8_000));
@@ -278,7 +290,7 @@ async function work(req: BrowserRequest, c: PageController, url: string): Promis
       await within(c.run(keyProbeScript), 5_000);
       const sent = await c.key(key).catch(() => false);
       await sleep(90);
-      const moved = getPage(sessionId).loading || (c.url() || '') !== before;
+      const moved = getPage(tab).loading || (c.url() || '') !== before;
       const arrived = moved || (sent && (await within(c.run(keyProbeRead), 5_000).catch(() => true)) === true);
       // The shell's key did not reach the page (no focus in it): the same press as events on the focused element.
       if (!arrived) await within(c.run(pressScript(key)), 5_000);
@@ -287,7 +299,7 @@ async function work(req: BrowserRequest, c: PageController, url: string): Promis
     case 'scroll': {
       const r = plain(await within(c.run(scrollScript(q, req.to, req.by)), 5_000));
       if (r.error) return { ok: false, url: before, error: String(r.error).slice(0, 400) };
-      return { ok: true, url: before, title: getPage(sessionId).title, target: text(r.target, 200), text: text(r.text, 120) };
+      return { ok: true, url: before, title: getPage(tab).title, target: text(r.target, 200), text: text(r.text, 120) };
     }
     case 'eval': {
       let r: Done;
@@ -301,16 +313,16 @@ async function work(req: BrowserRequest, c: PageController, url: string): Promis
       return after({ text: text(r.text, EVAL_MAX) ?? 'undefined', truncated: (Number(r.length) || 0) > EVAL_MAX });
     }
     case 'logs': {
-      const log = getLog(sessionId);
+      const log = getLog(tab);
       if (req.kind === 'network') {
         const got = (await within(c.run(requestsScript(LINES_MAX)), 5_000)) as { total?: number; requests?: { url?: unknown; kind?: unknown; status?: unknown; ms?: unknown }[] } | null;
         const requests = (Array.isArray(got?.requests) ? got.requests : []).slice(-LINES_MAX).map((e) => ({ url: String(e.url ?? '').slice(0, 300), kind: String(e.kind ?? '').slice(0, 20), status: Number(e.status) || undefined, ms: Number(e.ms) || 0 }));
         // Requests that failed outright have no timing entry: the shell saw them.
         const known = new Set(requests.filter((r) => (r.status ?? 0) >= 400).map((r) => r.url));
         const failed = log.failed.filter((f) => !known.has(f.url)).slice(-20).map((f) => ({ url: f.url, method: f.method, status: f.status, error: f.status ? undefined : f.error || 'failed' }));
-        return { ok: true, url: before, title: getPage(sessionId).title, requests: [...requests, ...failed], more: { failed: Math.max(0, (Number(got?.total) || 0) - requests.length) } };
+        return { ok: true, url: before, title: getPage(tab).title, requests: [...requests, ...failed], more: { failed: Math.max(0, (Number(got?.total) || 0) - requests.length) } };
       }
-      return { ok: true, url: before, title: getPage(sessionId).title, lines: log.lines.slice(-LINES_MAX), more: { console: log.moreLines + Math.max(0, log.lines.length - LINES_MAX) } };
+      return { ok: true, url: before, title: getPage(tab).title, lines: log.lines.slice(-LINES_MAX), more: { console: log.moreLines + Math.max(0, log.lines.length - LINES_MAX) } };
     }
     case 'wait': {
       const ms = Math.max(100, Math.min(30_000, req.timeoutMs ?? 5_000));
@@ -323,21 +335,21 @@ async function work(req: BrowserRequest, c: PageController, url: string): Promis
         r = { count: Date.now() - started, timedOut: !!req.selector };
       }
       if (r.error) return { ok: false, url: before, error: String(r.error).slice(0, 400) };
-      return { ok: true, url: c.url() || before, title: text(r.title, 300) || getPage(sessionId).title, count: Number(r.count) || 0, timedOut: r.timedOut === true || undefined };
+      return { ok: true, url: c.url() || before, title: text(r.title, 300) || getPage(tab).title, count: Number(r.count) || 0, timedOut: r.timedOut === true || undefined };
     }
     case 'navigate': {
       const action = req.action ?? 'reload';
       let sawLoad = false;
       if (!c.history(action)) return { ok: false, url: before, error: action === 'reload' ? 'The page could not be reloaded.' : `There is no page to go ${action} to.` };
       // A step inside one document (a hash, pushState) never loads: a short wait tells the two apart.
-      await waitFor(sessionId, () => (sawLoad ||= getPage(sessionId).loading), 1_200);
-      if (sawLoad) await waitFor(sessionId, () => !getPage(sessionId).loading, 30_000);
-      const p = getPage(sessionId);
+      await waitFor(tab, () => (sawLoad ||= getPage(tab).loading), 1_200);
+      if (sawLoad) await waitFor(tab, () => !getPage(tab).loading, 30_000);
+      const p = getPage(tab);
       if (p.error) return { ok: false, url: p.url, error: `The page did not load: ${loadFailure(p.errorCode, p.url)} (${p.error}).` };
       if (p.loading) return { ok: false, url: p.url, error: 'The page is still loading after 30 seconds.' };
       // The title often arrives just after the load.
-      if (sawLoad && !p.title) await waitFor(sessionId, () => !!getPage(sessionId).title, 800);
-      return { ok: true, url: c.url() || p.url, title: getPage(sessionId).title };
+      if (sawLoad && !p.title) await waitFor(tab, () => !!getPage(tab).title, 800);
+      return { ok: true, url: c.url() || p.url, title: getPage(tab).title };
     }
     default:
       return { ok: false, error: 'The Browser tab does not know that request.' };

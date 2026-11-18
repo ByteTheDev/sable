@@ -658,7 +658,8 @@ export function draftItem(item: ThreadItem, opts: { streaming?: boolean } = {}):
         .join('\n\n');
       return tool({
         name: item.tool,
-        kind: 'agent',
+        // Only a spawn is an agent (a block, and a card in the Agents tab); waiting, messaging or closing one is a step.
+        kind: item.tool === 'spawnAgent' ? 'agent' : 'other',
         title: verb[item.tool] ?? item.tool,
         status,
         detail: { prompt: item.prompt ?? undefined, subagent: item.model ?? undefined },
