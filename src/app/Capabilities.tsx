@@ -1,6 +1,7 @@
 import { useShallow } from 'zustand/react/shallow';
 import type { CapabilityState, SessionOptions } from '@shared/protocol';
 import { Icon, type IconName } from '@/icons';
+import { useAndroidAvailable } from '@/features/rail/device-status';
 import { setSessionOptions } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { Popover, PopoverContent, PopoverTrigger, Switch, Tip } from '@/ui';
@@ -9,16 +10,19 @@ type Key = keyof SessionOptions;
 
 const ROWS: { key: Key; icon: IconName; label: string }[] = [
   { key: 'browserTab', icon: 'globe', label: 'Browser tab' },
+  { key: 'device', icon: 'device', label: 'Device' },
   { key: 'browser', icon: 'browser', label: 'Browser control' },
   { key: 'computerUse', icon: 'cursor-click', label: 'Computer use' },
   { key: 'remoteControl', icon: 'devices', label: 'Remote control' },
 ];
 
 /** Whether a capability is on: Codex's plugin follows the user's own config until switched. */
-export function optionOn(key: Key, options: SessionOptions | undefined, linked?: boolean) {
+export function optionOn(key: Key, options: SessionOptions | undefined, linked?: boolean, android?: boolean) {
   const v = options?.[key];
   // The agent sees Sable's own Browser tab unless switched off.
   if (key === 'browserTab') return v !== false;
+  // The device tools are on where adb is, unless switched off.
+  if (key === 'device') return v ?? !!android;
   return v ?? (key !== 'remoteControl' && !!linked);
 }
 
@@ -31,16 +35,17 @@ export function CapabilitiesButton({ sessionId }: { sessionId: string }) {
       return m ? { id: m.id, status: m.status, options: m.options, remote: m.remote, capState: m.capState } : undefined;
     }),
   );
-  // Every agent gets the Browser tab tools once its capabilities are known.
-  const rows = ROWS.filter((r) => (r.key === 'browserTab' ? !!features : features?.[r.key]));
+  const android = useAndroidAvailable();
+  // Every agent gets the Browser tab tools once its capabilities are known, and the device tools where adb is.
+  const rows = ROWS.filter((r) => (r.key === 'browserTab' ? !!features : r.key === 'device' ? !!features && !!android : features?.[r.key]));
   if (!session || !rows.length) return null;
   const linked = !!features?.linkedBrowserComputer;
-  // The dot marks capabilities switched on beyond the defaults: the Browser tab is on unless switched off.
-  const anyOn = rows.some((r) => r.key !== 'browserTab' && optionOn(r.key, session.options, linked));
+  // The dot marks capabilities switched on beyond the defaults: the Browser tab and the device are on unless switched off.
+  const anyOn = rows.some((r) => r.key !== 'browserTab' && r.key !== 'device' && optionOn(r.key, session.options, linked));
 
   const toggle = (key: Key, on: boolean) => {
     // Codex: one plugin gives both, so they switch together.
-    const patch: SessionOptions = linked && key !== 'remoteControl' && key !== 'browserTab' ? { browser: on, computerUse: on } : { [key]: on };
+    const patch: SessionOptions = linked && key !== 'remoteControl' && key !== 'browserTab' && key !== 'device' ? { browser: on, computerUse: on } : { [key]: on };
     void setSessionOptions(session.id, patch);
   };
 
@@ -57,9 +62,9 @@ export function CapabilitiesButton({ sessionId }: { sessionId: string }) {
       <PopoverContent align="end" width={280} className="caps-pop">
         <div className="menu-label">Capabilities</div>
         {rows.map((r) => {
-          const on = optionOn(r.key, session.options, linked);
+          const on = optionOn(r.key, session.options, linked, !!android);
           const state: CapabilityState | undefined =
-            r.key === 'remoteControl' ? (session.remote ? { ...session.remote } : undefined) : r.key === 'browserTab' ? undefined : session.capState?.[r.key as 'browser' | 'computerUse'];
+            r.key === 'remoteControl' ? (session.remote ? { ...session.remote } : undefined) : r.key === 'browserTab' || r.key === 'device' ? undefined : session.capState?.[r.key as 'browser' | 'computerUse'];
           return (
             <div key={r.key} className="menu-item caps-row" data-on={on || undefined}>
               <Icon name={r.icon} size={16} />

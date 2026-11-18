@@ -36,6 +36,7 @@ import { codexPlan } from './plans';
 import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
 import { WIDGET_DESCRIPTION, WIDGET_FENCE_HINT, WIDGET_INPUT_SCHEMA, WIDGET_TOOL, dynamicToolAnswer, widgetsEnabled } from './widget-tool';
 import { BROWSER_CORE, BROWSER_DESCRIPTIONS, BROWSER_HINT, BROWSER_INPUT_SCHEMAS, BROWSER_OPS, BROWSER_TOOLS, browserDynamicAnswer, browserOp, browserTabEnabled } from './browser-tool';
+import { DEVICE_CORE, DEVICE_DESCRIPTIONS, DEVICE_HINT, DEVICE_INPUT_SCHEMAS, DEVICE_NAMESPACE, DEVICE_NAMESPACE_DESCRIPTION, DEVICE_OPS, DEVICE_TOOLS, deviceDynamicAnswer, deviceEnabled, deviceOp } from './device-tool';
 import { CodexRpc, RpcError, resolveCodexCommand, type ExitInfo } from './codex-rpc';
 import { serviceTierFor } from './codex-map';
 import { AGENT_INPUT_SCHEMA, AGENT_TOOLS, agentOfTool, agentToolDescription, readAgentCall } from './agent-tool';
@@ -532,7 +533,7 @@ export class CodexProvider implements Provider {
    */
   async developerInstructions(cwd: string, meta?: Pick<SessionMeta, 'options'>): Promise<string | undefined> {
     const settings = this.ctx.settings?.();
-    const ours = [settings?.conciseReplies === false ? '' : CONCISE_REPLIES_PROMPT, widgetsEnabled(settings) ? WIDGET_FENCE_HINT : '', meta && browserTabEnabled(meta) ? BROWSER_HINT : ''].filter(Boolean).join('\n\n');
+    const ours = [settings?.conciseReplies === false ? '' : CONCISE_REPLIES_PROMPT, widgetsEnabled(settings) ? WIDGET_FENCE_HINT : '', meta && browserTabEnabled(meta) ? BROWSER_HINT : '', meta && deviceEnabled(meta) ? DEVICE_HINT : ''].filter(Boolean).join('\n\n');
     if (!ours) return undefined;
     let own: string | undefined;
     try {
@@ -570,6 +571,16 @@ export class CodexProvider implements Provider {
         else deferred.push({ ...fn, deferLoading: true });
       }
       if (deferred.length) tools.push({ type: 'namespace', name: BROWSER_NAMESPACE, description: BROWSER_NAMESPACE_DESCRIPTION, tools: deferred });
+    }
+    // The Android device tools, while the session's "Device" capability is on: looking in the prompt, working the device deferred.
+    if (meta && deviceEnabled(meta)) {
+      const deferred: CodexFunctionTool[] = [];
+      for (const op of DEVICE_OPS) {
+        const fn: CodexFunctionTool = { type: 'function', name: DEVICE_TOOLS[op], description: DEVICE_DESCRIPTIONS[op], inputSchema: DEVICE_INPUT_SCHEMAS[op] };
+        if (DEVICE_CORE.has(op)) tools.push(fn);
+        else deferred.push({ ...fn, deferLoading: true });
+      }
+      if (deferred.length) tools.push({ type: 'namespace', name: DEVICE_NAMESPACE, description: DEVICE_NAMESPACE_DESCRIPTION, tools: deferred });
     }
     return tools.length ? tools : undefined;
   }
@@ -1416,6 +1427,9 @@ class CodexSession implements ProviderSession {
           // The Browser tab tools ask the session's window (and the user, for pages that are not local).
           const op = browserOp(typeof p?.tool === 'string' ? p.tool : undefined);
           if (op) return await browserDynamicAnswer(this.rt, op, p?.arguments, ac.signal);
+          // The Android device tools run in the bridge (and ask before touching a real phone).
+          const dop = deviceOp(typeof p?.tool === 'string' ? p.tool : undefined);
+          if (dop) return await deviceDynamicAnswer(this.rt, dop, p?.arguments, ac.signal);
           // A sub-agent from the other agent (Claude Code): it runs nested under this call's step.
           const agent = agentOfTool(typeof p?.tool === 'string' ? p.tool : undefined);
           if (agent) return await this.runDelegate(agent, p?.arguments, ac.signal);

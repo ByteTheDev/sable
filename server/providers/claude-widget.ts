@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { ProviderId } from '../../shared/protocol';
 import type { SessionRuntime } from '../core/runtime';
 import { AGENT_PARAMS, AGENT_TOOLS, agentToolDescription, readAgentCall, type AgentCall } from './agent-tool';
+import { DEVICE_CORE, DEVICE_DESCRIPTIONS, DEVICE_OPS, DEVICE_PARAMS, DEVICE_TOOLS, runDeviceTool, type DeviceOp, type DeviceToolResult } from './device-tool';
 import { BROWSER_CORE, BROWSER_DESCRIPTIONS, BROWSER_OPS, BROWSER_PARAMS, BROWSER_TOOLS, runBrowserTool, type BrowserOp, type BrowserToolResult } from './browser-tool';
 import { WIDGET_CODE_DESCRIPTION, WIDGET_DESCRIPTION, WIDGET_SERVER, WIDGET_TITLE_DESCRIPTION, WIDGET_TOOL, widgetResult } from './widget-tool';
 
@@ -18,6 +19,8 @@ export function widgetServer(
   opts: {
     widgets?: boolean;
     session?: () => SessionRuntime | undefined;
+    /** The device tools (the session's "Device" capability): they find the session the same way. */
+    device?: () => SessionRuntime | undefined;
     /** Sub-agents from the other agent: the agents offered and how a call runs (see agent-tool.ts). */
     delegate?: { agents: ProviderId[]; run: (call: AgentCall, signal?: AbortSignal) => Promise<{ ok: boolean; text: string }> };
   } = { widgets: true },
@@ -93,6 +96,44 @@ export function widgetServer(
           annotations: { title: TITLES[op], readOnlyHint: LOOKS.has(op), destructiveHint: false, openWorldHint: true },
           // Looking and opening are always in the prompt; working a page waits behind tool search.
           ...(BROWSER_CORE.has(op) ? { alwaysLoad: true } : { searchHint: 'Sable Browser tab: work the open page' }),
+        }),
+      );
+    }
+  }
+  const device = opts.device;
+  if (device) {
+    const run = async (op: DeviceOp, args: unknown, extra: unknown) => {
+      const rt = device();
+      const r: DeviceToolResult = rt ? await runDeviceTool(rt, op, args, (extra as { signal?: AbortSignal } | undefined)?.signal) : { ok: false, text: 'No session is attached yet.' };
+      const content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[] = [{ type: 'text', text: r.text }];
+      if (r.image) content.push({ type: 'image', data: r.image.data, mimeType: r.image.mime });
+      return { content, isError: !r.ok };
+    };
+    const TITLES: Record<DeviceOp, string> = {
+      list: 'List Android devices',
+      screenshot: 'Screenshot of the Android device',
+      tap: 'Tap on the Android device',
+      swipe: 'Swipe on the Android device',
+      type: 'Type on the Android device',
+      key: 'Press a key on the Android device',
+      install: 'Install an app on the Android device',
+      launch: 'Launch an app on the Android device',
+      logs: 'Log of the Android device',
+      start: 'Start the Android emulator',
+      open: 'Open a link on the Android device',
+    };
+    const LOOKS = new Set<DeviceOp>(['list', 'screenshot', 'logs']);
+    for (const op of DEVICE_OPS) {
+      const shape: Record<string, z.ZodTypeAny> = {};
+      for (const [key, p] of Object.entries(DEVICE_PARAMS[op])) {
+        const base = p.enum ? z.enum(p.enum) : p.type === 'number' ? z.number() : p.type === 'boolean' ? z.boolean() : z.string();
+        shape[key] = (p.required ? base : base.optional()).describe(p.description);
+      }
+      tools.push(
+        tool(DEVICE_TOOLS[op], DEVICE_DESCRIPTIONS[op], shape, (args, extra: unknown) => run(op, args, extra), {
+          annotations: { title: TITLES[op], readOnlyHint: LOOKS.has(op), destructiveHint: false, openWorldHint: false },
+          // Looking is always in the prompt; working the device waits behind tool search.
+          ...(DEVICE_CORE.has(op) ? { alwaysLoad: true } : { searchHint: 'Sable Android device: tap, swipe, type, keys, install, launch, logs' }),
         }),
       );
     }

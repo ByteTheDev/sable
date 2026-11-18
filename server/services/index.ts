@@ -1,6 +1,7 @@
 import type { App } from '../app';
 import { registerBackdrop } from './backdrop';
 import { registerConfig } from './config';
+import { registerDevice } from './device';
 import { registerFiles } from './files';
 import { registerFs } from './fs';
 import { registerGit } from './git';
@@ -23,4 +24,5 @@ export function registerServices(app: App, opts: ServiceOptions = {}) {
   registerConfig(app, { home: opts.userHome });
   registerBackdrop(app);
   registerUsage(app, { home: opts.userHome });
+  registerDevice(app);
 }

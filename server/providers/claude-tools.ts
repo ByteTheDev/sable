@@ -2,6 +2,7 @@ import type { AgentStats, FileDiff, Question, Todo, ToolDetail, ToolKind, ToolRe
 import { countChanges, makeFileDiff } from '../../shared/diff';
 import { WIDGET_SERVER, WIDGET_TOOL_ID, describeWidget } from './widget-tool';
 import { browserOp, describeBrowser } from './browser-tool';
+import { describeDevice, deviceOp } from './device-tool';
 import { agentOfTool, describeAgentCall } from './agent-tool';
 
 /** Normalizes Claude Code tool calls and results into Sable's display model. */
@@ -134,6 +135,7 @@ export function describeTool(name: string, input: Obj = {}): ToolView {
       return describeWidget(input);
     default: {
       if (name.startsWith(`mcp__${WIDGET_SERVER}__browser_`) && browserOp(name)) return describeBrowser(name, input);
+      if (name.startsWith(`mcp__${WIDGET_SERVER}__device_`) && deviceOp(name)) return describeDevice(name, input);
       const agent = agentOfTool(name);
       if (agent) return describeAgentCall(agent, input);
       if (name.startsWith('mcp__')) {

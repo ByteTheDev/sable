@@ -175,6 +175,8 @@ import { MagnifyingGlassMinusIcon } from '@phosphor-icons/react/dist/csr/Magnify
 import { MonitorIcon } from '@phosphor-icons/react/dist/csr/Monitor';
 import { DeviceTabletIcon } from '@phosphor-icons/react/dist/csr/DeviceTablet';
 import { DeviceMobileIcon } from '@phosphor-icons/react/dist/csr/DeviceMobile';
+import { DeviceMobileSpeakerIcon } from '@phosphor-icons/react/dist/csr/DeviceMobileSpeaker';
+import { SquareIcon } from '@phosphor-icons/react/dist/csr/Square';
 import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import './icons.css';
 import { ANIMATED } from './animated/parts';
@@ -360,6 +362,9 @@ const ICONS = {
   monitor: MonitorIcon,
   tablet: DeviceTabletIcon,
   phone: DeviceMobileIcon,
+  /** An Android device or the emulator (the side panel's Device tab, the device_* tools). */
+  device: DeviceMobileSpeakerIcon,
+  square: SquareIcon,
   reload: ArrowClockwiseIcon,
 } satisfies Record<string, PhIcon>;
 
@@ -458,6 +463,7 @@ export const TOOL_ICON: Record<string, { icon: IconName; tone: string }> = {
   skill: { icon: 'skill', tone: NEUTRAL },
   widget: { icon: 'grid', tone: NEUTRAL },
   browser: { icon: 'globe', tone: NEUTRAL },
+  device: { icon: 'device', tone: NEUTRAL },
   other: { icon: 'wrench', tone: NEUTRAL },
 };
 

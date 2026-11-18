@@ -355,6 +355,12 @@ svg[data-anim] {
     & .ln2 { animation: ai-line-in var(--ai-d2) calc(var(--ai-lag) * 2.5) var(--ai-out) both; }
   }
 
+  /* device: a finger taps the screen; a ring opens from the touch and the phone gives a little under it */
+  & svg[data-icon='device'][data-anim] {
+    & .touch { transform-origin: 128px 144px; animation: ai-device-touch var(--ai-d3) var(--ai-out); }
+    & .body { transform-origin: 128px 128px; animation: ai-device-give var(--ai-d2) var(--ai-out); }
+  }
+
   /* agent: the eyes blink */
   & svg[data-icon='robot'][data-anim] {
     & .eye { transform-origin: 128px 108px; animation: ai-robot-eye var(--ai-d2) var(--ai-out); }
@@ -458,6 +464,14 @@ svg[data-anim] {
 @keyframes ai-line-in {
   from { opacity: 0; transform: translateX(-20px); }
   to { opacity: 1; transform: translateX(0); }
+}
+@keyframes ai-device-touch {
+  0% { opacity: 0; transform: scale(0.2); }
+  25% { opacity: 1; transform: scale(0.55); }
+  100% { opacity: 0; transform: scale(1.45); }
+}
+@keyframes ai-device-give {
+  25% { transform: scale(0.95); }
 }
 @keyframes ai-robot-eye {
   25% { transform: scaleY(0.15); }

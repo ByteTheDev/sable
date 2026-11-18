@@ -10,6 +10,7 @@ import { AgentsTab, useLiveAgentCount } from './AgentsTab';
 import { BrowserTab } from './BrowserTab';
 import { ChangesTab, useChangeCount } from './ChangesTab';
 import { ContextTab } from './ContextTab';
+import { DeviceTab } from './DeviceTab';
 import { FilesTab } from './FilesTab';
 import { useGitAutoRefresh } from './git-state';
 import { TasksTab, useOpenTaskCount } from './TasksTab';
@@ -21,6 +22,7 @@ const TABS: { id: RailTab; label: string; icon: IconName }[] = [
   { id: 'changes', label: 'Changes', icon: 'diff' },
   { id: 'files', label: 'Files', icon: 'folder' },
   { id: 'browser', label: 'Browser', icon: 'globe' },
+  { id: 'device', label: 'Device', icon: 'device' },
   { id: 'terminal', label: 'Terminal', icon: 'terminal' },
   { id: 'tasks', label: 'Tasks', icon: 'tasks' },
   { id: 'context', label: 'Context', icon: 'context' },
@@ -93,6 +95,7 @@ function RailInner({ sessionId }: { sessionId: string }) {
     changes: <ChangesTab sessionId={sessionId} cwd={cwd} />,
     files: <FilesTab sessionId={sessionId} cwd={cwd} />,
     browser: <BrowserTab sessionId={sessionId} active={tab === 'browser'} />,
+    device: <DeviceTab active={tab === 'device'} />,
     terminal: <TerminalTab sessionId={sessionId} cwd={cwd} active={tab === 'terminal'} />,
     tasks: <TasksTab sessionId={sessionId} />,
     context: <ContextTab sessionId={sessionId} active={tab === 'context'} />,

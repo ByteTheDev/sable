@@ -316,6 +316,18 @@ export const ANIMATED: Record<string, AnimatedDef> = {
       </>
     ),
   },
+  // The phone, drawn as DeviceMobileSpeaker: its outline, the speaker slot, and a touch that only shows while it animates.
+  device: {
+    parts: (
+      <>
+        <g className="body">
+          <path d={rrect(64, 24, 128, 208, 16)} />
+          <line x1="96" y1="56" x2="160" y2="56" />
+        </g>
+        <path className="touch" d={circ(128, 144, 24)} opacity={0} />
+      </>
+    ),
+  },
   terminal: {
     parts: (
       <>

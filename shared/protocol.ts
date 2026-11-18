@@ -210,7 +210,48 @@ export interface SessionOptions {
   remoteControl?: boolean;
   /** The agent sees Sable's own Browser tab (browser_read, browser_screenshot, browser_open and a line on what it shows). Absent means on. */
   browserTab?: boolean;
+  /** The agent sees and works Android devices and the emulator (the device_* tools, the side panel's Device tab). Absent means on when the Android SDK or adb is found. */
+  device?: boolean;
 }
+
+/** An Android device or emulator adb can reach (`device.list`). */
+export interface DeviceInfo {
+  /** adb's serial: emulator-5554, a USB serial, or 192.168.1.20:5555 over Wi-Fi. */
+  serial: string;
+  /** adb's state: device (ready), offline, unauthorized (accept the prompt on the phone), or booting (an emulator Sable started, not ready yet). */
+  state: 'device' | 'offline' | 'unauthorized' | 'booting' | 'other';
+  kind: 'emulator' | 'usb' | 'wifi';
+  /** The model adb reports ("Pixel 8"); for an emulator, its AVD name. */
+  name: string;
+  /** An emulator Sable started (Sable stops it when it quits). */
+  sable?: boolean;
+}
+
+/** What `device.list` answers and `device.updated` carries. */
+export interface DeviceStatus {
+  /** adb was found (ANDROID_HOME's platform-tools, or on the PATH). */
+  adb: boolean;
+  /** The emulator is installed; `avds` are the virtual devices it can start. */
+  emulator: boolean;
+  avds: string[];
+  devices: DeviceInfo[];
+  /** The device the Device tab shows and the agent's tools use when there are several. */
+  preferred?: string;
+  /** The last emulator start that failed, in a few words. */
+  error?: string;
+}
+
+/** One picture of a device's screen (`device.screenshot`): a PNG data URL in device pixels. */
+export interface DeviceFrame {
+  serial: string;
+  data: string;
+  width: number;
+  height: number;
+  at: number;
+}
+
+/** The keys the device tools press. */
+export type DeviceKey = 'back' | 'home' | 'recent' | 'enter' | 'delete' | 'tab' | 'escape' | 'up' | 'down' | 'left' | 'right' | 'menu' | 'power' | 'volume_up' | 'volume_down';
 
 /** A request from the bridge to the window that shows a session's Browser tab (the agent's browser tools). */
 export interface BrowserRequest {
@@ -456,6 +497,8 @@ export type ToolKind =
   | 'widget'
   /** Sable's own Browser tab: browser_read, browser_screenshot, browser_open (detail.url is the page). */
   | 'browser'
+  /** An Android device or the emulator: the device_* tools (a screenshot comes back as the result's picture). */
+  | 'device'
   | 'other';
 
 export type ToolStatus = 'pending' | 'running' | 'awaiting' | 'done' | 'error' | 'denied' | 'cancelled';
@@ -1057,7 +1100,9 @@ export type BridgeEvent =
   | { type: 'term.exit'; termId: string; code: number | null }
   | { type: 'toast'; level: 'info' | 'success' | 'error'; text: string }
   /** The agent's browser tool needs the session's Browser tab: answer with `browser.respond`. */
-  | { type: 'browser.request'; request: BrowserRequest };
+  | { type: 'browser.request'; request: BrowserRequest }
+  /** Devices changed in a way the bridge saw (an emulator started, booted, stopped or failed). */
+  | { type: 'device.updated'; status: DeviceStatus };
 
 // ──────────────────────────────────── RPC ───────────────────────────────────
 
@@ -1201,6 +1246,27 @@ export interface RpcMethods {
   'browser.respond': { params: { sessionId: string; requestId: string; answer: BrowserAnswer }; result: { ok: boolean } };
   /** What the session's Browser tab shows now (null: nothing, or the tab is closed), for the line the agent gets with the next message. */
   'browser.page': { params: { sessionId: string; page: { url: string; title: string } | null }; result: { ok: boolean } };
+
+  /** Android devices and the emulator, through adb (server/services/device.ts). Every call has a timeout; nothing runs until asked. */
+  'device.list': { params: Record<string, never>; result: DeviceStatus };
+  /** The device the Device tab shows and the agent's tools prefer. */
+  'device.use': { params: { serial: string | null }; result: DeviceStatus };
+  /** Starts an emulator without a window (the first AVD unless `avd` names one); `device.updated` follows as it boots. */
+  'device.start': { params: { avd?: string }; result: { serial: string } };
+  'device.stop': { params: { serial: string }; result: { ok: boolean } };
+  'device.screenshot': { params: { serial: string }; result: DeviceFrame };
+  /** Coordinates in device pixels. `hold` presses that long (a long press). */
+  'device.tap': { params: { serial: string; x: number; y: number; hold?: number }; result: { ok: boolean } };
+  'device.swipe': { params: { serial: string; x1: number; y1: number; x2: number; y2: number; ms?: number }; result: { ok: boolean } };
+  'device.type': { params: { serial: string; text: string }; result: { ok: boolean } };
+  'device.key': { params: { serial: string; key: DeviceKey }; result: { ok: boolean } };
+  'device.install': { params: { serial: string; apk: string }; result: { ok: boolean; text: string } };
+  'device.launch': { params: { serial: string; package: string; activity?: string; restart?: boolean }; result: { ok: boolean; text: string } };
+  /** Apps the user installed (not the system's), sorted. */
+  'device.packages': { params: { serial: string }; result: { packages: string[] } };
+  /** The newest log lines, of one app when `package` is given; at most 1000. */
+  'device.logs': { params: { serial: string; package?: string; lines?: number; level?: 'all' | 'warn' | 'error' }; result: { lines: string[]; note?: string } };
+  'device.open': { params: { serial: string; url: string }; result: { ok: boolean } };
 
   'history.list': { params: { provider: ProviderId; cwd?: string; limit?: number; accountId?: string }; result: HistoryEntry[] };
 

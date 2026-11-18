@@ -24,6 +24,7 @@ import type {
 import { makeFileDiff, parseUnifiedDiff } from '../../shared/diff';
 import { WIDGET_TOOL, describeWidget, isWidgetTool } from './widget-tool';
 import { browserOp, describeBrowser } from './browser-tool';
+import { describeDevice, deviceOp } from './device-tool';
 import { agentOfTool, describeAgentCall } from './agent-tool';
 import type {
   RateLimitResetCreditsSummary,
@@ -612,6 +613,18 @@ export function draftItem(item: ThreadItem, opts: { streaming?: boolean } = {}):
         return tool({
           name: item.tool,
           ...describeBrowser(item.tool, item.arguments, plain),
+          status,
+          input: item.arguments,
+          ...(status !== 'running' ? { result: { text: plain, isError: status === 'error' || undefined, ...(images.length ? { images } : {}) }, endedAt: done(status) } : {}),
+        });
+      }
+      // The Android device tools: one line with what happened, the picture in the details.
+      if (deviceOp(item.tool)) {
+        const images = (item.contentItems as { type: string; imageUrl?: string }[] | null | undefined)?.flatMap((c) => (c.type === 'inputImage' && c.imageUrl?.startsWith('data:image/') ? [c.imageUrl] : [])) ?? [];
+        const plain = item.contentItems?.filter((c) => c.type === 'inputText').map((c) => c.text ?? '').join('\n');
+        return tool({
+          name: item.tool,
+          ...describeDevice(item.tool, item.arguments),
           status,
           input: item.arguments,
           ...(status !== 'running' ? { result: { text: plain, isError: status === 'error' || undefined, ...(images.length ? { images } : {}) }, endedAt: done(status) } : {}),
