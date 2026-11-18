@@ -1,16 +1,17 @@
+import { RELEASE } from '@/features/composer/flight';
 import { reducedMotion, uiZoom } from '@/lib/motion';
 
 /**
  * The home-to-session hand-off: sending the first message from the home screen is one motion.
  *
  * On send, the home composer card is copied into a fixed layer above the stage (the "ghost") and
- * the real card hides. The ghost glides on a spring (about 450 ms) from the centre of the home
+ * the real card hides. The ghost glides on a spring (about 350 ms) from the centre of the home
  * screen to where the session's docked composer will sit, predicted from the stage's geometry, so
  * it moves at once even though the session does not exist yet. When the session view mounts, its
  * composer claims the flight: the spring is re-aimed at the real card (keeping its velocity), the
  * real card stays hidden until the ghost lands on it, and then the two swap in one frame.
- * Meanwhile the headline dissolves upward and the home view (with its backdrop) fades out while the
- * session's quiet band fades in (App reads `handoffActive()` for those exits).
+ * Meanwhile the mark and headline are gone within a few frames and the home view (with its backdrop)
+ * fades out while the session's quiet band fades in (App reads `handoffActive()` for those exits).
  *
  * The spring is stepped ahead of time and handed over as animations (like the sent words in
  * `composer/flight.ts`): the glide is one compositor transform, so the session view mounting under
@@ -42,6 +43,8 @@ interface Flight {
   path: Sample[];
   move: Animation | null;
   size: Animation | null;
+  /** What cleared the home stage at the send (undone when the send starts no session). */
+  clear: Animation[];
   /** Corrections run after the claim (the docked card can still move as the session settles). */
   fixes: number;
   timer: number;
@@ -67,8 +70,9 @@ export const subscribeHandoff = (fn: () => void) => {
 /** True from the send until the docked composer has taken over (App picks its view transitions by it). */
 export const handoffActive = () => phase === 'flying';
 
-const STIFF = 260;
-const DAMP = 30;
+/** Critically damped, near the top of the app's range: the card is docked in about 350 ms. */
+const STIFF = 440;
+const DAMP = 40;
 const LINE = 32;
 /** No session after this long (the bridge is slow or the send failed silently): give up quietly. */
 const GIVE_UP = 8000;
@@ -215,14 +219,20 @@ export function beginHandoff(card: HTMLElement | null) {
   }
   copy.querySelector('.cmp-roll')?.remove();
   document.body.appendChild(ghost);
-  // The send key answers on the way: its arrow launches up out of the disc, and the disc goes
-  // quiet (the docked card brings its own key).
+  // The send key answers on the way, as it does in a session (composer/launch.ts): the disc gives,
+  // the arrow launches up out of it and the stop square grows in its place, so the ghost lands as
+  // the docked card of a running turn.
   const key = copy.querySelector<HTMLElement>('.cmp-send');
   const arrow = key?.querySelector('.sk-glyph');
   if (key && arrow) {
     key.style.overflow = 'hidden';
-    arrow.animate([{ transform: 'translateY(0px)', opacity: 1 }, { transform: 'translateY(-20px)', opacity: 0.2 }], { duration: 180, delay: 56, easing: 'cubic-bezier(0.55, 0, 0.8, 0.3)', fill: 'forwards' });
-    key.animate([{ transform: 'scale(1)' }, { transform: 'scale(0.9)', offset: 0.3 }, { transform: 'scale(1)', opacity: 1, offset: 0.6 }, { transform: 'scale(1)', opacity: 0 }], { duration: 420, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'forwards' });
+    key.style.position = 'relative';
+    const sq = document.createElement('span');
+    sq.className = 'sk-launch-sq';
+    key.appendChild(sq);
+    arrow.animate([{ transform: 'translateY(0px)', opacity: 1 }, { transform: 'translateY(-20px)', opacity: 0 }], { duration: 180, delay: RELEASE, easing: 'cubic-bezier(0.55, 0, 0.8, 0.3)', fill: 'forwards' });
+    key.animate([{ scale: '1' }, { scale: '0.88', offset: 0.2 }, { scale: '1' }], { duration: 300, easing: 'cubic-bezier(0.3, 0, 0.2, 1)' });
+    sq.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], { duration: 190, delay: RELEASE + 110, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'both' });
   }
   // The field settles to one line on the way down (the docked composer's resting height).
   requestAnimationFrame(() => field && (field.style.height = `${LINE}px`));
@@ -230,7 +240,15 @@ export function beginHandoff(card: HTMLElement | null) {
   // (the docked composer takes them over when it claims the flight).
   card.style.opacity = '0';
 
-  const f: Flight = { ghost, source: card, start, dock: null, path: [], move: null, size: null, fixes: 0, timer: 0, ending: false };
+  // The stage clears at once, on the compositor (the home view's own exit waits for React, which
+  // is about to be busy mounting the session): the mark, the headline and the chips are gone
+  // before the message has risen past them, so it crosses nothing.
+  const clear: Animation[] = [];
+  for (const el of card.closest('.home')?.querySelectorAll<HTMLElement>('.home-mark, .home-title, .home-chips-row, .home-center > :last-child:not(.home-composer)') ?? []) {
+    clear.push(el.animate([{ opacity: 1, transform: 'translateY(0px)' }, { opacity: 0, transform: 'translateY(-6px)' }], { duration: 80, easing: 'linear', fill: 'forwards' }));
+  }
+
+  const f: Flight = { ghost, source: card, start, dock: null, path: [], move: null, size: null, clear, fixes: 0, timer: 0, ending: false };
   flight = f;
   set('flying');
   run(f, glide({ t: 0, x: 0, y: 0, w: start.width, vx: 0, vy: 0, vw: 0 }, target.left - start.left, target.top - start.top, target.width), () => arrived(f));
@@ -272,8 +290,14 @@ export function claimHandoff(card: HTMLElement | null): boolean {
   if (!f || f.dock || f.ending) return false;
   f.dock = card;
   card.style.opacity = '0';
+  // The prediction is normally exact: the glide goes on untouched. Only a dock that sits
+  // somewhere else re-aims it (from where the ghost is, at its speed).
   const to = dockTarget(f);
-  if (to) run(f, glide(whereNow(f), to.x, to.y, to.w), () => arrived(f));
+  const end = f.path[f.path.length - 1];
+  const off = to && end && (Math.abs(to.x - end.x) > 0.5 || Math.abs(to.y - end.y) > 0.5 || Math.abs(to.w - end.w) > 0.5);
+  if (to && off) run(f, glide(whereNow(f), to.x, to.y, to.w), () => arrived(f));
+  // Already resting at the predicted place: the swap happens now.
+  else if (f.move?.playState === 'finished') land();
   return true;
 }
 
@@ -291,6 +315,7 @@ export function cancelHandoff() {
   f.move?.pause();
   f.size?.pause();
   f.source.style.opacity = '';
+  for (const a of f.clear) a.cancel();
   if (f.dock) f.dock.style.opacity = '';
   fadeOut(f, 140);
   flight = null;

@@ -8,7 +8,6 @@ import { launchArrival, resolveGlyphs } from '@/art/LaunchLayer';
 import { buildMark, LogoMark, markEcho } from '@/art/Logo';
 import { Composer } from '@/features/composer/Composer';
 import { ConnectBanner } from '@/features/connect/Connect';
-import { dissolve } from '@/lib/dissolve';
 import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
 import { usePrewarm } from '@/state/hooks';
 import { useStore } from '@/state/store';
@@ -74,13 +73,6 @@ export function Home() {
   const composer = useRef<HTMLDivElement>(null);
   usePrewarm('.home-composer');
   useArrival(mark, title, composer);
-
-  // Sending the first message: the headline and mark break up and drift upward as the composer leaves.
-  useEffect(() => {
-    if (!leaving) return;
-    dissolve(mark.current);
-    dissolve(title.current);
-  }, [leaving]);
 
   // The mark listens: each keystroke in the composer glints one of its missing corner cells.
   useEffect(() => {

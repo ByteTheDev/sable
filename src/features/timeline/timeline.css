@@ -173,15 +173,9 @@
   }
 }
 
-/* Its words flew in from the composer (composer/flight.ts): the flight is its entrance. */
+/* It flew in from the composer as its bubble (composer/flight.ts): the flight is its entrance. */
 .tl-item .user[data-flight] {
   animation: none !important;
-}
-
-/* The bubble resolves in dither under its words: the words stay above the veil. */
-.user[data-flight] .user-text {
-  position: relative;
-  z-index: 9;
 }
 
 /* ───────────── a one-line row (tools, thinking, groups) ───────────── */
@@ -874,8 +868,8 @@ button:hover > .row-caret {
   transition: opacity var(--d-3) var(--ease);
 }
 
-/* The card's surface on its own layer, so it can resolve around the words when they land
-   (flight.ts sets data-draw) without the text itself flickering. */
+/* The card's surface on its own layer, so it can form around the words as they leave the
+   composer (flight.ts fades it in on the flying copy) without the text itself flickering. */
 .user-card::before {
   content: '';
   position: absolute;
@@ -887,18 +881,6 @@ button:hover > .row-caret {
   background-size: var(--grain-size);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.075);
   pointer-events: none;
-}
-
-.user-card[data-draw]::before {
-  transform-origin: 100% 100%;
-  animation: card-form 340ms var(--ease-out) backwards;
-}
-
-@keyframes card-form {
-  from {
-    opacity: 0;
-    transform: scale(0.94);
-  }
 }
 
 .user-text {
