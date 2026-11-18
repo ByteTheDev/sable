@@ -344,7 +344,7 @@ function tryRelease(r: Run) {
 /** Samples of an eased move as linear keyframes (the easing is applied here, in scale's own space). */
 const TRAVEL_STEPS = 30;
 /** The mark's glide to its place, ms, and how far it draws in before it leaves. */
-const TRAVEL = 780;
+const TRAVEL = 520;
 const INHALED = 0.955;
 
 /**
@@ -420,16 +420,16 @@ function release(r: Run) {
     window.dispatchEvent(new CustomEvent<FieldEventDetail>(FIELD_EVENT, { detail: { kind: 'send', x: box.left + half, y: box.top + half, strength: 1 } }));
   });
   // Soon the app shows through most of the window: clicks belong to it from here.
-  cue(r, L.inhale + 300, () => (r.root.dataset.phase = 'open'));
+  cue(r, L.inhale + 180, () => (r.root.dataset.phase = 'open'));
 
   const parts = r.parts;
   if (parts) {
-    resolveGlyphs(parts.title, L.inhale + 250, 15, (a) => track(r, a));
-    animate(r, parts.title, [{ transform: 'translateY(12px)' }, { transform: 'translateY(0px)' }], { duration: 620, delay: L.inhale + 250, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', fill: 'backwards' });
-    animate(r, parts.composer, [{ opacity: 0, transform: 'translateY(22px)' }, { opacity: 1, transform: 'translateY(0px)' }], { duration: 640, delay: L.inhale + 330, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'backwards' });
+    resolveGlyphs(parts.title, L.inhale + 150, 10, (a) => track(r, a));
+    animate(r, parts.title, [{ transform: 'translateY(12px)' }, { transform: 'translateY(0px)' }], { duration: 460, delay: L.inhale + 150, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', fill: 'backwards' });
+    animate(r, parts.composer, [{ opacity: 0, transform: 'translateY(22px)' }, { opacity: 1, transform: 'translateY(0px)' }], { duration: 480, delay: L.inhale + 200, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'backwards' });
   }
   // Whatever happens to the worker, the window opens.
-  cue(r, L.inhale + L.burst + 700, () => end(r));
+  cue(r, L.inhale + L.burst + 500, () => end(r));
 }
 
 /** The composer that takes what was typed during the piece: home's, or a restored session's. */

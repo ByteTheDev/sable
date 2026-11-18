@@ -26,16 +26,16 @@ const MOAT = 3;
 
 export const LAUNCH = {
   /** The first cell stands alone this long. */
-  ignite: 120,
+  ignite: 60,
   /** The wake's front reaches the far corner after this. */
-  wake: 1050,
+  wake: 620,
   /** Gap between the mark's places starting to fill, and how long one takes. */
-  placeStep: 24,
-  placeFill: 230,
+  placeStep: 12,
+  placeFill: 140,
   /** The light gathers on the mark before the crest leaves. */
-  inhale: 120,
+  inhale: 80,
   /** The crest and the opening behind it: from the mark to past the far corner. */
-  burst: 820,
+  burst: 520,
   /** A yielded piece opens in this. */
   finish: 150,
   /** One ring per this while held. */
