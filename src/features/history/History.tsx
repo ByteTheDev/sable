@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { DEFAULT_ACCOUNT, type HistoryEntry, type ProviderId } from '@shared/protocol';
 import { ProviderMark, PROVIDER_NAME } from '@/art/Logo';
 import { Highlight } from '@/features/palette/Highlight';
@@ -8,7 +8,7 @@ import { baseName, dayBucket, plural, timeAgo } from '@/lib/format';
 import { fuzzy, wordPrefix } from '@/lib/fuzzy';
 import { homeAccountId, resumeFromHistory } from '@/state/actions';
 import { useStore } from '@/state/store';
-import { IconButton, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger, Modal, Segmented, cx } from '@/ui';
+import { byKeys, IconButton, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger, Modal, Segmented, cx, useSlidePill } from '@/ui';
 import './history.css';
 
 /** Browse and resume conversations the providers keep on disk. */
@@ -146,6 +146,8 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
 
   useEffect(() => setCursor(0), [query, provider, cwd, onlyNew]);
   const safe = Math.min(cursor, Math.max(0, rows.length - 1));
+  // One selection pill that travels between rows for arrow keys and lands under the pointer at once.
+  const pill = useSlidePill(rows[safe]?.entry.providerSessionId ?? null, 8, byKeys);
   useLayoutEffect(() => {
     listRef.current?.querySelector<HTMLElement>(`[data-index="${safe}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [safe]);
@@ -278,6 +280,7 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
                 index={i}
                 head={head ? bucket : null}
                 active={i === safe}
+                pill={i === safe ? pill : undefined}
                 isOpen={!!openId}
                 showProject={!cwd && !(onlyNew && grouped)}
                 busy={resuming === r.entry.providerSessionId}
@@ -320,6 +323,7 @@ function HistoryRowView({
   index,
   head,
   active,
+  pill,
   isOpen,
   showProject,
   busy,
@@ -328,6 +332,7 @@ function HistoryRowView({
 }: {
   row: Row;
   index: number;
+  pill?: RefObject<HTMLSpanElement>;
   head: string | null;
   active: boolean;
   isOpen: boolean;
@@ -349,10 +354,11 @@ function HistoryRowView({
         aria-selected={active}
         data-index={index}
         data-active={active || undefined}
-        className={cx('hrow', active && 'dither-sel', busy && 'is-busy')}
+        className={cx('hrow', busy && 'is-busy')}
         onMouseMove={() => !active && onHover(index)}
         onClick={() => onResume(entry)}
       >
+        {active && <span ref={pill} className="hrow-pill dither-sel" aria-hidden />}
         <div className="hrow-main">
           <div className="hrow-top">
             <span className="hrow-title truncate">

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { AnimatePresence, cancelFrame, frame, motion, type Variants } from 'motion/react';
+import { AnimatePresence, cancelFrame, frame, motion, MotionConfig, type Variants } from 'motion/react';
 import { Launch, launchPlays } from '@/art/LaunchLayer';
 import { LogoMark, ProviderMark } from '@/art/Logo';
 import { veil, VEIL_SWAP, VEIL_SWAP_AT } from '@/art/veil';
@@ -210,106 +210,109 @@ export function App() {
   }, [sessionId, setUi]);
 
   return (
-    <TipProvider>
-      <div className="app" data-provider={provider} data-sidebar={sidebarOpen}>
-        <aside className="app-side" aria-hidden={!sidebarOpen || onboarding} inert={onboarding}>
-          <Sidebar />
-        </aside>
+    // Under reduced motion every motion/react element keeps its fades and drops its moves and springs.
+    <MotionConfig reducedMotion="user">
+      <TipProvider>
+        <div className="app" data-provider={provider} data-sidebar={sidebarOpen}>
+          <aside className="app-side" aria-hidden={!sidebarOpen || onboarding} inert={onboarding}>
+            <Sidebar />
+          </aside>
 
-        <main className="stage" inert={onboarding}>
-          <Topbar />
-          <div className="stage-body" ref={stageBody}>
-            {launching && <Launch ready={ready} onDone={endLaunch} />}
-            {/* The session's band of light, one field for every session (like the dock): a switch
-                changes its colour and pace, it is never built again. Under the conversation. */}
-            <AnimatePresence initial={false} custom={viewMode}>
-              {viewKey != null && sessionId && (
-                <motion.div key="light" className="stage-view stage-light" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
-                  <Suspense fallback={null}>
-                    <SessionLight sessionId={sessionId} />
-                  </Suspense>
-                </motion.div>
-              )}
-            </AnimatePresence>
-            {/* After a send from home the conversation fades in around the docked composer, which must not move. */}
-            <AnimatePresence mode="popLayout" initial={false} custom={viewMode}>
-              {viewKey == null ? null : (
-                <motion.div key={viewKey} className="stage-view" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
-                  {sessionId ? (
+          <main className="stage" inert={onboarding}>
+            <Topbar />
+            <div className="stage-body" ref={stageBody}>
+              {launching && <Launch ready={ready} onDone={endLaunch} />}
+              {/* The session's band of light, one field for every session (like the dock): a switch
+                  changes its colour and pace, it is never built again. Under the conversation. */}
+              <AnimatePresence initial={false} custom={viewMode}>
+                {viewKey != null && sessionId && (
+                  <motion.div key="light" className="stage-view stage-light" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
                     <Suspense fallback={null}>
-                      <SessionView sessionId={sessionId} />
+                      <SessionLight sessionId={sessionId} />
                     </Suspense>
-                  ) : (
-                    <Home />
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-            {/* The dock outlives a change of session (one key for all of them): only its contents follow.
-                Coming from or going to home it arrives and leaves with the view. */}
-            <AnimatePresence initial={false} custom={viewMode}>
-              {viewKey != null && sessionId && (
-                <motion.div key="dock" className="stage-dock" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
-                  <Suspense fallback={null}>
-                    <SessionDock sessionId={sessionId} />
-                  </Suspense>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          {ready && conn !== 'open' && (
-            <div className="offline" role="status">
-              <span className="spinner" />
-              Reconnecting to the bridge
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              {/* After a send from home the conversation fades in around the docked composer, which must not move. */}
+              <AnimatePresence mode="popLayout" initial={false} custom={viewMode}>
+                {viewKey == null ? null : (
+                  <motion.div key={viewKey} className="stage-view" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
+                    {sessionId ? (
+                      <Suspense fallback={null}>
+                        <SessionView sessionId={sessionId} />
+                      </Suspense>
+                    ) : (
+                      <Home />
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              {/* The dock outlives a change of session (one key for all of them): only its contents follow.
+                  Coming from or going to home it arrives and leaves with the view. */}
+              <AnimatePresence initial={false} custom={viewMode}>
+                {viewKey != null && sessionId && (
+                  <motion.div key="dock" className="stage-dock" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
+                    <Suspense fallback={null}>
+                      <SessionDock sessionId={sessionId} />
+                    </Suspense>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
-          )}
-        </main>
-
-        <AnimatePresence initial={false} onExitComplete={railGone}>
-          {railShown && (
-            <motion.aside
-              key="rail"
-              className="app-rail"
-              // The panel's contents resolve through the dither veil (and dissolve into it on close),
-              // so only reduced motion fades them.
-              initial={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
-              animate={{ width: 'var(--rail-fit)', opacity: 1 }}
-              exit={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
-              // Just past critical damping: the edge arrives without passing its place, so nothing
-              // beside it ever moves back.
-              transition={{ type: 'spring', stiffness: 400, damping: 42 }}
-              onAnimationComplete={releaseRail}
-            >
-              <div className="app-rail-inner">
-                <Suspense fallback={null}>
-                  <Rail sessionId={sessionId} />
-                </Suspense>
+            {ready && conn !== 'open' && (
+              <div className="offline" role="status">
+                <span className="spinner" />
+                Reconnecting to the bridge
               </div>
-            </motion.aside>
-          )}
-        </AnimatePresence>
+            )}
+          </main>
 
-        <Deferred when={paletteOpen}>
-          <Palette />
-        </Deferred>
-        <Deferred when={historyOpen}>
-          <History />
-        </Deferred>
-        <Deferred when={settingsOpen}>
-          <Settings />
-        </Deferred>
-        <Deferred when={pickerOpen}>
-          <ProjectPicker />
-        </Deferred>
-        {/* While its chunk loads, a plain sheet keeps the waiting app from showing through. */}
-        <Suspense fallback={onboarding ? <div style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'var(--sheet)' }} /> : null}>
-          <AnimatePresence>{onboarding && <Onboarding key="onboarding" />}</AnimatePresence>
-        </Suspense>
-        <Toasts />
-      </div>
-      {/* Outside .app (an isolated stacking context) so the controls stay above dialogs and the welcome. */}
-      <WindowControls />
-    </TipProvider>
+          <AnimatePresence initial={false} onExitComplete={railGone}>
+            {railShown && (
+              <motion.aside
+                key="rail"
+                className="app-rail"
+                // The panel's contents resolve through the dither veil (and dissolve into it on close),
+                // so only reduced motion fades them.
+                initial={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
+                animate={{ width: 'var(--rail-fit)', opacity: 1 }}
+                exit={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
+                // Just past critical damping: the edge arrives without passing its place, so nothing
+                // beside it ever moves back.
+                transition={{ type: 'spring', stiffness: 400, damping: 42 }}
+                onAnimationComplete={releaseRail}
+              >
+                <div className="app-rail-inner">
+                  <Suspense fallback={null}>
+                    <Rail sessionId={sessionId} />
+                  </Suspense>
+                </div>
+              </motion.aside>
+            )}
+          </AnimatePresence>
+
+          <Deferred when={paletteOpen}>
+            <Palette />
+          </Deferred>
+          <Deferred when={historyOpen}>
+            <History />
+          </Deferred>
+          <Deferred when={settingsOpen}>
+            <Settings />
+          </Deferred>
+          <Deferred when={pickerOpen}>
+            <ProjectPicker />
+          </Deferred>
+          {/* While its chunk loads, a plain sheet keeps the waiting app from showing through. */}
+          <Suspense fallback={onboarding ? <div style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'var(--sheet)' }} /> : null}>
+            <AnimatePresence>{onboarding && <Onboarding key="onboarding" />}</AnimatePresence>
+          </Suspense>
+          <Toasts />
+        </div>
+        {/* Outside .app (an isolated stacking context) so the controls stay above dialogs and the welcome. */}
+        <WindowControls />
+      </TipProvider>
+    </MotionConfig>
   );
 }
 

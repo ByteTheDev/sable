@@ -1232,8 +1232,18 @@
 
 /* One line per row, like the command palette: an icon where the row is a thing (a file, a folder,
    an agent), the name, then what places it, dim. The active row is the dithered selection pill. */
+/* The selection: one pill under the active row's content (ui useSlidePill moves it between rows). */
+.sg-pill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
 .sg-row {
   position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1924,6 +1934,20 @@ button.hc:active {
   max-width: 180px;
   font-weight: var(--w-regular);
   color: var(--text-3);
+}
+
+/* The agent menu: as tall as the window allows, its rows scrolling inside (as the model menu's do). */
+.hc-pop {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(var(--radix-dropdown-menu-content-available-height, 100vh) / var(--ui-zoom, 1));
+}
+
+.hc-list {
+  min-height: 0;
+  margin: -4px;
+  padding: 4px;
+  border-radius: inherit;
 }
 
 .hc-group + .hc-group {

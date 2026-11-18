@@ -102,6 +102,7 @@
 
 .hrow {
   position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -112,6 +113,15 @@
   scroll-margin: 34px 0 8px;
 }
 
+
+/* The selection: one pill under the active row's content (ui useSlidePill moves it between rows). */
+.hrow-pill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+}
 
 .hrow.is-busy {
   opacity: 0.7;

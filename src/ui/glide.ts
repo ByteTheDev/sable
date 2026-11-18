@@ -14,6 +14,9 @@
 /** Which input moved the focus last: only key presses glide. */
 let byKeys = false;
 
+/** Whether the latest move came from the keyboard (lists outside menus use it to glide their own pill). */
+export const movedByKeys = () => byKeys;
+
 const ROW = '.menu-item[role^="menuitem"], .menu-item[role="option"]';
 
 function glideOf(pop: HTMLElement): HTMLElement {
@@ -98,4 +101,3 @@ if (typeof document !== 'undefined') {
   );
 }
 
-export {};

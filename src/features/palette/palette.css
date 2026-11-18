@@ -125,6 +125,7 @@
 
 .palette-row {
   position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -132,6 +133,15 @@
   padding: 0 10px 0 8px;
   border-radius: var(--r-sm);
   cursor: default;
+}
+
+/* The selection: one pill under the active row's content (ui useSlidePill moves it between rows). */
+.palette-pill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
 }
 
 

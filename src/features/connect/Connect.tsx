@@ -275,7 +275,7 @@ function AccountRow({
                   {account.label}
                 </button>
               )}
-              <Roll k={plan ?? '-'} className="acc-plan">
+              <Roll k={plan ?? '-'} className={cx('acc-plan', !plan && 'acc-plan-none')}>
                 {plan ?? ''}
               </Roll>
               {multi && account.isDefault && <span className="acc-default">Default</span>}

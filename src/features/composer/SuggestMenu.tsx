@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Icon } from '@/icons';
 import { highlightRuns } from '@/lib/fuzzy';
 import { play, spring } from '@/lib/motion';
+import { byKeys, useSlidePill } from '@/ui';
 import type { SuggestRow } from './commands';
 
 function Lit({ text, indices }: { text: string; indices?: number[] }) {
@@ -141,6 +142,9 @@ export function SuggestMenu({
     else box?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [active, rows]);
 
+  // One selection pill that travels between rows for arrow keys and lands under the pointer at once.
+  const pill = useSlidePill(rows[active]?.id ?? null, 10, byKeys);
+
   return createPortal(
     <div ref={box} className="sg pop" data-spot data-placement={placement} style={style} onMouseDown={(e) => e.preventDefault()}>
       <div className="sg-list scroll" ref={list} role="listbox" id={id} aria-label="Suggestions" style={{ maxHeight: `min(306px, ${typeof style.maxHeight === 'number' ? style.maxHeight - 10 : 306}px)` }}>
@@ -162,7 +166,7 @@ export function SuggestMenu({
                 data-rid={r.id}
                 data-active={i === active || undefined}
                 data-kind={r.kind}
-                className={i === active ? 'sg-row dither-sel' : 'sg-row'}
+                className="sg-row"
                 onMouseMove={() => {
                   if (i === active) return;
                   hovered.current = i;
@@ -170,6 +174,7 @@ export function SuggestMenu({
                 }}
                 onClick={() => onPick(i)}
               >
+                {i === active && <span ref={pill} className="sg-pill dither-sel" aria-hidden />}
                 {r.icon && (
                   <span className="sg-icon" aria-hidden>
                     <Icon name={r.icon} size={16} />

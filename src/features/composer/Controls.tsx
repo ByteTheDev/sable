@@ -409,7 +409,7 @@ function AgentMenu({ onClosed }: { onClosed: () => void }) {
       </RM.Trigger>
       <RM.Portal>
         <RM.Content
-          className="pop cm-pop"
+          className="pop cm-pop hc-pop"
           data-spot
           side="bottom"
           align="start"
@@ -421,6 +421,8 @@ function AgentMenu({ onClosed }: { onClosed: () => void }) {
             onClosed();
           }}
         >
+          {/* Many accounts make a long list: it scrolls inside the room the window has, never past its edge. */}
+          <div className="hc-list scroll">
           {installed.map((p) => {
             const accounts = p.accounts ?? [];
             const several = accounts.length > 1;
@@ -456,6 +458,7 @@ function AgentMenu({ onClosed }: { onClosed: () => void }) {
               </RM.Group>
             );
           })}
+          </div>
         </RM.Content>
       </RM.Portal>
     </RM.Root>

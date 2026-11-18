@@ -1,13 +1,13 @@
 import { forwardRef, useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog as RD, DropdownMenu as RM, Popover as RP, Slider as RSl, Switch as RS, Tooltip as RT } from 'radix-ui';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { Icon, type IconName } from '@/icons';
 import { isMac, shortcutKeys } from '@/lib/format';
 import { play, spring } from '@/lib/motion';
 import { useStore } from '@/state/store';
 import './grow';
-import './glide';
+import { movedByKeys } from './glide';
 
 /** React wrappers around the primitives in styles/ui.css. Keep this file small and boring. */
 
@@ -397,8 +397,10 @@ const PILL = spring(520, 38);
  * offset parent) are measured once and the
  * pill plays a transform from the old box to the new one, its radius corrected for the scale.
  * Returns the ref for the pill element. `radius` is the pill's border radius in CSS pixels.
+ * `when` decides per change whether to slide (a list that follows the pointer passes `byKeys`, so
+ * the pill lands under the pointer at once and only travels for arrow keys).
  */
-export function useSlidePill(key: unknown, radius: number) {
+export function useSlidePill(key: unknown, radius: number, when?: () => boolean) {
   const ref = useRef<HTMLElement | null>(null);
   const prev = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
@@ -407,6 +409,7 @@ export function useSlidePill(key: unknown, radius: number) {
     const from = prev.current;
     prev.current = host;
     if (!pill || !host || !from || from === host || !from.isConnected || from.offsetParent !== host.offsetParent) return;
+    if (when && !when()) return;
     // Layout boxes, not rects: a pressed option is scaled for a moment and must not skew the slide.
     const sx = from.offsetWidth / host.offsetWidth;
     const sy = from.offsetHeight / host.offsetHeight;
@@ -425,6 +428,9 @@ export function useSlidePill(key: unknown, radius: number) {
   return ref as RefObject<HTMLSpanElement>;
 }
 
+/** For `useSlidePill`'s `when`: slide only for moves made with the keys. */
+export const byKeys = movedByKeys;
+
 // ── toasts ──
 
 export function Toasts() {
@@ -434,21 +440,27 @@ export function Toasts() {
   // from reaching an open dialog's outside-click handler, so dismissing a toast leaves the dialog open.
   return createPortal(
     <div className="toasts" aria-live="polite" onPointerDown={(e) => e.nativeEvent.stopPropagation()}>
-      {toasts.map((t) => (
-        <motion.button
-          key={t.id}
-          layout
-          initial={{ opacity: 0, y: 14, scale: 0.96 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-          className="toast"
-          data-level={t.level}
-          onClick={() => dismiss(t.id)}
-        >
-          <Icon name={t.level === 'error' ? 'error' : t.level === 'success' ? 'check-circle' : 'info'} size={16} />
-          <span>{t.text}</span>
-        </motion.button>
-      ))}
+      {/* A toast rises in on a spring and, dismissed or timed out, sinks back and fades while the
+          others close the gap; it never just vanishes. */}
+      <AnimatePresence initial={false} mode="popLayout">
+        {toasts.map((t) => (
+          <motion.button
+            key={t.id}
+            layout="position"
+            initial={{ opacity: 0, y: 14, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.97, transition: { duration: 0.14, ease: [0.4, 0, 1, 1] } }}
+            transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+            className="toast"
+            data-level={t.level}
+            aria-label={`${t.text}. Dismiss`}
+            onClick={() => dismiss(t.id)}
+          >
+            <Icon name={t.level === 'error' ? 'error' : t.level === 'success' ? 'check-circle' : 'info'} size={16} />
+            <span>{t.text}</span>
+          </motion.button>
+        ))}
+      </AnimatePresence>
     </div>,
     document.body,
   );

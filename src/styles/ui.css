@@ -829,9 +829,10 @@ textarea.field {
   color: var(--text);
 }
 
-.menu-item[data-highlighted] svg,
-.menu-item[data-active='true'] svg,
-.menu-item:hover svg {
+/* An agent's mark keeps its own colour on a lit row (art.css). */
+.menu-item[data-highlighted] svg:not(.provider-mark),
+.menu-item[data-active='true'] svg:not(.provider-mark),
+.menu-item:hover svg:not(.provider-mark) {
   color: var(--text);
 }
 
@@ -909,7 +910,7 @@ textarea.field {
   color: var(--text-2);
 }
 
-.pop[data-glide] .menu-item:hover:not([data-highlighted], [data-state='open'], [data-active='true']) svg {
+.pop[data-glide] .menu-item:hover:not([data-highlighted], [data-state='open'], [data-active='true']) svg:not(.provider-mark) {
   color: var(--text-3);
 }
 

@@ -138,6 +138,11 @@
   outline-offset: 1px;
 }
 
+/* No plan to show (a Demo account): no empty slot, or the gap beside it doubles. */
+.acc-top > .acc-plan-none {
+  display: none;
+}
+
 .acc-default {
   display: inline-flex;
   align-items: center;

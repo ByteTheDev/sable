@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { Dialog as RD } from 'radix-ui';
 import { DEFAULT_ACCOUNT, type ProviderId, type SessionMeta } from '@shared/protocol';
 import { accountName as nameOfAccount } from '@/state/hooks';
@@ -8,7 +8,7 @@ import { timeAgo } from '@/lib/format';
 import { fuzzy, wordPrefix } from '@/lib/fuzzy';
 import { useNow } from '@/lib/useNow';
 import { useStore } from '@/state/store';
-import { Kbd, PathLabel, cx } from '@/ui';
+import { byKeys, Kbd, PathLabel, cx, useSlidePill } from '@/ui';
 import { Highlight } from './Highlight';
 import { buildItems, loadRecent, pushRecent, type PaletteGroup, type PaletteItem } from './items';
 import './palette.css';
@@ -159,6 +159,8 @@ function PaletteBody({ onRun }: { onRun: (item: PaletteItem) => void }) {
 
   useEffect(() => setCursor(0), [q, scope]);
   const safe = Math.min(cursor, Math.max(0, rows.length - 1));
+  // One selection pill that travels between rows for arrow keys and lands under the pointer at once.
+  const pill = useSlidePill(rows[safe] ? `${rows[safe].group}:${rows[safe].item.id}` : null, 8, byKeys);
 
   // Keep the cursor row in view, smoothly.
   useLayoutEffect(() => {
@@ -227,7 +229,7 @@ function PaletteBody({ onRun }: { onRun: (item: PaletteItem) => void }) {
           <div className="palette-empty">{q ? `Nothing matches “${q}”.` : 'Nothing here yet.'}</div>
         ) : (
           rows.map((row, i) => (
-            <PaletteRowView key={`${row.group}:${row.item.id}`} row={row} index={i} active={i === safe} showHead={i === 0 || rows[i - 1].group !== row.group} onHover={setCursor} onRun={onRun} />
+            <PaletteRowView key={`${row.group}:${row.item.id}`} row={row} index={i} active={i === safe} pill={i === safe ? pill : undefined} showHead={i === 0 || rows[i - 1].group !== row.group} onHover={setCursor} onRun={onRun} />
           ))
         )}
       </div>
@@ -267,6 +269,7 @@ function PaletteRowView({
   row,
   index,
   active,
+  pill,
   showHead,
   onHover,
   onRun,
@@ -274,6 +277,7 @@ function PaletteRowView({
   row: Row;
   index: number;
   active: boolean;
+  pill?: RefObject<HTMLSpanElement>;
   showHead: boolean;
   onHover: (i: number) => void;
   onRun: (item: PaletteItem) => void;
@@ -292,10 +296,11 @@ function PaletteRowView({
         aria-selected={active}
         data-index={index}
         data-active={active || undefined}
-        className={cx('palette-row', active && 'dither-sel', item.session?.archived && 'is-archived')}
+        className={cx('palette-row', item.session?.archived && 'is-archived')}
         onMouseMove={() => !active && onHover(index)}
         onClick={() => onRun(item)}
       >
+        {active && <span ref={pill} className="palette-pill dither-sel" aria-hidden />}
         <span className="palette-lead">
           {item.session ? (
             <span className="palette-smark">
