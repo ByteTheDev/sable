@@ -512,6 +512,8 @@ export class App {
     // starts with this message; Codex can take most of a minute): show the message now, send it
     // once the agent is there.
     let early: UserItem | undefined;
+    // An agent that cannot start at all (its account was removed) refuses the message outright.
+    if (!rt.handle && !this.opening.has(rt.id)) this.provider(rt.meta.provider, rt.meta.accountId);
     if (this.opening.has(rt.id) || !rt.handle) {
       early = addUser();
       this.delivering.add(rt.id);
