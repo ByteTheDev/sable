@@ -1,6 +1,8 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import type { ProviderId } from '../../shared/protocol';
 import type { SessionRuntime } from '../core/runtime';
+import { AGENT_PARAMS, AGENT_TOOLS, agentToolDescription, readAgentCall, type AgentCall } from './agent-tool';
 import { BROWSER_CORE, BROWSER_DESCRIPTIONS, BROWSER_OPS, BROWSER_PARAMS, BROWSER_TOOLS, runBrowserTool, type BrowserOp, type BrowserToolResult } from './browser-tool';
 import { WIDGET_CODE_DESCRIPTION, WIDGET_DESCRIPTION, WIDGET_SERVER, WIDGET_TITLE_DESCRIPTION, WIDGET_TOOL, widgetResult } from './widget-tool';
 
@@ -12,8 +14,34 @@ import { WIDGET_CODE_DESCRIPTION, WIDGET_DESCRIPTION, WIDGET_SERVER, WIDGET_TITL
  * tools ask the session's window (`session()` finds the session that owns the process at call time,
  * so a prewarmed process works once a session adopts it).
  */
-export function widgetServer(opts: { widgets?: boolean; session?: () => SessionRuntime | undefined } = { widgets: true }): McpSdkServerConfigWithInstance {
+export function widgetServer(
+  opts: {
+    widgets?: boolean;
+    session?: () => SessionRuntime | undefined;
+    /** Sub-agents from the other agent: the agents offered and how a call runs (see agent-tool.ts). */
+    delegate?: { agents: ProviderId[]; run: (call: AgentCall, signal?: AbortSignal) => Promise<{ ok: boolean; text: string }> };
+  } = { widgets: true },
+): McpSdkServerConfigWithInstance {
   const tools = [];
+  for (const agent of opts.delegate?.agents ?? []) {
+    const name = AGENT_TOOLS[agent];
+    if (!name) continue;
+    const run = opts.delegate!.run;
+    tools.push(
+      tool(
+        name,
+        agentToolDescription(agent),
+        { description: z.string().describe(AGENT_PARAMS.description.description), prompt: z.string().describe(AGENT_PARAMS.prompt.description), model: z.string().optional().describe(AGENT_PARAMS.model.description) },
+        async (args, extra: unknown) => {
+          const call = readAgentCall(agent, args);
+          if (!call) return { content: [{ type: 'text' as const, text: 'The task is empty: say what the sub-agent should do in `prompt`.' }], isError: true };
+          const r = await run(call, (extra as { signal?: AbortSignal } | undefined)?.signal);
+          return { content: [{ type: 'text' as const, text: r.text }], isError: !r.ok };
+        },
+        { annotations: { title: `Sub-agent: ${agent}`, readOnlyHint: false, destructiveHint: false, openWorldHint: false }, alwaysLoad: true },
+      ),
+    );
+  }
   if (opts.widgets !== false) {
     tools.push(
       tool(

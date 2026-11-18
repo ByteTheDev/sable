@@ -24,6 +24,7 @@ import type {
 import { makeFileDiff, parseUnifiedDiff } from '../../shared/diff';
 import { WIDGET_TOOL, describeWidget, isWidgetTool } from './widget-tool';
 import { browserOp, describeBrowser } from './browser-tool';
+import { agentOfTool, describeAgentCall } from './agent-tool';
 import type {
   RateLimitResetCreditsSummary,
   AskForApproval,
@@ -614,6 +615,17 @@ export function draftItem(item: ThreadItem, opts: { streaming?: boolean } = {}):
           status,
           input: item.arguments,
           ...(status !== 'running' ? { result: { text: plain, isError: status === 'error' || undefined, ...(images.length ? { images } : {}) }, endedAt: done(status) } : {}),
+        });
+      }
+      // A sub-agent from the other agent (Claude Code): its steps nest under this one.
+      const agent = item.namespace ? undefined : agentOfTool(item.tool);
+      if (agent) {
+        return tool({
+          name: item.tool,
+          ...describeAgentCall(agent, item.arguments),
+          status,
+          input: item.arguments,
+          ...(status !== 'running' ? { result: { text, isError: status === 'error' || undefined }, endedAt: done(status) } : {}),
         });
       }
       return tool({

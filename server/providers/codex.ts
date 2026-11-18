@@ -17,6 +17,7 @@ import type {
   ModelInfo,
   NoticeItem,
   PermissionOption,
+  ProviderId,
   ProviderInfo,
   Question,
   RateLimit,
@@ -37,6 +38,8 @@ import { WIDGET_DESCRIPTION, WIDGET_FENCE_HINT, WIDGET_INPUT_SCHEMA, WIDGET_TOOL
 import { BROWSER_CORE, BROWSER_DESCRIPTIONS, BROWSER_HINT, BROWSER_INPUT_SCHEMAS, BROWSER_OPS, BROWSER_TOOLS, browserDynamicAnswer, browserOp, browserTabEnabled } from './browser-tool';
 import { CodexRpc, RpcError, resolveCodexCommand, type ExitInfo } from './codex-rpc';
 import { serviceTierFor } from './codex-map';
+import { AGENT_INPUT_SCHEMA, AGENT_TOOLS, agentOfTool, agentToolDescription, readAgentCall } from './agent-tool';
+import { claimStep } from '../core/sub-agent';
 import {
   PRESETS,
   activityFor,
@@ -551,6 +554,12 @@ export class CodexProvider implements Provider {
   dynamicTools(meta?: Pick<SessionMeta, 'options'>): CodexDynamicTool[] | undefined {
     const tools: CodexDynamicTool[] = [];
     if (widgetsEnabled(this.ctx.settings?.())) tools.push({ type: 'function', name: WIDGET_TOOL, description: WIDGET_DESCRIPTION, inputSchema: WIDGET_INPUT_SCHEMA });
+    // Sub-agents from the other agent (Claude Code), while it is installed and signed in.
+    if (meta && this.ctx.runAgent)
+      for (const agent of this.ctx.otherAgents?.() ?? []) {
+        const name = AGENT_TOOLS[agent];
+        if (agent !== 'codex' && name) tools.push({ type: 'function', name, description: agentToolDescription(agent), inputSchema: AGENT_INPUT_SCHEMA });
+      }
     // The Browser tab tools, while the session's capability is on (a thread keeps what it was started with).
     // Those that work an open page wait behind Codex's tool search until the agent looks for them.
     if (meta && browserTabEnabled(meta)) {
@@ -1396,6 +1405,9 @@ class CodexSession implements ProviderSession {
           // The Browser tab tools ask the session's window (and the user, for pages that are not local).
           const op = browserOp(typeof p?.tool === 'string' ? p.tool : undefined);
           if (op) return await browserDynamicAnswer(this.rt, op, p?.arguments, ac.signal);
+          // A sub-agent from the other agent (Claude Code): it runs nested under this call's step.
+          const agent = agentOfTool(typeof p?.tool === 'string' ? p.tool : undefined);
+          if (agent) return await this.runDelegate(agent, p?.arguments, ac.signal);
           // Client-defined tools (show_widget): the timeline already shows the call as the widget.
           return dynamicToolAnswer(p);
         }
@@ -1430,6 +1442,26 @@ class CodexSession implements ProviderSession {
       this.rt.patch<ToolItem>(id, allowed ? { status: 'running' } : { status: 'denied', endedAt: Date.now() });
     }
     if (this.rt.turnActive) this.rt.update({ activity: allowed ? (it ? firstLine(`Running ${it.title}`, 70) : 'Working') : 'Thinking' });
+  }
+
+  private claimedSteps = new Set<string>();
+
+  /** Runs a sub-agent of `agent` for this session under the call's step; its final answer is the tool's result. */
+  private async runDelegate(agent: ProviderId, args: unknown, signal: AbortSignal) {
+    const answer = (text: string, ok: boolean) => ({ contentItems: [{ type: 'inputText' as const, text }], success: ok });
+    const call = readAgentCall(agent, args);
+    if (!call) return answer('The task is empty: say what the sub-agent should do in `prompt`.', false);
+    const run = this.provider.ctx.runAgent;
+    if (!run) return answer('Sub-agents are not available here.', false);
+    const mine = (it: ToolItem) => agentOfTool(it.name) === agent;
+    // The call's step usually exists already; give it a moment when the request came first.
+    let step = claimStep(this.rt, mine, this.claimedSteps);
+    if (!step) {
+      await new Promise((r) => setTimeout(r, 250));
+      step = claimStep(this.rt, mine, this.claimedSteps);
+    }
+    const r = await run(this.rt, call, step, signal);
+    return answer(r.text, r.ok);
   }
 
   private async approveCommand(p: CommandExecutionRequestApprovalParams, signal: AbortSignal) {

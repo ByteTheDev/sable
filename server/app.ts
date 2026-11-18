@@ -29,6 +29,7 @@ import { speedFor, startSpeedFor } from '../shared/speed';
 import type { Provider, ProviderContext, ProviderSession } from './providers/types';
 import { findAccountFolders, folderLabel, labelFromAuth, pickNextAccount } from './accounts/folders';
 import { handoverText } from './accounts/handover';
+import { runSubAgent } from './core/sub-agent';
 import { cutAt } from './core/fork';
 import { orderAccounts } from './accounts/order';
 import { withBrowserLine } from './providers/browser-tool';
@@ -189,7 +190,33 @@ export class App {
       emit: (e) => this.fromProvider(accountId, e),
       account: accountId === DEFAULT_ACCOUNT ? undefined : { id: accountId, dir },
       settings: () => this.store.state.settings,
+      otherAgents: () => this.otherAgents(),
+      runAgent: (rt, call, itemId, signal) => {
+        if (this.sessions.get(rt.id) !== rt) return Promise.resolve({ ok: false, text: 'No session is attached yet.' });
+        return runSubAgent(
+          {
+            provider: (id, account) => this.provider(id, account),
+            accountFor: (id) => this.defaultAccountId(id),
+            defaultModel: (id) => this.store.state.settings.defaultModels[id],
+            modeFor: subAgentMode,
+            log: this.log,
+          },
+          rt,
+          call,
+          itemId,
+          signal,
+        );
+      },
     };
+  }
+
+  /** The agents a session can hand work to: Claude Code and Codex where installed and signed in (last known). */
+  private otherAgents(): ProviderId[] {
+    return (['claude', 'codex'] as ProviderId[]).filter((id) => {
+      if (!this.providers.has(id)) return false;
+      const info = this.cache.get<ProviderInfo>(`info:${id}`);
+      return !!info?.installed && !!info.auth?.loggedIn;
+    });
   }
 
   /** Tags a provider instance's events with its account and keeps the per-account caches current. */
@@ -1424,6 +1451,21 @@ function isDir(dir: string) {
   } catch {
     return false;
   }
+}
+
+/** A sub-agent's permission mode: the same posture as its parent's, in its own agent's terms. */
+function subAgentMode(agent: ProviderId, parentMode: string): string {
+  const posture: Record<string, 'full' | 'edits' | 'read' | 'ask'> = {
+    bypassPermissions: 'full',
+    'full-access': 'full',
+    acceptEdits: 'edits',
+    auto: 'edits',
+    plan: 'read',
+    'read-only': 'read',
+  };
+  const p = posture[parentMode] ?? 'ask';
+  if (agent === 'codex') return { full: 'full-access', edits: 'auto', read: 'read-only', ask: 'default' }[p];
+  return { full: 'bypassPermissions', edits: 'acceptEdits', read: 'plan', ask: 'default' }[p];
 }
 
 /** A place above every folder in the manual order (where a new or returning folder goes). */

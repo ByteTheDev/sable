@@ -54,6 +54,8 @@ import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
 import { widgetServer } from './claude-widget';
 import { BROWSER_HINT, BROWSER_TOOL_IDS, browserTabEnabled } from './browser-tool';
 import { WIDGET_FENCE_HINT, WIDGET_SERVER, WIDGET_TOOL_ID, widgetsEnabled } from './widget-tool';
+import { AGENT_TOOLS, agentOfTool, agentToolId, type AgentCall } from './agent-tool';
+import { claimStep } from '../core/sub-agent';
 
 type Obj = Record<string, any>;
 
@@ -174,6 +176,8 @@ export class ClaudeProvider implements Provider {
   private infoCache?: { at: number; info: ProviderInfo };
   private capsCache = new Map<string, { at: number; caps: Capabilities }>();
   private capsInflight = new Map<string, Promise<Capabilities>>();
+  /** Tool steps a sub-agent call has already nested under (see `claimStep`). */
+  private claimedSteps = new Set<string>();
   private loginProc?: ChildProcess;
   private limitsCache: RateLimit[] = [];
   /** Extra usage as last known: from the usage request, and whether turns run on it (rate_limit_event). */
@@ -311,8 +315,23 @@ export class ClaudeProvider implements Provider {
     // Sable's own tools: show_widget (generative UI) and the Browser tab tools (the session's capability),
     // allowed without the CLI's prompt (the browser tools ask for pages that are not local themselves).
     const browser = browserTabEnabled(meta);
-    const own = this.widgets() || browser;
-    const allowed = [...(this.widgets() ? [WIDGET_TOOL_ID] : []), ...(browser ? BROWSER_TOOL_IDS : [])];
+    // Sub-agents from the other agent (Codex), while it is installed and signed in.
+    const delegates = (this.ctx.otherAgents?.() ?? []).filter((a) => a !== 'claude' && AGENT_TOOLS[a]);
+    const own = this.widgets() || browser || delegates.length > 0;
+    const allowed = [...(this.widgets() ? [WIDGET_TOOL_ID] : []), ...(browser ? BROWSER_TOOL_IDS : []), ...delegates.map(agentToolId)];
+    const runAgent = this.ctx.runAgent;
+    const delegate =
+      delegates.length && runAgent
+        ? {
+            agents: delegates,
+            run: (call: AgentCall, signal?: AbortSignal) => {
+              const rt = owner.session?.runtime();
+              if (!rt) return Promise.resolve({ ok: false, text: 'No session is attached yet.' });
+              const step = claimStep(rt, (it) => agentOfTool(it.name) === call.agent, this.claimedSteps);
+              return runAgent(rt, call, step, signal);
+            },
+          }
+        : undefined;
     return {
       ...base,
       // Appended to Claude Code's own prompt: CLAUDE.md, output styles and settings still apply.
@@ -334,7 +353,7 @@ export class ClaudeProvider implements Provider {
       // Generative UI: an in-process server with the show_widget tool, allowed without asking.
       // The user's own MCP servers still load from their settings.
       ...(own
-        ? { mcpServers: { [WIDGET_SERVER]: widgetServer({ widgets: this.widgets(), session: browser ? () => owner.session?.runtime() : undefined }) }, allowedTools: allowed }
+        ? { mcpServers: { [WIDGET_SERVER]: widgetServer({ widgets: this.widgets(), session: browser ? () => owner.session?.runtime() : undefined, delegate }) }, allowedTools: allowed }
         : {}),
       canUseTool: (name, toolInput, o) =>
         owner.session ? owner.session.canUseTool(name, toolInput, o) : Promise.resolve({ behavior: 'deny', message: 'No session is attached yet.' } as PermissionResult),
@@ -1218,6 +1237,8 @@ class ClaudeSession implements ProviderSession {
     if (name === WIDGET_TOOL_ID) return { behavior: 'allow', updatedInput: input };
     // The Browser tab tools ask for themselves, with the page's host (local pages need no answer).
     if (BROWSER_TOOL_IDS.includes(name)) return { behavior: 'allow', updatedInput: input };
+    // A sub-agent from the other agent: its own steps ask here, as they come, in this session's mode.
+    if (agentOfTool(name)) return { behavior: 'allow', updatedInput: input };
 
     if (name === 'AskUserQuestion') {
       const questions = describeTool(name, input).detail.questions ?? [];
