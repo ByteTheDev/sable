@@ -1,0 +1,38 @@
+/* Where a chat switched agents (AgentSwitch.tsx): a notice line with the agent's own mark and one quiet action. */
+
+.as-line .notice-label {
+  color: var(--text-2);
+}
+
+.as-back {
+  flex-shrink: 0;
+  height: 22px;
+  margin-left: -4px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+  background-color: transparent;
+  transition:
+    color var(--d-1) var(--ease-out),
+    background-color var(--d-1) var(--ease-out);
+}
+
+.as-back:hover {
+  color: var(--text);
+  background-color: var(--fill-1);
+}
+
+.as-back:active {
+  scale: 0.97;
+}
+
+.as-back[aria-disabled='true'] {
+  color: var(--text-4);
+  background-color: transparent;
+  cursor: default;
+}
+
+.as-back[aria-disabled='true']:active {
+  scale: 1;
+}

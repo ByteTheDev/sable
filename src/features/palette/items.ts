@@ -5,7 +5,7 @@ import { baseName, tildePath } from '@/lib/format';
 import { skillLabeller } from '@/lib/skills';
 import { SECTIONS as SETTINGS_SECTIONS } from '@/features/settings/sections';
 import { openImport } from '@/features/history/History';
-import { continueInAgent, goHome, interrupt, openSession, openSettings } from '@/state/actions';
+import { goHome, interrupt, openSession, openSettings, switchAgent } from '@/state/actions';
 import { RAIL_TABS, railTabKeys } from '@/features/rail/tabs';
 import { focusComposer } from '@/state/hooks';
 import { createLane } from '@/features/session/lane';
@@ -99,10 +99,10 @@ export function buildItems(opts: {
       const title = t.id === 'browser' ? 'Open browser' : t.label;
       act(`panel:${t.id}`, title, t.icon, () => setUi({ railOpen: true, railTab: t.id }), { sub: 'Panel', keys: railTabKeys(t.id), keywords: RAIL_WORDS[t.id] ?? 'panel show open' });
     }
-    // Continue in the other agent: Claude Code to Codex and back, starting from a summary.
+    // Switch agent: the same chat goes on with Claude Code or Codex (and back), from a handover.
     const other: ProviderId | undefined = opts.active.provider === 'claude' ? 'codex' : opts.active.provider === 'codex' ? 'claude' : undefined;
     if (other && opts.installed.includes(other))
-      act(`continue:${other}`, `Continue in ${PROVIDER_NAME[other]}`, 'arrow-right', () => void continueInAgent(id, other), { keywords: 'handover switch agent move conversation' });
+      act(`switch:${other}`, `Switch to ${PROVIDER_NAME[other]}`, 'arrow-right', () => void switchAgent(id, other), { keywords: 'continue handover switch agent move conversation' });
     // Lanes: a worktree of its own for this chat, now (its conversation goes along).
     const lane = opts.active.lane;
     if (lane) act('lane:changes', 'Land or discard the lane', 'fork', () => setUi({ railOpen: true, railTab: 'changes' }), { keywords: `lane worktree branch merge land discard ${lane.branch}` });

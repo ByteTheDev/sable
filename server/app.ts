@@ -4,7 +4,9 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import {
   DEFAULT_ACCOUNT,
+  matchModel,
   type AccountCap,
+  type AgentHandover,
   type AccountInfo,
   type AppState,
   type BridgeEvent,
@@ -34,6 +36,7 @@ import { speedFor, startSpeedFor } from '../shared/speed';
 import type { Provider, ProviderContext, ProviderSession } from './providers/types';
 import { findAccountFolders, folderLabel, labelFromAuth, pickNextAccount } from './accounts/folders';
 import { handoverText } from './accounts/handover';
+import { backgroundRunning, itemsSince, lastSwitch, legOf, rootBefore, undoableSwitch, withLeg, workedIn } from './core/agent-switch';
 import { runSubAgent } from './core/sub-agent';
 import { readOnlyMode, TurnChecks, withoutChecks } from './core/check';
 import { cutAt } from './core/fork';
@@ -731,6 +734,8 @@ export class App {
     }
     // Stopped while the agent was starting: the message stays where it was sent, and is not sent later.
     if (early && this.stoppedEarly.delete(early.id)) return;
+    // A model chosen since the agent started takes effect now, with this message (never inside a running turn).
+    await this.applyDue(rt, handle);
     const item = early ?? addUser();
     const runningSince = item.steered ? rt.turnStartedAt : undefined;
     try {
@@ -748,12 +753,90 @@ export class App {
     }
   }
 
-  /** The message as the agent gets it: after a move to another account without the conversation, the summary goes first (once). */
+  /**
+   * The message as the agent gets it: after a move to another account without the conversation, the
+   * summary goes first (once); after a switch of agent, the handover of what that agent has not seen.
+   */
   private withHandover(rt: SessionRuntime, item: UserItem): UserItem {
-    const summary = this.handovers.get(rt.id);
-    if (!summary) return item;
+    const pending = rt.meta.agentHandover;
+    if (pending) rt.update({ agentHandover: null });
+    // A summary of the whole conversation covers what a switch would hand over.
+    const summary = this.handovers.get(rt.id) ?? (pending ? this.agentHandoverText(rt, pending, item.id) : '');
     this.handovers.delete(rt.id);
+    if (!summary) return item;
     return { ...item, text: `${summary}\n\n---\n\n${item.text}` };
+  }
+
+  /** What an agent the chat switched to has not seen: the whole chat, or what happened since it was left (`since`). */
+  private agentHandoverText(rt: SessionRuntime, pending: AgentHandover, skip?: string): string {
+    const range = withoutChecks(itemsSince(rt.items, pending.since)).filter((i) => i.id !== skip);
+    const worked = workedIn(range, pending.from).filter((p) => p !== rt.meta.provider);
+    const from = (worked.length ? worked : [pending.from]).map((p) => this.agentName(p)).join(' and ');
+    return handoverText(range, { from, since: !!pending.since, maxChars: SWITCH_HANDOVER_CHARS });
+  }
+
+  /** An agent's name, also for one this build does not have. */
+  private agentName(provider: ProviderId): string {
+    return this.providers.get(provider)?.name ?? AGENT_NAMES[provider] ?? provider;
+  }
+
+  // ── the session's model ──
+
+  /** Sessions whose model changed while their agent was there: it takes the model right before the next message (`speed`: the speed fell back too). */
+  private modelDue = new Map<string, { speed: boolean }>();
+
+  /**
+   * Sets the session's model. Nothing goes to the agent now: a running agent takes it right
+   * before the next message goes out (live where the agent can, so its process and any background
+   * work stay); an agent that starts later starts with it.
+   */
+  private setSessionModel(rt: SessionRuntime, model: string) {
+    if (!model || model === rt.meta.model) return;
+    rt.update({ model });
+    // A speed the new model does not offer falls back to standard.
+    let speed = false;
+    if (rt.meta.speed && rt.meta.speed !== STANDARD_SPEED && speedFor(this.modelInfo(rt, model), rt.meta.speed) === STANDARD_SPEED) {
+      rt.update({ speed: STANDARD_SPEED, fast: false });
+      speed = true;
+    }
+    if (rt.handle || this.opening.has(rt.id)) this.modelDue.set(rt.id, { speed: speed || !!this.modelDue.get(rt.id)?.speed });
+  }
+
+  /** A model chosen since the agent started goes to it now (never into a running turn: a steer leaves it for the next message). */
+  private async applyDue(rt: SessionRuntime, handle: ProviderSession) {
+    const due = this.modelDue.get(rt.id);
+    if (!due || rt.turnActive) return;
+    this.modelDue.delete(rt.id);
+    try {
+      await handle.setModel(rt.meta.model);
+      if (due.speed) await handle.setSpeed?.(rt.meta.speed ?? STANDARD_SPEED);
+    } catch (err) {
+      this.log('model change failed', (err as Error).message);
+    }
+  }
+
+  /**
+   * `/model <name>` typed as a message (the phone, or anything that did not catch it first): never
+   * sent. Sets the session's model, or switches the chat to the agent that has a model of that name.
+   */
+  private async modelCommand(rt: SessionRuntime, query: string): Promise<RpcMethods['session.send']['result']> {
+    if (!query) return { ok: false, error: 'Name a model after /model' };
+    const caps = rt.caps ?? this.cache.get<Capabilities>(capsCacheKey(rt.meta.provider, rt.meta.accountId ?? DEFAULT_ACCOUNT, rt.meta.cwd)) ?? (await this.capsFast(rt.meta.provider, rt.meta.cwd, rt.meta.accountId ?? DEFAULT_ACCOUNT).catch(() => undefined));
+    const own = matchModel(query, caps?.models ?? []);
+    if (own) {
+      this.setSessionModel(rt, own.id);
+      return { ok: true, model: own.id };
+    }
+    for (const p of this.otherAgents()) {
+      if (p === rt.meta.provider) continue;
+      const accountId = rt.meta.agents?.find((l) => l.provider === p)?.accountId ?? this.defaultAccountId(p);
+      const theirs = this.cache.get<Capabilities>(capsCacheKey(p, accountId, rt.meta.cwd)) ?? this.cache.get<Capabilities>(capsCacheKey(p, accountId));
+      const m = theirs && matchModel(query, theirs.models);
+      if (!m) continue;
+      await this.switchAgent(rt, p, { model: m.id });
+      return { ok: true, model: m.id, switched: p };
+    }
+    return { ok: false, error: `No model called “${query}”` };
   }
 
   /** The message as the agent gets it: one line on the page in the Browser tab when it changed since the last message (never its content). */
@@ -1025,6 +1108,7 @@ export class App {
       ? this.resumeMessage(rt, refused, carried)
       : { id: randomUUID(), ts: Date.now(), type: 'user', text: 'The usage limit has reset. Carry on with the task from where it stopped.', state: 'sent' };
     const handle = await this.ensureHandle(rt);
+    await this.applyDue(rt, handle);
     try {
       await handle.send(this.withHandover(rt, item));
     } catch (err) {
@@ -1115,6 +1199,115 @@ export class App {
       }
     }
     return { ok: true, carried };
+  }
+
+  /**
+   * Switches the chat to another agent in place: the same chat and conversation, the next message
+   * goes to `provider`. The agent it leaves keeps its own conversation (`SessionMeta.agents`); an
+   * agent the chat ran with before resumes its own and is told what happened since it was left, a
+   * new one starts from a handover of the whole chat (both computed when the next message goes out,
+   * so they survive a restart). Switching back right after a switch, with nothing sent, undoes it
+   * (the switch line goes). Refused while the agent works or background work runs in its process.
+   */
+  async switchAgent(rt: SessionRuntime, provider: ProviderId, opts: { model?: string; accountId?: string } = {}): Promise<RpcMethods['session.switchAgent']['result']> {
+    this.hydrate(rt);
+    const from = rt.meta.provider;
+    if (provider === from) {
+      if (opts.model) this.setSessionModel(rt, opts.model);
+      return { ok: true };
+    }
+    if (!this.providers.has(provider)) throw new Error(`Provider not available: ${provider}`);
+    if (rt.turnActive || this.opening.has(rt.id) || this.delivering.has(rt.id) || this.capChecks.has(rt.id)) throw new Error('The agent is still working. Switch when it is done.');
+    if (backgroundRunning(rt.items)) throw new Error('Background work is still running in this chat. Switch when it is done.');
+    const cwd = rt.meta.cwd;
+    if (provider !== 'demo' && !isDir(cwd)) throw new Error(`Folder not found: ${cwd}`);
+    const settings = this.store.state.settings;
+    const undo = undoableSwitch(rt.items, from, provider);
+    let legs = rt.meta.agents ?? [];
+    // Undone: the line goes, and an agent whose conversation reached it covers up to the item before it.
+    if (undo) {
+      const before = rootBefore(rt.items, undo.id);
+      legs = legs.map((l) => (l.knows === undo.id ? { ...l, knows: before } : l));
+    }
+    const target = legs.find((l) => l.provider === provider);
+    // The agent it goes back to keeps its account (and so its conversation) while that account exists,
+    // and, for Claude Code, whose conversations belong to a folder, while the chat is in the same folder.
+    const keeps = !!target && (!target.accountId || !!this.findAccount(provider, target.accountId)) && !(provider === 'claude' && target.cwd && !sameDir(target.cwd, cwd));
+    const accountId = keeps ? (target!.accountId ?? DEFAULT_ACCOUNT) : (opts.accountId ?? this.defaultAccountId(provider));
+    // Refuses an account that was removed before anything changes.
+    this.provider(provider, accountId);
+    const cached = this.cache.get<Capabilities>(capsCacheKey(provider, accountId, cwd));
+    const defaultModel = (caps: Capabilities | undefined) => caps?.models.find((m) => m.isDefault)?.id ?? caps?.models[0]?.id;
+    const model = opts.model || (keeps ? target!.model : '') || settings.defaultModels[provider] || defaultModel(cached) || '';
+    const prev = legs.find((l) => l.provider === from);
+
+    rt.cancelPrompts();
+    await rt.handle?.close().catch(() => {});
+    rt.handle = undefined;
+    this.modelDue.delete(rt.id);
+    this.handovers.delete(rt.id);
+
+    // Only the latest switch line offers to switch back.
+    const prior = lastSwitch(rt.items);
+    let line: NoticeItem | undefined;
+    if (undo) {
+      rt.remove(undo.id);
+      const latest = lastSwitch(rt.items);
+      if (latest?.agentSwitch?.past) rt.patch<NoticeItem>(latest.id, { agentSwitch: { ...latest.agentSwitch, past: false } });
+    } else {
+      if (prior?.agentSwitch && !prior.agentSwitch.past) rt.patch<NoticeItem>(prior.id, { agentSwitch: { ...prior.agentSwitch, past: true } });
+      line = rt.add<NoticeItem>({ type: 'notice', variant: 'info', text: `${target ? 'Switched back to' : 'Switched to'} ${this.agentName(provider)}`, agentSwitch: { from, to: provider, ...(target ? { back: true } : {}) } });
+    }
+    // The agent left behind covers the chat up to this line, unless its handover never went out.
+    const leaving = legOf(rt.meta, rt.meta.agentHandover ? prev?.knows : (line?.id ?? rt.items.findLast((i) => !i.parentId)?.id));
+    const knows = keeps ? target!.knows : undefined;
+    const startSpeed = keeps ? (target!.speed && target!.speed !== STANDARD_SPEED ? { speed: target!.speed, fast: true } : {}) : this.startSpeed(provider, accountId, cwd, model, settings.defaultSpeeds?.[provider]);
+    const next: SessionMeta = {
+      ...rt.meta,
+      provider,
+      providerSessionId: keeps ? target!.providerSessionId : undefined,
+      model,
+      effort: keeps ? target!.effort : settings.defaultEfforts[provider],
+      mode: keeps ? target!.mode : subAgentMode(provider, rt.meta.mode),
+      accountId: accountId === DEFAULT_ACCOUNT ? undefined : accountId,
+      speed: undefined,
+      fast: undefined,
+      ...startSpeed,
+      ultracode: keeps ? target!.ultracode : undefined,
+      options: keeps ? target!.options : withDefaultOptions(provider, settings.sessionOptions?.[provider]),
+      movedFrom: undefined,
+      remote: undefined,
+      capState: undefined,
+      status: 'idle',
+      lastError: undefined,
+      activity: undefined,
+      usage: { ...rt.meta.usage, contextTokens: keeps ? target!.context?.tokens : undefined, contextWindow: keeps ? target!.context?.window : undefined },
+      agents: withLeg(legs, leaving),
+      agentHandover: { from, ...(knows ? { since: knows } : {}) },
+    };
+    // Fields that end are dropped, not left undefined (patches travel as JSON; the meta goes whole below).
+    for (const k of Object.keys(next) as (keyof SessionMeta)[]) if (next[k] === undefined) delete next[k];
+    for (const k of Object.keys(rt.meta) as (keyof SessionMeta)[]) if (!(k in next)) delete rt.meta[k];
+    rt.update(next);
+    // Whole, so what ended (a conversation id, an account, a speed) ends in every window too.
+    this.emit({ type: 'session.added', session: { ...rt.meta } });
+    // The new agent's models and modes at once where known; asked for otherwise.
+    if (cached) rt.setCaps(cached);
+    else {
+      rt.caps = undefined;
+      this.emit({ type: 'session.caps', id: rt.id, caps: undefined as unknown as Capabilities });
+      void this.capsFast(provider, cwd, accountId)
+        .then((caps) => {
+          if (this.sessions.get(rt.id) !== rt || rt.meta.provider !== provider || rt.handle || rt.caps) return;
+          rt.setCaps(caps);
+          if (!rt.meta.model && defaultModel(caps)) rt.update({ model: defaultModel(caps) });
+        })
+        .catch(() => {});
+    }
+    // A wait for the old agent's limit to reset is over.
+    this.spare.movedByHand(rt);
+    this.persistSessions();
+    return { ok: true, ...(undo ? { undone: true } : {}) };
   }
 
   /**
@@ -1756,6 +1949,9 @@ export class App {
     this.register('session.send', async ({ sessionId, text, attachments, steer }) => {
       const rt = this.runtime(sessionId);
       this.hydrate(rt);
+      // `/model <name>` changes the model; it never goes to the agent (whose own /model restarts it).
+      const model = typeof text === 'string' && !attachments?.length ? /^\/model(?:\s+([\s\S]*))?$/i.exec(text.trim()) : null;
+      if (model) return this.modelCommand(rt, (model[1] ?? '').trim());
       // While the agent works the bridge holds the message until the turn ends, unless it is
       // steered into the running turn (and the agent can take one).
       if (rt.turnActive && !(steer && rt.caps?.features.steer !== false)) {
@@ -1822,13 +2018,14 @@ export class App {
       return { ok: true };
     });
 
-    this.register('session.setModel', async ({ sessionId, model }) => {
-      const rt = this.runtime(sessionId);
-      await rt.handle?.setModel(model);
-      rt.update({ model });
-      // A speed the new model does not offer falls back to standard.
-      if (rt.meta.speed && rt.meta.speed !== STANDARD_SPEED && speedFor(this.modelInfo(rt, model), rt.meta.speed) === STANDARD_SPEED) await this.applySpeed(rt, STANDARD_SPEED);
+    // Stored on the session; the agent takes it with the next message (see setSessionModel).
+    this.register('session.setModel', ({ sessionId, model }) => {
+      this.setSessionModel(this.runtime(sessionId), typeof model === 'string' ? model : '');
       return { ok: true };
+    });
+    this.register('session.switchAgent', async ({ sessionId, provider, model, accountId }) => {
+      const rt = this.runtime(sessionId);
+      return this.switchAgent(rt, provider, { model: typeof model === 'string' && model ? model : undefined, accountId: typeof accountId === 'string' && accountId ? accountId : undefined });
     });
     this.register('session.setSpeed', async ({ sessionId, speed }) => {
       const rt = this.runtime(sessionId);
@@ -2110,6 +2307,12 @@ function subAgentMode(agent: ProviderId, parentMode: string): string {
 const cleanName = (name: unknown) => (typeof name === 'string' ? name.replace(/\s+/g, ' ').trim().slice(0, 120) : '');
 
 const sameDir = (a: string, b: string) => path.resolve(a).replace(/[\\/]+$/, '').toLowerCase() === path.resolve(b).replace(/[\\/]+$/, '').toLowerCase();
+
+/** The longest handover a switch of agent sends ahead of the next message (about a thousand tokens). */
+const SWITCH_HANDOVER_CHARS = 4500;
+
+/** Agents' names when this build has no such provider (a chat that once ran with it). */
+const AGENT_NAMES: Partial<Record<ProviderId, string>> = { claude: 'Claude Code', codex: 'Codex', demo: 'Demo' };
 
 /** How long a sign-in may wait for the browser. */
 const LOGIN_TIMEOUT_MS = 10 * 60_000;

@@ -106,9 +106,10 @@ export function shapeOf(item: TimelineItem | undefined): string {
       return 'h';
     case 'tool':
       if (item.check) return 'x';
-      return item.kind === 'plan' ? 'p' : item.kind === 'widget' ? 'g' : item.kind === 'todo' ? 'k' : 'w';
+      return item.kind === 'plan' ? 'p' : item.kind === 'widget' ? 'g' : item.kind === 'share' ? 'f' : item.kind === 'todo' ? 'k' : 'w';
     case 'notice':
-      if (item.until) return 'Z';
+      // An until loop's end, or a switch of agent: a line of its own that closes a turn left open.
+      if (item.until || item.agentSwitch) return 'Z';
       if (item.variant === 'interrupted') return 'i';
       if (item.variant === 'error') return 'e';
       if (item.variant === 'command') return 'c';

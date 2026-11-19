@@ -15,6 +15,8 @@ import { spareCommand } from './spare';
 export interface CommandCtx {
   sessionId: string | null;
   openModel: () => void;
+  /** `/model <name>`: picks that model at once (another agent's switches the chat), never sent. */
+  setModel?: (name: string) => void;
   openMode: () => void;
   openEffort: () => void;
   /** Switches between standard and the fastest speed the model offers; absent when it offers none. */
@@ -60,7 +62,7 @@ export const APP_COMMANDS: AppCommand[] = [
       goHome(meta?.cwd);
     },
   },
-  { name: 'model', description: 'Choose the model', run: (c) => c.openModel() },
+  { name: 'model', description: 'Choose the model', run: (c, arg) => (arg && c.setModel ? c.setModel(arg) : c.openModel()) },
   { name: 'effort', description: 'Choose the reasoning effort', run: (c) => c.openEffort() },
   {
     name: 'fast',

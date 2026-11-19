@@ -87,25 +87,36 @@ export interface NewSessionChoice {
   accountId?: string;
   /** Claude Code: start with ultracode on. */
   ultracode?: boolean;
-  /** Start from a summary of this Sable session's conversation (Continue in the other agent). */
-  handoverFrom?: string;
   /** A chat without a folder: the bridge makes its folder, named after `text` (the first message). */
   chat?: { text?: string };
 }
 
 /**
- * Continue in the other agent: a new session with `provider` (and `model`, else its default) in the
- * same folder, under the account new sessions of that agent use, starting from a summary of
- * `sessionId`. A draft in the composer goes along.
+ * Switches the chat to another agent in place: the same chat goes on with `provider` (and `model`,
+ * else its last one in this chat or its default). An agent new to the chat runs under the account
+ * new sessions of that agent use; one the chat ran with keeps its own. `back`: the switch line's
+ * "Switch back" (no model or account chosen).
  */
-export async function continueInAgent(sessionId: string, provider: ProviderId, model?: string) {
-  const st = useStore.getState();
-  const s = st.sessions[sessionId];
-  if (!s || s.provider === provider) return null;
-  const draft = st.drafts[sessionId];
-  const made = await createSession({ provider, cwd: s.cwd, handoverFrom: sessionId, title: s.title, accountId: homeAccountId(provider), ...(model ? { model } : {}) });
-  if (made && draft && (draft.text?.trim() || draft.attachments?.length)) useStore.setState((x) => ({ drafts: { ...x.drafts, [made.id]: draft } }));
-  return made;
+export async function switchAgent(sessionId: string, provider: ProviderId, model?: string, back = false): Promise<boolean> {
+  const s = useStore.getState().sessions[sessionId];
+  if (!s || s.provider === provider) return false;
+  try {
+    await bridge.call('session.switchAgent', { sessionId, provider, ...(model ? { model } : {}), ...(back ? {} : { accountId: homeAccountId(provider) }) });
+    return true;
+  } catch (err) {
+    fail(err);
+    return false;
+  }
+}
+
+/** `/model <name>` in a chat: the bridge finds the model (this agent's, or another agent's, which switches the chat) and says when there is none. */
+export async function modelByName(sessionId: string, name: string) {
+  try {
+    const r = await bridge.call('session.send', { sessionId, text: `/model ${name}` });
+    if (!r.ok && r.error) useStore.getState().toast(r.error);
+  } catch (err) {
+    fail(err);
+  }
 }
 
 export async function createSession(choice: NewSessionChoice): Promise<SessionMeta | null> {

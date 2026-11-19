@@ -97,7 +97,7 @@ const clip = (s: string, n: number) => {
  * message to the new account's agent (the timeline shows only what the user typed). The newest
  * exchanges are kept when it gets long. `skip` leaves out an item (the message about to be sent again).
  */
-export function handoverText(items: TimelineItem[], opts: { skip?: string; maxChars?: number; from?: string } = {}): string {
+export function handoverText(items: TimelineItem[], opts: { skip?: string; maxChars?: number; from?: string; since?: boolean } = {}): string {
   const max = opts.maxChars ?? 6000;
   const lines: string[] = [];
   let tools: string[] = [];
@@ -119,10 +119,13 @@ export function handoverText(items: TimelineItem[], opts: { skip?: string; maxCh
   }
   flushTools();
   if (!lines.length) return '';
-  // `from`: the conversation began with another agent (Continue in the other agent).
-  const head = opts.from
-    ? `This continues a conversation the user had with ${opts.from} in this folder. Here is what happened so far, oldest first:`
-    : 'This continues a conversation that started under another account. Here is what happened so far, oldest first:';
+  // `from`: the conversation began with another agent (a switch of agent); `since`: this agent was
+  // part of it before, and only what happened after it left is new to it.
+  const head = opts.since
+    ? `Since your last reply here, the user went on with ${opts.from ?? 'another agent'} in this conversation. Here is what happened since, oldest first:`
+    : opts.from
+      ? `This continues a conversation the user had with ${opts.from} in this folder. Here is what happened so far, oldest first:`
+      : 'This continues a conversation that started under another account. Here is what happened so far, oldest first:';
   const tail = 'Carry on from there. The next message is the one to answer now.';
   const kept: string[] = [];
   let size = head.length + tail.length;

@@ -30,6 +30,7 @@ import { UntilStrip } from './UntilStrip';
 import { SpareStrip } from './SpareStrip';
 import { SendKey } from './SendKey';
 import { SuggestMenu } from './SuggestMenu';
+import { modelCommand } from './model-command';
 import { UltraEdge } from './Ultracode';
 import './composer.css';
 
@@ -468,6 +469,7 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
     () => ({
       sessionId,
       openModel: () => openComposerMenu('model'),
+      setModel: (name: string) => modelCommand(name, choice),
       openMode: () => openComposerMenu('mode'),
       openEffort: () => openComposerMenu('effort'),
       // A paid speed (Claude's fast mode) is asked for in the effort popover the first time in a session.
@@ -481,7 +483,7 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
           }
         : undefined,
     }),
-    [sessionId, speedModel, speed, speeds, setSpeed],
+    [sessionId, speedModel, speed, speeds, setSpeed, choice],
   );
 
   const accept = (row: SuggestRow | undefined) => {

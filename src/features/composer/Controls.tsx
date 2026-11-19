@@ -9,7 +9,7 @@ import { baseName, tildePath } from '@/lib/format';
 import { fuzzy } from '@/lib/fuzzy';
 import { modelName, visibleModels } from '@/lib/models';
 import { currentBranch } from '@/lib/workspace';
-import { continueInAgent, goHomeChat, homeAccountId, openSettings, setHomeAccount } from '@/state/actions';
+import { goHomeChat, homeAccountId, openSettings, setHomeAccount, switchAgent } from '@/state/actions';
 import { accountName } from '@/state/hooks';
 import { capsKey, ensureProviderCaps, refreshStaleCaps, useStore } from '@/state/store';
 import { Kbd, PathLabel, Tip } from '@/ui';
@@ -191,6 +191,11 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
   const content = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
   const others = useOtherAgentModels(choice, open);
+  // The chat switches agents only between turns.
+  const busy = useStore((s) => {
+    const st = choice.sessionId ? s.sessions[choice.sessionId]?.status : undefined;
+    return st === 'running' || st === 'starting' || st === 'awaiting';
+  });
 
   useEffect(() => {
     if (!open) setQuery('');
@@ -208,7 +213,7 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
       return { m, name, hit: q ? fuzzy(q, name) : undefined };
     })
     .filter((r) => !q || r.hit);
-  // The other agents' models: picking one carries the conversation over (Continue in the other agent).
+  // The other agents' models: picking one switches the chat to that agent, in place.
   const away = others
     .map((o) => {
       const name = modelName(o.m) ?? o.m.id;
@@ -216,8 +221,9 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
     })
     .filter((r) => !q || r.hit);
   const goAway = (provider: ProviderId, id: string) => {
+    if (busy) return;
     setOpen(false);
-    if (choice.sessionId) void continueInAgent(choice.sessionId, provider, id);
+    if (choice.sessionId) void switchAgent(choice.sessionId, provider, id);
   };
 
   const name = choice.modelLabel ?? 'Model';
@@ -323,7 +329,15 @@ export const ModelPopover = memo(function ModelPopover({ choice, side, onClosed 
                   })}
                   {away.length > 0 && rows.length > 0 && <RM.Separator className="menu-sep" />}
                   {away.map(({ provider, m, name, hit }) => (
-                    <RM.Item key={`${provider}:${m.id}`} className="menu-item mm-row mm-away" data-mrow aria-label={`Continue in ${PROVIDER_NAME[provider]} with ${name}`} onSelect={() => goAway(provider, m.id)} {...guard}>
+                    <RM.Item
+                      key={`${provider}:${m.id}`}
+                      className="menu-item mm-row mm-away"
+                      data-mrow
+                      disabled={busy}
+                      aria-label={`Switch to ${PROVIDER_NAME[provider]} with ${name}`}
+                      onSelect={() => goAway(provider, m.id)}
+                      {...guard}
+                    >
                       <ProviderMark provider={provider} size={14} className="mm-mark" />
                       <span className="mm-name truncate">
                         <Hits text={name} indices={hit?.indices} />

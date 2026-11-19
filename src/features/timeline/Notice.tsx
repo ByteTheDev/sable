@@ -4,6 +4,7 @@ import { Collapse } from '@/components/Collapse';
 import { Markdown } from '@/components/Markdown';
 import { Icon, type IconName } from '@/icons';
 import { LimitNotice } from '@/features/accounts';
+import { AgentSwitchLine } from './AgentSwitch';
 
 const ICON: Record<NoticeItem['variant'], IconName> = {
   info: 'info',
@@ -23,6 +24,8 @@ export const Notice = memo(function Notice({ item }: { item: NoticeItem }) {
 
   // A turn refused at a plan limit: the accounts feature says when it resets and offers another account.
   if (item.limit) return <LimitNotice item={item} />;
+  // The chat switched agents here (AgentSwitch.tsx).
+  if (item.agentSwitch) return <AgentSwitchLine item={item} />;
 
   if (item.variant === 'error') {
     return (

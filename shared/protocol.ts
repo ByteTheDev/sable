@@ -423,6 +423,79 @@ export interface SessionMeta {
   lane?: SessionLane | null;
   /** The chat waits to start by itself: on spare quota, or at a limit's reset (`SpareWait`). Null once it started or was cancelled (patches travel as JSON). */
   spare?: SpareWait | null;
+  /**
+   * The agents this chat has run with (`session.switchAgent`), one entry per agent, the current one
+   * included once it switched: each keeps its own conversation, so switching back resumes it.
+   */
+  agents?: AgentLeg[];
+  /** The next message goes out with a handover of the conversation (after a switch of agent); null once sent. */
+  agentHandover?: AgentHandover | null;
+}
+
+/**
+ * One agent's part in a chat that switched agents in place: what it resumes with when the chat
+ * switches back to it. The current agent's entry is written when the chat leaves it.
+ */
+export interface AgentLeg {
+  provider: ProviderId;
+  /** That agent's own conversation (Claude session / Codex thread), once it had one. */
+  providerSessionId?: string;
+  /** The folder it worked in (a chat that moved into a lane since starts Claude Code's conversation anew there). */
+  cwd?: string;
+  model: string;
+  effort?: Effort;
+  mode: string;
+  accountId?: string;
+  speed?: string;
+  ultracode?: boolean;
+  options?: SessionOptions;
+  /** Its context use when it was left. */
+  context?: { tokens?: number; window?: number };
+  /**
+   * The last root item that agent's own conversation covers (the switch line where it was left);
+   * absent when it has none of this chat yet. What follows it is new to that agent.
+   */
+  knows?: string;
+}
+
+/** A handover sent ahead of the next message: what happened after `since` (absent: the whole chat), under `from`. */
+export interface AgentHandover {
+  from: ProviderId;
+  since?: string;
+}
+
+/**
+ * A chat switched agents here (`session.switchAgent`); `back`: to an agent it had run with before;
+ * `past`: a later switch followed (only the latest line offers to switch back).
+ */
+export interface AgentSwitchMark {
+  from: ProviderId;
+  to: ProviderId;
+  back?: boolean;
+  past?: boolean;
+}
+
+/**
+ * The model a typed name stands for (`/model opus`, `/model gpt-5.1`): its id, its name, the
+ * versioned name its description starts with ("Opus 5.5 · …"), then the start of its id or name,
+ * or of a word in its name ("mini"), models the agent's own picker offers first. Case, spaces and
+ * dashes do not matter. Undefined when none fits.
+ */
+export function matchModel(query: string, models: ModelInfo[]): ModelInfo | undefined {
+  const flat = (s: string | undefined) => (s ?? '').toLowerCase().replace(/[\s_-]+/g, '');
+  const q = flat(query);
+  if (!q) return undefined;
+  const head = (m: ModelInfo) => m.description?.split(/\s+·\s+/)[0];
+  const offered = (list: ModelInfo[]) => list.find((m) => m.picker !== false) ?? list[0];
+  const exact = models.find((m) => m.id.toLowerCase() === query.trim().toLowerCase()) ?? models.find((m) => flat(m.id) === q || flat(m.name) === q);
+  if (exact) return exact;
+  // An alias describes itself by the model it stands for: the model of that name goes first.
+  const named = models.filter((m) => flat(head(m)) === q);
+  if (named.length) return named.find((m) => flat(head(m)).startsWith(flat(m.name))) ?? named[0];
+  const starts = models.filter((m) => flat(m.id).startsWith(q) || flat(m.name).startsWith(q));
+  if (starts.length) return offered(starts);
+  const word = models.filter((m) => m.name.toLowerCase().split(/[\s_-]+/).some((w) => flat(w).startsWith(q)));
+  return word.length ? offered(word) : undefined;
 }
 
 /**
@@ -847,6 +920,8 @@ export interface NoticeItem extends BaseItem {
   limit?: LimitHit;
   /** A `/until` loop ended here (shown as its end line, under its last check). */
   until?: UntilMark;
+  /** The chat switched agents here (shown as one line with "Switch back" while it is the latest switch). */
+  agentSwitch?: AgentSwitchMark;
 }
 
 /** Closes a turn: duration, cost, token counts. */
@@ -1693,7 +1768,20 @@ export interface RpcMethods {
    * (`UserItem.steered`) and the agent takes it at its next step. Without a running turn `steer`
    * changes nothing. An agent that cannot steer (`caps.features.steer` false) queues it instead.
    */
-  'session.send': { params: { sessionId: string; text: string; attachments?: Attachment[]; steer?: boolean }; result: { ok: boolean; queued?: boolean } };
+  /**
+   * `/model <name>` is never sent: it sets the session's model (`model`, its id), or switches the
+   * chat to the agent that has that model (`switched`); `error` when no model has that name.
+   */
+  'session.send': { params: { sessionId: string; text: string; attachments?: Attachment[]; steer?: boolean }; result: { ok: boolean; queued?: boolean; model?: string; switched?: ProviderId; error?: string } };
+  /**
+   * Switches the chat to another agent in place (same chat, same conversation shown): the next
+   * message goes to `provider`, which starts from a compact handover of the conversation, or, when
+   * the chat ran with it before, resumes its own conversation with a handover of what happened
+   * since. Switching back right after a switch, with nothing sent, undoes it. Refused while a turn
+   * or background work runs. `model`: else the agent's last one here, else its default. `accountId`
+   * applies to an agent new to the chat (one it ran with keeps its account).
+   */
+  'session.switchAgent': { params: { sessionId: string; provider: ProviderId; model?: string; accountId?: string }; result: { ok: boolean; undone?: boolean } };
   'session.interrupt': { params: { sessionId: string }; result: { ok: boolean } };
   'session.setModel': { params: { sessionId: string; model: string }; result: { ok: boolean } };
   'session.setEffort': { params: { sessionId: string; effort: Effort }; result: { ok: boolean } };
