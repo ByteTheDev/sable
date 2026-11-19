@@ -133,11 +133,11 @@ export interface OptionKeys {
   allow?: PermissionOption;
   always?: PermissionOption;
   deny?: PermissionOption;
-  /** The key shown on each answer's button, in the options' order. */
+  /** The key for each answer, in the options' order (named in the button's tooltip, never printed on it). */
   hints: string[];
 }
 
-/** Which answer Enter, Shift+Enter and D give, and the key each button shows (the rest by position). */
+/** Which answer Enter, Shift+Enter and D give, and the key for each answer (the rest by position). */
 export function optionKeys(options: PermissionOption[]): OptionKeys {
   const allow = options.find((o) => o.tone === 'allow') ?? options.find((o) => o.tone !== 'deny');
   const always = options.find((o) => o.tone === 'always' && o !== allow);

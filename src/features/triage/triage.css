@@ -1,12 +1,15 @@
-/* The triage deck: every waiting prompt across sessions, as a stack of cards over the dimmed app. */
+/* The triage deck: every waiting prompt across sessions, as a stack of glass cards over the app.
+   The front card is the composer's material (frosted ink, grain, a faint inner hairline, one soft
+   shadow, radius 20); the two behind are the same glass one step deeper each: lower, narrower,
+   darker, their hairline quieter. The app stays in view under a calm dim, so the backdrop's light
+   still reads around the stack. Monochrome; the agent's mark is the one colour. */
 
 .tri-overlay {
   position: fixed;
   inset: 0;
   z-index: var(--z-modal);
-  /* Deeper than the palette's: while it is open the stack is the only thing to read. */
-  background: rgb(0 0 0 / 0.7);
-  animation: fade-in var(--d-2) var(--ease);
+  background: rgb(5 5 7 / 0.64);
+  animation: fade-in var(--d-3) var(--ease);
 }
 
 .tri-overlay[data-state='closed'] {
@@ -14,26 +17,35 @@
 }
 
 .tri {
-  --tri-top: max(56px, calc(12 * var(--vh)));
+  --tri-top: max(56px, calc(13 * var(--vh)));
   position: fixed;
   z-index: var(--z-modal);
   top: var(--tri-top);
   left: 50%;
   translate: -50% 0;
   width: min(680px, calc(100 * var(--vw) - 32px));
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
   outline: none;
+  /* Rises into place; the cards fade in themselves (an opacity here would cut the glass off from
+     what is behind it while it runs). */
+  animation: tri-in 260ms var(--ease-out);
 }
 
 .tri[data-state='closed'] {
   animation: tri-out var(--d-3) var(--ease-in) forwards;
 }
 
+.tri[data-state='closed'] :is(.tri-card, .tri-end) {
+  animation: tri-fade var(--d-3) var(--ease-in) forwards;
+}
+
+@keyframes tri-in {
+  from {
+    transform: translateY(12px);
+  }
+}
+
 @keyframes tri-out {
   to {
-    opacity: 0;
     transform: translateY(-6px) scale(0.985);
   }
 }
@@ -50,56 +62,116 @@
   position: relative;
 }
 
+/* The stack casts one soft shadow on the app, as the composer does; each card only a close one on
+   the card behind it, so the edges below the front stay readable. The shadow is drawn outside its
+   box only, never through the glass. */
+.tri-stack::after {
+  content: '';
+  position: absolute;
+  inset: 0 12px;
+  z-index: -1;
+  border-radius: 20px;
+  box-shadow: 0 22px 48px -14px rgb(0 0 0 / 0.72);
+  pointer-events: none;
+  transition: opacity var(--d-3) var(--ease-out);
+}
+
+.tri-stack:has(> .tri-end)::after {
+  opacity: 0;
+}
+
+.tri[data-state='closed'] .tri-stack::after {
+  animation: tri-fade var(--d-3) var(--ease-in) forwards;
+}
+
 /* Every card sits at the top of the stack; the ones behind are scaled from their lower edge, so
    only a strip of each shows below the card in front. */
 .tri-card {
+  --tri-fill: rgb(16 16 19 / 0.86);
+  --tri-edge: 1;
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   transform-origin: 50% 100%;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-xl);
-  background: var(--grain) 0 0 / var(--grain-size), var(--panel);
-  box-shadow: var(--shadow-pop);
+  border-radius: 20px;
+  background-color: var(--tri-fill);
+  background-image: var(--grain);
+  background-size: var(--grain-size);
+  /* The same at every depth (a shadow never animates): a close contact shadow that draws the card's
+     edge over the one behind, and a dark outline against the app. */
+  box-shadow:
+    0 2px 4px -1px rgb(0 0 0 / 0.55),
+    0 0 0 1px rgb(0 0 0 / 0.32);
   overflow: hidden;
+  transition: background-color 220ms var(--ease-out);
 }
 
-/* One step back each: a little darker, the hairline a little quieter, and no shadow of its own
-   (the one in front casts it). Opaque, so nothing of the app shows through. */
+/* The inner hairline, on its own layer so it can step back with the card (opacity only). */
+.tri-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
+  opacity: var(--tri-edge);
+  pointer-events: none;
+  transition: opacity 220ms var(--ease-out);
+}
+
+/* In front: frosted, so the light behind the stack shows through softly. */
+.tri-card[data-depth='0'] {
+  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(22px);
+}
+
+/* Behind: the same glass a step deeper each, nearly opaque (no blur of their own: the front one's
+   frost covers them, and only their edges show). */
 .tri-card[data-depth='1'] {
-  background: color-mix(in srgb, var(--panel) 86%, var(--bg));
-  box-shadow: 0 10px 24px -14px rgb(0 0 0 / 0.7);
+  --tri-fill: rgb(14 14 16 / 0.96);
+  --tri-edge: 0.8;
 }
 
 .tri-card[data-depth='2'] {
-  border-color: rgb(255 255 255 / 0.07);
-  background: color-mix(in srgb, var(--panel) 68%, var(--bg));
-  box-shadow: 0 10px 24px -14px rgb(0 0 0 / 0.7);
+  --tri-fill: rgb(11 11 13 / 0.96);
+  --tri-edge: 0.55;
 }
 
-/* The card in front casts a short, close shadow on the strips below it, so they stay legible. */
-.tri-card[data-depth='0'] {
-  box-shadow:
-    0 3px 6px -2px rgb(0 0 0 / 0.55),
-    0 0 0 1px rgb(0 0 0 / 0.35);
+/* A card's edge behind the front answers the pointer: a click brings it forward. */
+.tri-card[data-depth='1']:hover {
+  --tri-fill: rgb(19 19 22 / 0.96);
+  --tri-edge: 0.9;
+}
+
+.tri-card[data-depth='2']:hover {
+  --tri-fill: rgb(16 16 19 / 0.96);
+  --tri-edge: 0.7;
+}
+
+/* When the governor sheds effects, the glass goes opaque and stops blurring. */
+:root[data-quality] .tri-card[data-depth='0'] {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  --tri-fill: var(--glass-solid);
 }
 
 .tri-card-inner {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  max-height: calc(100 * var(--vh) - var(--tri-top) - 96px);
-  padding: 10px 16px 14px;
+  gap: 14px;
+  max-height: calc(100 * var(--vh) - var(--tri-top) - 48px);
+  padding: 12px 18px 18px;
   overflow: auto;
   scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
   container-type: inline-size;
   opacity: 1;
   /* The next card's words come in once the answered one has mostly gone. */
   transition: opacity var(--d-3) var(--ease-out) 110ms;
 }
 
-/* Moved with J or K: nothing covers the stack, so the words come at once. */
+/* Moved (keys or a click on an edge): nothing covers the stack, so the words come at once. */
 .tri[data-move='shift'] .tri-card-inner {
   transition-delay: 0ms;
 }
@@ -117,7 +189,7 @@
   align-items: center;
   gap: 10px;
   min-height: 30px;
-  margin: 0 -8px 0 -8px;
+  margin: 0 -8px;
 }
 
 .tri-from-link {
@@ -125,14 +197,15 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  height: 28px;
-  padding: 0 9px 0 8px;
-  border-radius: var(--r-sm);
+  height: 30px;
+  padding: 0 10px 0 8px;
+  border-radius: 10px;
   font-size: var(--t-small);
   color: var(--text-2);
   transition:
     background-color var(--d-1) var(--ease),
-    color var(--d-1) var(--ease);
+    color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
 }
 
 .tri-from-link:hover {
@@ -142,124 +215,391 @@
 
 .tri-from-link:active {
   background-color: var(--fill-3);
-}
-
-.tri-from-link .provider-mark {
-  flex-shrink: 0;
+  scale: var(--press);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .tri-from-title {
-  min-width: 0;
+  flex-shrink: 1;
+  min-width: 48px;
+  font-size: var(--t-ui);
   font-weight: var(--w-medium);
   color: var(--text);
 }
 
+/* The folder gives way first when the row is short of room. */
 .tri-from-folder {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  color: var(--text-3);
+  flex-shrink: 4;
 }
 
-.tri-from-folder svg {
-  flex-shrink: 0;
-}
-
-.tri-age {
+.tri-pos {
   flex-shrink: 0;
   margin-left: auto;
   padding-right: 8px;
   font-size: var(--t-small);
+  color: var(--text-2);
+}
+
+.tri-pos-of {
   color: var(--text-3);
 }
 
-/* ── the request (the in-chat card's parts, prompts.css) ── */
+/* ── what it asks ── */
 
-.tri-card .pc-scroll {
-  max-height: min(calc(40 * var(--vh)), 380px);
+.tri-ask {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  margin-top: 2px;
 }
 
-.tri-q {
+.tri-ask-icon {
+  color: var(--text-2);
+}
+
+.tri-ask-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.tri-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 22px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.tri-desc {
+  margin-top: 3px;
+  font-size: var(--t-ui);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+/* The request's subject (the in-chat card's parts, prompts.css), set a little deeper in the glass. */
+.tri-subject {
+  gap: 10px;
+}
+
+.tri .pc-cmd {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background-color: rgb(0 0 0 / 0.3);
+  font-size: 12.5px;
+}
+
+.tri .pc-scroll {
+  max-height: min(calc(36 * var(--vh)), 320px);
+  border-radius: 12px;
+}
+
+.tri .dv {
+  border-radius: 12px;
+  background-color: rgb(0 0 0 / 0.3);
+}
+
+.tri .pc-fade {
+  border-radius: 0 0 12px 12px;
+}
+
+.tri .pc-plan {
+  max-height: min(calc(42 * var(--vh)), 400px);
+  border-radius: 12px;
+  background-color: rgb(0 0 0 / 0.26);
+}
+
+.tri .pc-target {
+  border-radius: 12px;
+}
+
+/* ── a question: its choices ── */
+
+.tri-qpage {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
+  min-height: 0;
+  margin-top: 2px;
 }
 
-.tri-q .qc-head:empty {
-  display: none;
+.tri-qpage .tri-ask {
+  margin-top: 0;
 }
 
-.tri-foot {
-  padding-top: 2px;
-}
-
-@container (max-width: 560px) {
-  .tri-card .pc-hint {
-    display: none;
-  }
-}
-
-/* ── the end state ── */
-
-.tri-end {
-  position: absolute;
-  inset: 0 0 auto;
-  height: 52px;
+.tri-opts {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-xl);
-  background: var(--grain) 0 0 / var(--grain-size), var(--panel);
-  box-shadow: var(--shadow-pop);
-  font-size: var(--t-ui);
-  color: var(--text-2);
-}
-
-.tri-end svg {
-  color: var(--text);
-}
-
-/* ── keys ── */
-
-/* A slim bar of frosted glass under the stack, so the count and keys read over whatever the app shows. */
-.tri-hints {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  height: 36px;
-  padding: 0 12px 0 13px;
-  border-radius: var(--r-lg);
-  font-size: var(--t-micro);
-  color: var(--text-3);
-  transition: opacity var(--d-2) var(--ease);
-}
-
-.tri-hints[data-hidden] {
-  opacity: 0;
-}
-
-.tri-count {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-2);
-}
-
-.tri-hint {
-  display: inline-flex;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
+  max-height: calc(46 * var(--vh));
+  margin: 0 -2px;
+  padding: 2px;
+  overflow: auto;
+  scrollbar-width: thin;
 }
 
-.tri-hint .kbds {
+.tri-opt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  padding: 9px 14px 9px 13px;
+  border-radius: 12px;
+  text-align: left;
+  background-color: rgb(255 255 255 / 0.025);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition:
+    background-color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
+}
+
+.tri-opt:hover {
+  background-color: var(--fill-2);
+}
+
+button.tri-opt:active {
+  background-color: var(--fill-3);
+  scale: 0.99;
+  transition-duration: var(--d-1), 70ms;
+}
+
+.tri-opt[data-on] {
+  background-color: var(--fill-3);
+  box-shadow: inset 0 0 0 1px var(--line-3);
+}
+
+.tri-opt:focus-visible {
+  outline-offset: var(--focus-offset);
+}
+
+.tri-opt-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   gap: 2px;
 }
 
-@media (max-width: 560px) {
-  .tri-hint:not(:last-child) {
-    display: none;
+.tri-opt-label {
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.tri-opt-other {
+  color: var(--text-2);
+}
+
+.tri-opt-desc {
+  font-size: var(--t-small);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.tri-opt[data-on] .tri-opt-desc {
+  color: var(--text-2);
+}
+
+/* The mark: a quiet ring or box that fills ivory, the ink dot or check growing in it. */
+.tri-mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--text-inverse);
+  box-shadow: inset 0 0 0 1.5px var(--line-3);
+  transition: background-color var(--d-2) var(--ease);
+}
+
+.tri-radio {
+  border-radius: 50%;
+}
+
+.tri-box {
+  border-radius: 5px;
+}
+
+.tri-mark[data-on] {
+  background-color: var(--text);
+  box-shadow: none;
+}
+
+.tri-radio i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--text-inverse);
+  transform: scale(0);
+  transition: transform var(--d-3) var(--ease-out);
+}
+
+.tri-box svg {
+  opacity: 0;
+  transform: scale(0.5);
+  transition:
+    opacity var(--d-1) var(--ease),
+    transform var(--d-3) var(--ease-out);
+}
+
+.tri-mark[data-on] i,
+.tri-mark[data-on] svg {
+  opacity: 1;
+  transform: none;
+}
+
+/* The mark's check is part of the choice, not the row's icon: it does not answer the hover. */
+.tri .tri-opts .tri-opt .tri-mark svg[data-icon],
+.tri .tri-opts .tri-opt .tri-mark svg[data-icon] * {
+  animation: none;
+}
+
+.tri-opt-field:focus-within {
+  box-shadow: inset 0 0 0 1px var(--focus-field);
+}
+
+.tri-other-field {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  background: none;
+  font-size: var(--t-ui);
+  color: var(--text);
+}
+
+.tri-other-field::placeholder {
+  color: var(--text-3);
+}
+
+.tri-other-field:focus-visible {
+  outline: none;
+}
+
+/* Where a request of several questions is. */
+.tri-steps {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 8px;
+}
+
+.tri-steps i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--fill-4);
+  transition: background-color var(--d-2) var(--ease);
+}
+
+.tri-steps i[data-on] {
+  background-color: var(--text);
+}
+
+/* ── the answers ── */
+
+.tri-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.tri-foot-no,
+.tri-foot-yes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tri-foot-yes {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.tri-foot .btn {
+  --h: 32px;
+  padding: 0 14px;
+  border-radius: 10px;
+}
+
+.tri-foot .btn-ghost {
+  padding: 0 12px;
+}
+
+/* No with a note: the field takes the row. */
+.tri-note {
+  flex-wrap: nowrap;
+  animation: rise-in var(--d-2) var(--ease-out);
+}
+
+.tri-note-field {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  border-radius: 10px;
+}
+
+@container (max-width: 520px) {
+  .tri-foot .btn {
+    padding: 0 11px;
+  }
+}
+
+/* ── the end ── */
+
+.tri-end {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px 0 13px;
+  border-radius: 22px;
+  background-color: rgb(16 16 19 / 0.86);
+  background-image: var(--grain);
+  background-size: var(--grain-size);
+  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(22px);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.075),
+    var(--shadow-composer),
+    0 0 0 1px rgb(0 0 0 / 0.32);
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.tri-end-mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: var(--text-inverse);
+  background-color: var(--text);
+}
+
+:root[data-quality] .tri-end {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background-color: var(--glass-solid);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tri,
+  .tri[data-state='closed'] {
+    animation-duration: 1ms;
   }
 }

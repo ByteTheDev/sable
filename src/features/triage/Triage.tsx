@@ -2,13 +2,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import { AnimatePresence, motion, useIsPresent, type Variants } from 'motion/react';
 import { Dialog as RD } from 'radix-ui';
 import type { PermissionOption } from '@shared/protocol';
-import { StatusGlyph } from '@/art/Logo';
 import { fieldBeat } from '@/art/events';
 import { Icon } from '@/icons';
 import { openSession, respondPermission, respondQuestion, setTriage } from '@/state/actions';
 import { selectPending, type PendingPrompt } from '@/state/pending';
 import { useStore } from '@/state/store';
-import { Kbd } from '@/ui';
 import { deckAction, deckKeyAllowed, deckReducer, emptyDeck, exitOf, type Exit } from './deck';
 import { CardBody, type CardHandle, type CardProps } from './TriageCard';
 import '@/features/prompts/prompts.css';
@@ -16,32 +14,35 @@ import './triage.css';
 
 /** Cards drawn: the front and two behind it. */
 const SHOWN = 3;
-/** How far each card behind peeks out below the one in front. */
-const PEEK = 11;
-/** How much smaller each card behind is. */
-const SHRINK = 0.045;
+/** How far each card behind shows below the one in front. */
+const PEEK = 12;
+/** How much narrower each card behind is. */
+const SHRINK = 0.05;
 /** A card that has just come forward takes no answer for this long, so a quick second key cannot answer it unseen. */
 const ARM_MS = 220;
 /** How long the end state stays before the deck closes. */
 const END_HOLD = 900;
 /** The stack's height while it shows the end state. */
-const END_H = 52;
-const SPRING = { type: 'spring', stiffness: 440, damping: 36 } as const;
+const END_H = 44;
+/** Cards taking their place: crisp, with the smallest settle. */
+const SPRING = { type: 'spring', stiffness: 480, damping: 34 } as const;
+/** An answered card leaving: stiffer, it is gone before the next one has arrived. */
+const LEAVE = { type: 'spring', stiffness: 520, damping: 40 } as const;
 
-const pose = (depth: number) => ({ y: depth * PEEK, x: 0, scale: 1 - depth * SHRINK, opacity: 1 });
+const pose = (depth: number) => ({ y: depth * PEEK, x: 0, rotate: 0, scale: 1 - depth * SHRINK, opacity: 1 });
 
-/** Where a leaving card goes: up when answered yes, aside when no, behind the stack when moved back, a fade when answered elsewhere. */
+/** Where a leaving card goes: up when answered yes, tossed aside when no, behind the stack when moved back, a fade when answered elsewhere. */
 function exitPose(exit: Exit) {
   // Quick enough that the leaving card's words are gone before the next card's come in.
-  const fade = { duration: 0.13, ease: [0.3, 0, 0.7, 0.5] as const };
+  const fade = { duration: 0.15, ease: [0.3, 0, 0.7, 0.5] as const };
   // An answered card leaves above the stack; one sent back goes under it.
   const over = { zIndex: SHOWN + 1 };
   const now = { zIndex: { duration: 0 } };
   switch (exit) {
     case 'allow':
-      return { ...over, y: -48, x: 0, scale: 1.01, opacity: 0, transition: { ...now, y: SPRING, scale: SPRING, opacity: fade } };
+      return { ...over, y: -60, x: 0, rotate: 0, scale: 1.02, opacity: 0, transition: { ...now, y: LEAVE, scale: LEAVE, opacity: fade } };
     case 'deny':
-      return { ...over, x: -72, y: 0, scale: 0.98, opacity: 0, transition: { ...now, x: SPRING, scale: SPRING, opacity: fade } };
+      return { ...over, x: -110, y: 10, rotate: -4, scale: 0.97, opacity: 0, transition: { ...now, x: LEAVE, y: LEAVE, rotate: LEAVE, scale: LEAVE, opacity: fade } };
     case 'back':
       return { ...pose(SHOWN), opacity: 0, zIndex: 0, transition: { ...SPRING, ...now, opacity: { duration: 0.14 } } };
     default:
@@ -49,7 +50,7 @@ function exitPose(exit: Exit) {
   }
 }
 
-/** The triage deck: every permission request and question waiting across sessions, as a stack of cards answered by key. */
+/** The triage deck: every permission request and question waiting across sessions, as a stack of glass cards answered by key or click. */
 export function Triage() {
   const open = useStore((s) => !!s.ui.triageOpen);
   return (
@@ -75,6 +76,14 @@ function Deck() {
   const cards = state.order.flatMap((k) => byKey.get(k) ?? []);
   const shown = cards.slice(0, SHOWN);
   const front = shown[0];
+
+  // Each card's place among what waits, oldest first: moving through the deck reads as 2 of 5, 3 of 5.
+  const posOf = useMemo(() => {
+    const inDeck = new Set(state.order);
+    const m = new Map<string, number>();
+    for (const k of keys) if (inDeck.has(k)) m.set(k, m.size + 1);
+    return m;
+  }, [keys, state.order]);
 
   // A card that comes forward is armed a moment later.
   const [armedKey, setArmedKey] = useState<string | null>(null);
@@ -112,6 +121,8 @@ function Deck() {
   const leave = useCallback(
     (key: string, exit: Exit) => {
       moved.current = 'answer';
+      // A yes lifts off the stack and the field under the deck answers it with a soft beat.
+      if (exit === 'allow') fieldBeat('pulse', root.current?.querySelector('.tri-card[data-depth="0"]'), 0.4);
       dispatch({ type: 'answer', key, exit });
       refocus();
     },
@@ -135,6 +146,15 @@ function Deck() {
     setTriage(false);
     openSession(p.sessionId);
   }, []);
+  // A click on a card's edge behind the front brings that card forward (as J does, once per step).
+  const raise = useCallback(
+    (depth: number) => {
+      moved.current = 'shift';
+      for (let i = 0; i < depth; i++) dispatch({ type: 'next' });
+      refocus();
+    },
+    [refocus],
+  );
 
   const onKeyDown = (e: ReactKeyboardEvent) => {
     const ev = e.nativeEvent;
@@ -144,8 +164,7 @@ function Deck() {
     if (a.type === 'next' || a.type === 'prev') {
       moved.current = 'shift';
       dispatch({ type: a.type });
-    }
-    else if (a.type === 'open') front && onOpen(front);
+    } else if (a.type === 'open') front && onOpen(front);
     else if (!front || !handles.current.get(front.key)?.act(a)) return;
     e.preventDefault();
   };
@@ -193,11 +212,12 @@ function Deck() {
               key={p.key}
               p={p}
               depth={depth}
-              delay={dealt ? 0 : depth * 0.045}
+              delay={dealt ? 0 : depth * 0.05}
               height={depth === 0 ? heights[p.key] : frontH}
               onMeasure={measure}
               bind={bind}
-              cardProps={{ p, armed: depth === 0 && armed, onPermission, onQuestion, onOpen, refocus }}
+              onRaise={raise}
+              cardProps={{ p, pos: posOf.get(p.key) ?? 1, total: cards.length, armed: depth === 0 && armed, onPermission, onQuestion, onOpen, refocus }}
             />
           ))}
         </AnimatePresence>
@@ -208,53 +228,31 @@ function Deck() {
               ref={endRef}
               className="tri-end"
               role="status"
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0, transition: { ...SPRING, delay: state.answered ? 0.12 : 0 } }}
+              initial={{ opacity: 0, y: 8, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1, transition: { ...SPRING, delay: state.answered ? 0.12 : 0 } }}
               exit={{ opacity: 0, transition: { duration: 0.1 } }}
             >
-              <Icon name="check" size={15} />
+              <motion.span
+                className="tri-end-mark"
+                initial={{ scale: 0.4, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1, transition: { ...SPRING, delay: state.answered ? 0.2 : 0.08 } }}
+              >
+                <Icon name="check" size={11} />
+              </motion.span>
               {state.answered ? 'All answered' : 'Nothing is waiting on you'}
             </motion.div>
           )}
         </AnimatePresence>
       </motion.div>
-
-      <footer className="tri-hints glass" data-hidden={empty || undefined} aria-hidden={empty || undefined}>
-        <span className="tri-count">
-          <StatusGlyph tone="awaiting" size={10} />
-          <span>
-            <span className="num">{cards.length}</span> waiting
-          </span>
-        </span>
-        <span className="grow" />
-        {cards.length > 1 && (
-          <span className="tri-hint">
-            <span className="kbds">
-              <kbd className="kbd">J</kbd>
-              <kbd className="kbd">K</kbd>
-            </span>
-            Move
-          </span>
-        )}
-        <span className="tri-hint">
-          <span className="kbds">
-            <kbd className="kbd">O</kbd>
-          </span>
-          Open chat
-        </span>
-        <span className="tri-hint">
-          <Kbd combo="esc" />
-          Close
-        </span>
-      </footer>
     </RD.Content>
   );
 }
 
 /**
- * One card of the stack. The front one shows its request; the two behind are the same surface one
- * step back each (lower, smaller, darker), the first of them already laid out unseen so it comes
- * forward without building anything.
+ * One card of the stack. The front one is the composer's frosted glass and shows its request; the
+ * two behind are the same glass one step deeper each (lower, narrower, darker), the first of them
+ * already laid out unseen so it comes forward without building anything. A click on a card's edge
+ * behind brings it forward.
  */
 function Card({
   p,
@@ -263,6 +261,7 @@ function Card({
   height,
   onMeasure,
   bind,
+  onRaise,
   cardProps,
 }: {
   p: PendingPrompt;
@@ -271,6 +270,7 @@ function Card({
   height: number | undefined;
   onMeasure: (key: string, h: number) => void;
   bind: (key: string, h: CardHandle | null) => void;
+  onRaise: (depth: number) => void;
   cardProps: Omit<CardProps, 'handle'>;
 }) {
   const inner = useRef<HTMLDivElement>(null);
@@ -291,20 +291,23 @@ function Card({
     enter: { ...pose(depth + 1), opacity: 0 },
     exit: (resolve: (key: string) => Exit) => exitPose(resolve(p.key)),
   };
+  const behind = depth > 0;
 
   return (
     <motion.article
       className="tri-card"
       data-depth={depth}
-      aria-hidden={depth > 0 || !present || undefined}
-      inert={depth > 0 || !present}
+      data-spot={(!behind && present) || undefined}
+      aria-hidden={behind || !present || undefined}
+      inert={!present}
+      onClick={behind && present ? () => onRaise(depth) : undefined}
       style={{ zIndex: SHOWN - depth }}
       variants={variants}
       initial="enter"
       animate={{ ...pose(depth), ...(height ? { height } : {}), transition: { ...SPRING, delay, opacity: { duration: 0.18, delay } } }}
       exit="exit"
     >
-      <div ref={inner} className="tri-card-inner">
+      <div ref={inner} className="tri-card-inner" inert={behind}>
         {withBody && <CardBody {...cardProps} handle={depth === 0 && present ? handle : null} />}
       </div>
     </motion.article>
