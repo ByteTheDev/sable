@@ -29,11 +29,15 @@ export function launchKey(card: HTMLElement | null) {
   document.body.appendChild(disc);
 
   // The recoil: the card dips as the words leave it and springs back; the disc copy rides along.
-  const back = spring(420, 24);
-  const recoil: Keyframe[] = [{ translate: '0 2.5px' }, { translate: '0 0' }];
-  const kick = { duration: back.duration, delay: RELEASE, easing: back.easing };
-  play(card, recoil, kick);
-  play(disc, recoil, kick);
+  // Not while the words pour into a bead on its edge (flight.ts): the card holds still for it, and
+  // the bead's own break is the recoil.
+  if (!card.hasAttribute('data-pouring')) {
+    const back = spring(420, 24);
+    const recoil: Keyframe[] = [{ translate: '0 2.5px' }, { translate: '0 0' }];
+    const kick = { duration: back.duration, delay: RELEASE, easing: back.easing };
+    play(card, recoil, kick);
+    play(disc, recoil, kick);
+  }
   play(disc, [{ scale: '1' }, { scale: '0.88', offset: 0.2 }, { scale: '1' }], { duration: 300, easing: 'cubic-bezier(0.3, 0, 0.2, 1)' });
   play(arrow, [{ transform: 'translateY(0px)', opacity: 1 }, { transform: 'translateY(-20px)', opacity: 0.2 }], { duration: 180, delay: RELEASE, easing: 'cubic-bezier(0.55, 0, 0.8, 0.3)', fill: 'both' });
   const grow = play(sq, [{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], { duration: 190, delay: RELEASE + 110, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'both' });

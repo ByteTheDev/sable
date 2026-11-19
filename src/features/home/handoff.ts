@@ -1,4 +1,5 @@
 import { HOLD_MS, RELEASE } from '@/features/composer/flight';
+import { SNAP } from '@/features/composer/liquid-shape';
 import { holdSend } from '@/features/composer/settle';
 import { reducedMotion, uiZoom } from '@/lib/motion';
 
@@ -8,9 +9,12 @@ import { reducedMotion, uiZoom } from '@/lib/motion';
  * On send, the home composer card is copied into a fixed layer above the stage (the "ghost") and
  * the real card hides. The ghost glides on a spring (about 350 ms) from the centre of the home
  * screen to where the session's docked composer will sit, predicted from the stage's geometry, so
- * it moves at once even though the session does not exist yet. When the session view mounts, its
- * composer claims the flight: the spring is re-aimed at the real card (keeping its velocity), the
- * real card stays hidden until the ghost lands on it, and then the two swap in one frame.
+ * it moves without waiting for the session to exist. While the sent words pour into a bead on its
+ * top edge (composer/flight.ts) it holds still; it leaves as the drop breaks away, so the two part
+ * in one motion, the drop up to the top of the column and the bar down to the dock. When the
+ * session view mounts, its composer claims the flight: the spring is re-aimed at the real card
+ * (keeping its velocity), the real card stays hidden until the ghost lands on it, and then the two
+ * swap in one frame.
  * Meanwhile the mark and headline are gone within a few frames and the home view (with its backdrop)
  * fades out while the session's quiet band fades in (App reads `handoffActive()` for those exits).
  *
@@ -49,6 +53,8 @@ interface Flight {
   clear: Animation[];
   /** Corrections run after the claim (the docked card can still move as the session settles). */
   fixes: number;
+  /** Ms after the send the card holds still for the sent message's bead (0: it leaves at once). */
+  hold: number;
   timer: number;
   ending: boolean;
   /** Lands the send for `settle.ts`. */
@@ -102,6 +108,16 @@ function strip(el: Element) {
   el.removeAttribute('data-spot-on');
   if (el.classList.contains('spot-ring')) el.remove();
   for (const c of [...el.children]) strip(c);
+}
+
+/**
+ * The glide from `from`, held still until `hold` ms after the send (the bead is still joined to the
+ * card then), then the spring.
+ */
+function glideFrom(from: Sample, tx: number, ty: number, tw: number, hold: number): Sample[] {
+  const wait = Math.max(0, hold - from.t);
+  const path = glide({ ...from, t: from.t + wait }, tx, ty, tw);
+  return wait > 0 ? [from, ...path] : path;
 }
 
 /** The spring from `from` to (tx, ty, tw), semi-implicit Euler in 4 ms steps, sampled every 16 ms. */
@@ -188,7 +204,7 @@ function arrived(f: Flight) {
   const end = f.path[f.path.length - 1];
   if (Math.abs(to.x - end.x) < 0.5 && Math.abs(to.y - end.y) < 0.5 && Math.abs(to.w - end.w) < 0.5) return land();
   if (++f.fixes > 4) return land();
-  run(f, glide(whereNow(f), to.x, to.y, to.w), () => arrived(f));
+  run(f, glideFrom(whereNow(f), to.x, to.y, to.w, f.hold), () => arrived(f));
 }
 
 /** Starts the flight from the home composer card. Safe to call when one is already running. */
@@ -255,10 +271,12 @@ export function beginHandoff(card: HTMLElement | null) {
     clear.push(el.animate([{ opacity: 1, transform: 'translateY(0px)' }, { opacity: 0, transform: 'translateY(-6px)' }], { duration: 80, easing: 'linear', fill: 'forwards' }));
   }
 
-  const f: Flight = { ghost, source: card, start, dock: null, path: [], move: null, size: null, clear, fixes: 0, timer: 0, ending: false, done: holdSend() };
+  // A message pouring out of this card (composer/flight.ts marks it): the card waits for the break.
+  const hold = card.hasAttribute('data-pouring') ? SNAP : 0;
+  const f: Flight = { ghost, source: card, start, dock: null, path: [], move: null, size: null, clear, fixes: 0, hold, timer: 0, ending: false, done: holdSend() };
   flight = f;
   set('flying');
-  run(f, glide({ t: 0, x: 0, y: 0, w: start.width, vx: 0, vy: 0, vw: 0 }, target.left - start.left, target.top - start.top, target.width), () => arrived(f));
+  run(f, glideFrom({ t: 0, x: 0, y: 0, w: start.width, vx: 0, vy: 0, vw: 0 }, target.left - start.left, target.top - start.top, target.width, hold), () => arrived(f));
   f.timer = window.setTimeout(() => flight === f && !f.dock && cancelHandoff(), GIVE_UP);
 }
 
@@ -303,7 +321,7 @@ export function claimHandoff(card: HTMLElement | null): boolean {
   const to = dockTarget(f);
   const end = f.path[f.path.length - 1];
   const off = to && end && (Math.abs(to.x - end.x) > 0.5 || Math.abs(to.y - end.y) > 0.5 || Math.abs(to.w - end.w) > 0.5);
-  if (to && off) run(f, glide(whereNow(f), to.x, to.y, to.w), () => arrived(f));
+  if (to && off) run(f, glideFrom(whereNow(f), to.x, to.y, to.w, f.hold), () => arrived(f));
   // Already resting at the predicted place: the swap happens now.
   else if (f.move?.playState === 'finished') land();
   return true;

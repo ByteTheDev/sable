@@ -1,43 +1,44 @@
 import { EASE_OUT, play, reducedMotion, uiZoom } from '@/lib/motion';
 import { CARD_FONT, CARD_LINE, CARD_PAD_TOP, CARD_PAD_X, isLongMessage } from '@/features/timeline/user-card';
 import { holdSend } from './settle';
+import { freezeLiquid, pour, prewarmLiquid, type Pour } from './liquid';
+import { HAND, lerp, linearEasing, planLiquid, shiftAt, shiftEase, smooth, wordsAt, type Box, type LiquidPlan, type LiquidSpec } from './liquid-shape';
 
 /**
- * A sent message leaves the composer as what it is about to be: its bubble. On send the words are
- * copied into a fixed layer exactly where they stood in the field, already set as the message card
- * (the conversation's own `.user-card`, scaled to the field's type), and the field is empty and
- * live at once. The card's surface forms around the words while the key gives (`RELEASE` ms), then
- * the bubble is thrown: one spring per axis, the leading one a little stiffer, so the path is a
- * shallow arc that brakes onto the landing with the smallest settle. It is in place in about
- * 350 ms.
+ * A sent message leaves the composer as liquid (liquid-shape.ts has the beats and the geometry):
+ * the words pour into the bar's top-right corner, where a bead of its ink swells out of the edge;
+ * the field is empty and live at once. The bead lifts on a neck that thins and breaks, the drop
+ * flies to the bottom-right of where the message will sit, stretched along its speed, and spreads
+ * there into the card's shape, the words unfolding inside it; the conversation's own card then
+ * takes over in one cut. The message is in place in under half a second.
  *
- * - Where it lands is known before the row exists (guessed from the stage's geometry, the same
- *   numbers timeline.css lays the row out with), so the bubble is on its way in the first frame.
- *   When the real row mounts it stays hidden, the bubble becomes a copy of its card (same width,
- *   same lines, marks and attachments) and the spring is re-aimed at where the row will rest once
- *   the conversation has followed it, keeping its speed.
+ * - Who draws what: the liquid is drawn by a worker on a canvas of its own (liquid.ts), the words
+ *   are page layers animated on the compositor, both timed from the key on the same clock with
+ *   keyframes taken from the same geometry. Nothing runs per frame on the main thread, so a
+ *   session mounting or a turn starting cannot make it stutter.
+ * - Where it lands is guessed before the row exists (from the stage's geometry, the numbers
+ *   timeline.css lays the row out with). When the real row mounts it stays hidden until the card
+ *   sits on it. A row known before the drop has left simply moves the landing; one known later
+ *   shifts everything still to come (the drop, the sheet and the words alike) by the difference.
  * - The landing is a cut: the copy sits pixel for pixel on the real card and the two swap in one
- *   frame. A row that is still moving then (the view catching up, a line arriving above it) takes
- *   the small remainder itself and settles.
- * - The first message from home flies to the top of the column and waits there as the finished
- *   bubble until the session's own row takes over under it.
- * - A message queued while a turn runs is not a bubble: its words fly into the tray row as text.
- * - When its row is late (a loaded machine, a slow bridge), the bubble rests where it arrived and
+ *   frame. A row that is still moving then takes the small remainder itself.
+ * - The first message from home leaves the home composer the same way; the composer starts its
+ *   glide to the dock as the drop breaks away (home/handoff.ts).
+ * - A message queued while a turn runs lands in the queue tray's new row, melting into it.
+ * - A queued message sent from its row gathers into a drop at the row's end and rises from there.
+ * - When its row is late (a loaded machine, a slow bridge), the card waits where it landed and
  *   says so: it steps back to the waiting tone and a hairline fills slowly along its lower edge,
- *   both on the compositor, so they move while the main thread is busy mounting. It holds until
- *   the row is there (or the bridge refuses the message: then it flies back into the field with
- *   its words), and the line finishes on the row as they swap.
- * - The whole path is stepped ahead of time and handed to the compositor as one transform
- *   animation, so a busy main thread (a session mounting, a turn starting) cannot make it stutter.
- * Under reduced motion there are no clones: the items fade in as before.
+ *   on the compositor. It holds until the row is there (or the bridge refuses the message: then
+ *   it goes back into the field with its words).
+ * Under reduced motion there is none of this: the items fade in as before.
  */
 
 export type FlightDest = 'timeline' | 'tray';
 
-/** The beat the key, the bubble and the backdrop share: ms from the press to the release. */
+/** The beat the key and the backdrop share: ms from the press to the key's release. */
 export const RELEASE = 40;
 
-/** A point on the path: ms since the launch, offset from the start (px), speed (px/s). */
+/** A point on a path: ms since the launch, offset from the start (px), speed (px/s). */
 export interface Sample {
   t: number;
   x: number;
@@ -47,57 +48,65 @@ export interface Sample {
 }
 
 interface Flight {
-  el: HTMLDivElement;
   key: string;
   dest: FlightDest;
   steer: boolean;
-  /** Ms after the launch at which it leaves the field (it gathers until then). */
-  release: number;
-  /** The path it is on (compositor animation) and its samples. */
-  anim: Animation | null;
-  path: Sample[];
-  /** The path has been flown and nothing has taken the bubble yet (it waits where it landed). */
+  /**
+   * Time zero of the message, on the page's clock: the first frame after the key (under load the
+   * key's handler can hold that frame back; starting there means no beat is skipped). Every
+   * animation of the message and the worker's drawing are timed from it.
+   */
+  t0: number;
+  started: boolean;
+  liquid: Pour | null;
+  plan: LiquidPlan;
+  /** The words pouring out of their source (gone once poured). */
+  pourEls: HTMLElement[];
+  /** The landing layer (the message card, or the queue row's words) and its parts. */
+  el: HTMLDivElement;
+  inner: HTMLElement;
+  unfold: HTMLElement;
+  surface: HTMLElement | null;
+  /** Where the layer stands untransformed: the planned landing. */
+  box: Box;
+  /** The unfold and the surface (made again when the landing moves before the drop leaves). */
+  anims: Animation[];
+  /** The late correction, played on `inner` (the same curve the worker follows). */
+  fixAnim: Animation | null;
+  fixEnd: number;
+  /** Every animation of the message, for the dev freeze. */
+  all: Animation[];
+  /** The liquid has run its course: the card is complete (or the row's words are). */
   resting: boolean;
-  timer: number;
-  /** Where the clone's box starts (its untransformed place) and the scale it starts at. */
-  start: { left: number; top: number };
-  s0: number;
-  /** The sideways axis leads (a steer, the first message from home); otherwise the rise does. */
-  sideways: boolean;
-  /** What it lands on: the message's card in the conversation, or the tray row's text. */
   target: HTMLElement | null;
-  /** A bubble flying to a guessed landing: its path is never replaced, the inner layer corrects it. */
-  guessed: boolean;
-  fix: { x: number; y: number };
-  fixing: boolean;
-  /** The conversation row that is hidden until the bubble lands on it. */
   row: HTMLElement | null;
   ending: boolean;
-  /** Runs as the real message takes over (the steer's wire). */
   onLand?: () => void;
-  /** Lands the send for `settle.ts` (the chrome waiting on it goes on). */
   done: () => void;
-  /** The waiting state (the tone and the hairline), set to start once the path has been flown. */
   wait: Animation[];
   line: HTMLElement | null;
-  /** When it left, and the bridge's answer about the message (see bubbleHold). */
-  t0: number;
   answer: HoldAnswer;
   answeredAt: number;
+  timer: number;
+  restTimer: number;
+  /** Where the words stood in their source (a refused message goes back there). */
+  home: { left: number; top: number; s0: number };
+  /** The bar the bead forms on, while the bar holds still for it. */
+  bar: HTMLElement | null;
 }
 
 /** What the composer keeps of a launch: the bridge's answer decides how the wait ends. */
 export interface FlightHandle {
   /**
-   * The bridge took the message (`true`: its row has a little while left to appear, then the bubble
-   * lets go) or refused it (`false`: the bubble flies back into the field; resolves once it is there,
+   * The bridge took the message (`true`: its row has a little while left to appear, then the card
+   * lets go) or refused it (`false`: the message goes back into the field; resolves once it has,
    * for the words to be put back).
    */
   settle(ok: boolean): Promise<void>;
 }
 
 const pending: Flight[] = [];
-/** Messages that mounted in the conversation with no clone in the air yet (a tray row may still leave). */
+/** Messages that mounted in the conversation with no message in the air yet (a tray row may still leave). */
 const unclaimed: { key: string; root: HTMLElement; at: number }[] = [];
 
 const norm = (t: string) => t.trim().replace(/\s+/g, ' ').slice(0, 160);
@@ -106,13 +115,11 @@ const matches = (flightKey: string, text: string) => {
   return !!flightKey && (k === flightKey || k.startsWith(flightKey) || flightKey.startsWith(k));
 };
 
-/** Lines the words for the tray fly with. */
-const MAX_LINES = 4;
 /** Words for the tray that nothing has claimed fade after this long; none outlives the last. */
 const NO_CLAIM_MS = 1400;
 const MAX_LIFE_MS = 6000;
 /**
- * A bubble holds for its row: at most this long while the bridge has not answered (a new session
+ * A message holds for its row: at most this long while the bridge has not answered (a new session
  * may still be starting on a loaded machine), and this long once it has taken the message (its row
  * is in the store by then; one that does not show is in a view no longer on screen).
  */
@@ -123,8 +130,8 @@ export const ACKED_MS = 3000;
 export type HoldAnswer = 'pending' | 'taken' | 'refused';
 
 /**
- * What a bubble in the air does about its row, decided again whenever something changes. It never
- * fades for being late: it lands once its row is there, flies back into the field when the bridge
+ * What a message in the air does about its row, decided again whenever something changes. It never
+ * fades for being late: it lands once its row is there, goes back into the field when the bridge
  * refused the message, and lets go only when the row has not shown `ACKED_MS` after the bridge took
  * the message (it is in a view no longer on screen) or after `HOLD_MS` without any answer. Pure, so
  * the hold can be tested.
@@ -137,9 +144,9 @@ export function bubbleHold(s: { row: boolean; answer: HoldAnswer; sinceLaunch: n
   return 'hold';
 }
 
-/** When the waiting state begins, in ms after the key, for a path flown in `pathEnd` ms. */
+/** When the waiting state begins, in ms after the key, for a message complete at `pathEnd` ms. */
 export const waitStart = (pathEnd: number) => Math.max(WAIT_MIN, pathEnd + WAIT_AFTER);
-/** The waiting state starts this long after the path has been flown, and never before `WAIT_MIN` after the key. */
+/** The waiting state starts this long after the message is complete, and never before `WAIT_MIN` after the key. */
 const WAIT_AFTER = 120;
 const WAIT_MIN = 380;
 /** The waiting tone (a queued or steered message's, timeline.css `.user[data-queued] .user-card`). */
@@ -147,8 +154,6 @@ const WAIT_TONE = 0.6;
 /** The hairline's slow fill: quick at first, then ever slower, never quite to the end on its own. */
 const WAIT_FILL = 9000;
 const WAIT_REACH = 0.94;
-/** Where a queued message's row will be, from the field's text: the tray's last row, just above the card. */
-const TRAY_GUESS = { x: 21, y: -46 };
 
 /** The widest a card grows: this share of the reading column. */
 const CARD_SHARE = 0.8;
@@ -156,6 +161,14 @@ const CARD_SHARE = 0.8;
 const FIRST_TOP = 56;
 /** The narrowest side padding of a conversation row (timeline.css `.tl-content --gutter`). */
 const MIN_GUTTER = 24;
+/** The bead forms this far in from the bar's right edge (clear of its corner's curve). */
+const CORNER = 34;
+/** A queue row (composer.css `.cq-list`, `.cq-row`): inset in the tray, its height, its corners, where its words start. */
+const ROW = { inset: 6, gap: 6, height: 28, radius: 9, text: 35 };
+/** The words pour into the bead: this long per line, the lines a little apart. */
+const POUR_MS = 135;
+const POUR_SPREAD = 45;
+const MAX_BANDS = 6;
 
 function columnToken(): number {
   return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--column')) || 760;
@@ -194,35 +207,54 @@ export function firstLanding(stage: { left: number; top: number; width: number }
   return { left: columnEdges(stage.left, stage.width, column).right - card.width, top: stage.top + FIRST_TOP };
 }
 
-/**
- * Where the card will sit, guessed before its row exists (as an offset from the clone's start).
- * In an open conversation: just under the last row, or just above the dock once the view has
- * followed it. The real row corrects the aim a few ms later.
- */
-function guessLanding(f: Flight, from: HTMLElement, first: boolean): { x: number; y: number } | null {
-  const z = uiZoom();
-  const column = columnToken();
-  const w = f.el.offsetWidth;
-  const h = f.el.offsetHeight;
-  if (first) {
-    const sb = document.querySelector('.stage-body')?.getBoundingClientRect();
-    if (!sb) return null;
-    const to = firstLanding({ left: sb.left / z, top: sb.top / z, width: sb.width / z }, column, { width: w });
-    return { x: to.left - f.start.left, y: to.top - f.start.top };
-  }
+/** The page around the send, read once before anything is written (one layout for all of it). */
+interface Geometry {
+  z: number;
+  column: number;
+  stage: DOMRect | null;
+  card: DOMRect | null;
+  /** The open conversation: its content box, its scroller and where its last row ends. */
+  content: DOMRect | null;
+  scroller: DOMRect | null;
+  lastBottom: number | null;
+  contents: number;
+}
+
+function readGeometry(cardEl: HTMLElement | null): Geometry {
   const contents = document.querySelectorAll<HTMLElement>('.tl-content');
-  // Two conversations on stage (a session switch is fading one out): the bubble waits for the real row.
-  if (contents.length !== 1) return null;
-  const content = contents[0];
-  const c = content.getBoundingClientRect();
-  const right = columnEdges(c.left / z, c.width / z, column).right;
-  const card = from.closest('.cmp-card')?.getBoundingClientRect();
-  const last = [...content.children].reverse().find((n) => !n.classList.contains('tail'));
-  const after = last ? last.getBoundingClientRect().bottom / z + 26 : c.top / z + FIRST_TOP;
-  const y = Math.min(card ? card.top / z - 64 - h : after, after);
-  const sc = content.parentElement?.getBoundingClientRect();
-  if (sc && !(y >= sc.top / z && y + h <= (card ? card.top : sc.bottom) / z + 1)) return null;
-  return { x: right - w - f.start.left, y: y - f.start.top };
+  const content = contents.length === 1 ? contents[0] : null;
+  const last = content ? [...content.children].reverse().find((n) => !n.classList.contains('tail')) : null;
+  return {
+    z: uiZoom(),
+    column: columnToken(),
+    stage: document.querySelector('.stage-body')?.getBoundingClientRect() ?? null,
+    card: cardEl?.getBoundingClientRect() ?? null,
+    content: content?.getBoundingClientRect() ?? null,
+    scroller: content?.parentElement?.getBoundingClientRect() ?? null,
+    lastBottom: last ? last.getBoundingClientRect().bottom : null,
+    contents: contents.length,
+  };
+}
+
+/**
+ * Where the card will sit, guessed before its row exists. In an open conversation: just under the
+ * last row, or just above the dock once the view has followed it. The real row corrects it.
+ */
+function guessLanding(g: Geometry, w: number, h: number, first: boolean): { left: number; top: number } | null {
+  const z = g.z;
+  if (first) {
+    if (!g.stage) return null;
+    return firstLanding({ left: g.stage.left / z, top: g.stage.top / z, width: g.stage.width / z }, g.column, { width: w });
+  }
+  // Two conversations on stage (a session switch is fading one out): the real row decides.
+  if (g.contents !== 1 || !g.content) return null;
+  const c = g.content;
+  const right = columnEdges(c.left / z, c.width / z, g.column).right;
+  const after = g.lastBottom != null ? g.lastBottom / z + 26 : c.top / z + FIRST_TOP;
+  const y = Math.min(g.card ? g.card.top / z - 64 - h : after, after);
+  const sc = g.scroller;
+  if (sc && !(y >= sc.top / z && y + h <= (g.card ? g.card.top : sc.bottom) / z + 1)) return null;
+  return { left: right - w, top: y };
 }
 
 interface Source {
@@ -232,7 +264,7 @@ interface Source {
   oneLine?: boolean;
 }
 
-/** Where the words stand in their source, and their type. */
+/** Where the words stand in their source, their type, and the part of them that shows. */
 function measure(el: HTMLElement) {
   const cs = getComputedStyle(el);
   const z = uiZoom();
@@ -241,57 +273,169 @@ function measure(el: HTMLElement) {
   const padL = parseFloat(cs.paddingLeft) || 0;
   const padR = parseFloat(cs.paddingRight) || 0;
   const padT = parseFloat(cs.paddingTop) || 0;
+  const padB = parseFloat(cs.paddingBottom) || 0;
   const size = parseFloat(cs.fontSize) || 14;
-  return { cs, left: r.left / z + padL, top: r.top / z + padT - el.scrollTop, width: r.width / z - padL - padR, size, line: parseFloat(cs.lineHeight) || size * 1.5 };
+  const line = parseFloat(cs.lineHeight) || size * 1.5;
+  return {
+    cs,
+    left: r.left / z + padL,
+    top: r.top / z + padT - el.scrollTop,
+    width: r.width / z - padL - padR,
+    size,
+    line,
+    view: { top: r.top / z + padT, bottom: r.bottom / z - padB },
+    box: { left: r.left / z, top: r.top / z, right: r.right / z, bottom: r.bottom / z },
+  };
 }
+type Measured = NonNullable<ReturnType<typeof measure>>;
 
-const LAYER = 'position:fixed;z-index:60;margin:0;pointer-events:none;transform-origin:0 0;will-change:transform;';
+const fontOf = (cs: CSSStyleDeclaration) => `font-size:${cs.fontSize};line-height:${cs.lineHeight};font-family:${cs.fontFamily};font-weight:${cs.fontWeight};letter-spacing:${cs.letterSpacing};`;
 
-/** The words as plain text, for the tray. */
-function makeWords({ el, text }: Source): { clone: HTMLDivElement; left: number; top: number; s0: number } | null {
-  const m = measure(el);
-  if (!m) return null;
-  const clone = document.createElement('div');
-  clone.className = 'send-flight';
-  clone.setAttribute('aria-hidden', 'true');
-  clone.style.setProperty('--lines', String(MAX_LINES));
-  clone.style.cssText += `left:${m.left}px;top:${m.top}px;width:${m.width}px;font-size:${m.cs.fontSize};line-height:${m.cs.lineHeight};font-family:${m.cs.fontFamily};font-weight:${m.cs.fontWeight};letter-spacing:${m.cs.letterSpacing};`;
-  clone.textContent = text;
-  return { clone, left: m.left, top: m.top, s0: 1 };
+/**
+ * An animation timed from the message's start (`t0`, the page's clock), so it agrees with the
+ * worker frame for frame. Before the start is known (the launch's first frame) it is left pending;
+ * the start sets them all at once.
+ */
+function fromKey(f: Pick<Flight, 't0' | 'all' | 'started'>, el: Element, frames: Keyframe[], opts: KeyframeAnimationOptions): Animation | null {
+  const a = play(el, frames, { easing: 'linear', fill: 'both', ...opts });
+  if (!a) return null;
+  if (f.started) a.startTime = f.t0;
+  if (frozenAt != null) {
+    a.pause();
+    a.currentTime = frozenAt;
+  }
+  f.all.push(a);
+  return a;
 }
 
 /**
- * The words as their bubble: the conversation's own card, placed and scaled so its text stands
- * exactly on the words in the source (the field and a message share their type size).
+ * The words pour out of their source into the bead: the visible text is cut into its lines, each
+ * a layer of its own that narrows toward the bead faster than it flattens, fading as it arrives;
+ * the lines go one after another from the top, so the text drains into the corner.
  */
-function makeBubble({ el, text }: Source): { clone: HTMLDivElement; left: number; top: number; s0: number } | null {
-  const m = measure(el);
-  if (!m) return null;
-  const s0 = Math.min(1, m.size / CARD_FONT);
-  const left = m.left - CARD_PAD_X * s0;
-  const top = m.top - CARD_PAD_TOP * s0 + (m.line - CARD_LINE * s0) / 2;
-  const z = uiZoom();
-  const stage = document.querySelector('.stage-body')?.getBoundingClientRect();
-  const max = stage ? Math.floor(columnEdges(0, stage.width / z, columnToken()).width * CARD_SHARE) : 600;
-  const clone = document.createElement('div');
-  clone.className = 'send-bubble';
-  clone.setAttribute('aria-hidden', 'true');
-  clone.style.cssText = `${LAYER}left:${left}px;top:${top}px;width:max-content;max-width:${max}px;display:flex;transform:scale(${s0});`;
-  // The inner layer takes the correction when the real landing differs from the guess.
+function pourWords(f: Pick<Flight, 't0' | 'all' | 'started'>, src: Source, m: Measured, at: { x: number; y: number }): HTMLElement[] {
+  const viewH = Math.max(m.line, m.view.bottom - m.view.top);
+  const long = src.text.length > 1200;
+  const n = long || src.oneLine ? 1 : Math.max(1, Math.min(MAX_BANDS, Math.round(viewH / m.line)));
+  const bandH = n === 1 ? Math.min(viewH, src.oneLine ? viewH : m.line * MAX_BANDS) : m.line;
+  const font = fontOf(m.cs);
+  const out: HTMLElement[] = [];
+  const step = n > 1 ? Math.min(16, POUR_SPREAD / (n - 1)) : 0;
+  for (let i = 0; i < n; i++) {
+    const top = m.view.top + i * bandH;
+    const band = document.createElement('div');
+    band.className = 'send-pour';
+    band.setAttribute('aria-hidden', 'true');
+    band.style.cssText = `left:${m.left}px;top:${top}px;width:${m.width}px;height:${bandH}px;transform-origin:${(at.x - m.left).toFixed(1)}px ${(at.y - top).toFixed(1)}px;`;
+    const words = document.createElement('div');
+    words.style.cssText = `top:${(m.top - top).toFixed(2)}px;width:${m.width}px;${font}color:${m.cs.color};`;
+    if (src.oneLine) words.setAttribute('data-one-line', '');
+    words.textContent = src.text;
+    band.appendChild(words);
+    document.body.appendChild(band);
+    const frames: Keyframe[] = [];
+    for (let k = 0; k <= 10; k++) {
+      const u = k / 10;
+      // The far end races in first (the line narrows into the corner), the height goes last, as it enters the bead.
+      const e = u * u * (3 - 2 * u);
+      const sx = lerp(1, 0.012, e ** 0.8);
+      const sy = lerp(1, 0.03, e ** 1.25);
+      frames.push({ offset: u, transform: `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`, opacity: 1 - smooth(0.55, 1, u) });
+    }
+    fromKey(f, band, frames, { duration: POUR_MS, delay: i * step });
+    out.push(band);
+  }
+  return out;
+}
+
+/** The card the message becomes: the conversation's own `.user-card`, its surface a layer of its own (it forms last). */
+function makeCard(text: string, steer: boolean, max: number) {
+  const el = document.createElement('div');
+  el.className = 'send-bubble';
+  el.setAttribute('aria-hidden', 'true');
+  el.style.cssText = `left:0;top:0;width:max-content;max-width:${max}px;`;
   const inner = document.createElement('div');
-  inner.style.cssText = 'display:flex;flex:1 1 auto;min-width:0;will-change:transform;';
+  inner.className = 'send-in';
+  const unfold = document.createElement('div');
+  unfold.className = 'send-unfold';
+  const surface = document.createElement('i');
+  surface.className = 'send-surface';
   const card = document.createElement('div');
   card.className = 'user-card';
-  card.style.cssText = 'flex:1 1 auto;max-width:none;';
+  card.style.maxWidth = 'none';
+  if (steer) {
+    // A steer lands not yet taken: at the waiting tone (timeline.css `.user[data-queued] .user-card`).
+    card.style.opacity = '0.6';
+    // The steered mark's line (its icon comes with the real card).
+    const mark = document.createElement('span');
+    mark.className = 'user-mark';
+    mark.setAttribute('data-waiting', '');
+    // Room for its icon (the real card brings it), so the words stand where they will.
+    const icon = document.createElement('i');
+    icon.style.cssText = 'display:inline-block;width:11px;height:11px;';
+    mark.append(icon, 'Steered, not taken yet');
+    card.appendChild(mark);
+  }
   const words = document.createElement('div');
   words.className = 'user-text';
   // A long message is clipped in the conversation too, at the same line (timeline.css `.user-text[data-clipped]`).
   if (isLongMessage(text)) words.setAttribute('data-clipped', '');
   words.textContent = text;
   card.appendChild(words);
-  inner.appendChild(card);
-  clone.appendChild(inner);
-  return { clone, left, top, s0 };
+  unfold.append(surface, card);
+  inner.appendChild(unfold);
+  el.appendChild(inner);
+  return { el, inner, unfold, surface };
+}
+
+/** A queue row's words, as the tray will show them. */
+function makeRowWords(text: string, cs: CSSStyleDeclaration | null) {
+  const el = document.createElement('div');
+  el.className = 'send-flight';
+  el.setAttribute('aria-hidden', 'true');
+  const inner = document.createElement('div');
+  inner.className = 'send-in';
+  const unfold = document.createElement('div');
+  unfold.className = 'send-unfold';
+  const words = document.createElement('div');
+  words.className = 'send-row-text';
+  if (cs) words.style.cssText = fontOf(cs);
+  words.textContent = text.split('\n').find((l) => l.trim())?.trim() ?? text;
+  unfold.appendChild(words);
+  inner.appendChild(unfold);
+  el.appendChild(inner);
+  return { el, inner, unfold, surface: null };
+}
+
+/** The words unfold with the sheet (wordsAt), and the card's surface forms as the sheet hands over. */
+function unfoldAnims(f: Flight) {
+  for (const a of f.anims) a.cancel();
+  f.anims = [];
+  const p = f.plan;
+  const frames: Keyframe[] = [];
+  const span = p.hand - p.land;
+  const n = Math.max(6, Math.round(span / 12));
+  for (let i = 0; i <= n; i++) {
+    const t = p.land + (span * i) / n;
+    const w = wordsAt(p, t);
+    frames.push({ offset: i / n, transform: `translate(${w.x.toFixed(2)}px, ${w.y.toFixed(2)}px) scale(${w.s.toFixed(4)})`, opacity: w.o });
+  }
+  frames[frames.length - 1] = { offset: 1, transform: 'translate(0px, 0px) scale(1)', opacity: 1 };
+  const u = fromKey(f, f.unfold, frames, { duration: span, delay: p.land });
+  if (u) f.anims.push(u);
+  if (f.surface) {
+    const s = fromKey(f, f.surface, [{ opacity: 0 }, { opacity: 1 }], { duration: HAND, delay: p.hand, easing: 'cubic-bezier(0.3, 0, 0.2, 1)' });
+    if (s) f.anims.push(s);
+  }
+}
+
+/** Places the landing layer on its box. */
+function place(f: Flight) {
+  const b = f.box;
+  f.el.style.left = `${b.left.toFixed(2)}px`;
+  f.el.style.top = `${b.top.toFixed(2)}px`;
+  f.el.style.width = `${b.width.toFixed(2)}px`;
+  f.el.style.maxWidth = 'none';
 }
 
 /**
@@ -300,79 +444,168 @@ function makeBubble({ el, text }: Source): { clone: HTMLDivElement; left: number
  */
 export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: boolean; first?: boolean }): FlightHandle | null {
   if (reducedMotion() || !source.text.trim()) return null;
+  const t0 = performance.now();
   const bubble = opts.dest === 'timeline';
-  const made = bubble ? makeBubble(source) : makeWords(source);
-  if (!made) return null;
-  const { clone, left, top, s0 } = made;
-  document.body.appendChild(clone);
-  const now = performance.now();
   const steer = !!opts.steer;
+  // Every read first: one layout for the whole launch.
+  const m = measure(source.el);
+  if (!m) return null;
+  const bar = source.oneLine ? null : source.el.closest<HTMLElement>('.cmp-card');
+  const g = readGeometry(bar);
+  const z = g.z;
+  const rowEl = source.oneLine ? source.el.closest<HTMLElement>('[data-qrow]') : null;
+  const rowBox = rowEl?.getBoundingClientRect();
+  const cardR = g.card;
+  const from: LiquidSpec['from'] = cardR
+    ? { x: cardR.right / z - CORNER, y: cardR.top / z, edge: true }
+    : rowBox
+      ? { x: rowBox.right / z - 44, y: (rowBox.top + rowBox.height / 2) / z, edge: false }
+      : { x: m.box.right - 30, y: (m.box.top + m.box.bottom) / 2, edge: false };
+
   const f: Flight = {
-    el: clone,
     key: norm(source.text),
     dest: opts.dest,
     steer,
-    // A row leaving the tray has no key press to share a beat with: it goes at once.
-    release: source.oneLine ? 0 : RELEASE,
-    anim: null,
-    path: [],
+    t0,
+    started: false,
+    liquid: null,
+    plan: null as unknown as LiquidPlan,
+    pourEls: [],
+    el: null as unknown as HTMLDivElement,
+    inner: null as unknown as HTMLElement,
+    unfold: null as unknown as HTMLElement,
+    surface: null,
+    box: { left: 0, top: 0, width: 0, height: 0, radii: [18, 18, 6, 18] },
+    anims: [],
+    fixAnim: null,
+    fixEnd: 0,
+    all: [],
     resting: false,
-    timer: 0,
-    start: { left, top },
-    s0,
-    sideways: steer || !!opts.first,
     target: null,
-    guessed: false,
-    fix: { x: 0, y: 0 },
-    fixing: false,
     row: null,
     ending: false,
     done: holdSend(),
     wait: [],
     line: null,
-    t0: now,
     answer: 'pending',
     answeredAt: 0,
+    timer: 0,
+    restTimer: 0,
+    home: { left: 0, top: 0, s0: 1 },
+    bar,
   };
+  // Where the card stands to show its words exactly on the field's (a refused message goes back there).
+  const s0 = Math.min(1, m.size / CARD_FONT);
+  f.home = { left: m.left - CARD_PAD_X * s0, top: m.top - CARD_PAD_TOP * s0 + (m.line - CARD_LINE * s0) / 2, s0 };
+
+  // The layer it lands as, measured where nothing shows it yet.
+  if (bubble) {
+    const max = g.stage ? Math.floor(columnEdges(0, g.stage.width / z, g.column).width * CARD_SHARE) : 600;
+    Object.assign(f, makeCard(source.text, steer, max));
+  } else Object.assign(f, makeRowWords(source.text, null));
+  f.el.style.visibility = 'hidden';
+  document.body.appendChild(f.el);
+  if (bubble) {
+    // Fractional: a width rounded down would wrap the last word.
+    const size = f.el.getBoundingClientRect();
+    const w = size.width / z;
+    const h = size.height / z;
+    const guess = guessLanding(g, w, h, !!opts.first);
+    // No guess (a view changing under it): just above the bar, on the column's right; the row decides.
+    const at = guess ?? { left: (cardR ? cardR.right / z : from.x + CORNER) - w, top: (cardR ? cardR.top / z : from.y) - 64 - h };
+    f.box = { left: at.left, top: at.top, width: w, height: h, radii: [18, 18, 6, 18] };
+  } else {
+    // The tray's newest row: just above the bar, inside the tray that unfolds behind it.
+    const c = cardR ?? new DOMRect(from.x - 400, from.y, 434, 60);
+    f.box = { left: c.left / z + ROW.inset, top: c.top / z - ROW.gap - ROW.height, width: c.width / z - ROW.inset * 2, height: ROW.height, radii: [ROW.radius, ROW.radius, ROW.radius, ROW.radius] };
+    f.el.style.height = `${ROW.height}px`;
+  }
+  place(f);
+  f.el.style.visibility = '';
+
+  const spec: LiquidSpec = { from, to: f.box, kind: bubble ? 'bubble' : 'row' };
+  f.liquid = pour(spec);
+  f.plan = f.liquid.plan;
+  // The words drain into the bead (or the row's end), and the landing unfolds from the sheet.
+  f.pourEls = pourWords(f, source, m, { x: from.x, y: from.y });
+  unfoldAnims(f);
+  // The bar holds still while the bead is joined to it (composer.css `.cmp-card[data-pouring]`).
+  if (bar) {
+    bar.setAttribute('data-pouring', '');
+    window.setTimeout(() => bar.removeAttribute('data-pouring'), f.plan.snap + 260);
+  }
   pending.push(f);
-  // The card's surface forms around the words while the key gives.
-  if (bubble) clone.querySelector('.user-card')?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 80, easing: 'linear', pseudoElement: '::before' });
-  // On its way at once: toward the guess, or a short lift until the landing is known.
-  // A queued message leaves the field for the tray just above the card, before its row exists.
-  const guess = opts.dest === 'tray' ? TRAY_GUESS : guessLanding(f, source.el, !!opts.first);
-  f.guessed = bubble && !!guess;
-  const path = fly(f, { t: 0, x: 0, y: 0, vx: 0, vy: 0 }, guess?.x ?? 0, guess?.y ?? -18);
-  run(f, path, () => rest(f));
-  // The waiting state is set now, to begin once the path has been flown: on the compositor, it
-  // shows on time even while the main thread is busy mounting the row it waits for.
-  if (bubble) waitFrom(f, waitStart(path[path.length - 1].t));
+  begin(f);
+  // The waiting state is set now, to begin once the card is complete: on the compositor, it shows
+  // on time even while the main thread is busy mounting the row it waits for.
+  if (bubble) waitFrom(f, waitStart(f.plan.end));
   if (bubble) review(f);
   else f.timer = window.setTimeout(() => !f.target && abort(f), NO_CLAIM_MS);
-  // Whatever happens on the way, no clone outlives this: the real message always shows.
+  // Whatever happens on the way, nothing outlives this: the real message always shows.
   window.setTimeout(() => abort(f), bubble ? HOLD_MS + 2000 : MAX_LIFE_MS);
   // A conversation row that mounted first (the bridge answered before this row left the tray).
-  if (opts.dest === 'timeline') {
-    const i = unclaimed.findIndex((u) => now - u.at < 400 && u.root.isConnected && matches(f.key, u.key));
+  if (bubble) {
+    const i = unclaimed.findIndex((u) => t0 - u.at < 400 && u.root.isConnected && matches(f.key, u.key));
     if (i >= 0) {
       const u = unclaimed.splice(i, 1)[0];
       landInTimeline(u.root, u.key, { steer, late: true });
     }
   }
+  if (import.meta.env.DEV) devHook();
   return { settle: (ok) => settle(f, ok) };
 }
 
-/** The waiting state, from `at` ms after the launch: the bubble at the waiting tone, a hairline filling along its lower edge. */
+/**
+ * Starts the message on the first frame after the launch: the worker and every layer take that
+ * frame's time as their zero (a hidden window draws no frame: a timer starts it instead).
+ */
+function begin(f: Flight) {
+  let done = false;
+  const go = (at: number) => {
+    if (done) return;
+    done = true;
+    f.t0 = at;
+    f.started = true;
+    for (const a of f.all) {
+      a.startTime = at;
+      if (frozenAt != null) {
+        a.pause();
+        a.currentTime = frozenAt;
+      }
+    }
+    f.liquid?.start(at);
+    armRest(f);
+  };
+  requestAnimationFrame((now) => go(now));
+  window.setTimeout(() => go(performance.now()), 120);
+  armRest(f);
+}
+
+/** Rests once the liquid has run its course; the pour layers go once poured. */
+function armRest(f: Flight) {
+  window.clearTimeout(f.restTimer);
+  const left = f.t0 + f.plan.end - performance.now();
+  f.restTimer = window.setTimeout(() => rest(f), Math.max(0, left));
+  const poured = f.t0 + POUR_MS + POUR_SPREAD + 40 - performance.now();
+  window.setTimeout(() => {
+    if (frozen) return;
+    for (const p of f.pourEls) p.remove();
+    f.pourEls = [];
+  }, Math.max(0, poured));
+}
+
+/** The waiting state, from `at` ms after the key: the card at the waiting tone, a hairline filling along its lower edge. */
 function waitFrom(f: Flight, at: number) {
-  const inner = f.el.firstElementChild as HTMLElement | null;
-  if (!inner) return;
-  inner.style.position = 'relative';
+  const inner = f.inner;
   const line = document.createElement('i');
   line.className = 'send-wait';
   line.setAttribute('aria-hidden', 'true');
   inner.appendChild(line);
   f.line = line;
-  const tone = inner.animate([{ opacity: 1 }, { opacity: WAIT_TONE }], { duration: 260, delay: at, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'forwards' });
-  const fill = line.animate(
+  const tone = fromKey(f, inner, [{ opacity: 1 }, { opacity: WAIT_TONE }], { duration: 260, delay: at, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'forwards' });
+  const fill = fromKey(
+    f,
+    line,
     [
       { transform: 'scaleX(0)', opacity: 0 },
       { transform: `scaleX(${(WAIT_REACH * 0.03).toFixed(3)})`, opacity: 1, offset: 0.015 },
@@ -380,7 +613,7 @@ function waitFrom(f: Flight, at: number) {
     ],
     { duration: WAIT_FILL, delay: at, easing: 'cubic-bezier(0.2, 0.7, 0.3, 1)', fill: 'forwards' },
   );
-  f.wait = [tone, fill];
+  f.wait = [tone, fill].filter((a): a is Animation => !!a);
 }
 
 /** Whether the waiting state has begun (its animations are past their delay). */
@@ -392,12 +625,11 @@ function endWait(f: Flight) {
 }
 
 /**
- * The swap after a wait: the row takes the bubble's tone and steps up to its own, and the hairline
+ * The swap after a wait: the row takes the card's tone and steps up to its own, and the hairline
  * runs to the end along the row's edge and fades, so the wait visibly completes as the message lands.
  */
 function finishWait(f: Flight, card: HTMLElement) {
-  const inner = f.el.firstElementChild as HTMLElement | null;
-  const tone = inner ? parseFloat(getComputedStyle(inner).opacity) || WAIT_TONE : WAIT_TONE;
+  const tone = parseFloat(getComputedStyle(f.inner).opacity) || WAIT_TONE;
   const scale = f.line ? new DOMMatrixReadOnly(getComputedStyle(f.line).transform).a : 0;
   play(card, [{ opacity: tone }, { opacity: 1 }], { duration: 200, easing: EASE_OUT });
   const line = document.createElement('i');
@@ -419,7 +651,7 @@ function finishWait(f: Flight, card: HTMLElement) {
   else gone();
 }
 
-/** A bubble's hold, decided now and again when it could next change (see bubbleHold). */
+/** A message's hold, decided now and again when it could next change (see bubbleHold). */
 function review(f: Flight) {
   window.clearTimeout(f.timer);
   if (f.ending || f.target) return;
@@ -446,50 +678,7 @@ function settle(f: Flight, ok: boolean): Promise<void> {
   return Promise.resolve();
 }
 
-/**
- * Refused: the bubble flies back to where its words stood in the field, shrinking to the field's
- * type while its surface dissolves, and is gone as the words are put back (the caller does that
- * when this resolves).
- */
-function goBack(f: Flight): Promise<void> {
-  f.ending = true;
-  window.clearTimeout(f.timer);
-  drop(f);
-  const shown = f.row ?? f.target;
-  if (shown) shown.style.opacity = '';
-  const from = whereNow(f);
-  const inner = f.el.firstElementChild as HTMLElement | null;
-  const tone = inner ? parseFloat(getComputedStyle(inner).opacity) || 1 : 1;
-  endWait(f);
-  f.line?.remove();
-  const fix = f.fix;
-  f.fix = { x: 0, y: 0 };
-  for (const a of inner?.getAnimations() ?? []) a.cancel();
-  // The inner layer's correction is folded into the path back.
-  const path = springPath({ ...from, x: from.x + fix.x, y: from.y + fix.y, t: 0 }, 0, 0, { sideways: f.sideways });
-  const end = path[path.length - 1].t || 1;
-  const frames: Keyframe[] = path.map((p) => {
-    const u = p.t / end;
-    return { offset: Math.min(1, u), transform: `translate3d(${p.x.toFixed(2)}px, ${p.y.toFixed(2)}px, 0) scale(${(1 + (f.s0 - 1) * Math.min(1, u * 1.4)).toFixed(4)})` };
-  });
-  frames[frames.length - 1].offset = 1;
-  f.anim?.cancel();
-  const back = play(f.el, frames, { duration: end, easing: 'linear', fill: 'forwards' });
-  if (inner && tone < 1) play(inner, [{ opacity: tone }, { opacity: 1 }], { duration: 160, easing: EASE_OUT, fill: 'forwards' });
-  // The surface goes as the words settle back into the field.
-  play(f.el.querySelector('.user-card'), [{ opacity: 1 }, { opacity: 0 }], { duration: Math.min(end, 220), delay: Math.max(0, end - 220), easing: 'linear', pseudoElement: '::before', fill: 'forwards' });
-  return new Promise((resolve) => {
-    const gone = () => {
-      f.el.remove();
-      f.done();
-      resolve();
-    };
-    if (back) back.finished.then(gone, gone);
-    else gone();
-  });
-}
-
-/** The springs (stiffness, damping): the axis that leads and the one that follows. Both settle with the smallest overshoot. */
+/** The springs (stiffness, damping) of a card going back: the axis that leads and the one that follows. */
 const LEAD = { k: 520, c: 40 };
 const FOLLOW = { k: 460, c: 38 };
 /** The throw: each axis leaves at this share of its trip per second, so the first frames cover ground. */
@@ -497,14 +686,12 @@ const THROW = 4;
 const THROW_FOLLOW = 1.5;
 /** How far it sinks while the key gives (px). */
 const DIP = 2;
-/** The bubble grows from the field's type to the message's over this long (ms after the release). */
-const GROW = 150;
 
 /**
- * The path from `from` to a landing at (gx, gy), stepped ahead of time (semi-implicit Euler, 4 ms
- * steps, a sample every 16 ms): the gather (it sinks a touch while the key gives), the throw at
- * the release, then one spring per axis until it rests exactly on the landing. Pure, so the
- * landing can be tested.
+ * A path from `from` to (gx, gy), stepped ahead of time (semi-implicit Euler, 4 ms steps, a sample
+ * every 16 ms): a short gather until the release, the throw, then one spring per axis until it
+ * rests exactly there. A refused message's card flies back into the field on it. Pure, so it can
+ * be tested.
  */
 export function springPath(from: Sample, gx: number, gy: number, opts: { release?: number; sideways?: boolean } = {}): Sample[] {
   const release = opts.release ?? 0;
@@ -540,85 +727,95 @@ export function springPath(from: Sample, gx: number, gy: number, opts: { release
   return out;
 }
 
-const fly = (f: Flight, from: Sample, gx: number, gy: number) => springPath(from, gx, gy, { release: f.release, sideways: f.sideways });
-
-/** The clone's scale at `t` ms after the launch: the field's type growing into the message's. */
-function scaleAt(f: Flight, t: number): number {
-  if (f.s0 >= 1) return 1;
-  const u = Math.min(1, Math.max(0, (t - f.release) / GROW));
-  return f.s0 + (1 - f.s0) * (1 - (1 - u) * (1 - u));
-}
-
-/** Plays a path on the clone (replacing the one it was on); `then` runs when it has been flown. */
-function run(f: Flight, path: Sample[], then?: () => void) {
-  const t0 = path[0].t;
-  const dur = Math.max(1, path[path.length - 1].t - t0);
-  const frames: Keyframe[] = path.map((p) => ({
-    offset: Math.min(1, (p.t - t0) / dur),
-    transform: `translate3d(${p.x.toFixed(2)}px, ${p.y.toFixed(2)}px, 0) scale(${scaleAt(f, p.t).toFixed(4)})`,
-  }));
-  if (frames.length < 2) frames.push({ ...frames[0], offset: 1 });
-  frames[frames.length - 1].offset = 1;
-  const old = f.anim;
-  f.path = path;
-  f.resting = false;
-  const a = (f.anim = f.el.animate(frames, { duration: dur, easing: 'linear', fill: 'forwards' }));
-  old?.cancel();
-  if (then) a.finished.then(() => f.anim === a && !f.ending && then(), () => {});
-}
-
-/** Where the clone is right now on its path (read from the animation's own clock). */
-function whereNow(f: Flight): Sample {
-  const p = f.path;
-  const t = p[0].t + (Number(f.anim?.currentTime) || 0);
-  for (let i = 1; i < p.length; i++) {
-    if (p[i].t < t) continue;
-    const a = p[i - 1];
-    const b = p[i];
-    const u = (t - a.t) / Math.max(1, b.t - a.t);
-    return { t, x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, vx: a.vx + (b.vx - a.vx) * u, vy: a.vy + (b.vy - a.vy) * u };
+/**
+ * Refused: before the card is complete, what is in the air fades as the words are put back in the
+ * field; a complete card flies back to where its words stood, shrinking to the field's type while
+ * its surface dissolves. Resolves when the words can be put back (the caller does that).
+ */
+function goBack(f: Flight): Promise<void> {
+  f.ending = true;
+  window.clearTimeout(f.timer);
+  window.clearTimeout(f.restTimer);
+  drop(f);
+  const shown = f.row ?? f.target;
+  if (shown) shown.style.opacity = '';
+  const tone = parseFloat(getComputedStyle(f.inner).opacity) || 1;
+  endWait(f);
+  f.line?.remove();
+  f.liquid?.cancel();
+  for (const p of f.pourEls) p.remove();
+  f.pourEls = [];
+  const finish = (a: Animation | null) =>
+    new Promise<void>((resolve) => {
+      const gone = () => {
+        f.el.remove();
+        f.done();
+        resolve();
+      };
+      if (a) a.finished.then(gone, gone);
+      else gone();
+    });
+  const t = performance.now() - f.t0;
+  if (f.dest !== 'timeline' || t < f.plan.hand) {
+    for (const a of f.all) a.pause();
+    return finish(play(f.el, [{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'linear', fill: 'forwards' }));
   }
-  // The path is flown: it rests at its end.
-  const e = p[p.length - 1];
-  return { t: Math.max(t, e.t), x: e.x, y: e.y, vx: 0, vy: 0 };
+  // From where it is (the correction folded in) back onto the words' place in the field.
+  const fix = shiftAt(f.plan, t);
+  for (const a of f.all) a.cancel();
+  const to = { x: f.home.left - f.box.left, y: f.home.top - f.box.top };
+  const path = springPath({ t: 0, x: fix.x, y: fix.y, vx: 0, vy: 0 }, to.x, to.y);
+  const end = path[path.length - 1].t || 1;
+  const frames: Keyframe[] = path.map((p) => {
+    const u = p.t / end;
+    return { offset: Math.min(1, u), transform: `translate3d(${p.x.toFixed(2)}px, ${p.y.toFixed(2)}px, 0) scale(${(1 + (f.home.s0 - 1) * Math.min(1, u * 1.4)).toFixed(4)})` };
+  });
+  frames[frames.length - 1].offset = 1;
+  f.el.style.transformOrigin = '0 0';
+  const back = play(f.el, frames, { duration: end, easing: 'linear', fill: 'forwards' });
+  if (tone < 1) play(f.inner, [{ opacity: tone }, { opacity: 1 }], { duration: 160, easing: EASE_OUT, fill: 'forwards' });
+  // The surface goes as the words settle back into the field.
+  play(f.surface, [{ opacity: 1 }, { opacity: 0 }], { duration: Math.min(end, 220), delay: Math.max(0, end - 220), easing: 'linear', fill: 'forwards' });
+  return finish(back);
 }
 
-/** The target's place as an offset from the clone's start: where it is now and where it will rest. */
-function targetAt(f: Flight): { x: number; y: number; restY: number } | null {
-  const t = f.target;
+/** What the landing layer lines up with: the message's card, or the tray row. */
+const landingEl = (f: Flight) => (f.dest === 'tray' ? (f.target?.closest<HTMLElement>('[data-qrow]') ?? f.target) : f.target);
+
+/** The target's place at rest (the conversation follows a sent message to its end: the row rests that much higher). */
+function targetAt(f: Flight): { left: number; top: number; width: number; height: number } | null {
+  const t = landingEl(f);
   if (!t?.isConnected) return null;
   const z = uiZoom();
   const r = t.getBoundingClientRect();
   if (!r.width) return null;
-  const x = r.left / z - f.start.left;
-  const y = r.top / z - f.start.top;
-  // The conversation follows a sent message to its end: the row rests that much higher.
   const sc = f.dest === 'timeline' ? t.closest<HTMLElement>('.tl-content')?.parentElement : null;
   const gap = sc ? Math.max(0, sc.scrollHeight - sc.clientHeight - sc.scrollTop) : 0;
-  return { x, y, restY: y - gap };
+  return { left: r.left / z, top: r.top / z - gap, width: r.width / z, height: r.height / z };
 }
 
-/** The path has been flown. With a target the real thing takes over; without one the bubble waits. */
+/** The liquid has run its course. With a target the real thing takes over; without one the card waits. */
 function rest(f: Flight) {
   f.resting = true;
-  if (!f.target || f.fixing) return;
+  if (frozen || !f.target || f.ending) return;
+  if (performance.now() < f.fixEnd) return;
   if (f.dest === 'tray') still(f);
   else land(f);
 }
 
 /**
- * The tray opens under the words (its height animates), so its row is still moving when they
- * arrive: they hover where the row will be until it has come to rest, then the two swap. A few
- * frames of polling, once.
+ * The tray opens under the words (its height animates), so its row may still be moving when they
+ * are complete: they hold until it has come to rest, then the two swap. A few frames of polling, once.
  */
 function still(f: Flight) {
-  let last: { x: number; y: number } | null = null;
+  let last: { left: number; top: number } | null = null;
   let tries = 0;
   const tick = () => {
     if (f.ending) return;
     const to = targetAt(f);
     if (!to) return abort(f);
-    if ((last && Math.abs(to.x - last.x) < 0.3 && Math.abs(to.y - last.y) < 0.3) || ++tries > 45) return land(f);
+    // At rest: the swap moves the row by whatever is left between the words and it.
+    if ((last && Math.abs(to.left - last.left) < 0.3 && Math.abs(to.top - last.top) < 0.3) || ++tries > 45) return land(f);
     last = to;
     requestAnimationFrame(tick);
   };
@@ -626,23 +823,28 @@ function still(f: Flight) {
 }
 
 /**
- * The swap. The clone sits on the real card: one goes, the other shows, in one frame. A row that
+ * The swap. The copy sits on the real card: one goes, the other shows, in one frame. A row that
  * is not quite there (the view is still catching up, a line arrived above it) takes the remainder
  * itself and settles onto its place.
  */
 function land(f: Flight) {
   if (f.ending) return;
   const to = targetAt(f);
-  const end = f.path[f.path.length - 1];
   f.ending = true;
   window.clearTimeout(f.timer);
+  window.clearTimeout(f.restTimer);
   const shown = f.row ?? f.target;
   if (shown) shown.style.opacity = '';
   if (f.dest === 'timeline' && f.target && waiting(f)) finishWait(f, f.target);
   endWait(f);
-  if (to && shown) {
-    const dx = end.x + f.fix.x - to.x;
-    const dy = end.y + f.fix.y - to.y;
+  const el = landingEl(f);
+  if (to && shown && el) {
+    const fix = shiftAt(f.plan, performance.now() - f.t0);
+    // Where the copy stands now against where the row is now (not at rest: the row moves the rest itself).
+    const r = el.getBoundingClientRect();
+    const z = uiZoom();
+    const dx = f.box.left + fix.x - r.left / z;
+    const dy = f.box.top + fix.y - r.top / z;
     if (Math.abs(dx) > 0.6 || Math.abs(dy) > 0.6) {
       // The row paints outside its own box while it settles (rows are paint-contained at rest).
       const item = shown.closest<HTMLElement>('.tl-item');
@@ -655,6 +857,8 @@ function land(f: Flight) {
   }
   f.onLand?.();
   f.el.remove();
+  for (const p of f.pourEls) p.remove();
+  f.pourEls = [];
   drop(f);
   f.done();
 }
@@ -663,8 +867,12 @@ function abort(f: Flight) {
   if (f.ending) return;
   f.ending = true;
   window.clearTimeout(f.timer);
+  window.clearTimeout(f.restTimer);
   const shown = f.row ?? f.target;
   if (shown) shown.style.opacity = '';
+  f.liquid?.cancel();
+  for (const p of f.pourEls) p.remove();
+  f.pourEls = [];
   const done = () => f.el.remove();
   const a = play(f.el, [{ opacity: 0 }], { duration: 140, easing: 'linear', fill: 'forwards' });
   if (a) a.finished.then(done, done);
@@ -683,7 +891,7 @@ function claim(dest: FlightDest, text: string): Flight | null {
   return i >= 0 ? pending[i] : null;
 }
 
-/** Whether `target` (a message's card in the conversation) is a place the bubble may fly to. */
+/** Whether `target` (a message's card in the conversation) is a place the card may land on. */
 function certainTarget(target: HTMLElement): boolean {
   const content = target.closest<HTMLElement>('.tl-content');
   const scroller = content?.parentElement;
@@ -698,52 +906,57 @@ function certainTarget(target: HTMLElement): boolean {
 }
 
 /**
- * The real landing takes over from the guess. A bubble on its way to a guessed place keeps its
- * path untouched (replacing a compositor animation while the main thread is busy mounting the row
- * would hold it still for a moment): the difference is eased in on the inner layer over what is
- * left of the trip, so the sum lands exactly. Anything else is re-aimed from where it is, at its speed.
+ * The real landing takes over from the guess. Before the drop has left, the landing simply moves
+ * (nothing of it shows yet). After that, everything still to come moves by the difference: the
+ * worker shifts the drop and the sheet, the words' layer takes the same shift on the same curve.
  */
 function aim(f: Flight) {
   const to = targetAt(f);
   if (!to) return abort(f);
-  if (f.guessed) {
-    const end = f.path[f.path.length - 1];
-    const dx = to.x - end.x;
-    const dy = to.restY - end.y;
-    f.fix = { x: dx, y: dy };
-    if (Math.abs(dx) < 0.6 && Math.abs(dy) < 0.6) {
-      f.fix = { x: 0, y: 0 };
-      if (f.resting) land(f);
-      return;
-    }
-    const left = f.resting ? 0 : end.t - whereNow(f).t;
-    const inner = f.el.firstElementChild;
-    const a = inner?.animate([{ transform: 'translate3d(0px, 0px, 0)' }, { transform: `translate3d(${dx.toFixed(2)}px, ${dy.toFixed(2)}px, 0)` }], {
-      duration: Math.max(180, left),
-      easing: 'cubic-bezier(0.3, 0, 0.2, 1)',
-      fill: 'forwards',
-    });
-    if (!a) return land(f);
-    f.fixing = true;
-    const done = () => {
-      f.fixing = false;
-      if (f.resting) land(f);
-    };
-    a.finished.then(done, done);
+  const t = performance.now() - f.t0;
+  const cur = shiftAt(f.plan, Math.max(t, f.fixEnd - f.t0));
+  const dx = to.left - (f.box.left + cur.x);
+  const dy = to.top - (f.box.top + cur.y);
+  const resized = Math.abs(to.width - f.box.width) > 0.5 || Math.abs(to.height - f.box.height) > 0.5;
+  if (t < f.plan.snap - 12 && f.liquid) {
+    if (Math.abs(dx) < 0.3 && Math.abs(dy) < 0.3 && !resized) return;
+    const height = f.dest === 'tray' ? f.box.height : to.height;
+    f.box = { ...f.box, left: to.left, top: to.top, width: to.width, height };
+    place(f);
+    f.liquid.retarget(f.box);
+    f.plan = f.liquid.plan;
+    unfoldAnims(f);
+    armRest(f);
     return;
   }
-  // Words on their way to the tray keep their path too: the row they land on is still moving.
-  if (f.dest === 'tray') {
-    if (f.resting) still(f);
+  if (Math.abs(dx) < 0.6 && Math.abs(dy) < 0.6) {
+    if (f.resting) rest(f);
     return;
   }
-  run(f, fly(f, whereNow(f), to.x, to.restY), () => rest(f));
+  // Lands where the row is by the time it touches down (or soon after, when it already has).
+  const dur = Math.max(160, f.plan.land - t);
+  const s = { at: t, dx, dy, dur };
+  if (f.liquid) f.liquid.shift(s);
+  if (f.liquid?.plan !== f.plan) f.plan.shifts.push(s);
+  f.fixEnd = f.t0 + t + dur;
+  // The words' layer follows the same sum of shifts, from now to the end of the last one.
+  const frames: Keyframe[] = [];
+  const n = Math.max(4, Math.round(dur / 16));
+  for (let i = 0; i <= n; i++) {
+    const at = t + (dur * i) / n;
+    const p = shiftAt(f.plan, at);
+    frames.push({ offset: i / n, transform: `translate(${p.x.toFixed(2)}px, ${p.y.toFixed(2)}px)` });
+  }
+  const old = f.fixAnim;
+  f.fixAnim = fromKey(f, f.inner, frames, { duration: dur, delay: t, fill: 'forwards' });
+  old?.cancel();
+  window.setTimeout(() => f.resting && rest(f), Math.max(0, f.fixEnd - performance.now()) + 4);
 }
 
 /**
- * A message mounted in the conversation (`root` is its `.user` element). When its bubble is in
- * the air, it lands here: the row skips its own entrance and stays clear until the bubble sits on
- * it, then the two swap. Returns true when a clone took it.
+ * A message mounted in the conversation (`root` is its `.user` element). When its message is in
+ * the air, it lands here: the row skips its own entrance and stays clear until the card sits on
+ * it, then the two swap. Returns true when a message in the air took it.
  */
 export function landInTimeline(root: HTMLElement, text: string, opts: { steer?: boolean; late?: boolean } = {}): boolean {
   if (reducedMotion()) return false;
@@ -758,23 +971,20 @@ export function landInTimeline(root: HTMLElement, text: string, opts: { steer?: 
   const card = root.querySelector<HTMLElement>('.user-card');
   if (!card) return false;
   // A row that is not where a message belongs (off the column, out of reach, not laid out): the
-  // bubble fades where it is and the row makes its own entrance.
+  // message fades where it is and the row makes its own entrance.
   if (!certainTarget(card)) {
     abort(f);
     return false;
   }
   root.setAttribute('data-flight', '');
   for (const a of root.getAnimations()) a.cancel();
-  // The bubble becomes this card: the same width and lines, its marks and attachments.
-  const z = uiZoom();
-  const r = card.getBoundingClientRect();
+  // The card becomes this card: the same width and lines, its marks and attachments.
+  const width = card.getBoundingClientRect().width / uiZoom();
   const copy = card.cloneNode(true) as HTMLElement;
-  copy.style.cssText = `flex:none;max-width:none;width:100%;transition:none;opacity:${getComputedStyle(card).opacity};`;
-  f.el.style.width = `${(r.width / z).toFixed(2)}px`;
-  f.el.style.maxWidth = 'none';
-  (f.el.firstElementChild ?? f.el).replaceChildren(copy);
-  // The waiting hairline stays on its edge (its fill goes on where it was).
-  if (f.line) f.el.firstElementChild?.appendChild(f.line);
+  copy.style.cssText = `max-width:none;width:${width.toFixed(2)}px;transition:none;opacity:${getComputedStyle(card).opacity};`;
+  f.unfold.querySelector('.user-card')?.replaceWith(copy);
+  // Past the drop's leaving the landing keeps its place and only shifts: the surface takes the real width now.
+  f.el.style.width = `${width.toFixed(2)}px`;
   f.target = card;
   f.row = root;
   root.style.opacity = '0';
@@ -783,32 +993,93 @@ export function landInTimeline(root: HTMLElement, text: string, opts: { steer?: 
     // The wire of a steer draws itself down into the turn (timeline.css `.user-wire[data-draw]`).
     if (steer) root.querySelector('.user-wire')?.setAttribute('data-draw', '');
   };
-  aim(f);
+  watch(f);
   return true;
 }
 
-/** A queued message's row appeared in the tray: the words from the field land on it. */
+/**
+ * Where a row rests is only known once the conversation has laid out around it (the turn it starts
+ * settles in the effects after it mounts): measured on the next frame, and again just before the
+ * drop leaves and just before it touches down, so a late change bends its flight instead of
+ * showing as a jump at the landing.
+ */
+function watch(f: Flight) {
+  requestAnimationFrame(() => !f.ending && aim(f));
+  const at = (ms: number) => {
+    const wait = f.t0 + ms - performance.now();
+    if (wait > 0) window.setTimeout(() => !f.ending && aim(f), wait);
+  };
+  at(f.plan.snap - 24);
+  at(f.plan.land - 40);
+}
+
+/** A queued message's row appeared in the tray: the words land on it. */
 export function landInTray(textEl: HTMLElement, text: string): boolean {
   if (reducedMotion()) return false;
   const f = claim('tray', text);
   if (!f) return false;
-  // The words take the row's type early in the trip (a queue row is 13 px), so the swap is a cut.
-  const cs = getComputedStyle(textEl);
-  f.el.style.fontSize = cs.fontSize;
-  f.el.style.lineHeight = cs.lineHeight;
-  f.el.style.letterSpacing = cs.letterSpacing;
-  f.el.style.setProperty('--lines', '1');
+  // The words take the row's type and stand where its text starts.
+  const row = textEl.closest<HTMLElement>('[data-qrow]');
+  const words = f.unfold.querySelector<HTMLElement>('.send-row-text');
+  if (words && row) {
+    const cs = getComputedStyle(textEl);
+    const z = uiZoom();
+    words.style.cssText = `${fontOf(cs)}padding-left:${((textEl.getBoundingClientRect().left - row.getBoundingClientRect().left) / z).toFixed(2)}px;`;
+  }
   f.target = textEl;
   textEl.style.opacity = '0';
-  aim(f);
+  // The tray is still unfolding under it (a transform): the guess is where the row comes to rest,
+  // and what is left is settled once it has (`still`).
   return true;
 }
 
-/** A queued message left the tray for the conversation: it lifts out of its row as the bubble. */
+/** A queued message left the tray for the conversation: it gathers at the row's end and rises from there. */
 export function launchFromTray(textEl: HTMLElement, text: string) {
   if (reducedMotion()) return;
   launchFlight({ el: textEl, text, oneLine: true }, { dest: 'timeline' });
 }
 
-/** For tests and the dev console: clones in the air. */
+/** For tests and the dev console: messages in the air. */
 export const flightsInAir = () => pending.length;
+
+// ── dev: frame sheets ──
+
+let frozen = false;
+let frozenAt: number | null = null;
+
+/** Dev only: holds every message in the air at `t` ms after its key (null lets them run on). */
+function freezeFlights(t: number | null) {
+  frozen = t != null;
+  frozenAt = t;
+  freezeLiquid(t);
+  for (const f of pending) {
+    for (const a of f.all) {
+      if (t == null) {
+        a.startTime = f.t0;
+      } else {
+        a.pause();
+        a.currentTime = t;
+      }
+    }
+    if (t == null) {
+      armRest(f);
+      if (f.resting) rest(f);
+    }
+  }
+}
+
+function devHook() {
+  const w = window as unknown as { __sableLiquid?: object };
+  if (!w.__sableLiquid)
+    w.__sableLiquid = {
+      freeze: freezeFlights,
+      plan: (spec: LiquidSpec) => planLiquid(spec),
+      inAir: () => pending.length,
+      easing: linearEasing(shiftEase),
+      debug: () =>
+        pending.map((f) => ({ dest: f.dest, t: Math.round(performance.now() - f.t0), box: f.box, from: f.plan.spec.from, land: f.plan.land, hand: f.plan.hand, end: f.plan.end, shifts: f.plan.shifts, target: !!f.target, ending: f.ending, resting: f.resting, el: f.el.getBoundingClientRect().toJSON() })),
+    };
+}
+
+// The worker that draws the liquid is loaded while the page is idle, ahead of the first send.
+if (typeof window !== 'undefined') prewarmLiquid();
