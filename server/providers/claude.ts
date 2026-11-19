@@ -1198,6 +1198,8 @@ class ClaudeSession implements ProviderSession {
     this.streams.clear();
     this.liveTasks.clear();
     this.clearLiveState();
+    // Background sub-agents and workflows lived in this process: they ended with it.
+    this.rt.stopBackground();
     if (this.rt.turnActive && !this.closed) {
       this.rt.settle(failure ? 'error' : 'cancelled');
       const text = failure ?? 'Claude Code stopped unexpectedly';

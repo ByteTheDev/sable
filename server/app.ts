@@ -648,6 +648,8 @@ export class App {
     // A file that is there but cannot be read is left exactly as it is (nothing is written to it).
     if (file.unreadable) rt.notice('error', 'This chat could not be read from disk', 'Nothing is written to it. Restart Sable to try again.');
     rt.settle('cancelled');
+    // No agent process carries anything from before: background sub-agents and workflows ended with it.
+    rt.stopBackground();
     // Messages still waiting for the agent when Sable closed (a steer not taken yet) would wait forever: back to the queue.
     rt.returnUntaken({ all: true, reason: 'closed' });
     const lost = this.untilLost.get(rt.id);

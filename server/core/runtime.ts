@@ -490,6 +490,18 @@ export class SessionRuntime {
   }
 
   /** Settles anything left "in flight" (after an interrupt, crash or restart). */
+  /**
+   * Sub-agents and workflows still marked as running in the background whose agent process is gone
+   * (it ended, or Sable restarted): they died with it and their end will never be reported.
+   */
+  stopBackground() {
+    for (const item of this.items) {
+      if (item.type !== 'tool') continue;
+      if (item.result?.agent?.background === 'running') this.patch<ToolItem>(item.id, { result: { ...item.result, agent: { ...item.result.agent, background: 'stopped' } } });
+      if (item.workflow?.status === 'running') this.patch<ToolItem>(item.id, { workflow: { ...item.workflow, status: 'stopped' } });
+    }
+  }
+
   settle(reason: 'cancelled' | 'error' = 'cancelled') {
     const keep = this.apart.size ? this.subtree(this.apart) : undefined;
     for (const item of this.items) {
