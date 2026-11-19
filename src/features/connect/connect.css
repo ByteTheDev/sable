@@ -485,13 +485,15 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding-top: 10px;
+  padding: 10px 0 2px;
 }
 
+/* As tall as the button beside it and the card's other small controls, so the pair reads as one row. */
 .login-code-input {
   flex: 1;
   min-width: 0;
-  height: 30px;
+  height: var(--ctl-h-sm);
+  border-radius: var(--r-ctl-sm);
   font-family: var(--font-mono);
   font-size: var(--t-small);
 }

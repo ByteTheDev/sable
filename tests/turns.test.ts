@@ -32,7 +32,9 @@ describe('shapeOf', () => {
       [{ ...base, type: 'user', text: 'hi', state: 'queued', steered: true }, 'S'],
       [{ ...base, type: 'user', text: 'hi', state: 'sent', steered: true }, 'S'],
       [{ ...base, type: 'text', text: 'Hello', streaming: false }, 't'],
-      [{ ...base, type: 'text', text: '', streaming: true }, 't'],
+      [{ ...base, type: 'text', text: '', streaming: true }, 'l'],
+      [{ ...base, type: 'text', text: 'Let me run the tests.', streaming: false }, 'l'],
+      [{ ...base, type: 'text', text: 'The guard answers 403. Let me fix it.', streaming: false }, 't'],
       [{ ...base, type: 'text', text: '  ', streaming: false }, '.'],
       [{ ...base, type: 'thinking', text: '', streaming: false }, 'h'],
       [{ ...base, type: 'tool', name: 'Bash', kind: 'bash', title: 'Run', status: 'done', detail: {} }, 'w'],
@@ -86,10 +88,10 @@ describe('groupTurns', () => {
     expect(s.work).toEqual(['2', '4']);
   });
 
-  it('starts a segment for every steered message, each with its own answer', () => {
+  it('starts a segment for every steered message; a segment the steer cut has reports, no answer', () => {
     const t = onlyTurn('U1 w2 t3 S4 t5 w6 w7 t8 T9');
     expect(t.segments.map((s) => [s.lead, s.steered, s.reply, s.answer, s.work])).toEqual([
-      ['1', false, null, '3', ['2']],
+      ['1', false, null, null, ['2']],
       ['4', true, '5', '8', ['6', '7']],
     ]);
     // The question, the reply, then the line for the work that went on.
@@ -321,5 +323,41 @@ describe('turnsIndex (groupTurns followed run by run)', () => {
     const third = index(c.ids, c.shape, true, (id) => (id === '12' ? '1' : undefined));
     expect((third.groups[0] as TurnGroup).checks).toEqual(['12']);
     expect((second.groups[0] as TurnGroup).checks).toBeUndefined();
+  });
+});
+
+describe('lead-ins', () => {
+  it('folds a lead-in with the steps it announces, and keeps reports and the answer in view', () => {
+    const t = onlyTurn('U1 l2 w3 l4 w5 w6 t7 l8 w9 t10 T11');
+    const s = t.segments[0];
+    expect(flowOf(s.flow)).toBe('| [2 3 4 5 6] 7 [8 9] 10');
+    expect(s.work).toEqual(['2', '3', '4', '5', '6', '8', '9']);
+    expect(s.steps).toBe(4);
+    expect(s.answer).toBe('10');
+    expect(s.narr).toEqual([]);
+  });
+
+  it('says a lead-in in view when no step follows it', () => {
+    // The last words of a settled turn are its answer, whatever they look like.
+    expect(onlyTurn('U1 w2 l3 T4').segments[0]).toMatchObject({ answer: '3', work: ['2'] });
+    // Before more text it is one more report.
+    expect(flowOf(onlyTurn('U1 l2 t3 w4 t5 T6').segments[0].flow)).toBe('2 3 | [4] 5');
+  });
+
+  it('keeps the newest lead-in of a running turn folded while it waits for its step', () => {
+    const s = onlyTurn('U1 w2 t3 w4 l5', true).segments[0];
+    expect(flowOf(s.flow)).toBe('| [2] 3 [4 5]');
+    expect(s.answer).toBeNull();
+    expect(s.narr).toEqual(['5']);
+  });
+
+  it('forgets the lead-ins once the agent has said something in view', () => {
+    expect(onlyTurn('U1 l2 w3 t4 w5', true).segments[0].narr).toEqual([]);
+  });
+
+  it('always shows the reply to a steered message, even when it reads as a lead-in', () => {
+    const t = onlyTurn('U1 w2 S3 l4 l5 w6 t7 T8');
+    expect(t.segments[1]).toMatchObject({ reply: '4', answer: '7', work: ['5', '6'] });
+    expect(flowOf(t.segments[1].flow)).toBe('4 | [5 6] 7');
   });
 });

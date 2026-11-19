@@ -50,7 +50,7 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
     if (wasQueued.current && !queued && item.steered) {
       const card = root.current?.querySelector('.user-card');
       play(card, [{ opacity: 0.6, transform: 'scale(0.985)', offset: 0 }, { opacity: 1, transform: 'scale(1.012)', offset: 0.45 }, { opacity: 1, transform: 'scale(1)' }], { duration: 420, easing: EASE_OUT });
-      // The wire goes solid and a light runs along it, from the message into the turn.
+      // A light runs down the wire, from the message into the turn, as the wire lets go (timeline.css).
       const wire = root.current?.querySelector<HTMLElement>('.user-wire');
       if (wire && !reducedMotion()) {
         const light = document.createElement('b');

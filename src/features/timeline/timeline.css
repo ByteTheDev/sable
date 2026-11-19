@@ -982,9 +982,10 @@ button:hover > .row-caret {
   color: var(--text-4);
 }
 
-/* A message steered into a running turn is wired to it: the rule down its left edge carries on
-   down into what the agent does with it. Dotted until the agent takes it; then it goes solid and
-   a light runs down it once (User.tsx). */
+/* A message steered into a running turn is wired to it while it waits: a dotted rule from its
+   tail corner down into the turn. When the agent takes it a light runs down the rule once and the
+   rule lets go (User.tsx), so a taken steer stands as a plain card over its reply: a stub left
+   hanging into the margin read as a stray mark. */
 .user-wire {
   position: absolute;
   right: 22px;
@@ -1003,6 +1004,11 @@ button:hover > .row-caret {
 
 .user[data-queued] .user-wire > i {
   border-left-style: dotted;
+}
+
+.user:not([data-queued]) .user-wire > i {
+  opacity: 0;
+  transition: opacity 420ms var(--ease);
 }
 
 /* The light that runs the wire when the agent takes the message. */
@@ -2191,8 +2197,9 @@ button:hover > .row-caret {
   color: var(--text-3);
 }
 
+/* Monochrome: amber is kept for what waits on the person, and an interrupted turn waits on nothing. */
 .turn-note > svg {
-  color: var(--amber);
+  color: var(--text-4);
 }
 
 .turn-hover {
@@ -2465,4 +2472,20 @@ button:hover > .row-caret {
   .tl-sub[data-fresh] > * {
     animation: none;
   }
+}
+
+/* A lead-in among the opened steps ("Let me run the tests."): the agent's note on the step after
+   it, in the steps' own size and one tone back, so the run reads as steps with their reasons. */
+.story .tl-sub[data-t='text'] {
+  padding: 4px 0 3px;
+}
+
+.story .tl-sub[data-t='text'] .md {
+  --md-fg: var(--text-3);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.story .tl-sub[data-t='text'] .md :is(strong, .md-code, .md-link) {
+  color: var(--text-3);
 }

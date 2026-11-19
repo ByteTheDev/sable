@@ -1,5 +1,6 @@
 import type { TimelineItem } from '@shared/protocol';
 import { changedSince, type ItemsRevision } from '@/state/revision';
+import { isLeadIn } from './lead-in';
 
 /**
  * Turn structure for the conversation: which root items belong to which turn, how each segment
@@ -9,6 +10,9 @@ import { changedSince, type ItemsRevision } from '@/state/revision';
  * Each root item is reduced to one character (`shapeOf`):
  *   U  a sent message that starts a turn       Q  a queued message, not taken yet (floats to the end)
  *   S  a message steered into the running turn  t  assistant prose (an answer candidate)
+ *   l  a lead-in: a one-line announcement of the next step ("Let me run the tests."), or a text
+ *      still being written that may turn out one (see `lead-in.ts`): folded with the steps it
+ *      announces, said in view when no step follows it
  *   c  command output (an answer candidate)     p  a plan (an answer candidate)
  *   w  a step: a tool call                      n  any other notice (mode, model, compaction, retry): not a step
  *   h  thinking: part of the work, not counted as a step
@@ -56,6 +60,8 @@ export interface Segment {
   reply: string | null;
   /** Error notices, and notices that are all a segment holds: never folded, after the flow. */
   errors: string[];
+  /** The lead-ins folded into the work since the agent last said something in view, oldest first: the live line names the newest. */
+  narr: string[];
 }
 
 export type TurnState = 'running' | 'done' | 'failed' | 'interrupted';
@@ -94,7 +100,8 @@ export function shapeOf(item: TimelineItem | undefined): string {
       if (item.steered) return 'S';
       return item.state === 'queued' ? 'Q' : 'U';
     case 'text':
-      return item.streaming || item.text.trim() ? 't' : '.';
+      if (!item.streaming && !item.text.trim()) return '.';
+      return isLeadIn(item.text, !!item.streaming) ? 'l' : 't';
     case 'thinking':
       return 'h';
     case 'tool':
@@ -184,7 +191,37 @@ interface Open {
   failed: boolean;
 }
 
-function buildSegment(seg: Open['segs'][number], index: number, turnKey: string, failed: boolean, live = false): Segment {
+/** What may follow a lead-in for it to fold with the work it announces. */
+const WORK_AFTER = new Set(['w', 'h', 'k', 'n', 'l']);
+
+/**
+ * The segment's characters with each lead-in settled: it stays one (`l`, folded with the work) when
+ * a step follows it, or while it is the newest thing in a running segment; otherwise it is said in
+ * view after all (`t`): before more text, as the answer of a settled segment, and always as the
+ * reply to a steered message.
+ */
+function settleLeads(chars: string[], live: boolean, steered: boolean): string[] {
+  if (!chars.includes('l')) return chars;
+  const out = chars.slice();
+  let replied = !steered;
+  for (let i = 0; i < out.length; i++) {
+    const ch = out[i];
+    if (ch === 't') replied = true;
+    if (ch !== 'l') continue;
+    if (!replied) {
+      out[i] = 't';
+      replied = true;
+      continue;
+    }
+    let j = i + 1;
+    while (j < out.length && out[j] === '.') j++;
+    if (j < out.length ? !WORK_AFTER.has(out[j]) : !live) out[i] = 't';
+  }
+  return out;
+}
+
+function buildSegment(raw: Open['segs'][number], index: number, turnKey: string, failed: boolean, live = false, cut = false): Segment {
+  const seg = { ...raw, chars: settleLeads(raw.chars, live, raw.steered) };
   const errors: string[] = [];
   let answerAt = -1;
   for (let i = seg.chars.length - 1; i >= 0; i--) {
@@ -196,8 +233,10 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
     // the answer only while nothing has come after it.
     if (live && seg.chars[i] !== '.' && seg.chars[i] !== 'i' && seg.chars[i] !== 'e') break;
   }
-  // A failed segment answers with its error card; its last text is one more report.
-  if (failed) answerAt = -1;
+  // A failed segment answers with its error card; its last text is one more report. So does a
+  // segment a steered message cut: the turn went on past it, and its last words were said on the
+  // way (they keep their tone when the steer arrives instead of brightening into an answer).
+  if (failed || cut) answerAt = -1;
   // Nothing but notices (a /compact, a model change on its own): they are the turn, so they show.
   const lone = !seg.chars.some((c) => c !== 'n' && c !== '.' && c !== 'i' && c !== 'e');
   let replyAt = -1;
@@ -213,6 +252,7 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
   let ready = !seg.steered;
   let run: string[] = [];
   let runCount = 0;
+  let narr: string[] = [];
   const flush = () => {
     if (!run.length) return;
     if (!lined && ready) {
@@ -234,9 +274,13 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
     if (ch === 't' || SHOW.has(ch)) {
       flush();
       flow.push({ kind: ch === 't' ? 'text' : 'show', id });
-      if (ch === 't') ready = true;
+      if (ch === 't') {
+        ready = true;
+        narr = [];
+      }
       continue;
     }
+    if (ch === 'l') narr.push(id);
     work.push(id);
     run.push(id);
     if (ch === 'w') {
@@ -257,6 +301,7 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
     answer: answerAt >= 0 ? seg.ids[answerAt] : null,
     reply: replyAt >= 0 ? seg.ids[replyAt] : null,
     errors,
+    narr,
   };
 }
 
@@ -308,7 +353,7 @@ function groupFrom(g: Grouping, ids: readonly string[], shape: string, busy: boo
     const state: TurnState = atEnd && !end && busy && !o.interrupted ? 'running' : failed ? 'failed' : o.interrupted ? 'interrupted' : 'done';
     const key = o.ids[0];
     const last = o.segs.length - 1;
-    const segments = o.segs.map((s, i) => buildSegment(s, i, key, failed && i === last, state === 'running' && i === last));
+    const segments = o.segs.map((s, i) => buildSegment(s, i, key, failed && i === last, state === 'running' && i === last, i < last));
     groups.push({ kind: 'turn', key, segments, end, state, ids: o.ids });
   };
 

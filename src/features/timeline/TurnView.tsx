@@ -15,6 +15,7 @@ import { changesOf } from './changes';
 import { Tail } from './Tail';
 import { TurnFoot } from './Turn';
 import { LINE, shapeIndex, turnsIndex, type FlowChunk, type Group, type Segment, type TurnGroup, type TurnLayout } from './turns';
+import { leadTitle } from './lead-in';
 import { shortDuration, thinkingHeadline, useHeld, useTick } from './util';
 
 /** Groups built when a transcript opens, and how many more each step up builds. */
@@ -410,8 +411,28 @@ const TITLE_HOLD_MS = 600;
 /** How long a finished step still names what the agent is doing, when nothing newer has started (ms). */
 const RECENT_MS = 2000;
 
-/** What the running segment is doing right now: `${waiting}|${title}`. */
-function liveSelector(sessionId: string, seg: Segment) {
+/**
+ * The lead-in that names what the agent does now, or '' when there is none: the newest one written
+ * since the agent last said something in view, while the steps it announced run. A step started
+ * after one of those had ended, or thinking, is the agent's next move: the lead-in has had its say.
+ */
+function currentLead(items: Record<string, TimelineItem>, seg: Segment): string {
+  const id = seg.narr[seg.narr.length - 1];
+  const it = id ? items[id] : undefined;
+  if (it?.type !== 'text' || it.streaming) return '';
+  const at = seg.work.lastIndexOf(id);
+  let ended = Infinity;
+  for (let i = at + 1; i < seg.work.length; i++) {
+    const step = items[seg.work[i]];
+    if (!step) continue;
+    if (step.type !== 'tool' || step.ts > ended) return '';
+    if (step.endedAt) ended = Math.min(ended, step.endedAt);
+  }
+  return leadTitle(it.text);
+}
+
+/** What the running segment is doing right now: `${waiting}|${title}`. `held` keeps the title last given. */
+function liveSelector(sessionId: string, seg: Segment, held: { title: string }) {
   // The pieces in view (texts, widgets, plans), newest first: a widget being drawn or a text being written.
   const pieces: string[] = [];
   for (let i = seg.flow.length - 1; i >= 0 && pieces.length < 4; i--) {
@@ -428,6 +449,8 @@ function liveSelector(sessionId: string, seg: Segment) {
     // The newest step, when it finished a moment ago: quick steps in a row read as one calm sequence
     // of their titles instead of flickering back to "Working" between them.
     let recent = '';
+    // A lead-in being written: the line keeps what it says until the sentence is whole.
+    let writing = false;
     for (let i = seg.work.length - 1, n = 0; i >= 0 && n < 60; i--, n++) {
       const it = d.items[seg.work[i]];
       if (!it) continue;
@@ -436,10 +459,14 @@ function liveSelector(sessionId: string, seg: Segment) {
         if (it.kind === 'agent') agents++;
         if (!title) title = it.title;
       } else if (it.type === 'thinking' && it.streaming && !title) title = thinkingHeadline((it as ThinkingItem).text) || 'Thinking';
+      else if (n === 0 && it.type === 'text' && it.streaming) writing = true;
       else if (n === 0 && it.type === 'tool' && it.endedAt && Date.now() - it.endedAt < RECENT_MS) recent = it.title;
     }
     // Several sub-agents at once: the line counts them.
     if (agents > 1) title = `Running ${agents} sub-agents`;
+    // The agent's own words for what it does now, while the steps it announced run.
+    else if (writing && held.title) title = held.title;
+    else title = currentLead(d.items, seg) || title;
     for (const id of pieces) {
       if (title) break;
       const it = d.items[id];
@@ -447,6 +474,7 @@ function liveSelector(sessionId: string, seg: Segment) {
       else if (it?.type === 'text' && it.streaming) title = 'Writing';
     }
     if (!title) title = recent || (meta.status === 'starting' ? 'Starting' : meta.activity || 'Working');
+    held.title = title;
     return `${waiting ? 1 : 0}|${title}`;
   };
 }
@@ -485,7 +513,8 @@ function useSwap(value: string): [string, boolean] {
  */
 function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onToggle?: () => void }) {
   const { sessionId } = useTimeline();
-  const info = useStore(useMemo(() => liveSelector(sessionId, seg), [sessionId, seg]));
+  const [last] = useState(() => ({ title: '' }));
+  const info = useStore(useMemo(() => liveSelector(sessionId, seg, last), [sessionId, seg, last]));
   const lead = useItem(seg.lead ?? seg.work[0] ?? '');
   const now = useTick();
   const cut = info.indexOf('|');
@@ -496,6 +525,25 @@ function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onTogg
   const elapsed = lead ? now - lead.ts : 0;
   // The working tiles keep their own animation: the line's ticks and title changes leave them alone.
   const tiles = useMemo(() => <Tiles size={12} />, []);
+  // A new title of another width: the time and steps after it glide to their new place instead of
+  // jumping there. A longer title waits until they have made room, so no words ever cross. The old
+  // width is read as the old title fades out, the new one as it arrives: never at mount, where a
+  // sent message is still in the air.
+  const label = useRef<HTMLSpanElement>(null);
+  const width = useRef(-1);
+  useLayoutEffect(() => {
+    if (out && label.current) width.current = label.current.offsetWidth;
+  }, [out]);
+  useLayoutEffect(() => {
+    const was = width.current;
+    width.current = -1;
+    const el = label.current;
+    if (!el || was < 0) return;
+    const w = el.offsetWidth;
+    if (Math.abs(was - w) < 1) return;
+    for (let n = el.nextElementSibling; n; n = n.nextElementSibling) n.animate([{ transform: `translateX(${was - w}px)` }, { transform: 'translateX(0)' }], { duration: 220, easing: 'cubic-bezier(0.2, 0, 0, 1)', composite: 'add' });
+    if (w > was) el.animate([{ opacity: 0 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], { duration: 380, easing: 'ease-out' });
+  }, [title, waiting]);
   const body = (
     <>
       {waiting ? (
@@ -506,9 +554,11 @@ function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onTogg
         <span className="work-ind">{tiles}</span>
       )}
       {waiting ? (
-        <span className="work-label work-waiting">Waiting for you</span>
+        <span ref={label} className="work-label work-waiting">
+          Waiting for you
+        </span>
       ) : (
-        <span className="work-label work-live-title shimmer truncate" data-out={out || undefined}>
+        <span ref={label} className="work-label work-live-title shimmer truncate" data-out={out || undefined}>
           {title}
         </span>
       )}

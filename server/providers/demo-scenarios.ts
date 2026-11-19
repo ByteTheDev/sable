@@ -1715,32 +1715,38 @@ const ADMIN_TS_AFTER = C.ADMIN_TS.replace("import type { SessionStore } from './
 );
 
 /**
- * A working turn that says what it is doing now and then: a short report between runs of steps
- * (thinking, reads, an edit, the tests, a type check), then the answer. Long enough to steer into:
- * a message sent while it works is answered at the next step, and the work goes on.
+ * A working turn written the way Claude writes one: a one-line lead-in before most steps ("Let me
+ * read the handler."), a real report now and then (what it found, what passed), then the answer.
+ * Long enough to steer into: a message sent while it works is answered at the next step, and the
+ * work goes on.
  */
 const progress: Scenario = async ({ s }) => {
-  await s.think(
-    'Every error should leave through `errorHandler` as `{ error: code }`. First I will find each place that writes an error body by hand, then read the handler and those routes.',
-  );
+  await s.think('Every error should leave through `errorHandler` as `{ error: code }`. First I will find each place that writes an error body by hand, then read the handler and those routes.');
+  await s.say("I'll start by finding every place that writes an error body by hand.");
   await s.grep('res\\.status\\(\\d+\\)\\.json', C.grep(/res\.status\(\d+\)\.json/));
+  await s.say('Let me read the error handler and the admin routes.');
   await s.readMany([
     { rel: 'src/server/errors.ts', content: C.ERRORS_TS },
     { rel: 'src/server/admin.ts', content: C.ADMIN_TS },
   ]);
   await s.pause(1800, 2400);
-  await s.say("Found it: the admin guard answers `{ message: 'Forbidden' }`, a body no client can branch on. I'll send it through `HttpError` like every other route.");
+  await s.say("Found it: the admin guard answers `{ message: 'Forbidden' }`, a body no client can branch on. Let me check how the middleware and the routes build theirs.");
   await s.read('src/auth/middleware.ts', C.MIDDLEWARE_TS);
   await s.read('src/server/routes.ts', C.ROUTES_TS);
   await s.pause(1500, 2000);
   await s.think('The middleware already throws `HttpError` for missing and expired sessions, so the admin guard is the odd one out. A throw from an async handler reaches `errorHandler` through Express 5, which this project runs.');
+  await s.say("Now I'll make the admin guard throw `HttpError` like the middleware does.");
   await s.edit('src/server/admin.ts', C.ADMIN_TS, ADMIN_TS_AFTER, { description: 'Throw HttpError(403) instead of writing the body by hand' });
-  await s.pause(1500, 2000);
+  await s.pause(1200, 1600);
+  await s.say('Now let me run the tests.');
   await s.bash('npm test', { description: 'Run the test suite', lines: vitestPass(s.cwd, BASE_TEST_FILES), activity: 'Running the test suite' });
-  await s.say('The admin guard now answers like the rest, and the suite passes. Checking the webhook path next, since it builds its own errors too.');
+  await s.say('The admin guard now answers like the rest, and the suite passes. The webhook path builds its own errors too, so let me check it.');
   await s.read('src/server/webhooks.ts', C.WEBHOOKS_TS);
+  await s.pause(900, 1300);
+  await s.say('Let me make sure nothing else builds an error by hand.');
   await s.grep('HttpError', C.grep(/HttpError/));
-  await s.pause(1500, 2000);
+  await s.pause(1200, 1600);
+  await s.say('Perfect. Let me run the type check.');
   await s.bash('npx tsc --noEmit', { description: 'Type-check the project', lines: [['', 3000]], activity: 'Type-checking' });
   await s.pause(800, 1200);
   await s.say(
