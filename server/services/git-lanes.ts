@@ -361,13 +361,13 @@ export async function landLane(lane: SessionLane, message: string): Promise<Lane
 export async function removeLane(lane: SessionLane, opts: { force?: boolean } = {}): Promise<{ ok: true } | { error: string }> {
   for (const name of lane.links ?? LANE_LINKS) unlinkLink(path.join(lane.path, name));
   if (isDir(lane.path)) {
-    const r = await runGit(lane.root, ['worktree', 'remove', '--force', lane.path], { timeoutMs: T_TREE });
-    if (!ok(r)) {
-      try {
-        rmSync(lane.path, { recursive: true, force: true, maxRetries: 3 });
-      } catch (err) {
-        return { error: (err as Error).message.includes('EBUSY') ? 'The lane folder is in use. Close what has it open and try again.' : gitError(r, 'Could not remove the lane folder.') };
-      }
+    // Node removes the folder itself: it unlinks any link or junction left inside without following
+    // it (git for Windows walks into junctions it does not know, which could reach the main checkout's
+    // node_modules). git then only forgets the worktree.
+    try {
+      rmSync(lane.path, { recursive: true, force: true, maxRetries: 3 });
+    } catch (err) {
+      return { error: (err as Error).message.includes('EBUSY') ? 'The lane folder is in use. Close what has it open and try again.' : 'Could not remove the lane folder.' };
     }
   }
   await runGit(lane.root, ['worktree', 'prune'], { timeoutMs: T_FAST });

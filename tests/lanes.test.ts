@@ -1,6 +1,6 @@
 /** Lanes at the git level, on temporary repositories only. */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -172,6 +172,21 @@ describe('lanes', { timeout: 30_000 }, () => {
     expect(git(r.root, 'worktree', 'list').split('\n')).toHaveLength(1);
     expect(readFileSync(path.join(r.root, 'node_modules', 'left-pad', 'index.js'), 'utf8')).toContain('module.exports');
     expect(readFileSync(path.join(r.root, 'src', 'session.js'), 'utf8')).toBe('export const IDLE = 60;\n');
+  });
+
+  it('removes a lane without following a link or junction left deeper inside it', async () => {
+    const r = repo();
+    const { lane: l } = await lane(r, 'deep');
+    // What an install inside the lane leaves: a package's own node_modules linking out of the lane.
+    const outside = path.join(r.home, 'outside-store');
+    mkdirSync(path.join(outside, 'pkg'), { recursive: true });
+    writeFileSync(path.join(outside, 'pkg', 'keep.js'), 'keep\n');
+    mkdirSync(path.join(l.path, 'packages', 'a'), { recursive: true });
+    symlinkSync(outside, path.join(l.path, 'packages', 'a', 'node_modules'), 'junction');
+    expect(await removeLane(l, { force: true })).toEqual({ ok: true });
+    expect(existsSync(l.path)).toBe(false);
+    expect(readFileSync(path.join(outside, 'pkg', 'keep.js'), 'utf8')).toBe('keep\n');
+    expect(git(r.root, 'worktree', 'list').split('\n')).toHaveLength(1);
   });
 
   it('refuses a folder that is not a repository or has no commit', async () => {
