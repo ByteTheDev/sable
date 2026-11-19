@@ -594,6 +594,9 @@ export function backdropImageBlob(id: string): Promise<Blob> {
 // Account id optional everywhere: absent means the agent's built-in default account.
 export const login = (provider: ProviderId, accountId?: string) => bridge.call('auth.login', { provider, accountId }).catch(fail);
 export const cancelLogin = (provider: ProviderId, accountId?: string) => bridge.call('auth.cancel', { provider, accountId }).catch(fail);
+/** The code a browser showed instead of returning to Sable: finishes the sign-in in progress. */
+export const submitLoginCode = (provider: ProviderId, accountId: string | undefined, code: string) =>
+  bridge.call('auth.code', { provider, accountId, code }).catch((err: Error) => ({ ok: false, error: err.message }));
 export const logout = (provider: ProviderId, accountId?: string) => bridge.call('auth.logout', { provider, accountId }).catch(fail);
 export const refreshProvider = (provider: ProviderId, accountId?: string) => bridge.call('auth.refresh', { provider, accountId }).catch(fail);
 export const refreshLimits = (provider: ProviderId, accountId?: string) => bridge.call('provider.limits', { provider, accountId }).catch(() => []);

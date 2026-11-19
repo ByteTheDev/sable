@@ -1335,6 +1335,17 @@ export class App {
 
     // ── auth ──
     this.register('auth.refresh', ({ provider, accountId }) => this.emitProvider(provider, accountId ?? DEFAULT_ACCOUNT));
+    // The code a browser showed instead of returning to Sable: it finishes the sign-in in progress.
+    this.register('auth.code', async ({ provider, accountId = DEFAULT_ACCOUNT, code }) => {
+      const p = this.provider(provider, accountId);
+      if (!p.submitLoginCode) return { ok: false, error: 'This agent finishes its sign-in in the browser.' };
+      try {
+        await p.submitLoginCode(String(code ?? ''));
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: (err as Error).message || 'The code did not work. Start the sign-in again.' };
+      }
+    });
     this.register('auth.login', async ({ provider, accountId = DEFAULT_ACCOUNT }) => {
       const p = this.provider(provider, accountId);
       const key = accountKey(provider, accountId);

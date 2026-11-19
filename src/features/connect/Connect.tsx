@@ -8,6 +8,7 @@ import { resetIn } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
 import { tildePath } from '@/lib/format';
 import { openAddAccount } from '@/features/accounts/model';
+import { LoginCode } from './LoginCode';
 import { cancelLogin, login, logout, moveAccount, openSettings, refreshLimits, refreshProvider, removeAccount, renameAccount, setDefaultAccount } from '@/state/actions';
 import { useAccounts } from '@/state/hooks';
 import { accountKey, useStore, type AuthFlow } from '@/state/store';
@@ -388,6 +389,8 @@ function AccountRow({
       </div>
 
       <AutoHeight>{showLimits && <MiniLimits limits={limits!} />}</AutoHeight>
+      {/* The browser may show a code to paste instead of returning to Sable. */}
+      <AutoHeight>{phase === 'url' && live?.codeUrl && <LoginCode provider={provider} accountId={accountId} />}</AutoHeight>
     </div>
   );
 }

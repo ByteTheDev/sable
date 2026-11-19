@@ -298,6 +298,7 @@ describe('Claude sign-in through its CLI (fake CLI)', () => {
     const bin = fakeClaudeCli();
     const before = process.env.PATH;
     process.env.PATH = `${bin}${path.delimiter}${before}`;
+    process.env.SABLE_LOGIN = 'cli';
     try {
       const home = temp('sable-home-');
       const app = new App({ home, providers: [(ctx) => new ClaudeProvider(ctx)], quiet: true, userHome: temp() });
@@ -329,6 +330,7 @@ describe('Claude sign-in through its CLI (fake CLI)', () => {
     } finally {
       process.env.PATH = before;
       delete process.env.FAKE_LOGIN;
+      delete process.env.SABLE_LOGIN;
     }
   });
 });

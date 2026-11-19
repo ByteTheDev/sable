@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import type { ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import {
   query,
   listSessions,
@@ -115,6 +115,23 @@ class PushQueue<T> implements AsyncIterable<T> {
   }
 }
 
+/** The SDK's sign-in requests (on the query object, not in its public types). */
+type AuthQuery = Query & {
+  claudeAuthenticate(loginWithClaudeAi: boolean): Promise<{ manualUrl: string; automaticUrl: string }>;
+  claudeOAuthCallback(authorizationCode: string, state: string): Promise<unknown>;
+  claudeOAuthWaitForCompletion(): Promise<unknown>;
+};
+
+/** Opens a link in the default browser (no shell: the link's & and = stay as they are). */
+function openInBrowser(url: string) {
+  const [cmd, args] = process.platform === 'win32' ? ['rundll32.exe', ['url.dll,FileProtocolHandler', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+  try {
+    spawn(cmd, args as string[], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  } catch {
+    /* the link is in Sable too */
+  }
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
@@ -188,6 +205,8 @@ export class ClaudeProvider implements Provider {
   /** Tool steps a sub-agent call has already nested under (see `claimStep`). */
   private claimedSteps = new Set<string>();
   private loginProc?: ChildProcess;
+  /** The sign-in in progress, run through Claude Code's own SDK flow (see `login`). */
+  private auth?: { q: AuthQuery; input: PushQueue<SDKUserMessage> };
   private limitsCache: RateLimit[] = [];
   /** Extra usage as last known: from the usage request, and whether turns run on it (rate_limit_event). */
   private extraCache?: NonNullable<LimitsMeta['extra']>;
@@ -245,9 +264,52 @@ export class ClaudeProvider implements Provider {
     return info;
   }
 
-  login(): Promise<void> {
+  /**
+   * Signs in through Claude Code's SDK sign-in flow: it gives two links, one that returns to this
+   * computer by itself (opened in the browser) and one whose page shows a code to paste. Either
+   * finishes it: the browser's return, or the code pasted into Sable (`submitLoginCode`). Older
+   * CLIs without the flow fall back to `claude auth login`.
+   */
+  async login(): Promise<void> {
+    await this.cancelLogin();
+    // SABLE_LOGIN=cli: the CLI's own `claude auth login` (the tests drive a fake CLI that way).
+    if (process.env.SABLE_LOGIN === 'cli') return this.loginWithCli();
+    const input = new PushQueue<SDKUserMessage>();
+    const q = query({ prompt: input, options: { ...this.baseOptions(homedir()), settingSources: [], strictMcpConfig: true, persistSession: false } }) as AuthQuery;
+    if (typeof q.claudeAuthenticate !== 'function') {
+      input.end();
+      q.close();
+      return this.loginWithCli();
+    }
+    const auth = { q, input };
+    this.auth = auth;
+    try {
+      const urls = await withTimeout(q.claudeAuthenticate(true), 30_000, 'Claude Code sign-in');
+      this.ctx.emit({ type: 'auth.progress', provider: 'claude', state: 'url', url: urls.automaticUrl, codeUrl: urls.manualUrl });
+      openInBrowser(urls.automaticUrl);
+      await q.claudeOAuthWaitForCompletion();
+    } finally {
+      if (this.auth === auth) this.auth = undefined;
+      input.end();
+      try {
+        q.close();
+      } catch {
+        /* already gone */
+      }
+      this.infoCache = undefined;
+    }
+  }
+
+  async submitLoginCode(code: string): Promise<void> {
+    const auth = this.auth;
+    if (!auth) throw new Error('No sign-in is waiting for a code. Start it again.');
+    const [authorizationCode, state] = code.trim().split('#');
+    if (!authorizationCode || !state) throw new Error('That is not the whole code. Copy it again from the browser.');
+    await auth.q.claudeOAuthCallback(authorizationCode, state);
+  }
+
+  private loginWithCli(): Promise<void> {
     return new Promise((resolve, reject) => {
-      void this.cancelLogin();
       const child = spawnCli('claude', ['auth', 'login', '--claudeai'], { env: this.env() });
       this.loginProc = child;
       let out = '';
@@ -275,6 +337,16 @@ export class ClaudeProvider implements Provider {
   async cancelLogin() {
     killTree(this.loginProc);
     this.loginProc = undefined;
+    const auth = this.auth;
+    this.auth = undefined;
+    if (auth) {
+      auth.input.end();
+      try {
+        auth.q.close();
+      } catch {
+        /* already gone */
+      }
+    }
   }
 
   async logout() {

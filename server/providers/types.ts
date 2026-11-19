@@ -83,6 +83,8 @@ export interface Provider {
   info(force?: boolean): Promise<ProviderInfo>;
   login(): Promise<void>;
   cancelLogin(): Promise<void>;
+  /** A code the browser showed instead of returning to the app ("code#state"): finishes the sign-in in progress. */
+  submitLoginCode?(code: string): Promise<void>;
   logout(): Promise<void>;
   /** Capabilities before a session exists (used by the home composer). */
   caps(cwd?: string): Promise<Capabilities>;

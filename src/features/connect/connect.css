@@ -477,3 +477,32 @@
   font-size: var(--t-ui);
   color: var(--text-2);
 }
+
+/* ── a sign-in finished with a code the browser shows (LoginCode) ── */
+
+.login-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.login-code-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+}
+
+.login-code-input::placeholder {
+  font-family: var(--font-sans);
+}
+
+.login-code-error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--t-small);
+  color: var(--red);
+}

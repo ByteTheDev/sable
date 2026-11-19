@@ -54,6 +54,8 @@ export type SettingsSection = 'general' | 'appearance' | 'accounts' | 'usage' | 
 export interface AuthFlow {
   state: 'started' | 'url' | 'done' | 'error' | 'cancelled' | 'timeout';
   url?: string;
+  /** The sign-in can also finish with a code the browser shows (see features/connect/LoginCode). */
+  codeUrl?: string;
   message?: string;
 }
 
@@ -497,7 +499,8 @@ export function applyEvent(e: BridgeEvent) {
       const key = accountKey(e.provider, e.accountId);
       // A new flow starts clean; later steps keep the link the CLI printed.
       const url = e.url ?? (e.state === 'started' ? undefined : useStore.getState().auth[key]?.url);
-      const flow: AuthFlow = { state: e.state, url, message: e.message };
+      const codeUrl = e.codeUrl ?? (e.state === 'started' ? undefined : useStore.getState().auth[key]?.codeUrl);
+      const flow: AuthFlow = { state: e.state, url, codeUrl, message: e.message };
       useStore.setState((s) => ({ auth: { ...s.auth, [key]: flow } }));
       // A finished sign-in is history after a moment, so its success state does not linger.
       if (e.state === 'done') {

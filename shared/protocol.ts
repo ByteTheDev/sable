@@ -1320,7 +1320,8 @@ export interface PendingPrompts {
 
 export type BridgeEvent =
   | { type: 'provider.updated'; provider: ProviderInfo }
-  | { type: 'auth.progress'; provider: ProviderId; accountId?: string; state: 'started' | 'url' | 'done' | 'error' | 'cancelled' | 'timeout'; url?: string; message?: string }
+  /** `url`: the sign-in link opened in the browser; `codeUrl`: the one whose page shows a code to paste (`auth.code`). */
+  | { type: 'auth.progress'; provider: ProviderId; accountId?: string; state: 'started' | 'url' | 'done' | 'error' | 'cancelled' | 'timeout'; url?: string; codeUrl?: string; message?: string }
   | { type: 'projects.updated'; projects: Project[]; groups?: FolderGroup[]; chatsOrder?: number }
   | { type: 'settings.updated'; settings: AppSettings }
   | { type: 'session.added'; session: SessionMeta }
@@ -1586,6 +1587,8 @@ export interface RpcMethods {
 
   'auth.refresh': { params: { provider: ProviderId; accountId?: string }; result: ProviderInfo };
   'auth.login': { params: { provider: ProviderId; accountId?: string }; result: { started: boolean } };
+  /** The code the browser showed instead of returning to Sable ("code#state"): finishes the sign-in in progress. */
+  'auth.code': { params: { provider: ProviderId; accountId?: string; code: string }; result: { ok: boolean; error?: string } };
   'auth.cancel': { params: { provider: ProviderId; accountId?: string }; result: { ok: boolean } };
   'auth.logout': { params: { provider: ProviderId; accountId?: string }; result: ProviderInfo };
 

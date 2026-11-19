@@ -3,6 +3,7 @@ import type { AccountFolder, ProviderId } from '@shared/protocol';
 import { ProviderMark, PROVIDER_NAME, Ring } from '@/art/Logo';
 import { CopyButton } from '@/components/CopyButton';
 import { AutoHeight, DrawnCheck, Roll } from '@/features/connect/Connect';
+import { LoginCode } from '@/features/connect/LoginCode';
 import { Icon, type IconName } from '@/icons';
 import { desktop, hasNativeFolderPicker } from '@/lib/desktop';
 import { tildePath } from '@/lib/format';
@@ -212,6 +213,8 @@ function SignIn({ provider, accountId, onRetry, onCancel, onDone }: { provider: 
           </button>
         )}
       </div>
+      {/* The browser may show a code to paste instead of returning to Sable. */}
+      <AutoHeight>{phase === 'waiting' && flow?.codeUrl && <LoginCode provider={provider} accountId={accountId} />}</AutoHeight>
     </div>
   );
 }
