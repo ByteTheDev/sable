@@ -4,7 +4,6 @@ import type { Question, QuestionRequest } from '@shared/protocol';
 import { Icon } from '@/icons';
 import { respondQuestion } from '@/state/actions';
 import { focusComposer } from '@/state/hooks';
-import { KeyHint } from './PermissionCard';
 import { usePromptKeys } from './keys';
 
 interface Answer {
@@ -184,7 +183,6 @@ export function QuestionPage({ x, onFieldEscape }: { x: QuestionAnswers; onField
                   <span className="qc-opt-label">{o.label}</span>
                   {o.description && <span className="qc-opt-desc">{o.description}</span>}
                 </span>
-                {i < 9 && <KeyHint k={String(i + 1)} />}
               </button>
             );
           })}
@@ -194,7 +192,6 @@ export function QuestionPage({ x, onFieldEscape }: { x: QuestionAnswers; onField
               <span className="qc-opt-text">
                 <span className="qc-opt-label">Other</span>
               </span>
-              {q.options.length < 9 && <KeyHint k={String(q.options.length + 1)} />}
             </button>
           ) : (
             <div className="qc-opt qc-other" data-on={a.other.trim() ? true : undefined}>
@@ -266,18 +263,15 @@ export function QuestionCard({ sessionId, req, more }: { sessionId: string; req:
       <div className="pc-foot qc-foot">
         <button type="button" className="btn btn-ghost" disabled={sent} onClick={() => x.send(true)}>
           Skip
-          <KeyHint k="Esc" />
         </button>
         <span className="grow" />
         {!last && (
           <button type="button" className="btn" disabled={!x.ready} onClick={() => x.go(step + 1)}>
             Next
-            <KeyHint k="↵" />
           </button>
         )}
         <button type="button" className="btn btn-primary" disabled={!complete || sent} onClick={() => x.send()}>
           Send answers
-          {last && <KeyHint k="↵" />}
         </button>
       </div>
     </section>

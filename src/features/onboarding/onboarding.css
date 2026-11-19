@@ -325,16 +325,6 @@ html[data-handover] .home .logo-mark {
   color: var(--text-3);
 }
 
-.onb-place-kbd {
-  flex-shrink: 0;
-  opacity: 0;
-  transition: opacity var(--d-1) var(--ease);
-}
-
-.onb-place:focus-visible .onb-place-kbd {
-  opacity: 1;
-}
-
 .onb-place-go {
   position: absolute;
   right: 16px;
@@ -381,10 +371,6 @@ html[data-handover] .home .logo-mark {
 
 .onb-places-list > :only-child::before {
   display: none;
-}
-
-.onb-place-pick:hover .onb-place-kbd {
-  opacity: 0.8;
 }
 
 /* ── footer: back, progress, skip ── */

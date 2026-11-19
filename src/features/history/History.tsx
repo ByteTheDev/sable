@@ -293,15 +293,6 @@ function HistoryBody({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="history-foot">
-        <span className="history-hint">
-          <kbd className="kbd">↑</kbd>
-          <kbd className="kbd">↓</kbd>
-          to move
-        </span>
-        <span className="history-hint">
-          <kbd className="kbd">↵</kbd>
-          to resume
-        </span>
         <span className="grow" />
         {entries && <span className="history-count num">{rows.length === entries.length || (onlyNew && !query.trim()) ? plural(rows.length, 'conversation') : `${rows.length} of ${entries.length}`}</span>}
       </div>

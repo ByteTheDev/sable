@@ -221,7 +221,6 @@ function PaletteBody({ onRun }: { onRun: (item: PaletteItem) => void }) {
           aria-controls="palette-list"
           aria-activedescendant={rows[safe] ? `palette-opt-${safe}` : undefined}
         />
-        <Kbd combo="esc" className="palette-esc" />
       </div>
 
       <div ref={listRef} id="palette-list" className="palette-list scroll" role="listbox" aria-label="Results">
@@ -232,27 +231,6 @@ function PaletteBody({ onRun }: { onRun: (item: PaletteItem) => void }) {
             <PaletteRowView key={`${row.group}:${row.item.id}`} row={row} index={i} active={i === safe} pill={i === safe ? pill : undefined} showHead={i === 0 || rows[i - 1].group !== row.group} onHover={setCursor} onRun={onRun} />
           ))
         )}
-      </div>
-
-      <div className="palette-foot">
-        <span className="palette-hint">
-          <Kbd combo="up" />
-          <Kbd combo="down" />
-          to move
-        </span>
-        <span className="palette-hint">
-          <Kbd combo="enter" />
-          to open
-        </span>
-        <span className="grow" />
-        <span className="palette-hint">
-          <kbd className="kbd">&gt;</kbd>
-          actions
-        </span>
-        <span className="palette-hint">
-          <kbd className="kbd">@</kbd>
-          sessions
-        </span>
       </div>
     </>
   );
@@ -318,11 +296,6 @@ function PaletteRowView({
 
         </span>
         <span className="palette-end">{item.session ? <SessionEnd session={item.session} /> : item.keys ? <Kbd combo={item.keys} /> : null}</span>
-        {active && (
-          <span className="palette-enter" aria-hidden>
-            <Icon name="enter" size={13} />
-          </span>
-        )}
       </div>
     </>
   );

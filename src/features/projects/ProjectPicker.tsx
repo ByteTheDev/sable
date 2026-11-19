@@ -8,7 +8,7 @@ import { baseName, dirName } from '@/lib/format';
 import { fuzzy } from '@/lib/fuzzy';
 import { addProject } from '@/state/actions';
 import { useStore } from '@/state/store';
-import { IconButton, Kbd, Modal, Spinner, Tip, cx } from '@/ui';
+import { IconButton, Modal, Spinner, Tip, cx } from '@/ui';
 import './picker.css';
 
 /**
@@ -405,13 +405,7 @@ function PickerBody({ onClose }: { onClose: () => void }) {
               }}
               onKeyDown={onFilterKey}
             />
-            {typedPath ? (
-              <span className="picker-filter-hint">
-                <Kbd combo="enter" /> to go
-              </span>
-            ) : (
-              listing && <span className="picker-filter-hint num">{filter ? `${rows.length} of ${listing.dirs.length}` : `${listing.dirs.length} folders`}</span>
-            )}
+            {!typedPath && listing && <span className="picker-filter-hint num">{filter ? `${rows.length} of ${listing.dirs.length}` : `${listing.dirs.length} folders`}</span>}
           </div>
 
           <div ref={listRef} id="picker-list" className="picker-list scroll" role="listbox" aria-label="Folders" aria-busy={loading}>
@@ -481,7 +475,6 @@ function PickerBody({ onClose }: { onClose: () => void }) {
         <button type="button" className="btn btn-primary" disabled={!listing || opening} onClick={() => listing && void openFolder(listing.path)}>
           {opening ? <Spinner size={13} /> : null}
           Open this folder
-          <Kbd combo="mod+enter" className="picker-kbd" />
         </button>
       </div>
     </div>

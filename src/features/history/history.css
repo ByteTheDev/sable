@@ -260,13 +260,6 @@
   border-top: 1px solid var(--line);
 }
 
-
-.history-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .history-count {
   color: var(--text-4);
 }

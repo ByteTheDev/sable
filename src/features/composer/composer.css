@@ -169,33 +169,6 @@
   text-overflow: ellipsis;
 }
 
-.cmp-ghost-key {
-  flex-shrink: 0;
-  margin-left: 8px;
-  align-self: center;
-}
-
-/* Once per session while a turn runs: which keys steer. Right-aligned on the placeholder's line. */
-.cmp-steer-hint {
-  position: absolute;
-  top: 5px;
-  right: 3px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 22px;
-  font-size: var(--t-small);
-  color: var(--text-3);
-  pointer-events: none;
-  animation: fade-in var(--d-3) var(--ease) 120ms backwards;
-}
-
-@container cmp (max-width: 460px) {
-  .cmp-steer-hint {
-    display: none;
-  }
-}
-
 /* Sending: the text rolls up behind the field's top edge and the next placeholder rises in. */
 .cmp-roll {
   position: absolute;
@@ -1542,20 +1515,6 @@
 
 .mm-empty {
   padding: 7px 8px 8px;
-  font-size: var(--t-small);
-  color: var(--text-3);
-}
-
-.mm-sep {
-  margin: 4px 6px;
-}
-
-.mm-foot-static {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 28px;
-  padding: 2px 8px 3px;
   font-size: var(--t-small);
   color: var(--text-3);
 }

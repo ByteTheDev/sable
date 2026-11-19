@@ -104,13 +104,6 @@ export const ModeMenu = memo(function ModeMenu({ choice, side, onClosed }: MenuP
   const at = Math.max(0, modes.findIndex((m) => m.id === anchor));
   const up = side === 'top';
   const ordered = up ? [...modes.slice(at + 1), ...modes.slice(0, at + 1)] : [...modes.slice(at), ...modes.slice(0, at)];
-  const foot = (
-    <div className="mm-foot-static" key="foot">
-      <span className="grow">Cycle modes</span>
-      <Kbd combo="shift+tab" />
-    </div>
-  );
-  const sep = <RM.Separator className="menu-sep mm-sep" key="sep" />;
   return (
     <RM.Root open={open} onOpenChange={setOpen} modal={false}>
       <Tip label="Mode" keys="shift+tab" side="top">
@@ -141,7 +134,6 @@ export const ModeMenu = memo(function ModeMenu({ choice, side, onClosed }: MenuP
           <Later>
             {() => (
               <>
-                {up && [foot, sep]}
                 {ordered.map((m) => (
                   <RM.Item key={m.id} className="menu-item mm-row" data-current={m.id === anchor || undefined} onSelect={() => choice.setMode(m.id)} {...guard}>
                     <Icon name={MODE_ICON[m.tone] ?? 'shield'} size={15} className="mm-lead" />
@@ -151,7 +143,6 @@ export const ModeMenu = memo(function ModeMenu({ choice, side, onClosed }: MenuP
                     <span className="mm-check">{m.id === cur?.id && <Icon name="check" size={14} />}</span>
                   </RM.Item>
                 ))}
-                {!up && [sep, foot]}
               </>
             )}
           </Later>

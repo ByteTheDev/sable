@@ -11,7 +11,6 @@ import { useStore } from '@/state/store';
 import { PathLabel } from '@/ui';
 import { usePromptKeys } from './keys';
 
-export const KeyHint = ({ k }: { k: string }) => <span className="pk">{k}</span>;
 
 /** One labelled value. Code (commands, patterns) is set in the code font; a path is a label in the UI font. */
 function Field({ label, value, mono, path }: { label: string; value?: string; mono?: boolean; path?: boolean }) {
@@ -101,7 +100,6 @@ export function CardWarmup({ active }: { active: boolean }) {
         <div className="pc-foot">
           <button type="button" tabIndex={-1} className="btn btn-primary">
             <span>Allow</span>
-            <KeyHint k="↵" />
           </button>
         </div>
       </section>
@@ -229,7 +227,6 @@ export function PermissionCard({ sessionId, req, more }: { sessionId: string; re
     }
   });
 
-  const keyFor = (o: PermissionOption, i: number) => (o === primary ? '↵' : o === deny ? 'Esc' : String(i + 1));
 
   return (
     <section className="pc glass-card" data-spot data-kind={req.kind} aria-label={req.title} aria-live="polite">
@@ -278,7 +275,6 @@ export function PermissionCard({ sessionId, req, more }: { sessionId: string; re
           </button>
           <button type="button" className="btn" onClick={() => respond(deny, message.trim() || undefined)}>
             {deny.label}
-            <KeyHint k="↵" />
           </button>
         </div>
       ) : (
@@ -294,7 +290,6 @@ export function PermissionCard({ sessionId, req, more }: { sessionId: string; re
             >
               <span>{o.label}</span>
               {o.hint && <span className="pc-hint">{o.hint}</span>}
-              <KeyHint k={keyFor(o, i)} />
             </button>
           ))}
         </div>

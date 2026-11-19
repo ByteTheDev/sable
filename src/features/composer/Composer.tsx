@@ -917,7 +917,6 @@ ${cur}` : draft.text, attachments: draft.attachments });
           {ghost && (
             <div className="cmp-ghost" aria-hidden>
               <span className="cmp-ghost-text">{ghost}</span>
-              <Kbd combo="tab" className="cmp-ghost-key" />
             </div>
           )}
           {shell && text === '!' && (

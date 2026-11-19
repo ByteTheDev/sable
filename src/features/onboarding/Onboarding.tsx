@@ -10,7 +10,7 @@ import { tildePath } from '@/lib/format';
 import { addProject, goHome, setSettings } from '@/state/actions';
 import { focusComposer } from '@/state/hooks';
 import { useStore } from '@/state/store';
-import { Kbd, Spinner } from '@/ui';
+import { Spinner } from '@/ui';
 import './onboarding.css';
 
 const STEPS = 3;
@@ -222,7 +222,6 @@ export function Onboarding() {
         <div className="onb-foot-side onb-foot-end">
           <button type="button" className="btn btn-ghost btn-sm onb-skip" onClick={() => void done()}>
             Skip
-            <Kbd combo="esc" />
           </button>
         </div>
       </footer>
@@ -550,7 +549,7 @@ function Folder({ reduce, onChoose, onDone, chooseRef }: { reduce: boolean; onCh
                     <span className="onb-place-name truncate">{p.name}</span>
                     <span className="onb-place-path truncate">{parentOf(p.path, home)}</span>
                   </span>
-                  {chosen === p.path ? <Ring size={14} label="Opening" /> : i === 0 ? <Kbd combo="enter" className="onb-place-kbd" /> : null}
+                  {chosen === p.path ? <Ring size={14} label="Opening" /> : null}
                   <Icon name="arrow-right" size={14} className="onb-place-go" />
                 </button>
               </Item>
@@ -562,7 +561,6 @@ function Folder({ reduce, onChoose, onDone, chooseRef }: { reduce: boolean; onCh
               <span className="onb-place-text">
                 <span className="onb-place-name">Choose a folder…</span>
               </span>
-              <Kbd combo="mod+o" className="onb-place-kbd" />
             </button>
           </Item>
         </div>
