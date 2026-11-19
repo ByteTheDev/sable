@@ -4,16 +4,15 @@ import { Collapse } from '@/components/Collapse';
 import { Markdown } from '@/components/Markdown';
 import { Icon, TOOL_ICON } from '@/icons';
 import { formatDuration, plural, relPath } from '@/lib/format';
-import { useNow } from '@/lib/view-hooks';
 import { PathLabel } from '@/ui';
 import { AgentBlock } from './Agent';
 import { useTimeline } from './ctx';
 import { ToolDetails, hasDetails } from './ToolDetails';
-import { isActive, partialJsonString, shortDuration } from './util';
+import { isActive, partialJsonString, shortDuration, useTick } from './util';
 
 /** Live seconds for a running call. Hidden for the first two seconds: most calls are done by then. */
 export function Elapsed({ since }: { since: number }) {
-  const now = useNow(true);
+  const now = useTick();
   const ms = now - since;
   if (ms < 2000) return null;
   return <span className="num">{shortDuration(ms)}</span>;
@@ -147,6 +146,9 @@ function Peek({ text }: { text: string }) {
   );
 }
 
+/** A running command shows its last lines once it has run this long (ms), as its seconds do. */
+const PEEK_AFTER_MS = 2000;
+
 function ToolRow({ item }: { item: ToolItem }) {
   const { cwd, home } = useTimeline();
   const [choice, setChoice] = useState<boolean | null>(null);
@@ -156,7 +158,10 @@ function ToolRow({ item }: { item: ToolItem }) {
   const icon = TOOL_ICON[item.kind] ?? TOOL_ICON.other;
   const t = rowText(item, cwd, home);
   const error = errorText(item);
-  const peek = item.kind === 'bash' && active && !open && !!item.output?.trim();
+  // Only a command that runs a while opens its window (with the seconds, after 2 s): a quick one
+  // never flashes it open and shut under the reader.
+  const now = useTick(item.kind === 'bash' && active);
+  const peek = item.kind === 'bash' && active && !open && !!item.output?.trim() && now - item.ts >= PEEK_AFTER_MS;
 
   return (
     <div className="tool" data-status={item.status} data-open={open || undefined}>
@@ -173,14 +178,18 @@ function ToolRow({ item }: { item: ToolItem }) {
         {expandable && <Icon name="caret-right" size={10} className="row-caret" />}
       </button>
       {error && !open && <pre className="tool-error">{error}</pre>}
-      <Collapse open={peek}>
-        <Peek text={item.output ?? ''} />
-      </Collapse>
-      <Collapse open={open}>
-        <div className="tool-details">
-          <ToolDetails item={item} />
-        </div>
-      </Collapse>
+      {item.kind === 'bash' && (
+        <Collapse open={peek}>
+          <Peek text={item.output ?? ''} />
+        </Collapse>
+      )}
+      {expandable && (
+        <Collapse open={open}>
+          <div className="tool-details">
+            <ToolDetails item={item} />
+          </div>
+        </Collapse>
+      )}
     </div>
   );
 }

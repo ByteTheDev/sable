@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ToolItem, WorkflowAgent, WorkflowRun } from '@shared/protocol';
 import { ProviderMark } from '@/art/Logo';
 import { Collapse } from '@/components/Collapse';
@@ -7,6 +7,7 @@ import { clock } from '@/features/usage/format';
 import { useSessionLimits } from '@/features/usage/scope';
 import { Icon } from '@/icons';
 import { formatTokens, plural } from '@/lib/format';
+import { EASE_OUT, play } from '@/lib/motion';
 import { accountName } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { Spinner } from '@/ui';
@@ -47,6 +48,7 @@ const SubAgentBlock = memo(function SubAgentBlock({ item, tail = TAIL, extra, sc
   const line = live ? null : agentLine(item, steps);
   const error = !open && item.status === 'error' ? firstLines(item.result?.stderr || item.result?.text) : '';
   const shown = ids.length + (now ? 1 : 0);
+  const rows = useTicker(trail);
 
   return (
     <div className="agent" data-status={item.status} data-live={live || undefined} data-open={open || undefined}>
@@ -97,14 +99,16 @@ const SubAgentBlock = memo(function SubAgentBlock({ item, tail = TAIL, extra, sc
         <Collapse open={live && !open && shown > 0}>
           <div className="agent-trail" aria-label="Latest steps">
             {steps > ids.length && <div className="agent-more num">+{steps - ids.length} earlier</div>}
-            {ids.map((id) => (
-              <TrailStep key={id} id={id} />
-            ))}
-            {now && (
-              <div key={now} className="agent-now">
-                <span className="shimmer">{now}</span>
-              </div>
-            )}
+            <div className="agent-rows" ref={rows}>
+              {ids.map((id) => (
+                <TrailStep key={id} id={id} />
+              ))}
+              {now && (
+                <div key={now} className="agent-now">
+                  <span className="shimmer">{now}</span>
+                </div>
+              )}
+            </div>
           </div>
         </Collapse>
         <Collapse open={open}>
@@ -120,6 +124,34 @@ function firstLines(text: string | undefined): string {
   if (!t) return '';
   const lines = t.split('\n');
   return lines.length > 3 ? lines.slice(0, 3).join('\n') + '\n…' : t;
+}
+
+/**
+ * The latest steps as a ticker: when the window moves on (the oldest step leaves as a new one
+ * arrives), the rows slide up by what left in one short glide instead of jumping a row at once;
+ * the newest comes in from under the window's edge.
+ */
+function useTicker(trail: string) {
+  const ref = useRef<HTMLDivElement>(null);
+  const tops = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const prev = tops.current;
+    const next = new Map<string, number>();
+    for (const c of el.children) {
+      const id = (c as HTMLElement).dataset.itemId;
+      if (id) next.set(id, (c as HTMLElement).offsetTop);
+    }
+    tops.current = next;
+    for (const [id, top] of next) {
+      const was = prev.get(id);
+      if (was === undefined) continue;
+      if (was - top > 1) play(el, [{ transform: `translateY(${was - top}px)` }, { transform: 'translateY(0px)' }], { duration: 240, easing: EASE_OUT });
+      break;
+    }
+  }, [trail]);
+  return ref;
 }
 
 /** One of the latest steps: the conversation's own step row, a size down. */

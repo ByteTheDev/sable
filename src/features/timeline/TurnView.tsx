@@ -1,11 +1,10 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { TimelineItem } from '@shared/protocol';
 import { Tiles } from '@/art/Logo';
 import { Collapse } from '@/components/Collapse';
 import { Icon } from '@/icons';
 import { plural } from '@/lib/format';
 import { reducedMotion } from '@/lib/motion';
-import { useNow } from '@/lib/view-hooks';
 import { showRailTab } from '@/state/actions';
 import { useStore, type Store } from '@/state/store';
 import { useFresh, useItem, useTimeline } from './ctx';
@@ -17,11 +16,19 @@ import { changesOf } from './changes';
 import { Tail } from './Tail';
 import { TurnFoot } from './Turn';
 import { groupTurns, shapeOf, type Group, type Segment, type StoryChunk, type TurnGroup, type TurnLayout } from './turns';
-import { shortDuration } from './util';
+import { shortDuration, useHeld, useTick } from './util';
 
 /** Groups built when a transcript opens, and how many more each step up builds. */
 const TAIL = 8;
 const CHUNK = 8;
+/**
+ * Older groups built ahead of the reader in idle moments, a few at a time, up to this many beyond
+ * the tail: scrolling up finds them built instead of building a chunk under a moving scroll.
+ */
+const AHEAD = 56;
+const IDLE_CHUNK = 2;
+/** How long the view must have been still before building ahead (ms). */
+const STILL_MS = 400;
 
 /** One character per root item (see `turns.ts`), recomputed only when the items object changes. */
 function shapeSelector(sessionId: string, ids: string[]) {
@@ -52,7 +59,8 @@ function stabilize(layout: TurnLayout, cache: Map<string, unknown>): TurnLayout 
     const segments = g.segments.map((s) => {
       const k = `s|${segSig(s)}`;
       const prev = (next.get(k) ?? cache.get(k)) as Segment | undefined;
-      const seg = prev ?? s;
+      const seg = prev ?? { ...s, story: s.story.map((c) => keepChunk(c, cache, next)) };
+      if (prev) for (const c of prev.story) if (c.kind === 'steps') next.set(`c|${c.key}`, c);
       next.set(k, seg);
       return seg;
     });
@@ -65,6 +73,17 @@ function stabilize(layout: TurnLayout, cache: Map<string, unknown>): TurnLayout 
   cache.clear();
   for (const [k, v] of next) cache.set(k, v);
   return { groups, queued: layout.queued };
+}
+
+/** A run of steps keeps its array while nothing joined it (ids only ever append), so its list skips rendering. */
+function keepChunk(c: StoryChunk, cache: Map<string, unknown>, next: Map<string, unknown>): StoryChunk {
+  if (c.kind !== 'steps') return c;
+  const k = `c|${c.key}`;
+  const old = (next.get(k) ?? cache.get(k)) as StoryChunk | undefined;
+  const same = old?.kind === 'steps' && old.count === c.count && old.ids.length === c.ids.length && old.ids[old.ids.length - 1] === c.ids[c.ids.length - 1];
+  const chunk = same ? old : c;
+  next.set(k, chunk);
+  return chunk;
 }
 
 function groupHeight(g: Group, items: Record<string, TimelineItem>): number {
@@ -86,7 +105,7 @@ function groupHeight(g: Group, items: Record<string, TimelineItem>): number {
  * behind a spacer of about their height and are built a few at a time as the reader scrolls up.
  */
 export const TurnList = memo(function TurnList({ ids }: { ids: string[] }) {
-  const { sessionId } = useTimeline();
+  const { sessionId, scrolled } = useTimeline();
   const shape = useStore(useMemo(() => shapeSelector(sessionId, ids), [sessionId, ids]));
   const busy = useStore((s) => {
     const st = s.sessions[sessionId]?.status;
@@ -115,13 +134,29 @@ export const TurnList = memo(function TurnList({ ids }: { ids: string[] }) {
   useEffect(() => {
     const el = spacer.current;
     if (!el || !hidden) return;
-    const io = new IntersectionObserver((entries) => entries[0]?.isIntersecting && setHidden((h) => Math.max(0, (h ?? hidden) - CHUNK)), {
+    // Interruptible: a chunk built under a moving scroll yields to its frames.
+    const io = new IntersectionObserver((entries) => entries[0]?.isIntersecting && startTransition(() => setHidden((h) => Math.max(0, (h ?? hidden) - CHUNK))), {
       root: el.closest('.tl-scroll'),
       rootMargin: '1500px 0px',
     });
     io.observe(el);
     return () => io.disconnect();
   }, [hidden]);
+
+  // Ahead of the reader: in idle moments the nearest older groups are built a couple at a time (off
+  // screen they skip layout and paint), so reading back up never waits for a chunk to build.
+  // Never under a moving scroll (its idle moments between frames are not idle for the reader): the
+  // build waits until the view has been still a moment.
+  useEffect(() => {
+    if (!hidden || groups.length - hidden >= TAIL + AHEAD || typeof requestIdleCallback !== 'function') return;
+    let id = 0;
+    const build = () => {
+      if (performance.now() - (scrolled?.current ?? 0) < STILL_MS) return void (id = requestIdleCallback(build, { timeout: 4000 }));
+      startTransition(() => setHidden((h) => Math.max(0, (h ?? hidden) - IDLE_CHUNK)));
+    };
+    id = requestIdleCallback(build, { timeout: 4000 });
+    return () => cancelIdleCallback(id);
+  }, [hidden, groups.length, scrolled]);
 
   // Reveal requests (sable:reveal-item): build every turn from the target down, open the folds
   // that hide it, then bring it into view.
@@ -323,6 +358,9 @@ function WorkLine({ seg, turn, index, open, onToggle, landed }: { seg: Segment; 
   );
 }
 
+/** The shortest time the live line shows one title (ms). */
+const TITLE_HOLD_MS = 450;
+
 /** What the running segment is doing right now: `${waiting}|${title}`. */
 function liveSelector(sessionId: string, seg: Segment) {
   return (s: Store): string => {
@@ -362,10 +400,11 @@ function LiveLine({ seg, open, onToggle, quiet }: { seg: Segment; open: boolean;
   const { sessionId } = useTimeline();
   const info = useStore(useMemo(() => liveSelector(sessionId, seg), [sessionId, seg]));
   const lead = useItem(seg.lead ?? seg.work[0] ?? '');
-  const now = useNow(true);
+  const now = useTick();
   const cut = info.indexOf('|');
   const waiting = info.slice(0, cut) === '1';
-  const title = info.slice(cut + 1);
+  // Quick steps in a row: each title holds a moment instead of flickering past (waiting shows at once).
+  const title = useHeld(info.slice(cut + 1), TITLE_HOLD_MS);
   const elapsed = lead ? now - lead.ts : 0;
   // The working tiles keep their own animation: the line's ticks and title changes leave them alone.
   const tiles = useMemo(() => <Tiles size={12} />, []);

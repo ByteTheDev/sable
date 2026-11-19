@@ -8,14 +8,14 @@ import { Icon } from '@/icons';
 import { FileLinksProvider, useResolvedFiles } from '@/lib/file-links';
 import { plural } from '@/lib/format';
 import { useStore } from '@/state/store';
-import { useFresh, useItem, useTimeline } from './ctx';
+import { stepEntrance, useFresh, useItem, useTimeline } from './ctx';
 import { Notice } from './Notice';
 import { steadyTail, useSmoothLength } from './smooth';
 import { Stamp } from './Stamp';
 import { Thinking } from './Thinking';
 import { ToolView } from './Tool';
 import { UserMessage } from './User';
-import { isExplore } from './util';
+import { isExplore, useHeld } from './util';
 
 type Row = { key: string; id: string; run?: undefined } | { key: string; run: string[]; id?: undefined };
 
@@ -179,7 +179,7 @@ export const LiveText = memo(function LiveText({ text, streaming, id }: { text: 
 /** One item, subscribed to itself only. `answer`: the reply a turn segment ends with. */
 export const ItemRow = memo(function ItemRow({ id, nested = false, answer = false }: { id: string; nested?: boolean; answer?: boolean }) {
   const item = useItem(id);
-  const fresh = useFresh(item?.ts);
+  const fresh = useFresh(item?.ts) && (!nested || stepEntrance(id));
   const { sessionId } = useTimeline();
   if (!item) return null;
   let body;
@@ -267,15 +267,18 @@ const ExploreRun = memo(function ExploreRun({ ids }: { ids: string[] }) {
   const { sessionId } = useTimeline();
   const grouped = ids.length >= 2;
   const [open, setOpen] = useState(false);
-  const fresh = useFresh();
+  const fresh = useFresh() && stepEntrance(ids[0]);
   const summary = useStore(useMemo(() => summarize(sessionId, ids), [sessionId, ids]));
   const [files, searches, pages, ...rest] = summary.split('|');
-  const active = rest.join('|');
+  // A quick run of reads names each file long enough to be read, not a flicker of names; done at once.
+  const now = rest.join('|');
+  const held = useHeld(now, 450);
+  const active = now && held;
   const label = runLabel(Number(files), Number(searches), Number(pages));
 
   return (
     <div className="tl-sub" data-t="tool" data-k="run" data-fresh={fresh || undefined}>
-      <Collapse open={grouped}>
+      {grouped && (
         <button type="button" className="row-btn tool-row" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           <span className="tool-icon">
             <Icon name={Number(searches) || Number(pages) ? 'search' : 'file-text'} size={14} />
@@ -291,8 +294,10 @@ const ExploreRun = memo(function ExploreRun({ ids }: { ids: string[] }) {
           <span className="tool-meta">{active ? <span className="num">{label.replace(/^\w+ /, '')}</span> : null}</span>
           <Icon name="caret-right" size={10} className="row-caret" />
         </button>
-      </Collapse>
-      <Collapse open={!grouped || open}>
+      )}
+      {/* Becoming a group swaps the single row for the group's line in place, at the same height:
+          nothing grows and shrinks at once (a fresh fold starts closed without animating). */}
+      <Collapse key={grouped ? 'group' : 'single'} open={!grouped || open}>
         <div className={grouped ? 'run-rows' : undefined}>
           {ids.map((id) => (
             <ToolById key={id} id={id} />

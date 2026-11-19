@@ -26,11 +26,6 @@
   will-change: scroll-position;
 }
 
-/* The reader is scrolling: no hover on the rows passing under the pointer (Timeline.tsx). */
-.tl-scroll[data-scrolling] > .tl-content {
-  pointer-events: none;
-}
-
 /* Content dissolves under the top bar instead of being cut by it: an overlay in the stage colour (no mask on the scroller). */
 .tl::before {
   content: '';
@@ -348,6 +343,28 @@ button:hover > .row-caret {
 .tool[data-status='denied'] :is(.tool-title, .tool-target),
 .tool[data-status='cancelled'] :is(.tool-title, .tool-target) {
   color: var(--text-3);
+}
+
+/* One light at a time: the live line over the trail carries the shimmer. The step running under it,
+   a group still reading, a sub-agent's or a workflow agent's latest action are simply lit, so the
+   trail holds still and a step that finishes only steps its tone back (no sweep restarting per
+   step, no label blinking through transparent as the sweep comes off). */
+.story .shimmer,
+.agent-under .shimmer {
+  color: var(--text);
+  background: none;
+  animation: none;
+  will-change: auto;
+}
+
+.agent-under .agent-now .shimmer,
+.agent-under .wf-agent-now.shimmer {
+  color: var(--text-2);
+}
+
+/* A group of looks takes over from its first row in place: no entrance of its own. */
+.tl-sub[data-k='run'][data-fresh] > .tool-row {
+  animation: none;
 }
 
 /* The running step: its icon steps up while the title carries the shimmer. */
@@ -1256,8 +1273,18 @@ button:hover > .row-caret {
   color: var(--text-3);
 }
 
+/* The window the latest steps move through (Agent.tsx, useTicker): rows slide up inside it and the
+   newest comes in from under its lower edge. Clipped vertically only, so hover fills keep their overhang. */
+.agent-rows {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow-x: visible;
+  overflow-y: clip;
+}
+
 .agent-step {
-  animation: rise-in var(--d-3) var(--ease-out) backwards;
+  animation: fade-in var(--d-3) var(--ease) backwards;
 }
 
 .agent-more,
@@ -1274,7 +1301,7 @@ button:hover > .row-caret {
 }
 
 .agent-now {
-  animation: rise-in var(--d-3) var(--ease-out) backwards;
+  animation: fade-in var(--d-3) var(--ease) backwards;
 }
 
 /* Under a sub-agent the plan stopped: the chat itself can go on (only said when true). */
@@ -1766,6 +1793,19 @@ button:hover > .row-caret {
   flex-direction: column;
 }
 
+/* A settled turn skips style, layout and paint as a whole while it is out of view: one boundary per
+   turn instead of one per row, so the browser's visibility check, run every frame of a scroll or a
+   stream, has a few dozen boxes to place in a long conversation rather than hundreds. The running
+   turn draws in full. */
+.tg:not([data-state='running']) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 360px;
+}
+
+.tg > .tl-item {
+  content-visibility: visible;
+}
+
 /* The answer reads at full strength; everything that led to it sits one step back. */
 .tl-item[data-answer] {
   padding-top: 6px;
@@ -2034,12 +2074,13 @@ button:hover > .row-caret {
   }
 }
 
+/* The summary takes over from the live line almost at once (no blank beat between them). */
 .work-head[data-landed] > * {
-  animation: land-in 320ms var(--ease-out) 200ms backwards;
+  animation: land-in 300ms var(--ease-out) 60ms backwards;
 }
 
 .work-head[data-landed] > :nth-child(2) {
-  animation-delay: 260ms;
+  animation-delay: 120ms;
 }
 
 @keyframes land-in {

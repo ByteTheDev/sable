@@ -10,9 +10,11 @@ export interface TimelineCtxValue {
   live: { current: boolean };
   /** True while the view follows the newest content; false once the reader has scrolled away. */
   stuck: { current: boolean };
+  /** When the reader last scrolled (performance.now()); the conversation's own view keeps it. */
+  scrolled?: { current: number };
 }
 
-export const TimelineCtx = createContext<TimelineCtxValue>({ sessionId: '', cwd: '', home: '', live: { current: false }, stuck: { current: true } });
+export const TimelineCtx = createContext<TimelineCtxValue>({ sessionId: '', cwd: '', home: '', live: { current: false }, stuck: { current: true }, scrolled: { current: 0 } });
 
 export const useTimeline = () => useContext(TimelineCtx);
 
@@ -30,6 +32,28 @@ export function useFresh(ts?: number): boolean {
   const { live } = useTimeline();
   const [fresh] = useState(() => live.current && (ts === undefined || Date.now() - ts < 4000));
   return fresh;
+}
+
+/** Steps that arrive closer together than this (ms) come in a burst: they appear without an entrance. */
+const BURST_MS = 150;
+const entered = new Map<string, boolean>();
+let lastEntrance = 0;
+
+/**
+ * Whether a fresh step row plays its entrance. A step on its own rises in; steps that arrive in a
+ * burst (a quick run of reads, a 300-step marathon) simply appear while the view glides after them,
+ * so the trail never has a dozen rows rising at once. Decided once per item.
+ */
+export function stepEntrance(id: string): boolean {
+  let v = entered.get(id);
+  if (v === undefined) {
+    const now = performance.now();
+    v = now - lastEntrance >= BURST_MS;
+    lastEntrance = now;
+    entered.set(id, v);
+    if (entered.size > 400) entered.delete(entered.keys().next().value as string);
+  }
+  return v;
 }
 
 export const EMPTY: string[] = [];

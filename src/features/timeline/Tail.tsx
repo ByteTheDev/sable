@@ -1,10 +1,9 @@
 import { memo } from 'react';
 import { Tiles } from '@/art/Logo';
 import { Icon } from '@/icons';
-import { useNow } from '@/lib/view-hooks';
 import { useStore, type SessionData } from '@/state/store';
 import { useTimeline } from './ctx';
-import { shortDuration } from './util';
+import { shortDuration, useTick } from './util';
 
 /** `${turnStart}|${quiet}`: when the running turn began, and whether its last item is streaming prose. */
 function tailInfo(data: SessionData | undefined): string {
@@ -34,7 +33,7 @@ export const Tail = memo(function Tail() {
   const activity = useStore((s) => s.sessions[sessionId]?.activity);
   const info = useStore((s) => tailInfo(s.data[sessionId]));
   const working = status === 'running' || status === 'starting';
-  const now = useNow(working);
+  const now = useTick(working);
   if (!working && status !== 'awaiting') return null;
 
   const [startRaw, quietRaw] = info.split('|');

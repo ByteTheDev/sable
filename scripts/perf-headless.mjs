@@ -245,11 +245,11 @@ function analyse(events) {
  * The compositor's frames between the trace marks `sable:send` and `sable:land` (set by the flight
  * probe in measure()): PipelineReporter states, DrawFrame gaps, and main-thread long tasks.
  */
-function flightFrames(events) {
+function flightFrames(events, from = 'sable:send', to = 'sable:land') {
   const mark = (m) => events.find((e) => e.name === 'TimeStamp' && (e.args?.data?.message === m || e.args?.data?.name === m));
-  const s = mark('sable:send');
+  const s = mark(from);
   if (!s) return { cc: null };
-  const l = mark('sable:land');
+  const l = mark(to);
   const t0 = s.ts;
   const t1 = l ? l.ts : t0 + 1_200_000;
   // The page's renderer and its threads.
@@ -522,6 +522,7 @@ async function measure(name, run) {
             const d = e.duration;
             const s = new Number(d);
             // Where the frame went: scripts (by invoker), then rendering (style/layout, paint).
+            s.at = e.startTime;
             s.info = `${Math.round(d)}ms: render ${Math.round(e.startTime + d - (e.renderStart || e.startTime + d))} style+layout ${Math.round(e.startTime + d - (e.styleAndLayoutStart || e.startTime + d))} | ${(e.scripts ?? [])
               .map((x) => `${x.invoker || x.name} ${Math.round(x.duration)}ms (fsl ${Math.round(x.forcedStyleAndLayoutDuration)})`)
               .join(', ')}`;
@@ -605,6 +606,13 @@ async function measure(name, run) {
       renders, ms: Math.round(end - F.t0), landed: !!F.land, frames: fr.length, dropped, worst: Math.round(worst), first: fr.length ? Math.round(fr[0] - F.t0) : -1 };
   });
   if (flight) Object.assign(flight, flightFrames(trace.traceEvents ?? trace));
+  // A span the scenario marked itself (the scroll and work scenarios): frames, long tasks, long animation frames.
+  const span = flightFrames(trace.traceEvents ?? trace, 'sable:span0', 'sable:span1');
+  if (span.cc)
+    span.loaf = await page.evaluate(() => {
+      const l = window.__loaf.filter((x) => x.at >= (window.__span0 ?? 0) && x.at <= (window.__span1 ?? Infinity));
+      return { n: l.length, ms: Math.round(l.reduce((s, d) => s + Number(d), 0)), worst: Math.round(Math.max(0, ...l.map(Number))) };
+    });
   const page2 = await page.evaluate(() => {
     const anims = document.getAnimations().filter((x) => x.playState === 'running');
     const who = anims.slice(0, 6).map((x) => {
@@ -662,6 +670,7 @@ async function measure(name, run) {
     layoutN: d('LayoutCount'),
     taskMs: +(d('TaskDuration') * 1000).toFixed(1),
     flight,
+    span: span.cc ? span : undefined,
     trace: a,
     ...page2,
     ...L,
@@ -671,7 +680,7 @@ async function measure(name, run) {
 const ev = (js, arg) => page.evaluate(js, arg);
 
 async function waitIdle(id, timeout = 60_000) {
-  await page.waitForFunction((sid) => window.sable.store.getState().sessions[sid]?.status === 'idle', id, { timeout, polling: 250 });
+  await page.waitForFunction((sid) => window.sable?.store.getState().sessions[sid]?.status === 'idle', id, { timeout, polling: 250 });
 }
 
 async function sweep(from, to, steps = 60, gap = 16) {
@@ -699,6 +708,7 @@ let finishedId = null;
 let longId = null;
 
 async function home() {
+  await page.waitForFunction(() => window.sable?.store.getState().ready, null, { timeout: 30_000 });
   await ev(() => window.sable.actions.goHome());
   await page.mouse.move(size[0] - 4, size[1] - 4);
   await sleep(1500);
@@ -712,6 +722,114 @@ async function finishedSession() {
   await ev(() => window.sable.store.getState().setUi({ railOpen: false }));
   await page.mouse.move(size[0] / 2, size[1] - 40);
   await sleep(1500);
+}
+
+// ── the conversation: scrolling and a working turn ──
+
+/** Marks the span the frame figures cover (`r.span`): from the first input to the last. */
+const span0 = () => ev(() => ((window.__span0 = performance.now()), console.timeStamp('sable:span0')));
+const span1 = () => ev(() => ((window.__span1 = performance.now()), console.timeStamp('sable:span1')));
+
+/** A trackpad flick: a wheel event every 8 ms, fast at first and decaying like momentum. dir -1 up, 1 down. */
+async function flick(dir, v0 = 70, n = 70) {
+  let v = v0;
+  for (let i = 0; i < n; i++) {
+    await page.mouse.wheel(0, dir * Math.max(2, Math.round(v)));
+    v *= 0.955;
+    await sleep(8);
+  }
+}
+
+/** Mouse wheel notches, 100 px each, about 20 a second. */
+async function notches(dir, n = 20) {
+  for (let i = 0; i < n; i++) {
+    await page.mouse.wheel(0, dir * 100);
+    await sleep(45);
+  }
+}
+
+/** The reading pattern of the scroll scenarios: flicks up through history, notches back and forth, flicks down. */
+async function readBack() {
+  await span0();
+  for (let i = 0; i < 3; i++) (await flick(-1), await sleep(120));
+  await notches(-1, 16);
+  await notches(1, 16);
+  await sleep(120);
+  for (let i = 0; i < 2; i++) (await flick(1), await sleep(120));
+  await span1();
+  await sleep(300);
+}
+
+let convoId = null;
+
+/** The page is up (a reload by the dev server, when another file changes, drops `sable` for a moment). */
+async function ready() {
+  await page.waitForFunction(() => window.sable?.store.getState().ready, null, { timeout: 30_000 });
+}
+
+/**
+ * A long conversation: four Demo turns (edits and diffs, markdown with code and tables, a table,
+ * a web search), then their items copied in front until there are about `PERF_TURNS` (36) turns.
+ * The copies live in this page's store only (the bridge never hears of them): made again after a reload.
+ */
+async function longConversation() {
+  await ready();
+  if (!convoId) {
+    const id = await ev(() => window.sable.demo('refactor the session module', { mode: 'bypassPermissions' }));
+    await waitIdle(id, 240_000);
+    for (const text of ['markdown showcase', 'a table of the endpoints', 'search the docs for retry headers']) {
+      await ev(([sid, t]) => window.sable.actions.sendMessage(sid, t), [id, text]);
+      await sleep(800);
+      await waitIdle(id, 240_000);
+    }
+    convoId = id;
+  }
+  await ev(() => window.sable.actions.goHome());
+  await sleep(400);
+  await ev((id) => window.sable.actions.openSession(id), convoId);
+  await page.waitForFunction((id) => window.sable.store.getState().data[id]?.loaded, convoId, { timeout: 30_000 });
+  const cloned = await ev((id) => window.sable.store.getState().data[id].roots.some((r) => r.includes('~')), convoId);
+  if (!cloned) {
+    const turns = Number(process.env.PERF_TURNS ?? 36);
+    await ev(
+      ([sid, copies]) => {
+        const st = window.sable.store.getState();
+        const d = st.data[sid];
+        const items = {};
+        const children = {};
+        const roots = [];
+        for (let k = copies; k >= 1; k--) {
+          const re = (x) => `${x}~${k}`;
+          for (const [key, it] of Object.entries(d.items)) {
+            const c = { ...it, id: re(key), ts: it.ts - k * 3_600_000 };
+            if (it.parentId) c.parentId = re(it.parentId);
+            if ('endedAt' in it && it.endedAt) c.endedAt = it.endedAt - k * 3_600_000;
+            items[c.id] = c;
+          }
+          for (const [key, list] of Object.entries(d.children)) children[re(key)] = list.map(re);
+          roots.push(...d.roots.map(re));
+        }
+        window.sable.store.setState({
+          data: { ...st.data, [sid]: { ...d, items: { ...items, ...d.items }, children: { ...children, ...d.children }, roots: [...roots, ...d.roots] } },
+        });
+        // Opened afresh, as a long transcript is: away and back.
+        window.sable.actions.goHome();
+      },
+      [convoId, Math.max(0, Math.ceil(turns / 4) - 1)],
+    );
+    await sleep(600);
+    await ev((sid) => window.sable.actions.openSession(sid), convoId);
+  }
+  await ev(() => window.sable.store.getState().setUi({ railOpen: false }));
+  await sleep(1500);
+  const b = await box('.tl-scroll');
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height * 0.55);
+  await ev(() => {
+    const el = document.querySelector('.tl-scroll');
+    el.scrollTop = el.scrollHeight;
+  });
+  await sleep(800);
+  return convoId;
 }
 
 const SCENARIOS = {
@@ -891,6 +1009,51 @@ const SCENARIOS = {
       await sleep(300);
     });
   },
+  // Reading back through a long conversation (about 36 turns with diffs, code and tables), idle.
+  'scroll-long': async () => {
+    await longConversation();
+    return measure('scroll-long', readBack);
+  },
+  // The same while a turn streams at the end of it (the reader is away from the end).
+  'scroll-stream': async () => {
+    const id = await longConversation();
+    await ev((sid) => window.sable.actions.sendMessage(sid, 'refactor the session module'), id);
+    await sleep(1500);
+    const r = await measure('scroll-stream', readBack);
+    await waitIdle(id, 240_000).catch(() => {});
+    return r;
+  },
+  // One 4000-line answer: scrolling a single huge text.
+  'scroll-tome': async () => {
+    await home();
+    const id = await ev(() => window.sable.demo('tome', { mode: 'bypassPermissions' }));
+    await waitIdle(id, 240_000);
+    await ev(() => window.sable.store.getState().setUi({ railOpen: false }));
+    await sleep(1500);
+    const b = await box('.tl-scroll');
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height * 0.55);
+    return measure('scroll-tome', readBack);
+  },
+  // A working turn followed at the end: 300 quick steps (Demo marathon), the first 9 s.
+  'work-marathon': async () => {
+    await home();
+    return measure('work-marathon', async () => {
+      await span0();
+      await ev(() => window.sable.demo('marathon', { mode: 'bypassPermissions' }));
+      await sleep(9000);
+      await span1();
+    });
+  },
+  // A mixed working turn followed at the end (Demo refactor: thinking, reads, edits, a command, prose), 12 s.
+  'work-refactor': async () => {
+    await home();
+    return measure('work-refactor', async () => {
+      await span0();
+      await ev(() => window.sable.demo('refactor the session module', { mode: 'bypassPermissions' }));
+      await sleep(12000);
+      await span1();
+    });
+  },
   // The side panel: three opens and closes, 700 ms apart, on Changes (or --rail-tab name).
   'rail-open': async () => {
     await finishedSession();
@@ -1010,6 +1173,17 @@ try {
               `draws ${f.draws} gap ${f.drawGap}ms`,
               `main busy ${f.mainBusy}ms long ${f.long}/${f.longMs}ms max ${f.maxTask}ms`,
               f.log,
+            ].join(' | '),
+          );
+        const sp = r.span;
+        if (sp)
+          console.log(
+            [
+              `    span ${sp.span}ms`,
+              `cc all ${sp.cc.all} partial ${sp.cc.partial} dropped ${sp.cc.dropped} gap ${sp.cc.gap}ms`,
+              `draws ${sp.draws} gap ${sp.drawGap}ms`,
+              `main busy ${sp.mainBusy}ms long ${sp.long}/${sp.longMs}ms max ${sp.maxTask}ms`,
+              `loaf ${sp.loaf?.n}/${sp.loaf?.ms}ms worst ${sp.loaf?.worst}ms`,
             ].join(' | '),
           );
         if (t.detail)

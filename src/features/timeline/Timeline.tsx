@@ -42,10 +42,14 @@ export function Timeline({ sessionId }: { sessionId: string }) {
   const content = useRef<HTMLDivElement>(null);
   const stuck = useRef(true);
   const lastTop = useRef(0);
+  /** How far the view is from the end, as last measured (by a scroll or a resize): read by input handlers instead of the layout. */
+  const room = useRef(0);
+  /** When the reader last scrolled (ms): older turns wait to be built ahead until the view is still. */
+  const scrolled = useRef(0);
   const live = useRef(false);
   const [away, setAway] = useState(false);
 
-  const ctx = useMemo<TimelineCtxValue>(() => ({ sessionId, cwd, home, live, stuck }), [sessionId, cwd, home]);
+  const ctx = useMemo<TimelineCtxValue>(() => ({ sessionId, cwd, home, live, stuck, scrolled }), [sessionId, cwd, home]);
 
   const glide = useRef({ raf: 0, pos: 0, v: 0, last: 0 });
 
@@ -189,6 +193,7 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     const inner = content.current;
     if (!el || !inner) return;
     const ro = new ResizeObserver(() => {
+      room.current = el.scrollHeight - el.clientHeight - el.scrollTop;
       glideTail();
       if (restoreTo.current !== null && restore()) return;
       if (stuck.current) follow();
@@ -208,20 +213,15 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     const el = scroller.current;
     if (!el) return;
     const mark = () => (intent.current = performance.now());
-    // While the reader scrolls, rows passing under the pointer take no hover: each hover change
-    // would repaint the turn it sits in, every frame of the scroll. Back a moment after the wheel stops.
-    let still = 0;
-    const scrolling = () => {
-      if (!el.hasAttribute('data-scrolling')) el.setAttribute('data-scrolling', '');
-      window.clearTimeout(still);
-      still = window.setTimeout(() => el.removeAttribute('data-scrolling'), 160);
-    };
-    // Scrolling up with the wheel lets go at once, before the scroll event arrives.
+    // Scrolling up with the wheel lets go at once, before the scroll event arrives. Nothing here
+    // reads the layout or writes to the page: a wheel arrives every few ms during a flick, and a
+    // style change on the conversation's root here (it once switched hover off while scrolling)
+    // restyled every row twice per gesture, forced at once by the next read. The browser itself
+    // leaves hover alone while a scroll runs.
     const onWheel = (e: WheelEvent) => {
       mark();
       restoreTo.current = null;
-      scrolling();
-      if (e.deltaY < 0 && el.scrollHeight - el.clientHeight - el.scrollTop > 1) stuck.current = false;
+      if (e.deltaY < 0 && room.current > 1) stuck.current = false;
     };
     const onKey = (e: KeyboardEvent) => {
       if (/^(Arrow(Up|Down)|Page(Up|Down)|Home|End| )$/.test(e.key)) mark();
@@ -245,7 +245,6 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
     return () => {
-      window.clearTimeout(still);
       window.removeEventListener('pointercancel', up);
       el.removeEventListener('click', onClick, true);
       el.removeEventListener('wheel', onWheel);
@@ -261,6 +260,8 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     if (!el || restoreTo.current !== null) return;
     const top = el.scrollTop;
     const dist = el.scrollHeight - top - el.clientHeight;
+    room.current = dist;
+    scrolled.current = performance.now();
     const byReader = dragging.current || performance.now() - intent.current < 600;
     if (top < lastTop.current - 1 && dist > 1) {
       if (byReader) stuck.current = false;
@@ -273,6 +274,15 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     lastTop.current = top;
     setAway(!stuck.current && dist > AWAY);
   }, [pin]);
+
+  // A plain passive listener: a scroll event arrives every frame of a scroll, and React's synthetic
+  // dispatch for it cost more than the handler itself.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [onScroll]);
 
   const jump = useCallback(() => {
     const el = scroller.current;
@@ -325,7 +335,7 @@ export function Timeline({ sessionId }: { sessionId: string }) {
   return (
     <TimelineCtx.Provider value={ctx}>
       <div className="tl">
-        <div className="tl-scroll scroll" ref={scroller} onScroll={onScroll} tabIndex={-1}>
+        <div className="tl-scroll scroll" ref={scroller} tabIndex={-1}>
           <div className="tl-content" ref={content} data-empty={empty || undefined}>
             {empty ? <p className="tl-empty">Send a message to start</p> : loaded && <TurnList ids={roots} />}
           </div>
