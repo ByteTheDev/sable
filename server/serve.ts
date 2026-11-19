@@ -3,6 +3,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { BRIDGE_PATH } from '../shared/protocol';
 import { attachBridge } from './bridge';
+import { watchAwake } from './core/awake';
 
 /**
  * The production server: serves the built UI and hosts the bridge on one port, on 127.0.0.1 only
@@ -23,6 +24,8 @@ export interface RunningServer {
   port: number;
   /** Disposes the bridge (agent child processes exit) and closes the HTTP server. Safe to call twice. */
   close(): Promise<void>;
+  /** Calls `onChange` when agents start working anywhere, and when all have stopped for a minute (`core/awake.ts`). */
+  watchBusy(onChange: (busy: boolean) => void): () => void;
 }
 
 const types: Record<string, string> = {
@@ -138,5 +141,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     })());
 
-  return { url: `http://127.0.0.1:${port}`, port, close };
+  const watchBusy = (onChange: (busy: boolean) => void) => watchAwake({ get sessions() { return bridge.app.sessions.values(); }, subscribe: (l) => bridge.app.subscribe(l) }, onChange);
+
+  return { url: `http://127.0.0.1:${port}`, port, close, watchBusy };
 }

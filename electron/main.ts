@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, screen, session, shell, webContents, type MenuItemConstructorOptions, type Rectangle, type WebContents } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, powerSaveBlocker, screen, session, shell, webContents, type MenuItemConstructorOptions, type Rectangle, type WebContents } from 'electron';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { startServer, type RunningServer } from '../server/serve';
@@ -821,6 +821,21 @@ async function captureWindow(w: BrowserWindow, file: string) {
 /* ── lifecycle ── */
 
 let quitting = false;
+/**
+ * While an agent works anywhere, Windows does not suspend (an overnight run would stop halfway);
+ * the screen may still turn off. Released a minute after the last work ends (server/core/awake.ts).
+ */
+function keepAwake(s: RunningServer) {
+  let block: number | undefined;
+  s.watchBusy((busy) => {
+    if (busy && block === undefined) block = powerSaveBlocker.start('prevent-app-suspension');
+    else if (!busy && block !== undefined) {
+      if (powerSaveBlocker.isStarted(block)) powerSaveBlocker.stop(block);
+      block = undefined;
+    }
+  });
+}
+
 app.on('before-quit', (e) => {
   if (quitting || !server) return;
   e.preventDefault();
