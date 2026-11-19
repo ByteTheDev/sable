@@ -12,6 +12,7 @@ import { Mcp } from './Mcp';
 import { Memory } from './Memory';
 import { Models } from './Models';
 import { Permissions } from './Permissions';
+import { Phone } from './Phone';
 import { matchSections, SECTIONS } from './sections';
 import { Shortcuts } from './Shortcuts';
 import { Skills } from './Skills';
@@ -26,6 +27,7 @@ const VIEWS: Record<SettingsSection, ComponentType> = {
   usage: Usage,
   models: Models,
   permissions: Permissions,
+  phone: Phone,
   mcp: Mcp,
   hooks: Hooks,
   skills: Skills,

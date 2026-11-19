@@ -85,7 +85,8 @@ function SessionDefaults() {
   const opts = settings.sessionOptions?.[provider] ?? {};
   // Codex: absent means its own config decides (its plugin is on when installed).
   // The Browser tab: absent means on, for every agent.
-  const on = (key: keyof SessionOptions) => opts[key] ?? (key === 'browserTab' || (provider === 'codex' && key !== 'remoteControl'));
+  // Claude's Remote Control: absent means on (server/app.ts withDefaultOptions).
+  const on = (key: keyof SessionOptions) => opts[key] ?? (key === 'browserTab' || (provider === 'codex' && key !== 'remoteControl') || (provider === 'claude' && key === 'remoteControl'));
 
   return (
     <Card

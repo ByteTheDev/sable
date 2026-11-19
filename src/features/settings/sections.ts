@@ -38,6 +38,7 @@ export const SECTIONS: SectionMeta[] = [
   },
   { id: 'models', label: 'Models', icon: 'brain', keywords: 'model effort default new sessions opus sonnet haiku gpt reasoning' },
   { id: 'permissions', label: 'Permissions', icon: 'shield', keywords: 'permission mode rules allow ask deny approval sandbox bypass plan' },
+  { id: 'phone', label: 'Phone', icon: 'phone', keywords: 'phone mobile android app pair pairing qr code remote network lan devices' },
   {
     id: 'mcp',
     label: 'MCP servers',

@@ -46,6 +46,7 @@ import type {
   UserItem,
 } from '../../shared/protocol';
 import type { SessionRuntime } from '../core/runtime';
+import { dropRemote, holdRemote, type RemoteHolder } from '../core/remote-keep';
 import { claudeForkPoint, cutAt } from '../core/fork';
 import { killTree, runCli, spawnCli } from '../util/proc';
 import { baseName, describeTool, flattenContent, mapResult, mergeWorkflow, normalizeTodos, peekPartialInput, previewDiff, workflowStart } from './claude-tools';
@@ -859,11 +860,27 @@ class ClaudeSession implements ProviderSession {
   private limitHit?: { resetsAt?: number; window?: string };
   private limitNoticeId?: string;
 
+  /** When this chat was last used (a message, a turn's end, Remote Control on): for the Remote Control keeper. */
+  private lastActive = Date.now();
+  /** This chat's place with the Remote Control keeper (server/core/remote-keep.ts). */
+  private readonly remoteHolder: RemoteHolder;
+
   constructor(
     private rt: SessionRuntime,
     private provider: ClaudeProvider,
   ) {
     this.costBase = rt.meta.usage.costUsd ?? 0;
+    this.remoteHolder = {
+      id: rt.id,
+      lastActive: () => this.lastActive,
+      busy: () => this.rt.turnActive || this.liveTasks.size > 0,
+      release: () => {
+        if (this.rt.turnActive || this.liveTasks.size) return;
+        this.log('claude: Remote Control process released (not used recently)');
+        // As the idle close: the remote status says it reconnects when the chat is used again.
+        this.shutdown();
+      },
+    };
   }
 
   liveQuery() {
@@ -901,6 +918,8 @@ class ClaudeSession implements ProviderSession {
     this.resumeAt = undefined;
     this.q = q;
     this.input = input;
+    this.lastActive = Date.now();
+    if (meta.options?.remoteControl) holdRemote(this.remoteHolder);
     this.applied = { ...meta.options };
     this.lastTotalCost = 0;
     this.liveCaps = false;
@@ -954,7 +973,8 @@ class ClaudeSession implements ProviderSession {
       if (!on) return this.rt.update({ remote: undefined });
       const message = (err as Error).message;
       this.rt.update({ remote: { status: 'Remote Control is not available', tone: 'error' } });
-      this.rt.notice('error', 'Remote Control could not start', message);
+      // On by default in every chat: where the sign-in has no Remote Control, the session says so in its status only.
+      if (this.rt.caps?.features.remoteControl !== false) this.rt.notice('error', 'Remote Control could not start', message);
     }
   }
 
@@ -1019,6 +1039,14 @@ class ClaudeSession implements ProviderSession {
     if (!!options.remoteControl !== !!before.remoteControl) {
       this.applied = { ...before, remoteControl: options.remoteControl };
       await this.setRemote(q, !!options.remoteControl);
+      // Off: the process closes as any idle one; on: the keeper counts it as just used.
+      if (!options.remoteControl) {
+        dropRemote(this.remoteHolder);
+        if (!this.rt.turnActive) this.scheduleIdleClose();
+      } else {
+        this.lastActive = Date.now();
+        holdRemote(this.remoteHolder);
+      }
     }
     if (!!options.computerUse !== !!before.computerUse) {
       this.applied = { ...this.applied, computerUse: options.computerUse };
@@ -1065,8 +1093,10 @@ class ClaudeSession implements ProviderSession {
 
   private scheduleIdleClose() {
     clearTimeout(this.idleTimer);
+    this.lastActive = Date.now();
+    // Remote Control lives in this process: the keeper (server/core/remote-keep.ts) decides when it closes.
+    if (this.q && this.rt.meta.options?.remoteControl) holdRemote(this.remoteHolder);
     this.idleTimer = setTimeout(() => {
-      // Remote Control lives in this process: closing it would end the remote session.
       if (this.rt.turnActive || this.rt.meta.options?.remoteControl) return;
       // Background agents and shells live in this process too, and wake the agent when they end:
       // it stays while any runs, and the idle clock starts again once the last one is done.
@@ -1084,6 +1114,7 @@ class ClaudeSession implements ProviderSession {
 
   private shutdown() {
     clearTimeout(this.idleTimer);
+    dropRemote(this.remoteHolder);
     const q = this.q;
     if (q) this.clearLiveState();
     this.q = undefined;
@@ -1109,6 +1140,7 @@ class ClaudeSession implements ProviderSession {
     // Otherwise the SDK reports a missing cwd as a binary that "failed to launch".
     if (!existsSync(this.rt.meta.cwd)) throw new Error(`The folder ${this.rt.meta.cwd} does not exist.`);
     this.closed = false;
+    this.lastActive = Date.now();
     this.ensure();
     clearTimeout(this.idleTimer);
     const uuid = randomUUID();

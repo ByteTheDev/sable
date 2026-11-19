@@ -1102,7 +1102,86 @@ export type BridgeEvent =
   /** The agent's browser tool needs the session's Browser tab: answer with `browser.respond`. */
   | { type: 'browser.request'; request: BrowserRequest }
   /** Devices changed in a way the bridge saw (an emulator started, booted, stopped or failed). */
-  | { type: 'device.updated'; status: DeviceStatus };
+  | { type: 'device.updated'; status: DeviceStatus }
+  /** Settings › Phone changed (on or off, a pairing offer, a phone asking to pair, a phone seen). Never sent to phones. */
+  | { type: 'phone.updated'; status: PhoneStatus };
+
+// ───────────────────────────────── phone ─────────────────────────────────
+// The phone app (`mobile/`) talks to the bridge over the home network through `server/services/phone.ts`:
+// its own port on the LAN, opt-in, every socket authenticated with a device token, and only the
+// RPC methods in `PHONE_METHODS`. The localhost bridge is unchanged.
+
+/** The phone endpoint's fixed port (the pairing link names it too). */
+export const PHONE_PORT = 47820;
+/** The phone endpoint's WebSocket path. */
+export const PHONE_PATH = '/sable-phone';
+
+/** A phone allowed to connect. Its token is kept only as a hash. */
+export interface PhoneDevice {
+  id: string;
+  name: string;
+  pairedAt: number;
+  lastSeen?: number;
+  /** Connected now. */
+  online?: boolean;
+}
+
+export interface PhoneStatus {
+  /** Settings › Phone is on: the endpoint should listen. */
+  enabled: boolean;
+  /** It listens on the LAN now. */
+  listening: boolean;
+  port: number;
+  /** This computer's IPv4 addresses on the local network. */
+  hosts: string[];
+  /** This computer's name, as phones show it. */
+  name: string;
+  devices: PhoneDevice[];
+  /** The open pairing offer (a one-time key, valid for minutes): the link the QR code encodes, and the code as SVG path data on a `size` grid. */
+  pairing?: { link: string; expiresAt: number; qr: string; size: number };
+  /** A phone that presented the pairing key and waits for "Allow". */
+  request?: { id: string; name: string; address: string; at: number };
+  error?: string;
+}
+
+/** Frames a phone sends before it is authenticated (as JSON text). Afterwards it sends `RpcRequest`s. */
+export type PhoneHello = { hello: { token: string; name?: string } } | { pair: { key: string; name: string } };
+
+/** Frames the phone endpoint sends besides `ServerFrame`s. */
+export type PhoneFrame =
+  | { welcome: { deviceId: string; desktop: string; version: string } }
+  | { waiting: true }
+  | { paired: { token: string; deviceId: string; desktop: string } }
+  | { denied: string };
+
+/** What a paired phone may call: conversations, not the machine (no terminal, files, settings or accounts' sign-ins). */
+export const PHONE_METHODS = [
+  'app.hello',
+  'session.create',
+  'session.snapshot',
+  'session.send',
+  'session.interrupt',
+  'session.setModel',
+  'session.setEffort',
+  'session.setMode',
+  'session.setSpeed',
+  'session.setOptions',
+  'session.rename',
+  'session.update',
+  'session.switchAccount',
+  'queue.update',
+  'queue.remove',
+  'queue.take',
+  'queue.reorder',
+  'queue.sendNow',
+  'permission.respond',
+  'question.respond',
+  'provider.caps',
+  'provider.limits',
+  'usage.limits',
+  'fs.roots',
+  'fs.list',
+] as const satisfies readonly RpcName[];
 
 // ──────────────────────────────────── RPC ───────────────────────────────────
 
@@ -1291,6 +1370,17 @@ export interface RpcMethods {
 
   /** The agent's own settings files (permission rules, hooks), read-only and without secrets. */
   'config.read': { params: { provider: ProviderId; cwd?: string }; result: AgentConfigFile[] };
+
+  /** Settings › Phone (`server/services/phone.ts`). None of these can be called by a phone. */
+  'phone.status': { params: Record<string, never>; result: PhoneStatus };
+  /** Starts or stops the LAN endpoint (remembered across restarts). Turning it off ends every phone connection. */
+  'phone.setEnabled': { params: { on: boolean }; result: PhoneStatus };
+  /** A new one-time pairing key (the QR code), replacing any open one; `cancel` closes the offer. */
+  'phone.pair': { params: { cancel?: boolean }; result: PhoneStatus };
+  /** Answers a phone that asked to pair. */
+  'phone.approve': { params: { requestId: string; allow: boolean }; result: PhoneStatus };
+  /** Forgets a phone: its token stops working and its connection ends. */
+  'phone.revoke': { params: { deviceId: string }; result: PhoneStatus };
 
   'term.run': { params: { cwd: string; command: string }; result: { termId: string } };
   'term.kill': { params: { termId: string }; result: { ok: boolean } };

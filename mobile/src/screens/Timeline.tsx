@@ -1,0 +1,318 @@
+import { animate } from 'motion';
+import { AnimatePresence, motion } from 'motion/react';
+import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { NoticeItem, TextItem, ThinkingItem, TimelineItem, ToolItem, TurnItem, UserItem } from '@shared/protocol';
+import { formatDuration, formatTokens, plural } from '@desk/lib/format';
+import { conn } from '@m/lib/conn';
+import { renderMarkdown } from '@m/lib/md';
+import { haptic } from '@m/lib/native';
+import { sessionData, useStore } from '@m/lib/store';
+import { takeFlight } from '@m/lib/flight';
+import type { Turn } from '@m/lib/turns';
+import { Icon, TOOL_ICON } from '@m/ui/icons';
+import { Ring, Tiles } from '@m/ui/marks';
+
+const useItem = <T extends TimelineItem>(sid: string, id: string | undefined) => useStore((s) => (id ? (sessionData(s, sid).items[id] as T | undefined) : undefined));
+
+/** One turn: your message, the steps folded to a line, sub-agents and workflows as blocks, notices, the answer. */
+export const TurnView = memo(function TurnView({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) {
+  return (
+    <section className="turn" data-live={live || undefined}>
+      {turn.user && <UserBubble sid={sid} id={turn.user} />}
+      {(turn.steps.length > 0 || live) && <Steps sid={sid} turn={turn} live={live} />}
+      {turn.blocks.map((id) => (
+        <Block key={id} sid={sid} id={id} />
+      ))}
+      {turn.steered.map((id) => (
+        <UserBubble key={id} sid={sid} id={id} steered />
+      ))}
+      {turn.notices.map((id) => (
+        <Notice key={id} sid={sid} id={id} />
+      ))}
+      {turn.answer.map((id) => (
+        <Answer key={id} sid={sid} id={id} />
+      ))}
+    </section>
+  );
+});
+
+const UserBubble = memo(function UserBubble({ sid, id, steered }: { sid: string; id: string; steered?: boolean }) {
+  const it = useItem<UserItem>(sid, id);
+  const ref = useRef<HTMLDivElement>(null);
+  const [long, setLong] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  // The message flies from the composer to where it lands (lib/flight.ts records where it left).
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !it) return;
+    setLong(el.scrollHeight > 260);
+    const f = takeFlight(it.text);
+    if (!f) return;
+    // Land where it will rest: the conversation is at its newest line before measuring.
+    const sc = el.closest('.thread');
+    if (sc) sc.scrollTop = sc.scrollHeight;
+    const r = el.getBoundingClientRect();
+    const dx = f.rect.right - r.right;
+    const dy = f.rect.bottom - r.bottom;
+    animate(el, { x: [dx, 0], y: [dy, 0], scale: [0.96, 1], opacity: [0.5, 1] }, { type: 'spring', stiffness: 420, damping: 36, mass: 0.9 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!it]);
+
+  if (!it) return null;
+  const images = it.attachments?.filter((a) => a.dataUrl && a.kind === 'image') ?? [];
+  const files = it.attachments?.filter((a) => !(a.dataUrl && a.kind === 'image')) ?? [];
+  return (
+    <div className="user-row" data-steered={steered || undefined}>
+      <div ref={ref} className="user-bubble glass" data-long={long && !open ? true : undefined} onClick={() => long && setOpen((v) => !v)}>
+        {images.length > 0 && (
+          <div className="user-images">
+            {images.map((a) => (
+              <img key={a.id} src={a.dataUrl} alt={a.name} />
+            ))}
+          </div>
+        )}
+        {files.length > 0 && (
+          <div className="user-files">
+            {files.map((a) => (
+              <span key={a.id} className="file-chip">
+                <Icon name="file" size={13} /> {a.name}
+              </span>
+            ))}
+          </div>
+        )}
+        {it.text && <div className="user-text">{it.text}</div>}
+        {long && !open && <div className="user-more">Show more</div>}
+      </div>
+      {steered && <span className="user-note">Steered</span>}
+    </div>
+  );
+});
+
+/** The steps of a turn on one line: live while it runs (what it does now, the last few steps), a summary once done. */
+function Steps({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  const activity = useStore((s) => s.sessions[sid]?.activity);
+  const end = useItem<TurnItem>(sid, turn.end);
+  const first = useItem<UserItem>(sid, turn.user);
+  const lastStep = useItem<TimelineItem>(sid, turn.steps[turn.steps.length - 1]);
+  const n = turn.steps.length;
+
+  const label = live
+    ? activity || (lastStep?.type === 'tool' ? lastStep.title : lastStep?.type === 'thinking' ? 'Thinking' : 'Working')
+    : end
+      ? `Worked ${formatDuration(end.durationMs)}${n ? ` · ${plural(n, 'step')}` : ''}`
+      : plural(n, 'step');
+
+  return (
+    <div className="steps" data-open={open || undefined}>
+      <button
+        type="button"
+        className="steps-line"
+        onClick={() => {
+          if (!n) return;
+          haptic('select');
+          setOpen((v) => !v);
+        }}
+        aria-expanded={open}
+      >
+        {live ? <Tiles size={13} /> : <Icon name="todo" size={15} />}
+        <span className={live ? 'steps-label shimmer' : 'steps-label'}>{label}</span>
+        {!live && first && end && <span className="steps-meta num">{formatTokens((end.inputTokens ?? 0) + (end.outputTokens ?? 0)) || ''}</span>}
+        {n > 0 && <Icon name="caretDown" size={13} weight="bold" className="steps-caret" />}
+      </button>
+      <AnimatePresence initial={false}>
+        {(open || live) && n > 0 && (
+          <motion.div
+            className="steps-list"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 40 }}
+          >
+            {(open ? turn.steps : turn.steps.slice(-3)).map((id) => (
+              <Step key={id} sid={sid} id={id} quiet={!open} />
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+const Step = memo(function Step({ sid, id, quiet }: { sid: string; id: string; quiet?: boolean }) {
+  const it = useItem<TimelineItem>(sid, id);
+  const [open, setOpen] = useState(false);
+  if (!it) return null;
+  if (it.type === 'thinking') return <ThinkingStep it={it} quiet={quiet} />;
+  if (it.type === 'text') return <div className="step-text">{it.text.length > 280 ? `${it.text.slice(0, 280)}…` : it.text}</div>;
+  if (it.type !== 'tool') return null;
+  const detail = toolDetail(it);
+  const status = it.status;
+  return (
+    <div className="step" data-status={status}>
+      <button type="button" className="step-line" onClick={() => !quiet && detail && setOpen((v) => !v)} disabled={quiet || !detail}>
+        <span className="step-icon">{status === 'running' || status === 'pending' ? <Ring size={13} /> : <Icon name={TOOL_ICON[it.kind] ?? 'tool'} size={15} />}</span>
+        <span className="step-title">{it.title}</span>
+        {it.result?.diff && <DiffStat diff={it.result.diff} />}
+        {(status === 'error' || status === 'denied') && <span className="step-flag">{status === 'denied' ? 'Denied' : 'Failed'}</span>}
+      </button>
+      <AnimatePresence initial={false}>
+        {open && detail && (
+          <motion.pre className="step-detail" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: 'spring', stiffness: 420, damping: 40 }}>
+            {detail}
+          </motion.pre>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+});
+
+function ThinkingStep({ it, quiet }: { it: ThinkingItem; quiet?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const secs = it.endedAt ? Math.max(1, Math.round((it.endedAt - it.ts) / 1000)) : 0;
+  return (
+    <div className="step">
+      <button type="button" className="step-line" onClick={() => !quiet && it.text && setOpen((v) => !v)} disabled={quiet || !it.text}>
+        <span className="step-icon">{it.streaming ? <Ring size={13} /> : <Icon name="brain" size={15} />}</span>
+        <span className="step-title">{it.streaming ? 'Thinking' : secs ? `Thought for ${secs}s` : 'Thought'}</span>
+      </button>
+      {open && <div className="step-think">{it.text}</div>}
+    </div>
+  );
+}
+
+function toolDetail(it: ToolItem): string {
+  const d = it.detail;
+  const out: string[] = [];
+  if (d.command) out.push(`$ ${d.command}`);
+  else if (d.path) out.push(d.path);
+  else if (d.url) out.push(d.url);
+  else if (d.query || d.pattern) out.push(String(d.query ?? d.pattern));
+  const res = it.output || it.result?.text || it.result?.stderr;
+  if (res) {
+    const lines = res.replace(/\x1b\[[0-9;]*m/g, '').split('\n');
+    out.push(lines.slice(0, 24).join('\n') + (lines.length > 24 ? `\n… ${lines.length - 24} more lines` : ''));
+  }
+  if (it.result?.diff?.length) {
+    for (const f of it.result.diff.slice(0, 3))
+      for (const h of f.hunks.slice(0, 2)) out.push(h.lines.slice(0, 16).join('\n'));
+  }
+  return out.join('\n\n').slice(0, 4000);
+}
+
+function DiffStat({ diff }: { diff: NonNullable<ToolItem['result']>['diff'] }) {
+  const add = diff?.reduce((n, f) => n + f.additions, 0) ?? 0;
+  const del = diff?.reduce((n, f) => n + f.deletions, 0) ?? 0;
+  if (!add && !del) return null;
+  return (
+    <span className="diffstat num">
+      {add > 0 && <span className="add">+{add}</span>}
+      {del > 0 && <span className="del">−{del}</span>}
+    </span>
+  );
+}
+
+/** Sub-agents, workflows and widgets as compact blocks. */
+const Block = memo(function Block({ sid, id }: { sid: string; id: string }) {
+  const it = useItem<ToolItem>(sid, id);
+  const kids = useStore((s) => sessionData(s, sid).children[id]?.length ?? 0);
+  if (!it) return null;
+  if (it.kind === 'widget') {
+    const title = (it.input as { title?: string } | undefined)?.title ?? it.title;
+    return (
+      <div className="block block-quiet">
+        <Icon name="cube" size={16} />
+        <span className="block-title">{title}</span>
+        <span className="block-aside">Open on the desktop</span>
+      </div>
+    );
+  }
+  const w = it.workflow;
+  if (w) {
+    const running = w.agents.filter((a) => a.state === 'running').length;
+    const done = w.agents.filter((a) => a.state === 'done').length;
+    return (
+      <div className="block">
+        <div className="block-head">
+          <span className="block-icon">{w.status === 'running' ? <Ring size={14} /> : <Icon name="workflow" size={16} />}</span>
+          <span className="block-title">{w.name ?? 'Workflow'}</span>
+          <span className="block-aside num">{w.phases.length ? `Phase ${Math.max(1, w.phase)} of ${w.phases.length}` : statusWord(w.status)}</span>
+        </div>
+        {w.agents.length > 0 && (
+          <div className="block-agents" aria-label={`${running} running, ${done} done of ${w.agents.length}`}>
+            {w.agents.slice(0, 40).map((a) => (
+              <i key={a.index} data-state={a.state} />
+            ))}
+          </div>
+        )}
+        <div className="block-sub num">
+          {[running && `${running} running`, done && `${done} done`, w.tokens && `${formatTokens(w.tokens)} tokens`, w.durationMs && formatDuration(w.durationMs)].filter(Boolean).join(' · ') || plural(w.agents.length, 'agent')}
+        </div>
+      </div>
+    );
+  }
+  const stats = it.result?.agent;
+  const bg = stats?.background;
+  const runningNow = it.status === 'running' || it.status === 'pending' || bg === 'running';
+  const name = it.detail.subagent || it.title;
+  return (
+    <div className="block">
+      <div className="block-head">
+        <span className="block-icon">{runningNow ? <Ring size={14} /> : <Icon name="agent" size={16} />}</span>
+        <span className="block-title">{name}</span>
+        <span className="block-aside">{it.status === 'error' ? 'Failed' : runningNow ? (bg ? 'In the background' : 'Working') : 'Done'}</span>
+      </div>
+      {it.detail.description && it.detail.description !== name && <div className="block-desc">{it.detail.description}</div>}
+      <div className="block-sub num">
+        {[stats?.steps ? plural(stats.steps, 'step') : kids ? plural(kids, 'step') : '', stats?.tokens && `${formatTokens(stats.tokens)} tokens`, stats?.durationMs && formatDuration(stats.durationMs)].filter(Boolean).join(' · ')}
+      </div>
+    </div>
+  );
+});
+
+const statusWord = (s: string) => (s === 'running' ? 'Running' : s === 'done' ? 'Done' : s === 'failed' ? 'Failed' : 'Stopped');
+
+const Notice = memo(function Notice({ sid, id }: { sid: string; id: string }) {
+  const it = useItem<NoticeItem>(sid, id);
+  const provider = useStore((s) => s.sessions[sid]?.provider);
+  const accounts = useStore((s) => (provider ? s.providers[provider]?.accounts : undefined));
+  const [busy, setBusy] = useState(false);
+  if (!it) return null;
+  // At a plan limit: carry on with the account the desktop suggests (the refused message goes again).
+  const next = it.limit?.next && !it.limit.continuedWith ? accounts?.find((a) => a.id === it.limit!.next && a.auth.loggedIn) : undefined;
+  return (
+    <div className="notice" data-variant={it.variant}>
+      {it.variant === 'error' && <Icon name="warning" size={15} />}
+      <span>
+        {it.text}
+        {it.detail && <span className="notice-detail"> · {it.detail}</span>}
+        {next && (
+          <button
+            type="button"
+            className="btn btn-sm notice-action"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              haptic('send');
+              void conn.call('session.switchAccount', { sessionId: sid, accountId: next.id, retry: true }).finally(() => setBusy(false));
+            }}
+          >
+            Continue with {next.label}
+          </button>
+        )}
+      </span>
+    </div>
+  );
+});
+
+const Answer = memo(function Answer({ sid, id }: { sid: string; id: string }) {
+  const it = useItem<TextItem>(sid, id);
+  const html = useMemo(() => (it ? renderMarkdown(it.text, it.streaming) : ''), [it]);
+  if (!it || !it.text.trim()) return null;
+  return <div className="md" data-streaming={it.streaming || undefined} dangerouslySetInnerHTML={{ __html: html }} />;
+});
+
+export function Empty({ children }: { children: ReactNode }) {
+  return <p className="empty">{children}</p>;
+}

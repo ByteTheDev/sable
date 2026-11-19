@@ -18,6 +18,7 @@ import {
   type RpcMethods,
   type RpcName,
   type SessionMeta,
+  type SessionOptions,
   type UserItem,
 } from '../shared/protocol';
 import { normalizeBackdrop } from '../shared/backdrop';
@@ -1168,7 +1169,7 @@ export class App {
         usage: { inputTokens: 0, outputTokens: 0, turns: 0 },
       };
       if (accountId !== DEFAULT_ACCOUNT) meta.accountId = accountId;
-      const options = p.options ?? settings.sessionOptions?.[p.provider];
+      const options = withDefaultOptions(p.provider, p.options ?? settings.sessionOptions?.[p.provider]);
       if (options && Object.keys(options).length) meta.options = { ...options };
       const rt = this.makeRuntime(meta);
       this.sessions.set(meta.id, rt);
@@ -1470,6 +1471,15 @@ function isDir(dir: string) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Capabilities a new session starts with: the person's choice for the agent, else the defaults.
+ * Claude's Remote Control is on unless chosen otherwise (every chat can be continued on a phone).
+ */
+export function withDefaultOptions(provider: ProviderId, chosen: SessionOptions | undefined): SessionOptions | undefined {
+  if (provider === 'claude' && chosen?.remoteControl === undefined) return { ...chosen, remoteControl: true };
+  return chosen;
 }
 
 /** A sub-agent's permission mode: the same posture as its parent's, in its own agent's terms. */

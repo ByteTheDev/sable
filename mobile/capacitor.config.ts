@@ -1,0 +1,25 @@
+import type { CapacitorConfig } from '@capacitor/cli';
+
+const config: CapacitorConfig = {
+  appId: 'io.github.leonxlnx.sable.mobile',
+  appName: 'Sable',
+  webDir: 'dist',
+  backgroundColor: '#070708',
+  server: {
+    // http://localhost: the desktop endpoint is plain ws:// on the home network, which an https page could not open.
+    androidScheme: 'http',
+    cleartext: true,
+    // Development only (SABLE_MOBILE_DEV=1 before `cap sync`): load the web build from `vite preview` through `adb reverse tcp:5190 tcp:5190`.
+    ...(process.env.SABLE_MOBILE_DEV ? { url: 'http://localhost:5190' } : {}),
+  },
+  android: {
+    backgroundColor: '#070708',
+  },
+  plugins: {
+    SystemBars: { insetsHandling: 'css', style: 'DARK', initialViewportFitValueHint: 'cover' },
+    Keyboard: { resizeOnFullScreen: false },
+    LocalNotifications: { smallIcon: 'ic_stat_sable', iconColor: '#f2f1ee' },
+  },
+};
+
+export default config;

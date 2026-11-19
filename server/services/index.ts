@@ -6,6 +6,7 @@ import { registerFiles } from './files';
 import { registerFs } from './fs';
 import { registerGit } from './git';
 import { registerMemory } from './memory';
+import { registerPhone } from './phone';
 import { registerTerm } from './term';
 import { registerUsage } from './usage';
 
@@ -25,4 +26,5 @@ export function registerServices(app: App, opts: ServiceOptions = {}) {
   registerBackdrop(app);
   registerUsage(app, { home: opts.userHome });
   registerDevice(app);
+  registerPhone(app);
 }
