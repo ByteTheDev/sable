@@ -191,7 +191,6 @@ kbd {
   text-overflow: ellipsis;
   direction: rtl;
   text-align: left;
-  unicode-bidi: plaintext;
   color: var(--text-3);
 }
 

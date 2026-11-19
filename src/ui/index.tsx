@@ -582,7 +582,8 @@ export function PathLabel({ path, className, title }: { path: string; className?
   // The full path shows as a tooltip only when part of it was cut (or when a different title was asked for).
   return (
     <span className={cx('path', className)} title={title && title !== path ? title : undefined} data-title={path} onPointerEnter={title && title !== path ? undefined : titleIfCut}>
-      {dir && <span className="path-dir">{dir}</span>}
+      {/* Left-to-right marks hold the slashes in place inside the right-to-left box that cuts from the start. */}
+      {dir && <span className="path-dir">{`\u200E${dir}\u200E`}</span>}
       <span className="path-name">{name || norm}</span>
     </span>
   );
