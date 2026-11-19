@@ -1174,6 +1174,8 @@ export interface AppSettings {
   generativeUi?: boolean;
   /** Lanes: a session starting in a git folder where another session works gets a worktree of its own. Absent means off. */
   autoLanes?: boolean;
+  /** With the phone on and a phone paired, the computer does not sleep while on mains power, so the phone can reach it (`server/core/awake.ts`). Absent means on. */
+  phoneAwake?: boolean;
   /** At a plan limit, a session carries on with the next signed-in account of its agent that has room. Absent means off. */
   continueAtLimit?: boolean;
   /** Per account (`${provider}:${accountId}`): carry on with credits or extra usage at a limit, before the next account. Absent means off. */

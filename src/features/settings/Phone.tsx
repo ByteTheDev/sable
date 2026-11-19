@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import type { PhoneStatus } from '@shared/protocol';
 import { Icon } from '@/icons';
 import { bridge } from '@/lib/bridge';
+import { setSettings } from '@/state/actions';
+import { useStore } from '@/state/store';
 import { timeAgo } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
 import { Switch } from '@/ui';
@@ -22,6 +24,7 @@ const ago = (ts: number, now: number) => {
 export function Phone() {
   const [status, setStatus] = useState<PhoneStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const awake = useStore((s) => s.settings.phoneAwake !== false);
   const now = useNow();
 
   useEffect(() => {
@@ -58,6 +61,12 @@ export function Phone() {
         <Row label="Phone access" help={on ? (status.listening ? `On this network at ${status.hosts[0] ?? status.name}:${status.port}` : (status.error ?? 'Starting')) : 'Paired phones connect over your home network'}>
           <Switch label="Phone access" checked={on} disabled={busy} onChange={(v) => void run(() => bridge.call('phone.setEnabled', { on: v }))} />
         </Row>
+        {/* A sleeping computer cannot answer the phone (server/core/awake.ts); never on battery. */}
+        {on && (
+          <Row label="Stay awake for the phone" help="While plugged in, with a phone paired">
+            <Switch label="Stay awake for the phone" checked={awake} onChange={(phoneAwake) => setSettings({ phoneAwake })} />
+          </Row>
+        )}
       </Card>
 
       {status.request && (

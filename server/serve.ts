@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { BRIDGE_PATH } from '../shared/protocol';
 import { attachBridge } from './bridge';
-import { watchAwake } from './core/awake';
+import { watchAwake, watchPhoneAwake } from './core/awake';
 
 /**
  * The production server: serves the built UI and hosts the bridge on one port, on 127.0.0.1 only
@@ -26,6 +26,8 @@ export interface RunningServer {
   close(): Promise<void>;
   /** Calls `onChange` when agents start working anywhere, and when all have stopped for a minute (`core/awake.ts`). */
   watchBusy(onChange: (busy: boolean) => void): () => void;
+  /** Calls `onChange` when a paired phone starts or stops needing the computer awake (`core/awake.ts`). */
+  watchPhone(onChange: (on: boolean) => void): () => void;
 }
 
 const types: Record<string, string> = {
@@ -142,6 +144,8 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     })());
 
   const watchBusy = (onChange: (busy: boolean) => void) => watchAwake({ get sessions() { return bridge.app.sessions.values(); }, subscribe: (l) => bridge.app.subscribe(l) }, onChange);
+  const watchPhone = (onChange: (on: boolean) => void) =>
+    watchPhoneAwake({ subscribe: (l) => bridge.app.subscribe(l), phone: () => bridge.app.call('phone.status', {}), settings: () => bridge.app.store.state.settings }, onChange);
 
-  return { url: `http://127.0.0.1:${port}`, port, close, watchBusy };
+  return { url: `http://127.0.0.1:${port}`, port, close, watchBusy, watchPhone };
 }

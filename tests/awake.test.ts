@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BridgeEvent, SessionMeta } from '../shared/protocol';
-import { watchAwake } from '../server/core/awake';
+import type { AppSettings, BridgeEvent, PhoneStatus, SessionMeta } from '../shared/protocol';
+import { phoneWantsAwake, watchAwake, watchPhoneAwake } from '../server/core/awake';
 
 type S = { meta: SessionMeta; turnActive: boolean };
 
@@ -61,6 +61,39 @@ describe('keep awake', () => {
     expect(calls).toEqual([true]);
     stop();
     expect(calls).toEqual([true, false]);
+    expect(listeners.size).toBe(0);
+  });
+});
+
+describe('keep awake for the phone', () => {
+  const status = (enabled: boolean, devices: number) => ({ enabled, devices: Array.from({ length: devices }, (_, i) => ({ id: String(i), name: 'p', pairedAt: 0 })) }) as unknown as PhoneStatus;
+
+  it('wants the computer up only with the phone on, a phone paired and the setting not off', () => {
+    expect(phoneWantsAwake(status(true, 1), {} as AppSettings)).toBe(true);
+    expect(phoneWantsAwake(status(true, 0), {} as AppSettings)).toBe(false);
+    expect(phoneWantsAwake(status(false, 1), {} as AppSettings)).toBe(false);
+    expect(phoneWantsAwake(status(true, 1), { phoneAwake: false } as AppSettings)).toBe(false);
+    expect(phoneWantsAwake(undefined, {} as AppSettings)).toBe(false);
+  });
+
+  it('follows the phone and the settings by their events', async () => {
+    const listeners = new Set<(e: BridgeEvent) => void>();
+    let settings = {} as AppSettings;
+    const calls: boolean[] = [];
+    const stop = watchPhoneAwake(
+      { subscribe: (l) => (listeners.add(l), () => void listeners.delete(l)), phone: async () => status(true, 1), settings: () => settings },
+      (on) => calls.push(on),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toEqual([true]);
+    settings = { phoneAwake: false } as AppSettings;
+    for (const l of listeners) l({ type: 'settings.updated', settings });
+    expect(calls).toEqual([true, false]);
+    settings = {} as AppSettings;
+    for (const l of listeners) l({ type: 'phone.updated', status: status(true, 0) });
+    expect(calls).toEqual([true, false]);
+    stop();
     expect(listeners.size).toBe(0);
   });
 });

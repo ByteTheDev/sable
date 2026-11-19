@@ -1,4 +1,4 @@
-import type { BridgeEvent, SessionMeta } from '../../shared/protocol';
+import type { AppSettings, BridgeEvent, PhoneStatus, SessionMeta } from '../../shared/protocol';
 
 /**
  * Keep awake: while an agent works (a turn runs, or an /until loop runs its check between turns)
@@ -57,5 +57,47 @@ export function watchAwake(src: AwakeSource, onChange: (busy: boolean) => void, 
     clearTimeout(release);
     if (busy) onChange(false);
     busy = false;
+  };
+}
+
+/**
+ * The phone: a paired phone can only reach this computer while it is awake. With the phone on,
+ * at least one phone paired and `AppSettings.phoneAwake` not off, the shell keeps the computer
+ * from sleeping while it runs on mains power (never on battery). Recomputed on the phone's and
+ * the settings' own events.
+ */
+export interface PhoneAwakeSource {
+  subscribe(listener: (e: BridgeEvent) => void): () => void;
+  phone(): Promise<PhoneStatus | undefined>;
+  settings(): AppSettings;
+}
+
+export const phoneWantsAwake = (status: PhoneStatus | undefined, settings: AppSettings) => !!status?.enabled && status.devices.length > 0 && settings.phoneAwake !== false;
+
+export function watchPhoneAwake(src: PhoneAwakeSource, onChange: (on: boolean) => void): () => void {
+  let status: PhoneStatus | undefined;
+  let on = false;
+  const check = () => {
+    const now = phoneWantsAwake(status, src.settings());
+    if (now !== on) {
+      on = now;
+      onChange(now);
+    }
+  };
+  const off = src.subscribe((e) => {
+    if (e.type === 'phone.updated') status = e.status;
+    if (e.type === 'phone.updated' || e.type === 'settings.updated') check();
+  });
+  void src.phone().then(
+    (s) => {
+      status ??= s;
+      check();
+    },
+    () => {},
+  );
+  return () => {
+    off();
+    if (on) onChange(false);
+    on = false;
   };
 }
