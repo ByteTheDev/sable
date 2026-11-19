@@ -1,35 +1,44 @@
 # Sable
 
-Sable is a desktop app for working with coding agents. It runs the Claude Code and Codex CLIs you already have installed and signed in, and gives both one calm place to work: a conversation that shows what the agent is doing while it does it, answers that can hold charts and small interactive views, and a side panel with your changes, files, a browser, a terminal and the agent's tasks. Sable has no model or account of its own. Your agents do the work; Sable shows it.
+Sable is a desktop app for working with coding agents. It runs the Claude Code and Codex CLIs you already have installed and signed in, and gives both one calm place to work: a conversation that shows what the agent is doing without drowning you in tool calls, answers that can hold charts and small interactive views, a side panel with your changes, files, a browser, a terminal and the agent's sub-agents, and a phone app to follow and steer your chats from anywhere. Sable has no model or account of its own. Your agents do the work; Sable shows it.
 
 ![A finished turn with a chart in the answer](docs/session.png)
 
 ## What is different
 
-**The agent can answer with an interface.** Both agents get a `show_widget` tool. When a chart, a diagram, a small form or a simulation explains something better than prose, the agent draws it and it appears inline in the answer. Clicking a choice in a widget can send it back as your next message. Widgets run in a sandboxed frame with no network access and no access to Sable or your files. Answers also draw `mermaid` code blocks as diagrams, preview `html` and `svg` code blocks, and lay out wide tables properly.
+**A conversation you can follow.** While a turn runs you see one live line (what the agent is doing now, the time, how many steps) and the agent's own short reports as they come in. The steps fold behind that line and open with one click, in their places. A message you send while the agent works is answered right below it, and the work goes on. When the turn ends, the line becomes a summary with the time it took and the files it changed, above the answer.
 
-**A conversation you can follow.** While a turn runs you see one live line on top and a trail of steps below it, one short line each: reads and searches fold into runs, a running command shows its last lines, edits show their diff on demand. Text streams at an even pace. When the turn ends, the steps gather into a single summary line with the time it took and the files it changed, and the answer stays in view.
+![A live turn and the Changes panel](docs/live.png)
 
-![A live turn with the trail of steps and the Changes panel](docs/live.png)
+**Two agents that work together.** Each agent can hand a task to the other as a sub-agent: a Claude Code session can ask Codex, and the other way round, and the sub-agent's steps show under the step that started it. Under a finished turn that changed files, "Check with Codex" (or Claude Code) lets the other agent review the changes read-only and puts its findings in your composer.
 
-**Several accounts per agent, and their limits in view.** Add as many Claude Code or Codex accounts as you use, each with its own config folder, and switch between them from the sidebar. The switcher shows how much of each plan window is used. When a turn hits a plan limit, Sable offers to continue the same conversation with another account that has room, or does it for you if you turn that on.
+**The agent can answer with an interface.** Both agents get a `show_widget` tool. When a chart, a diagram, a small form or a simulation explains something better than prose, the agent draws it and it appears inline in the answer. Widgets run in a sandboxed frame with no network access and no access to Sable or your files. Answers also draw `mermaid` diagrams, preview `html` and `svg` code blocks, and lay out wide tables properly. Files the agent hands you show up as cards you can open.
+
+**Your phone as a remote.** The Android app pairs with Sable by QR code and shows your chats, their live progress and everything that waits on you. Answer permissions and questions, send or steer messages, start new chats, and get a notification when a turn finishes or needs you. It talks to your computer directly over your home network (or [Tailscale](https://tailscale.com) when you are away); nothing goes through a server of ours.
+
+**Several accounts per agent, and their limits in view.** Add as many Claude Code or Codex accounts as you use and switch between them from the sidebar, which shows how much of each plan window is used. Set a cap per account ("use this one up to 90%"), and when a turn hits a cap or a plan limit, Sable continues the same conversation on the next account in your order. Spare quota that would expire unused can run queued work (`/spare`), and a chat stopped at a limit can continue by itself when the window resets.
 
 ![The account switcher with one account's limits](docs/accounts.png)
 
-**Usage you can read.** Settings › Usage shows each account's plan windows with when they reset and whether you are on pace to hit them, plus the tokens your agents used by day, model, project and session, read from the transcripts the agents already keep on disk.
+**Usage you can read.** Settings › Usage shows each account's plan windows with when they reset and whether you are on pace, plus the tokens your agents used by day, model, project and session, read from the transcripts the agents already keep on disk.
 
 ![Settings, Usage](docs/usage.png)
 
 ## Everything else
 
-- Claude Code (through the Claude Agent SDK) and Codex (through `codex app-server`) in one timeline: messages, thinking, commands, file edits with diffs, searches, sub-agents, MCP tools, plans and todos.
-- Permission cards with diff previews (allow once, always allow, deny with feedback) and keyboard-driven question cards.
-- Queue a message while the agent works, or steer it into the running turn.
-- Slash commands and skills (`/`), file mentions (`@`), shell commands (`!`), attachments and images.
-- Model, permission mode and thinking level per session, including Ultracode for Claude and the ultra level for Codex.
-- Side panel: git changes, file tree, a browser next to the conversation, a terminal, tasks and context usage.
+- Claude Code (through the Claude Agent SDK) and Codex (through `codex app-server`) in one timeline: messages, thinking, commands, file edits with diffs, searches, sub-agents and workflows, MCP tools, plans and todos.
+- A triage deck (Ctrl+I) with every permission and question waiting across all chats, answered by keyboard.
+- `/until <check>`: the agent keeps going until your check passes (tests, a build, a linter), within a number of rounds and a usage budget.
+- Before and after: a local page in the Browser tab is captured before and after a turn that edits files, with the changed regions marked and a compare slider.
+- Lanes (optional): a chat that starts in a git folder where another chat is working gets its own worktree and branch, and the Changes tab says whether it lands cleanly before you land it.
+- Projects that group folders, chats without a folder, and a sidebar you arrange by drag.
+- Permission cards with diff previews, question cards, queueing and steering, slash commands and skills (`/`), file mentions (`@`), shell commands (`!`), attachments and images.
+- Model, permission mode, thinking level and speed per session, including Ultracode for Claude and the ultra level for Codex.
+- Side panel: git changes, file tree, a browser with tabs next to the conversation, a terminal, tasks, context usage, the agents of the chat, and an Android device or emulator for app work.
 - History: browse and resume the conversations your agents keep on disk. Rewind to an earlier message, optionally restoring files.
-- Command palette and keyboard shortcuts for everything.
+- A profile of you (`~/.sable/profile.md`) that both agents read and can add short facts to.
+- Long chats stay fast: chats of hundreds of megabytes open in seconds and stream without slowing the app.
+- The computer does not go to sleep while an agent works, or while a paired phone may need it and it is plugged in.
 - A dithered backdrop that reacts when you send, when a turn ends and when something fails, and goes still when you stop. Presets, your own image and a live editor in Settings › Appearance.
 
 ![Settings, Appearance](docs/appearance.png)
@@ -44,10 +53,19 @@ Sable is Windows only for now. The installer is not code-signed, so Windows Smar
 
 Sable keeps its data in `~/.sable`. The uninstaller leaves that folder alone.
 
+### The phone app
+
+1. Download `Sable-Android-<version>.apk` from the same release onto your Android phone and open it. Android asks once to allow installs from that source (the app is not on the Play Store).
+2. In Sable on your computer, open Settings › Phone, turn phone access on and choose "Pair a phone". Scan the code with the app and allow the phone on the computer.
+3. The phone reaches the computer on the same Wi-Fi. To use it away from home, install [Tailscale](https://tailscale.com) on both, signed in to the same account, and open the app once at home afterwards: it learns the computer's Tailscale address by itself. Keep the computer on and plugged in (closing a laptop's lid usually puts it to sleep).
+
+A newer APK installs over the old one and keeps the pairing.
+
 ## Requirements
 
 - Windows 10 or 11.
 - Claude Code and/or the Codex CLI, installed and signed in. Sable uses their own sign-in and never sees your password or tokens: plan limits are asked of the agents themselves, and usage is counted from their transcripts.
+- For the phone app: Android 7 or newer.
 
 ## Development
 

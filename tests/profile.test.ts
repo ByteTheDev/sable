@@ -112,7 +112,7 @@ describe('remember', () => {
     expect(remember(OWN, 'x'.repeat(300)).ok).toBe(false);
     expect(remember(OWN, '  ').ok).toBe(false);
     // Plain facts about keys and tokens are fine.
-    for (const fine of ['Prefers token-efficient answers', 'Works on D:\\fabletests5.2\\ade', 'Uses a Windows 11 laptop with 32 GB of RAM', 'Keeps API keys in a password manager']) expect(secretReason(fine), fine).toBeUndefined();
+    for (const fine of ['Prefers token-efficient answers', 'Works on D:\\projects\\app', 'Uses a Windows 11 laptop with 32 GB of RAM', 'Keeps API keys in a password manager']) expect(secretReason(fine), fine).toBeUndefined();
   });
 
   it('keeps at most MAX_ENTRIES additions, dropping the oldest', () => {
