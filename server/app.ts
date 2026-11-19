@@ -1004,9 +1004,9 @@ export class App {
     // A move by a cap says why in its own line; a move at a limit closes the limit's notice.
     const open = opts.line ? undefined : rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
     if (open) rt.patch<NoticeItem>(open.id, { limit: { ...open.limit, continuedWith: accountId } });
-    if (opts.line) rt.notice('info', opts.line, carried === 'summary' ? 'It starts with a summary of this one' : undefined);
+    if (opts.line) rt.notice('info', opts.line, carried === 'summary' ? 'With a summary of the conversation so far' : undefined);
     else if (!open || carried === 'summary') {
-      rt.notice('info', carried === 'summary' ? `New conversation with ${label}` : `Continued with ${label}`, carried === 'summary' ? 'It starts with a summary of this one' : undefined);
+      rt.notice('info', carried === 'summary' ? `New conversation with ${label}` : `Continued with ${label}`, carried === 'summary' ? 'With a summary of the conversation so far' : undefined);
     }
     if (refused) {
       const handle = await this.ensureHandle(rt);
