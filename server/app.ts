@@ -39,6 +39,7 @@ import { orderAccounts } from './accounts/order';
 import { withBrowserLine } from './providers/browser-tool';
 import { profileOf } from './services/profile';
 import { parseUntil, runCheck, UntilLoops } from './core/until';
+import { Lanes } from './core/lanes';
 import { isAllModelsWeekly } from './core/limit-policy';
 import { VERSION } from './version';
 
@@ -139,6 +140,27 @@ export class App {
   });
   /** Loops that were armed when Sable closed: their sessions say so when next opened. */
   private untilLost = new Map<string, NonNullable<SessionMeta['until']>>();
+  /** Lanes: a worktree of its own for a session whose folder another session is working in (server/core/lanes.ts). */
+  private lanes = new Lanes({
+    home: () => this.store.dir,
+    sessions: () => this.sessions.values(),
+    auto: () => this.store.state.settings.autoLanes !== false,
+    release: async (rt) => {
+      await this.opening.get(rt.id)?.catch(() => {});
+      rt.cancelPrompts();
+      await rt.handle?.close().catch(() => {});
+      rt.handle = undefined;
+    },
+    configHome: (rt) => {
+      try {
+        return this.provider(rt.meta.provider, rt.meta.accountId ?? DEFAULT_ACCOUNT).configHome?.();
+      } catch {
+        return undefined;
+      }
+    },
+    persist: () => this.persistSessions(),
+    log: (...args) => this.log(...args),
+  });
 
   constructor(opts: AppOptions) {
     this.quiet = !!opts.quiet;
@@ -560,6 +582,8 @@ export class App {
    */
   private async deliver(rt: SessionRuntime, text: string, attachments?: UserItem['attachments'], extra?: Pick<UserItem, 'until'>) {
     // Past its account's cap, the session moves to the next account before the message goes out.
+    // The first message names the session's lane, or moves it into one when its folder got busy.
+    if (!extra?.until && !rt.items.some((i) => i.type === 'user')) await this.lanes.beforeFirstSend(rt, text);
     if (!rt.turnActive && !this.opening.has(rt.id)) await this.checkCap(rt);
     const addUser = () => {
       if (rt.meta.titleSource === 'auto' && !rt.items.some((i) => i.type === 'user')) {
@@ -1046,7 +1070,8 @@ export class App {
     // (a chat's own folder is not one: chats sit together in the chats group).
     for (const s of this.store.state.sessions) {
       if (s.chat) continue;
-      const key = path.resolve(s.cwd);
+      // A chat in a lane belongs to the folder it came from, never to the lane.
+      const key = path.resolve(s.lane?.folder ?? s.cwd);
       if (seen.has(key.toLowerCase())) continue;
       seen.add(key.toLowerCase());
       projects.push({ path: key, name: path.basename(key) || key, lastOpened: 0 });
@@ -1055,7 +1080,7 @@ export class App {
     const last = new Map<string, number>();
     for (const s of this.store.state.sessions) {
       if (s.archived) continue;
-      const k = path.resolve(s.cwd).toLowerCase();
+      const k = path.resolve(s.lane?.folder ?? s.cwd).toLowerCase();
       last.set(k, Math.max(last.get(k) ?? 0, s.updatedAt));
     }
     const activity = (p: Project) => Math.max(p.lastOpened, last.get(path.resolve(p.path).toLowerCase()) ?? 0);
@@ -1456,10 +1481,16 @@ export class App {
           rt.notice('info', `Continued from ${source.meta.title}`, 'It starts with a summary of that conversation');
         }
       }
-      // A chat's own folder is not one of the sidebar's folders.
+      // A chat's own folder is not one of the sidebar's folders; the chats group, new, goes on top.
       if (!meta.chat) this.touchProject(meta.cwd);
+      else if (typeof this.store.state.chatsOrder !== 'number') {
+        this.store.state.chatsOrder = this.topPlace();
+        this.store.saveState();
+        this.emitProjects();
+      }
       this.emit({ type: 'session.added', session: meta });
-      const opened = provider.open(rt, { loadTranscript: !!p.resume }).then(
+      // A folder another session is working in: the session starts in a lane of its own.
+      const opened = this.lanes.atStart(rt, p.title ?? p.chat?.text).then(() => provider.open(rt, { loadTranscript: !!p.resume })).then(
         (handle) => {
           // Closed while it was starting: let the agent go.
           if (this.sessions.get(rt.id) !== rt) return void Promise.resolve(handle.close()).catch(() => {});
@@ -1613,6 +1644,13 @@ export class App {
     this.register('until.stop', ({ sessionId }) => ({ ok: this.until.stop(this.runtime(sessionId)) }));
     this.register('until.check', ({ sessionId }) => ({ ok: this.until.checkNow(this.runtime(sessionId)) }));
 
+    // Lanes (server/core/lanes.ts).
+    this.register('lane.forecast', ({ sessionId }) => this.lanes.forecast(this.runtime(sessionId)));
+    this.register('lane.land', ({ sessionId, message }) => this.lanes.land(this.runtime(sessionId), typeof message === 'string' ? message : undefined));
+    this.register('lane.discard', ({ sessionId }) => this.lanes.discard(this.runtime(sessionId)));
+    this.register('lane.create', ({ sessionId }) => this.lanes.create(this.runtime(sessionId)));
+    this.register('lane.open', ({ sessionId }) => this.lanes.open(this.runtime(sessionId)));
+
     this.register('session.rename', ({ sessionId, title }) => {
       this.runtime(sessionId).update({ title: title.trim() || 'Untitled', titleSource: 'user' });
       return { ok: true };
@@ -1639,6 +1677,8 @@ export class App {
         this.emit({ type: 'session.removed', id: sessionId });
         // A deleted chat takes its folder along when nothing was ever put in it.
         if (rt.meta.chat) removeEmptyChatFolder(this.chatsRoot(), rt.meta.cwd);
+        // A deleted chat's lane goes too when it holds nothing to land (otherwise its branch keeps the work).
+        void this.lanes.closed(rt);
       }
       this.persistSessions();
       return { ok: true };

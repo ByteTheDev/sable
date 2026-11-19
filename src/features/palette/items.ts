@@ -8,6 +8,7 @@ import { openImport } from '@/features/history/History';
 import { continueInAgent, goHome, interrupt, openSession, openSettings } from '@/state/actions';
 import { RAIL_TABS, railTabKeys } from '@/features/rail/tabs';
 import { focusComposer } from '@/state/hooks';
+import { createLane } from '@/features/session/lane';
 import { useStore, type RailTab } from '@/state/store';
 
 export type PaletteGroup = 'Recent' | 'Sessions' | 'Projects' | 'Actions' | 'Commands' | 'Skills';
@@ -102,6 +103,10 @@ export function buildItems(opts: {
     const other: ProviderId | undefined = opts.active.provider === 'claude' ? 'codex' : opts.active.provider === 'codex' ? 'claude' : undefined;
     if (other && opts.installed.includes(other))
       act(`continue:${other}`, `Continue in ${PROVIDER_NAME[other]}`, 'arrow-right', () => void continueInAgent(id, other), { keywords: 'handover switch agent move conversation' });
+    // Lanes: a worktree of its own for this chat, now (its conversation goes along).
+    const lane = opts.active.lane;
+    if (lane) act('lane:changes', 'Land or discard the lane', 'fork', () => setUi({ railOpen: true, railTab: 'changes' }), { keywords: `lane worktree branch merge land discard ${lane.branch}` });
+    else if (!opts.active.chat) act('lane:create', 'Move chat to a lane', 'fork', () => void createLane(id), { keywords: 'lane worktree branch isolate parallel git' });
     const s = opts.active.status;
     if (s === 'running' || s === 'starting' || s === 'awaiting') {
       act('stop', 'Stop the current session', 'stop', () => void interrupt(id), { keywords: 'interrupt cancel halt', tone: 'var(--red)' });

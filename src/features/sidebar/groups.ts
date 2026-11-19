@@ -155,8 +155,10 @@ export function buildGroups(
       (s.archived ? chatArchived : chatList).push(s);
       continue;
     }
-    if (hidden.has(pathKey(s.cwd))) continue;
-    const g = ensure(s.cwd);
+    // A chat in a lane belongs to the folder it came from.
+    const home = s.lane?.folder ?? s.cwd;
+    if (hidden.has(pathKey(home))) continue;
+    const g = ensure(home);
     if (s.archived) g.archived.push(s);
     else {
       g.sessions.push(s);

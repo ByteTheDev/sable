@@ -63,6 +63,9 @@ export function General() {
         <Row label="Generative UI">
           <Switch label="Generative UI" checked={settings.generativeUi !== false} onChange={(generativeUi) => setSettings({ generativeUi })} />
         </Row>
+        <Row label="Lanes" help="A chat in a busy git folder gets a worktree of its own.">
+          <Switch label="Lanes" checked={settings.autoLanes !== false} onChange={(autoLanes) => setSettings({ autoLanes })} />
+        </Row>
         <NotifyRow on={settings.notifyOnDone} />
       </Card>
       <SessionDefaults />

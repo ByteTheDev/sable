@@ -25,7 +25,7 @@ export interface GitResult {
 export function runGit(
   cwd: string,
   args: string[],
-  opts: { timeoutMs?: number; maxBytes?: number; input?: string } = {},
+  opts: { timeoutMs?: number; maxBytes?: number; input?: string; env?: Record<string, string> } = {},
 ): Promise<GitResult> {
   return new Promise((resolve) => {
     const max = opts.maxBytes ?? 16_000_000;
@@ -55,7 +55,7 @@ export function runGit(
         cwd,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_PAGER: 'cat', LC_ALL: 'C' },
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_PAGER: 'cat', LC_ALL: 'C', ...opts.env },
       });
     } catch {
       resolve({ code: null, stdout: '', stderr: '', missing: true, timedOut: false, truncated: false });
@@ -369,7 +369,7 @@ export async function gitBranches(cwd: string): Promise<{ current?: string; bran
 }
 
 /** The last meaningful lines of git's complaint, without hint noise. */
-function gitError(r: GitResult, fallback: string): string {
+export function gitError(r: GitResult, fallback: string): string {
   if (r.missing) return 'Git is not installed or not on PATH.';
   if (r.timedOut) return 'Git took too long and was stopped.';
   const text = `${r.stderr}\n${r.stdout}`

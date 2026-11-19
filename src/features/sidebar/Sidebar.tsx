@@ -287,7 +287,7 @@ function removeRow(id: string) {
 
 function selectActiveKey(s: { ui: { activeSessionId: string | null }; sessions: Record<string, SessionMeta> }): string | null {
   const a = s.ui.activeSessionId ? s.sessions[s.ui.activeSessionId] : undefined;
-  return a && !a.pinned ? (a.chat ? 'chats' : pathKey(a.cwd)) : null;
+  return a && !a.pinned ? (a.chat ? 'chats' : pathKey(a.lane?.folder ?? a.cwd)) : null;
 }
 
 /** Rows by id (a space-joined string, so the list re-renders only when membership or order changes). */

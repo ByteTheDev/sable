@@ -1,0 +1,259 @@
+/* ── Lanes: the header's mark and the glyph ──
+   The glyph is the folder's branch (trunk) with the lane off it. It moves once when a lane appears
+   (the line peels off the trunk) and once when it lands (the line folds back into the trunk and the
+   mark goes). Transform and opacity only; under reduced motion a plain fade. */
+
+.lane-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 22px;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  font-size: var(--t-small);
+  transition: background-color var(--d-1) var(--ease-out), color var(--d-1) var(--ease-out), scale var(--d-1) var(--ease-out);
+}
+
+.lane-mark:hover {
+  background: var(--fill-1);
+  color: var(--text-2);
+}
+
+.lane-mark:active {
+  scale: 0.97;
+}
+
+.lane-mark:focus-visible {
+  outline: var(--focus-w, 2px) solid var(--focus);
+  outline-offset: 1px;
+}
+
+.lane-mark .lane-glyph {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.lane-mark-name {
+  min-width: 0;
+}
+
+.lane-ab {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+/* The lane leaves the trunk from the fork point (4.5, 11 on the 16 grid). */
+.lane-glyph {
+  overflow: visible;
+}
+
+.lane-glyph-lane {
+  transform-box: view-box;
+  transform-origin: 4.5px 11px;
+}
+
+.lane-glyph[data-phase='peel'] .lane-glyph-lane {
+  animation: lane-peel 460ms var(--ease-out) both;
+}
+
+.lane-glyph[data-phase='merge'] .lane-glyph-lane {
+  animation: lane-merge 380ms var(--ease-in, cubic-bezier(0.55, 0, 1, 0.45)) both;
+}
+
+/* A landed lane: the line folds into the trunk, then the mark steps back. */
+.lane-mark[data-phase='merge'] {
+  animation: lane-mark-out 200ms var(--ease-out) 320ms both;
+}
+
+.lane-mark[data-phase='leave'] {
+  animation: lane-mark-out 220ms var(--ease-out) both;
+}
+
+.lane-mark[data-phase='peel'] .lane-mark-name {
+  animation: lane-name-in 300ms var(--ease-out) 140ms both;
+}
+
+@keyframes lane-peel {
+  0% { transform: rotate(-45deg) scale(0.55); opacity: 0; }
+  35% { opacity: 1; }
+  72% { transform: rotate(4deg) scale(1); }
+  100% { transform: rotate(0deg) scale(1); opacity: 1; }
+}
+
+@keyframes lane-merge {
+  0% { transform: rotate(0deg) scale(1); opacity: 1; }
+  100% { transform: rotate(-45deg) scale(0.6); opacity: 0; }
+}
+
+@keyframes lane-mark-out {
+  to { opacity: 0; transform: translateX(-4px); }
+}
+
+@keyframes lane-name-in {
+  from { opacity: 0; transform: translateX(-4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lane-glyph[data-phase] .lane-glyph-lane,
+  .lane-mark[data-phase='peel'] .lane-mark-name {
+    animation: none;
+  }
+  .lane-mark[data-phase='merge'],
+  .lane-mark[data-phase='leave'] {
+    animation: lane-fade 200ms linear both;
+  }
+}
+
+@keyframes lane-fade {
+  to { opacity: 0; }
+}
+
+/* ── The Changes tab's lane section ──
+   Sits where the commit box sits: a quiet head (glyph, lane, its base, how far apart), one line of
+   verdict, the conflicting files as paths, then the message (only when there is something to
+   commit) and the two actions. */
+
+.lane-box {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.lane-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 26px;
+  color: var(--text-2);
+  font-size: var(--t-ui);
+}
+
+.lane-head .lane-glyph {
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+
+.lane-branch {
+  min-width: 0;
+  color: var(--text);
+  font-weight: var(--w-medium);
+}
+
+.lane-from {
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--t-small);
+  flex-shrink: 1000;
+}
+
+.lane-head-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.lane-verdict {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-small);
+  transition: opacity var(--d-2) var(--ease-out);
+}
+
+.lane-verdict[data-loading] {
+  opacity: 0.6;
+}
+
+.lane-verdict svg {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.lane-verdict[data-state='clean'] svg {
+  color: var(--text-2);
+}
+
+/* What stops a land waits on the user: the waiting tone, not an error. */
+.lane-verdict[data-state='conflicts'] svg,
+.lane-verdict[data-state='blocked'] svg {
+  color: var(--amber);
+}
+
+.lane-stat {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-size: var(--t-micro);
+}
+
+.lane-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: -2px 0 0;
+  padding: 0 0 0 19px;
+  list-style: none;
+  font-size: var(--t-small);
+}
+
+.lane-files li {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  line-height: 20px;
+}
+
+.lane-more {
+  color: var(--text-3);
+}
+
+.lane-land {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lane-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.lane-land-btn {
+  --h: 30px;
+}
+
+.lane-confirm {
+  justify-content: flex-start;
+}
+
+.lane-confirm-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: var(--t-small);
+}
+
+.lane-box > .ch-commit-error {
+  margin-top: 0;
+}

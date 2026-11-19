@@ -415,6 +415,66 @@ export interface SessionMeta {
   capState?: { browser?: CapabilityState; computerUse?: CapabilityState };
   /** `/until <check>` is armed: after each turn Sable runs the check and sends a failure back. Ends with Sable (not resumed after a restart). Null once it ended (patches travel as JSON). */
   until?: UntilState | null;
+  /** The session works in a lane of its own (a git worktree on a branch of its own); `cwd` is inside it. Null once it landed or was discarded (patches travel as JSON). */
+  lane?: SessionLane | null;
+}
+
+/**
+ * Lanes: a session that starts in a git folder where another session is working gets a git
+ * worktree on a branch of its own (`sable/<short title>`), so the two never edit the same files.
+ * The lane is a property of the chat: it stays in its folder in the sidebar and comes back there
+ * when the lane lands or is discarded (`server/core/lanes.ts`, `server/services/git-lanes.ts`).
+ */
+export interface SessionLane {
+  /** The folder the session was started in, where it returns when the lane ends. */
+  folder: string;
+  /** The repository's top level of that folder (its main checkout). */
+  root: string;
+  /** The worktree's top level, under Sable's lanes folder. */
+  path: string;
+  branch: string;
+  /** The commit the lane started from. */
+  base: string;
+  /** The folder's branch when the lane began (absent on a detached head). */
+  from?: string;
+  createdAt: number;
+  /** Ignored folders of the main checkout shared into the lane through a link (`node_modules`). */
+  links?: string[];
+  /** The branch still has its first, made-up name: the first message names it. */
+  provisional?: boolean;
+}
+
+/** Whether a lane would land on the folder's branch now (a dry merge; nothing is changed). */
+export interface LaneForecast {
+  /** `clean`: lands without conflicts; `conflicts`: these files conflict with the branch; `blocked`: the folder has uncommitted edits in files the lane changes; `nothing`: no work to land; `unavailable`: see `reason`. */
+  state: 'clean' | 'conflicts' | 'blocked' | 'nothing' | 'unavailable';
+  /** The folder's current branch, where the lane lands. */
+  target?: string;
+  /** The lane's commits the branch does not have. */
+  ahead: number;
+  /** The branch's commits the lane does not have. */
+  behind: number;
+  /** Files the lane changed but did not commit (Land commits them first). */
+  uncommitted: number;
+  /** What landing brings: files, lines added and removed. */
+  files: number;
+  additions: number;
+  deletions: number;
+  /** Repository-relative paths. */
+  conflicts: string[];
+  blocked: string[];
+  reason?: string;
+}
+
+export interface LaneLandResult {
+  ok: boolean;
+  error?: string;
+  conflicts?: string[];
+  blocked?: string[];
+  /** How it landed: the branch moved forward to the lane, the lane's commits were replayed on the branch first, or a merge commit joined them. */
+  how?: 'fast-forward' | 'rebase' | 'merge';
+  commits?: number;
+  target?: string;
 }
 
 /**
@@ -1112,6 +1172,8 @@ export interface AppSettings {
    * blocks. Absent means on; applies to the tool when an agent process starts.
    */
   generativeUi?: boolean;
+  /** Lanes: a session starting in a git folder where another session works gets a worktree of its own. Absent means on. */
+  autoLanes?: boolean;
   /** At a plan limit, a session carries on with the next signed-in account of its agent that has room. Absent means off. */
   continueAtLimit?: boolean;
   /** Per account (`${provider}:${accountId}`): carry on with credits or extra usage at a limit, before the next account. Absent means off. */
@@ -1545,6 +1607,13 @@ export interface RpcMethods {
   'until.stop': { params: { sessionId: string }; result: { ok: boolean } };
   /** Runs a paused loop's check now (the session must be idle). */
   'until.check': { params: { sessionId: string }; result: { ok: boolean } };
+  /** Lanes (`SessionLane`). `forecast` dry-merges the lane into the folder's branch; `land` commits what is uncommitted (with `message`), brings the lane's commits onto that branch and ends the lane; `discard` ends it and drops its work; `create` moves the session into a new lane now. */
+  'lane.forecast': { params: { sessionId: string }; result: LaneForecast };
+  'lane.land': { params: { sessionId: string; message?: string }; result: LaneLandResult };
+  'lane.discard': { params: { sessionId: string }; result: { ok: boolean; error?: string } };
+  'lane.create': { params: { sessionId: string }; result: { ok: boolean; error?: string; lane?: SessionLane } };
+  /** Opens the lane's folder in the system's file manager. */
+  'lane.open': { params: { sessionId: string }; result: { ok: boolean; error?: string } };
 
   /**
    * Replaces a queued message's text, and its attachments when `attachments` is given (an empty

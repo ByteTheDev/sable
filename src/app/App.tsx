@@ -16,6 +16,7 @@ import { goHome, openSettings, renameSession, toggleTriage } from '@/state/actio
 import { useActiveProvider, useHotkey } from '@/state/hooks';
 import { SessionAccount } from '@/features/accounts';
 import { WaitingCount } from '@/features/triage/WaitingCount';
+import { LaneMark } from '@/features/session/LaneMark';
 import { shallow } from 'zustand/shallow';
 import { useLaggedStore } from '@/lib/lagged';
 import { railTabAt } from '@/features/rail/tabs';
@@ -588,7 +589,7 @@ function toggleSidebar(shown: boolean) {
 function selectBarSession(s: ReturnType<typeof useStore.getState>) {
   const id = s.ui.activeSessionId;
   const m = id ? s.sessions[id] : undefined;
-  return m ? { id: m.id, provider: m.provider, accountId: m.accountId, title: m.title, cwd: m.cwd, branch: m.branch } : undefined;
+  return m ? { id: m.id, provider: m.provider, accountId: m.accountId, title: m.title, cwd: m.cwd, branch: m.branch, laneFolder: m.lane?.folder, chat: !!m.chat } : undefined;
 }
 
 /** The bar follows the stage a task behind, and after a sent message has landed (see useLaggedStore). */
@@ -616,15 +617,22 @@ function Topbar({ panelShown }: { panelShown: boolean }) {
           <ProviderMark provider={session.provider} size={15} />
           <TitleName key={session.id} id={session.id} title={session.title} />
           <span className="topbar-crumb">
-            <Icon name="folder" size={13} />
-            <span className="truncate">{baseName(session.cwd)}</span>
-            {session.branch && (
+            {/* A chat without a folder: its own folder is named after its first message, so the title already says it. */}
+            {!session.chat && (
+              <>
+                <Icon name="folder" size={13} />
+                {/* A chat in a lane names its folder, and its lane in place of the branch. */}
+                <span className="truncate">{baseName(session.laneFolder ?? session.cwd)}</span>
+              </>
+            )}
+            {!session.chat && !session.laneFolder && session.branch && (
               <>
                 <Icon name="branch" size={13} />
                 <span className="truncate">{session.branch}</span>
               </>
             )}
             {/* The account, when its agent has several: opens "Continue with another account". */}
+            <LaneMark key={session.id} sessionId={session.id} />
             <SessionAccount sessionId={session.id} />
           </span>
         </div>

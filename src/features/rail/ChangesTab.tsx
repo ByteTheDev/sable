@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { FileDiff, GitFileStatus, ToolItem } from '@shared/protocol';
 import { Collapse } from '@/components/Collapse';
 import { DiffView } from '@/components/DiffView';
@@ -9,6 +9,8 @@ import { useStore } from '@/state/store';
 import { IconButton, Spinner, Tip } from '@/ui';
 import { STATUS_TONE, commitAll, gitKey, isSmall, loadAllDiffs, loadDiff, refreshGit, useRepo, type DiffEntry } from './git-state';
 import { LeaveList } from './leave';
+import { LaneSection } from './LaneSection';
+import { useSessionLane } from '@/features/session/lane';
 import { splitPath, useArrivals, useToolIds } from './util';
 
 /** How many files the Changes tab lists (working tree, or this session's edits outside a repo). */
@@ -23,6 +25,7 @@ export function useChangeCount(sessionId: string, cwd: string): number {
 export function ChangesTab({ sessionId, cwd }: { sessionId: string; cwd: string }) {
   const repo = useRepo(cwd);
   const status = repo?.status;
+  const lane = useSessionLane(sessionId);
 
   if (!status) {
     return (
@@ -40,13 +43,25 @@ export function ChangesTab({ sessionId, cwd }: { sessionId: string; cwd: string 
       </div>
     );
   }
+  // A lane whose folder is gone can still be discarded from here.
+  if (!status.isRepo && lane) {
+    return (
+      <div className="rail-col">
+        <div className="rail-scroll scroll">
+          <p className="rail-empty">The lane folder is gone.</p>
+        </div>
+        <LaneSection sessionId={sessionId} lane={lane} cwd={cwd} />
+      </div>
+    );
+  }
   if (!status.isRepo) return <SessionEdits sessionId={sessionId} cwd={cwd} />;
-  return <RepoChanges cwd={cwd} />;
+  return <RepoChanges cwd={cwd} foot={lane ? <LaneSection key={lane.path} sessionId={sessionId} lane={lane} cwd={cwd} /> : undefined} />;
 }
 
 // ───────────────────────────── repository ─────────────────────────────
 
-function RepoChanges({ cwd }: { cwd: string }) {
+/** `foot`: what takes the commit box's place (a lane's section, which lands instead). */
+function RepoChanges({ cwd, foot }: { cwd: string; foot?: ReactNode }) {
   const repo = useRepo(cwd)!;
   const status = repo.status!;
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
@@ -148,7 +163,7 @@ function RepoChanges({ cwd }: { cwd: string }) {
           </LeaveList>
         )}
       </div>
-      {status.files.length > 0 && <CommitBox cwd={cwd} />}
+      {foot ?? (status.files.length > 0 && <CommitBox cwd={cwd} />)}
     </div>
   );
 }
