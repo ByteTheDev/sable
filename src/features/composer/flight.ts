@@ -2,15 +2,16 @@ import { EASE_OUT, play, reducedMotion, uiZoom } from '@/lib/motion';
 import { CARD_FONT, CARD_LINE, CARD_PAD_TOP, CARD_PAD_X, isLongMessage } from '@/features/timeline/user-card';
 import { holdSend } from './settle';
 import { freezeLiquid, pour, prewarmLiquid, type Pour } from './liquid';
-import { HAND, lerp, linearEasing, planLiquid, shiftAt, shiftEase, smooth, wordsAt, type Box, type LiquidPlan, type LiquidSpec } from './liquid-shape';
+import { COLLAPSE, collapseAt, collapseEase, HAND, linearEasing, planLiquid, revealAt, shiftAt, shiftEase, type Box, type LiquidPlan, type LiquidSpec } from './liquid-shape';
 
 /**
  * A sent message leaves the composer as liquid (liquid-shape.ts has the beats and the geometry):
- * the words pour into the bar's top-right corner, where a bead of its ink swells out of the edge;
- * the field is empty and live at once. The bead lifts on a neck that thins and breaks, the drop
- * flies to the bottom-right of where the message will sit, stretched along its speed, and spreads
- * there into the card's shape, the words unfolding inside it; the conversation's own card then
- * takes over in one cut. The message is in place in under half a second.
+ * the words gather into the bar's top-right corner as one piece while the field closes to one
+ * line on the same curve; for a moment the bar is empty and at rest (it is live at once). Then a
+ * bead of its ink rises out of the top edge there, lifts on a neck that thins and parts, flies to
+ * the bottom-right of where the message will sit, stretched along its speed, and spreads there
+ * into the card's shape, revealing the words in place as it covers them; the conversation's own
+ * card then takes over in one cut.
  *
  * - Who draws what: the liquid is drawn by a worker on a canvas of its own (liquid.ts), the words
  *   are page layers animated on the compositor, both timed from the key on the same clock with
@@ -60,16 +61,17 @@ interface Flight {
   started: boolean;
   liquid: Pour | null;
   plan: LiquidPlan;
-  /** The words pouring out of their source (gone once poured). */
+  /** The words gathering out of their source (gone once gathered). */
   pourEls: HTMLElement[];
-  /** The landing layer (the message card, or the queue row's words) and its parts. */
+  /** The landing layer (the message card, or the queue row's words) and its parts: the window the ink reveals the words through, and the words. */
   el: HTMLDivElement;
   inner: HTMLElement;
+  clip: HTMLElement;
   unfold: HTMLElement;
   surface: HTMLElement | null;
   /** Where the layer stands untransformed: the planned landing. */
   box: Box;
-  /** The unfold and the surface (made again when the landing moves before the drop leaves). */
+  /** The reveal and the surface (made again when the landing moves before the drop leaves). */
   anims: Animation[];
   /** The late correction, played on `inner` (the same curve the worker follows). */
   fixAnim: Animation | null;
@@ -93,6 +95,8 @@ interface Flight {
   home: { left: number; top: number; s0: number };
   /** The bar the bead forms on, while the bar holds still for it. */
   bar: HTMLElement | null;
+  /** The field closing to one line (left to finish whatever happens to the message). */
+  barAnim: Animation | null;
 }
 
 /** What the composer keeps of a launch: the bridge's answer decides how the wait ends. */
@@ -106,8 +110,27 @@ export interface FlightHandle {
 }
 
 const pending: Flight[] = [];
-/** Messages that mounted in the conversation with no message in the air yet (a tray row may still leave). */
+/**
+ * Messages that mounted in the conversation with no message in the air yet (a tray row may still
+ * leave): claimed within `UNCLAIMED_MS`, forgotten after (so no old conversation is held).
+ */
 const unclaimed: { key: string; root: HTMLElement; at: number }[] = [];
+const UNCLAIMED_MS = 400;
+const pruneUnclaimed = (now: number) => {
+  for (let i = unclaimed.length - 1; i >= 0; i--) if (now - unclaimed[i].at >= UNCLAIMED_MS || !unclaimed[i].root.isConnected) unclaimed.splice(i, 1);
+};
+
+/** The bars a bead is joined to: each holds still (`data-pouring`) until the last of its messages has left it. */
+const holding = new WeakMap<HTMLElement, number>();
+function holdBar(bar: HTMLElement, ms: number) {
+  holding.set(bar, (holding.get(bar) ?? 0) + 1);
+  bar.setAttribute('data-pouring', '');
+  window.setTimeout(() => {
+    const n = (holding.get(bar) ?? 1) - 1;
+    holding.set(bar, n);
+    if (n <= 0) bar.removeAttribute('data-pouring');
+  }, ms);
+}
 
 const norm = (t: string) => t.trim().replace(/\s+/g, ' ').slice(0, 160);
 const matches = (flightKey: string, text: string) => {
@@ -165,10 +188,6 @@ const MIN_GUTTER = 24;
 const CORNER = 34;
 /** A queue row (composer.css `.cq-list`, `.cq-row`): inset in the tray, its height, its corners, where its words start. */
 const ROW = { inset: 6, gap: 6, height: 28, radius: 9, text: 35 };
-/** The words pour into the bead: this long per line, the lines a little apart. */
-const POUR_MS = 135;
-const POUR_SPREAD = 45;
-const MAX_BANDS = 6;
 
 function columnToken(): number {
   return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--column')) || 760;
@@ -309,46 +328,38 @@ function fromKey(f: Pick<Flight, 't0' | 'all' | 'started'>, el: Element, frames:
 }
 
 /**
- * The words pour out of their source into the bead: the visible text is cut into its lines, each
- * a layer of its own that narrows toward the bead faster than it flattens, fading as it arrives;
- * the lines go one after another from the top, so the text drains into the corner.
+ * The words gather out of their source into the corner the bead rises from: the visible text as
+ * one layer (clipped to the field), scaled uniformly toward that point and faded on the way, so the
+ * paragraph closes into it whole. Nothing of it is cut apart or re-wrapped.
  */
-function pourWords(f: Pick<Flight, 't0' | 'all' | 'started'>, src: Source, m: Measured, at: { x: number; y: number }): HTMLElement[] {
-  const viewH = Math.max(m.line, m.view.bottom - m.view.top);
-  const long = src.text.length > 1200;
-  const n = long || src.oneLine ? 1 : Math.max(1, Math.min(MAX_BANDS, Math.round(viewH / m.line)));
-  const bandH = n === 1 ? Math.min(viewH, src.oneLine ? viewH : m.line * MAX_BANDS) : m.line;
-  const font = fontOf(m.cs);
-  const out: HTMLElement[] = [];
-  const step = n > 1 ? Math.min(16, POUR_SPREAD / (n - 1)) : 0;
-  for (let i = 0; i < n; i++) {
-    const top = m.view.top + i * bandH;
-    const band = document.createElement('div');
-    band.className = 'send-pour';
-    band.setAttribute('aria-hidden', 'true');
-    band.style.cssText = `left:${m.left}px;top:${top}px;width:${m.width}px;height:${bandH}px;transform-origin:${(at.x - m.left).toFixed(1)}px ${(at.y - top).toFixed(1)}px;`;
-    const words = document.createElement('div');
-    words.style.cssText = `top:${(m.top - top).toFixed(2)}px;width:${m.width}px;${font}color:${m.cs.color};`;
-    if (src.oneLine) words.setAttribute('data-one-line', '');
-    words.textContent = src.text;
-    band.appendChild(words);
-    document.body.appendChild(band);
-    const frames: Keyframe[] = [];
-    for (let k = 0; k <= 10; k++) {
-      const u = k / 10;
-      // The far end races in first (the line narrows into the corner), the height goes last, as it enters the bead.
-      const e = u * u * (3 - 2 * u);
-      const sx = lerp(1, 0.012, e ** 0.8);
-      const sy = lerp(1, 0.03, e ** 1.25);
-      frames.push({ offset: u, transform: `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`, opacity: 1 - smooth(0.55, 1, u) });
-    }
-    fromKey(f, band, frames, { duration: POUR_MS, delay: i * step });
-    out.push(band);
+function gatherWords(f: Pick<Flight, 't0' | 'all' | 'started'>, src: Source, m: Measured, at: { x: number; y: number }): HTMLElement[] {
+  const view = { top: m.view.top, height: Math.max(m.line, m.view.bottom - m.view.top) };
+  const layer = document.createElement('div');
+  layer.className = 'send-gather';
+  layer.setAttribute('aria-hidden', 'true');
+  layer.style.cssText = `left:${m.left}px;top:${view.top}px;width:${m.width}px;height:${view.height}px;transform-origin:${(at.x - m.left).toFixed(1)}px ${(at.y - view.top).toFixed(1)}px;`;
+  const words = document.createElement('div');
+  words.style.cssText = `top:${(m.top - view.top).toFixed(2)}px;width:${m.width}px;${fontOf(m.cs)}color:${m.cs.color};`;
+  if (src.oneLine) words.setAttribute('data-one-line', '');
+  words.textContent = src.text.length > 4000 ? src.text.slice(0, 4000) : src.text;
+  layer.appendChild(words);
+  document.body.appendChild(layer);
+  const frames: Keyframe[] = [];
+  const n = 12;
+  for (let k = 0; k <= n; k++) {
+    const u = k / n;
+    const c = collapseAt(u);
+    frames.push({ offset: u, transform: `scale(${c.s.toFixed(4)})`, opacity: c.o.toFixed(3) });
   }
-  return out;
+  fromKey(f, layer, frames, { duration: COLLAPSE });
+  return [layer];
 }
 
-/** The card the message becomes: the conversation's own `.user-card`, its surface a layer of its own (it forms last). */
+/**
+ * The card the message becomes: the conversation's own `.user-card`, inside the window the ink
+ * reveals it through; its surface a layer of its own beside that window (it forms last, with its
+ * shadow, which the window would cut).
+ */
 function makeCard(text: string, steer: boolean, max: number) {
   const el = document.createElement('div');
   el.className = 'send-bubble';
@@ -356,6 +367,8 @@ function makeCard(text: string, steer: boolean, max: number) {
   el.style.cssText = `left:0;top:0;width:max-content;max-width:${max}px;`;
   const inner = document.createElement('div');
   inner.className = 'send-in';
+  const clip = document.createElement('div');
+  clip.className = 'send-clip';
   const unfold = document.createElement('div');
   unfold.className = 'send-unfold';
   const surface = document.createElement('i');
@@ -363,29 +376,19 @@ function makeCard(text: string, steer: boolean, max: number) {
   const card = document.createElement('div');
   card.className = 'user-card';
   card.style.maxWidth = 'none';
-  if (steer) {
-    // A steer lands not yet taken: at the waiting tone (timeline.css `.user[data-queued] .user-card`).
-    card.style.opacity = '0.6';
-    // The steered mark's line (its icon comes with the real card).
-    const mark = document.createElement('span');
-    mark.className = 'user-mark';
-    mark.setAttribute('data-waiting', '');
-    // Room for its icon (the real card brings it), so the words stand where they will.
-    const icon = document.createElement('i');
-    icon.style.cssText = 'display:inline-block;width:11px;height:11px;';
-    mark.append(icon, 'Steered, not taken yet');
-    card.appendChild(mark);
-  }
+  // A steer lands not yet taken: at the waiting tone (timeline.css `.user[data-queued] .user-card`).
+  if (steer) card.style.opacity = '0.6';
   const words = document.createElement('div');
   words.className = 'user-text';
   // A long message is clipped in the conversation too, at the same line (timeline.css `.user-text[data-clipped]`).
   if (isLongMessage(text)) words.setAttribute('data-clipped', '');
   words.textContent = text;
   card.appendChild(words);
-  unfold.append(surface, card);
-  inner.appendChild(unfold);
+  unfold.appendChild(card);
+  clip.appendChild(unfold);
+  inner.append(surface, clip);
   el.appendChild(inner);
-  return { el, inner, unfold, surface };
+  return { el, inner, clip, unfold, surface };
 }
 
 /** A queue row's words, as the tray will show them. */
@@ -395,6 +398,8 @@ function makeRowWords(text: string, cs: CSSStyleDeclaration | null) {
   el.setAttribute('aria-hidden', 'true');
   const inner = document.createElement('div');
   inner.className = 'send-in';
+  const clip = document.createElement('div');
+  clip.className = 'send-clip';
   const unfold = document.createElement('div');
   unfold.className = 'send-unfold';
   const words = document.createElement('div');
@@ -402,27 +407,36 @@ function makeRowWords(text: string, cs: CSSStyleDeclaration | null) {
   if (cs) words.style.cssText = fontOf(cs);
   words.textContent = text.split('\n').find((l) => l.trim())?.trim() ?? text;
   unfold.appendChild(words);
-  inner.appendChild(unfold);
+  clip.appendChild(unfold);
+  inner.appendChild(clip);
   el.appendChild(inner);
-  return { el, inner, unfold, surface: null };
+  return { el, inner, clip, unfold, surface: null };
 }
 
-/** The words unfold with the sheet (wordsAt), and the card's surface forms as the sheet hands over. */
+/**
+ * The words are revealed in place by the spreading ink (revealAt): a window over the card that
+ * follows the sheet, its content counter-scaled so the words never move or change size; the card's
+ * surface forms as the sheet hands over.
+ */
 function unfoldAnims(f: Flight) {
   for (const a of f.anims) a.cancel();
   f.anims = [];
   const p = f.plan;
-  const frames: Keyframe[] = [];
+  const win: Keyframe[] = [];
+  const words: Keyframe[] = [];
   const span = p.hand - p.land;
-  const n = Math.max(6, Math.round(span / 12));
+  const n = Math.max(8, Math.round(span / 8));
   for (let i = 0; i <= n; i++) {
     const t = p.land + (span * i) / n;
-    const w = wordsAt(p, t);
-    frames.push({ offset: i / n, transform: `translate(${w.x.toFixed(2)}px, ${w.y.toFixed(2)}px) scale(${w.s.toFixed(4)})`, opacity: w.o });
+    const r = revealAt(p, t);
+    win.push({ offset: i / n, transform: `translate(${r.x.toFixed(2)}px, ${r.y.toFixed(2)}px) scale(${r.sx.toFixed(4)}, ${r.sy.toFixed(4)})` });
+    words.push({ offset: i / n, transform: `scale(${(1 / r.sx).toFixed(4)}, ${(1 / r.sy).toFixed(4)}) translate(${(-r.x).toFixed(2)}px, ${(-r.y).toFixed(2)}px)`, opacity: r.o.toFixed(3) });
   }
-  frames[frames.length - 1] = { offset: 1, transform: 'translate(0px, 0px) scale(1)', opacity: 1 };
-  const u = fromKey(f, f.unfold, frames, { duration: span, delay: p.land });
-  if (u) f.anims.push(u);
+  win[n] = { offset: 1, transform: 'translate(0px, 0px) scale(1, 1)' };
+  words[n] = { offset: 1, transform: 'scale(1, 1) translate(0px, 0px)', opacity: 1 };
+  const a = fromKey(f, f.clip, win, { duration: span, delay: p.land });
+  const b = fromKey(f, f.unfold, words, { duration: span, delay: p.land });
+  for (const x of [a, b]) if (x) f.anims.push(x);
   if (f.surface) {
     const s = fromKey(f, f.surface, [{ opacity: 0 }, { opacity: 1 }], { duration: HAND, delay: p.hand, easing: 'cubic-bezier(0.3, 0, 0.2, 1)' });
     if (s) f.anims.push(s);
@@ -456,8 +470,13 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
   const rowEl = source.oneLine ? source.el.closest<HTMLElement>('[data-qrow]') : null;
   const rowBox = rowEl?.getBoundingClientRect();
   const cardR = g.card;
+  // The field closes to one line with the words. A docked bar grows upward, so its top edge comes
+  // down by what the field loses; the home card's copy keeps its top (home/handoff.ts).
+  const ta = bar && source.el instanceof HTMLTextAreaElement ? source.el : null;
+  const oneLine = m.line + (parseFloat(m.cs.paddingTop) || 0) + (parseFloat(m.cs.paddingBottom) || 0);
+  const shrink = ta ? Math.max(0, ta.getBoundingClientRect().height / z - oneLine) : 0;
   const from: LiquidSpec['from'] = cardR
-    ? { x: cardR.right / z - CORNER, y: cardR.top / z, edge: true }
+    ? { x: cardR.right / z - CORNER, y: cardR.top / z + (opts.first ? 0 : shrink), edge: true }
     : rowBox
       ? { x: rowBox.right / z - 44, y: (rowBox.top + rowBox.height / 2) / z, edge: false }
       : { x: m.box.right - 30, y: (m.box.top + m.box.bottom) / 2, edge: false };
@@ -473,6 +492,7 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
     pourEls: [],
     el: null as unknown as HTMLDivElement,
     inner: null as unknown as HTMLElement,
+    clip: null as unknown as HTMLElement,
     unfold: null as unknown as HTMLElement,
     surface: null,
     box: { left: 0, top: 0, width: 0, height: 0, radii: [18, 18, 6, 18] },
@@ -493,6 +513,7 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
     restTimer: 0,
     home: { left: 0, top: 0, s0: 1 },
     bar,
+    barAnim: null,
   };
   // Where the card stands to show its words exactly on the field's (a refused message goes back there).
   const s0 = Math.min(1, m.size / CARD_FONT);
@@ -526,13 +547,27 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
   const spec: LiquidSpec = { from, to: f.box, kind: bubble ? 'bubble' : 'row' };
   f.liquid = pour(spec);
   f.plan = f.liquid.plan;
-  // The words drain into the bead (or the row's end), and the landing unfolds from the sheet.
-  f.pourEls = pourWords(f, source, m, { x: from.x, y: from.y });
+  // The words gather into the corner the bead will rise from (or the row's end), and the landing
+  // is revealed by the sheet.
+  f.pourEls = gatherWords(f, source, m, { x: from.x, y: from.y });
+  // A queue row's words are gathering out of it: the row itself shows none (it leaves the tray
+  // meanwhile; one that stays gets its words back).
+  if (source.oneLine) {
+    const el = source.el;
+    el.style.opacity = '0';
+    window.setTimeout(() => (el.style.opacity = ''), COLLAPSE + 400);
+  }
   unfoldAnims(f);
-  // The bar holds still while the bead is joined to it (composer.css `.cmp-card[data-pouring]`).
-  if (bar) {
-    bar.setAttribute('data-pouring', '');
-    window.setTimeout(() => bar.removeAttribute('data-pouring'), f.plan.snap + 260);
+  // The bar holds still while the bead is joined to it, and its field closes with the words on
+  // their curve (composer.css `.cmp-card[data-pouring]`; the composer's own measure then sets the
+  // same height).
+  if (bar) holdBar(bar, f.plan.snap + 80);
+  if (ta && shrink > 0.5 && !opts.first) {
+    ta.style.overflowY = 'hidden';
+    ta.style.height = `${oneLine}px`;
+    // Timed from the same frame as the words (a transition would start whenever the busy main
+    // thread next gets to it), and above whatever the composer writes meanwhile.
+    f.barAnim = fromKey(f, ta, [{ height: `${(oneLine + shrink).toFixed(2)}px` }, { height: `${oneLine}px` }], { duration: COLLAPSE, easing: linearEasing(collapseEase, 20), fill: 'backwards' });
   }
   pending.push(f);
   begin(f);
@@ -545,7 +580,8 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
   window.setTimeout(() => abort(f), bubble ? HOLD_MS + 2000 : MAX_LIFE_MS);
   // A conversation row that mounted first (the bridge answered before this row left the tray).
   if (bubble) {
-    const i = unclaimed.findIndex((u) => t0 - u.at < 400 && u.root.isConnected && matches(f.key, u.key));
+    pruneUnclaimed(t0);
+    const i = unclaimed.findIndex((u) => matches(f.key, u.key));
     if (i >= 0) {
       const u = unclaimed.splice(i, 1)[0];
       landInTimeline(u.root, u.key, { steer, late: true });
@@ -573,7 +609,8 @@ function begin(f: Flight) {
         a.currentTime = frozenAt;
       }
     }
-    f.liquid?.start(at);
+    // A message given up before its first frame (its row was no place to land) draws nothing.
+    if (!f.ending) f.liquid?.start(at);
     armRest(f);
   };
   requestAnimationFrame((now) => go(now));
@@ -581,12 +618,12 @@ function begin(f: Flight) {
   armRest(f);
 }
 
-/** Rests once the liquid has run its course; the pour layers go once poured. */
+/** Rests once the liquid has run its course; the gathering words go once gathered. */
 function armRest(f: Flight) {
   window.clearTimeout(f.restTimer);
   const left = f.t0 + f.plan.end - performance.now();
   f.restTimer = window.setTimeout(() => rest(f), Math.max(0, left));
-  const poured = f.t0 + POUR_MS + POUR_SPREAD + 40 - performance.now();
+  const poured = f.t0 + COLLAPSE + 40 - performance.now();
   window.setTimeout(() => {
     if (frozen) return;
     for (const p of f.pourEls) p.remove();
@@ -757,7 +794,7 @@ function goBack(f: Flight): Promise<void> {
     });
   const t = performance.now() - f.t0;
   if (f.dest !== 'timeline' || t < f.plan.hand) {
-    for (const a of f.all) a.pause();
+    for (const a of f.all) if (a !== f.barAnim) a.pause();
     return finish(play(f.el, [{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'linear', fill: 'forwards' }));
   }
   // From where it is (the correction folded in) back onto the words' place in the field.
@@ -963,8 +1000,12 @@ export function landInTimeline(root: HTMLElement, text: string, opts: { steer?: 
   const f = claim('timeline', text);
   if (!f) {
     if (!opts.late) {
-      unclaimed.push({ key: text, root, at: performance.now() });
+      const now = performance.now();
+      pruneUnclaimed(now);
+      unclaimed.push({ key: text, root, at: now });
       if (unclaimed.length > 4) unclaimed.shift();
+      // Forgotten once it can no longer be claimed, so a conversation left behind is not held.
+      window.setTimeout(() => pruneUnclaimed(performance.now()), UNCLAIMED_MS + 20);
     }
     return false;
   }
@@ -990,8 +1031,11 @@ export function landInTimeline(root: HTMLElement, text: string, opts: { steer?: 
   root.style.opacity = '0';
   const steer = f.steer || !!opts.steer;
   f.onLand = () => {
-    // The wire of a steer draws itself down into the turn (timeline.css `.user-wire[data-draw]`).
-    if (steer) root.querySelector('.user-wire')?.setAttribute('data-draw', '');
+    if (!steer) return;
+    // The wire of a steer draws itself down into the turn (timeline.css `.user-wire[data-draw]`),
+    // and its mark beside the card comes in after the card.
+    root.querySelector('.user-wire')?.setAttribute('data-draw', '');
+    play(root.querySelector('.user-steer'), [{ opacity: 0, transform: 'translateX(4px)' }], { duration: 220, delay: 40, easing: EASE_OUT, fill: 'backwards' });
   };
   watch(f);
   return true;

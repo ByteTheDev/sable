@@ -193,10 +193,10 @@
   white-space: nowrap;
 }
 
-/* ── a sent message as liquid (flight.ts, liquid.ts, liquid-shape.ts) ──
-   Three layers over everything, transform and opacity only: the words pouring out of the field
+/* ── a sent message as liquid (flight.ts, liquid.ts, liquid-shape.ts, liquid-gl.ts) ──
+   Three layers over everything, transform and opacity only: the words gathering out of the field
    (under the ink), the ink itself (a canvas a worker draws), and the card or row the message lands
-   as (over the ink: its words unfold inside the spreading sheet, its surface forms last). */
+   as (over the ink: its words revealed in place by the spreading sheet, its surface forms last). */
 
 .send-liquid {
   position: fixed;
@@ -204,8 +204,8 @@
   pointer-events: none;
 }
 
-/* One line of the field's words, draining into the bead. */
-.send-pour {
+/* The field's words as one piece, gathering into the bar's top-right corner. */
+.send-gather {
   position: fixed;
   z-index: 59;
   overflow: hidden;
@@ -213,14 +213,14 @@
   will-change: transform, opacity;
 }
 
-.send-pour > div {
+.send-gather > div {
   position: absolute;
   left: 0;
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
 
-.send-pour > div[data-one-line] {
+.send-gather > div[data-one-line] {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -239,8 +239,20 @@
   position: relative;
 }
 
-/* No will-change: a layer promoted ahead of a scale-up is rastered at its small start and the
-   words blur as they grow; the animation itself puts it on the compositor, rastered at full size. */
+/* The window the spreading ink reveals the words through (it follows the sheet; the words inside
+   are counter-scaled, so they stand still at their size). No will-change: the animation promotes
+   them, rastered at full size. */
+.send-clip {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px 18px 6px 18px;
+  transform-origin: 0 0;
+}
+
+.send-flight .send-clip {
+  border-radius: 9px;
+}
+
 .send-unfold {
   position: relative;
   isolation: isolate;
@@ -254,11 +266,11 @@
   inset: 0;
   z-index: -1;
   border-radius: 18px 18px 6px 18px;
-  background-color: rgb(18 18 21 / 0.9);
+  background-color: rgb(20 20 23 / 0.84);
   background-image: var(--grain);
   background-size: var(--grain-size);
   box-shadow:
-    inset 0 0 0 1px rgb(255 255 255 / 0.07),
+    inset 0 0 0 1px rgb(255 255 255 / 0.08),
     var(--shadow-composer);
   pointer-events: none;
 }
@@ -280,10 +292,10 @@
   text-overflow: ellipsis;
 }
 
-/* The bar holds still while the bead is joined to it: a field that shrinks after the send waits
-   for the break, then the bar settles (Composer's measure sets the height; this only delays it). */
+/* The field closes to one line with the words gathering out of it (flight.ts animates its height
+   from the words' frame, on their curve): no transition of its own meanwhile. */
 .cmp-card[data-pouring] .cmp-input[data-ready] {
-  transition-delay: 170ms;
+  transition: none;
 }
 
 /* A sent message whose row is late (flight.ts): a hairline that fills slowly along the bubble's

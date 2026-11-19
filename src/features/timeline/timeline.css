@@ -862,10 +862,11 @@ button:hover > .row-caret {
 
 /* ───────────── user message ───────────── */
 
-/* The person's words sit on the right in the composer's own material: dark ink with its grain, the
-   same faint inner hairline and soft shadow, so a message reads as what left the composer. No
-   backdrop blur (a long conversation holds hundreds of these): the ink is a little denser instead,
-   so the field's light passes through only as a tint. The words are set like the answer's
+/* The person's words sit on the right in the composer's own material: frosted dark ink with its
+   grain, the same faint inner hairline and one soft shadow, so a message reads as what left the
+   composer. No backdrop blur (a long conversation holds hundreds of these): the ink is a touch
+   lighter and a little denser than the bar's instead, so it reads as glass on the stage and the
+   field's light passes through it as a tint. The words are set like the answer's
    (markdown.css `.md`). Time and actions appear above its right end on hover. Its numbers are
    shared with the bubble that flies here from the composer (user-card.ts). */
 .user {
@@ -896,11 +897,11 @@ button:hover > .row-caret {
   inset: 0;
   z-index: -1;
   border-radius: 18px 18px 6px 18px;
-  background-color: rgb(18 18 21 / 0.9);
+  background-color: rgb(20 20 23 / 0.84);
   background-image: var(--grain);
   background-size: var(--grain-size);
   box-shadow:
-    inset 0 0 0 1px rgb(255 255 255 / 0.07),
+    inset 0 0 0 1px rgb(255 255 255 / 0.08),
     var(--shadow-composer);
   pointer-events: none;
 }
@@ -980,6 +981,44 @@ button:hover > .row-caret {
 
 .user-mark svg {
   color: var(--text-4);
+}
+
+/* A message steered into a running turn: the steer key's arrow, small, beside the card on its first
+   line (User.tsx), named on hover. At the card's waiting tone until the agent takes it. */
+.user-steer {
+  display: grid;
+  flex: none;
+  align-self: flex-start;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: 11px 4px 0 0;
+  border-radius: 50%;
+  color: var(--text-4);
+  transition:
+    color var(--d-1) var(--ease),
+    opacity var(--d-3) var(--ease);
+}
+
+.user-steer svg {
+  transition: transform var(--d-1) var(--ease-out);
+}
+
+.user-steer:hover {
+  color: var(--text-2);
+}
+
+.user-steer:hover svg {
+  transform: translate(1px, -1px);
+}
+
+.user-steer:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 0;
+}
+
+.user-steer[data-waiting] {
+  opacity: 0.6;
 }
 
 /* A message steered into a running turn is wired to it while it waits: a dotted rule from its

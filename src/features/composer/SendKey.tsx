@@ -1,4 +1,4 @@
-import { memo, useSyncExternalStore } from 'react';
+import { memo, useLayoutEffect, useRef, useState, type ReactElement, useSyncExternalStore } from 'react';
 import { Tip } from '@/ui';
 
 const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -76,6 +76,25 @@ export interface SendKeyProps {
  * Send is a solid ivory disc with a dark glyph; stop an ivory disc with a dark square, static.
  */
 export const SendKey = memo(function SendKey({ canSend, busy, showStop, steerable, sendWithEnter, shell, stoppable, onSend, onStop }: SendKeyProps) {
+  // The send and stop keys share one slot. Pressed with the pointer, or swapped under a pointer
+  // that has not moved off the slot, the key there shows no tooltip until the pointer leaves: a tip
+  // is something asked for by pointing at a key, not a hint left lying beside it after a press.
+  const slot = useRef<HTMLDivElement>(null);
+  const [quiet, setQuiet] = useState(false);
+  const shown = useRef(showStop);
+  useLayoutEffect(() => {
+    if (shown.current === showStop) return;
+    shown.current = showStop;
+    if (slot.current?.matches(':hover')) setQuiet(true);
+  }, [showStop]);
+  const tip = (label: string, keys: string, el: ReactElement) =>
+    quiet ? (
+      el
+    ) : (
+      <Tip label={label} keys={keys} side="top">
+        {el}
+      </Tip>
+    );
   const queueing = busy && !shell;
   const held = useModHeld(queueing && steerable);
   const steer = queueing && steerable && held;
@@ -84,8 +103,10 @@ export const SendKey = memo(function SendKey({ canSend, busy, showStop, steerabl
   const label = shell ? 'Run in terminal' : steer ? 'Steer into this turn' : queueing ? 'Queue message' : 'Send';
 
   return (
-    <div className="cmp-keys">
-      <Tip label={label} keys={steer ? steerKeys : sendWithEnter ? 'enter' : 'mod+enter'} side="top">
+    <div className="cmp-keys" ref={slot} onPointerLeave={() => quiet && setQuiet(false)}>
+      {tip(
+        label,
+        steer ? steerKeys : sendWithEnter ? 'enter' : 'mod+enter',
         <button
           type="button"
           className="cmp-send"
@@ -95,13 +116,19 @@ export const SendKey = memo(function SendKey({ canSend, busy, showStop, steerabl
           aria-disabled={!canSend}
           tabIndex={showStop ? -1 : 0}
           onMouseDown={(e) => e.preventDefault()}
-          onClick={(e) => canSend && onSend(queueing && steerable && (MAC ? e.metaKey : e.ctrlKey))}
+          onClick={(e) => {
+            if (!canSend) return;
+            if (e.detail > 0) setQuiet(true);
+            onSend(queueing && steerable && (MAC ? e.metaKey : e.ctrlKey));
+          }}
         >
           <SendGlyphSvg glyph={glyph} />
-        </button>
-      </Tip>
-      {stoppable && (
-        <Tip label="Stop" keys="esc" side="top">
+        </button>,
+      )}
+      {stoppable &&
+        tip(
+          'Stop',
+          'esc',
           <button
             type="button"
             className="cmp-stop"
@@ -110,12 +137,14 @@ export const SendKey = memo(function SendKey({ canSend, busy, showStop, steerabl
             tabIndex={showStop ? 0 : -1}
             aria-hidden={!showStop}
             onMouseDown={(e) => e.preventDefault()}
-            onClick={onStop}
+            onClick={(e) => {
+              if (e.detail > 0) setQuiet(true);
+              onStop();
+            }}
           >
             <span className="cmp-stop-sq" aria-hidden />
-          </button>
-        </Tip>
-      )}
+          </button>,
+        )}
     </div>
   );
 });

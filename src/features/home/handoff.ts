@@ -1,5 +1,5 @@
 import { HOLD_MS, RELEASE } from '@/features/composer/flight';
-import { SNAP } from '@/features/composer/liquid-shape';
+import { COLLAPSE, collapseEase, linearEasing, SNAP } from '@/features/composer/liquid-shape';
 import { holdSend } from '@/features/composer/settle';
 import { reducedMotion, uiZoom } from '@/lib/motion';
 
@@ -9,9 +9,10 @@ import { reducedMotion, uiZoom } from '@/lib/motion';
  * On send, the home composer card is copied into a fixed layer above the stage (the "ghost") and
  * the real card hides. The ghost glides on a spring (about 350 ms) from the centre of the home
  * screen to where the session's docked composer will sit, predicted from the stage's geometry, so
- * it moves without waiting for the session to exist. While the sent words pour into a bead on its
- * top edge (composer/flight.ts) it holds still; it leaves as the drop breaks away, so the two part
- * in one motion, the drop up to the top of the column and the bar down to the dock. When the
+ * it moves without waiting for the session to exist. While the sent words gather into its corner
+ * and a bead rises out of its top edge (composer/flight.ts) it holds still, its field closing to one
+ * line with the words; it leaves as the drop parts from it, so the two part in one motion, the drop
+ * up to the top of the column and the bar down to the dock. When the
  * session view mounts, its composer claims the flight: the spring is re-aimed at the real card
  * (keeping its velocity), the real card stays hidden until the ghost lands on it, and then the two
  * swap in one frame.
@@ -238,7 +239,8 @@ export function beginHandoff(card: HTMLElement | null) {
     field.value = '';
     // Blank on the way down: the message just left, and the docked card brings its own placeholder.
     field.placeholder = '';
-    field.style.transition = 'height 260ms cubic-bezier(0.16, 1, 0.3, 1)';
+    // Closing with the words as they gather (their time and curve, liquid-shape.ts).
+    field.style.transition = `height ${COLLAPSE}ms ${linearEasing(collapseEase, 20)}`;
   }
   copy.querySelector('.cmp-roll')?.remove();
   document.body.appendChild(ghost);

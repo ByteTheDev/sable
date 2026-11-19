@@ -5,7 +5,7 @@ import { Icon } from '@/icons';
 import { formatBytes } from '@/lib/format';
 import { rewindTo } from '@/state/actions';
 import { useStore } from '@/state/store';
-import { IconButton, Popover, PopoverClose, PopoverContent, PopoverTrigger, Switch } from '@/ui';
+import { IconButton, Popover, PopoverClose, PopoverContent, PopoverTrigger, Switch, Tip } from '@/ui';
 import { fieldBeat } from '@/art/events';
 import { landInTimeline } from '@/features/composer/flight';
 import { afterSend, sendInAir } from '@/features/composer/settle';
@@ -14,6 +14,18 @@ import { MessageAgain } from './Again';
 import { useTimeline } from './ctx';
 import { Stamp } from './Stamp';
 import { isLongMessage } from './user-card';
+
+/** The steer key's arrow (composer/SendKey.tsx `steer`), drawn small: up and leaning into the turn. */
+function SteerMark() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <g transform="rotate(45 8 8)" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8 12.75V3.75" />
+        <path d="M4.25 7.5 8 3.75l3.75 3.75" />
+      </g>
+    </svg>
+  );
+}
 
 /** The person's message: their words on the right in the composer's material, with its time, copy and rewind on hover. */
 export const UserMessage = memo(function UserMessage({ item }: { item: UserItem }) {
@@ -117,14 +129,17 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
           )}
         </div>
       )}
-      <div className="user-card">
-        {item.steered ? (
-          // Steered into a running turn: marked in place, answered right below.
-          <span className="user-mark" data-waiting={queued || undefined}>
-            <Icon name="enter" size={11} />
-            {queued ? 'Steered, not taken yet' : 'Steered'}
+      {item.steered && (
+        // Steered into a running turn: a small mark beside the card, the steer key's own arrow
+        // leaning into the turn, named on hover. The card itself stays a plain message.
+        <Tip label={queued ? 'Sent while it worked, not taken yet' : 'Sent while it worked'} side="left">
+          <span className="user-steer" tabIndex={0} role="img" aria-label={queued ? 'Sent while it worked, not taken yet' : 'Sent while it worked'} data-waiting={queued || undefined}>
+            <SteerMark />
           </span>
-        ) : item.remote ? (
+        </Tip>
+      )}
+      <div className="user-card">
+        {item.steered ? null : item.remote ? (
           // Sent from elsewhere (Remote Control in the Claude app or on claude.ai).
           <span className="user-mark">
             <Icon name="phone" size={11} />

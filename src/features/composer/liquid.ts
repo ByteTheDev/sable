@@ -1,5 +1,6 @@
-import { uiZoom } from '@/lib/motion';
-import { drawLiquid, liquidAt, liquidBounds, planLiquid, type Box, type LiquidPlan, type LiquidSpec, type Shift } from './liquid-shape';
+import { reducedMotion, uiZoom } from '@/lib/motion';
+import { makeRenderer } from './liquid-gl';
+import { liquidAt, liquidBounds, planLiquid, type Box, type LiquidPlan, type LiquidSpec, type Shift } from './liquid-shape';
 import type { LiquidMessage, LiquidReply } from './liquid.worker';
 
 /**
@@ -59,6 +60,7 @@ function acquire(): Worker | null {
     }
     worker.onmessage = (e: MessageEvent<LiquidReply>) => {
       const m = e.data;
+      if (m.type === 'lost') return fail();
       if (m.type === 'free') {
         // Nothing left on it (the worker has cleared it): out of the page until the next message.
         const s = slots.find((x) => x.id === m.layer);
@@ -73,18 +75,21 @@ function acquire(): Worker | null {
       ends.delete(m.id);
       end?.();
     };
-    worker.onerror = () => {
-      broken = true;
-      worker?.terminate();
-      worker = null;
-      for (const s of slots) s.el.remove();
-      slots = [];
-      const list = [...ends.values()];
-      ends.clear();
-      for (const f of list) f();
-    };
+    worker.onerror = fail;
   }
   return worker;
+}
+
+/** The worker failed (or lost its GPU context): every message in the air settles, later ones draw on the page. */
+function fail() {
+  broken = true;
+  worker?.terminate();
+  worker = null;
+  for (const s of slots) s.el.remove();
+  slots = [];
+  const list = [...ends.values()];
+  ends.clear();
+  for (const f of list) f();
 }
 
 const post = (m: LiquidMessage, transfer: Transferable[] = []) => worker?.postMessage(m, transfer);
@@ -99,7 +104,8 @@ const scaleNow = () => Math.min(2, window.devicePixelRatio || 1) * uiZoom();
 
 /** The canvases, handed to the worker while the page is idle (see the top of this file). */
 function prepare() {
-  if (slots.length || preparing || !canHandOver()) return;
+  // Under reduced motion nothing is ever poured: no worker, no canvases.
+  if (slots.length || preparing || !canHandOver() || reducedMotion()) return;
   preparing = true;
   idle(() => {
     preparing = false;
@@ -110,6 +116,8 @@ function prepare() {
 }
 
 function make() {
+  // Made once per scale: a resize and a send in the same idle window both ask for it.
+  if (slots.length || !acquire()) return;
   const scale = scaleNow();
   slots = SHAPES.map((shape) => {
     const id = ++nextId;
@@ -136,8 +144,8 @@ function onResize() {
       s.el.remove();
       post({ type: 'drop', layer: s.id });
     }
-    idle(make);
     slots = [];
+    idle(make);
   }, 400);
 }
 
@@ -221,7 +229,12 @@ export function pour(spec: LiquidSpec): Pour {
   const gone = () => {
     if (over) return;
     over = true;
-    if (slot) slot.users = Math.max(0, slot.users - 1);
+    ends.delete(id);
+    if (slot) {
+      slot.users = Math.max(0, slot.users - 1);
+      // Never drawn on (cancelled before its start): out of the page again.
+      if (!slot.users && !started) slot.el.remove();
+    }
     resolve();
   };
   // Whatever happens, a message does not stay in the air for long.
@@ -236,7 +249,8 @@ export function pour(spec: LiquidSpec): Pour {
     return {
       plan,
       start(t0) {
-        if (started) return;
+        // Once, and never after a cancel: a message given up before its first frame draws nothing.
+        if (started || over) return;
         started = true;
         post({ type: 'start', id, layer: slot.id, origin: slot.at, spec: this.plan.spec, shifts: this.plan.shifts, at: performance.timeOrigin + t0 });
         if (frozenAt != null) post({ type: 'freeze', t: frozenAt });
@@ -271,19 +285,23 @@ function drawHere(plan: LiquidPlan, finished: Promise<void>, gone: () => void): 
   el.width = Math.max(1, Math.round(b.width * scale));
   el.height = Math.max(1, Math.round(b.height * scale));
   el.style.cssText = `left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;`;
-  document.body.appendChild(el);
-  void finished.then(() => el.remove());
-  const ctx = el.getContext('2d');
   let started = false;
   let t0 = 0;
   let fade = -1;
+  let r: ReturnType<typeof makeRenderer> = null;
   const handle: Pour = {
     plan,
     start(at) {
       if (started) return;
       started = true;
       t0 = at;
-      if (!ctx) return gone();
+      document.body.appendChild(el);
+      void finished.then(() => {
+        el.remove();
+        r?.dispose();
+      });
+      r = makeRenderer(el, scale);
+      if (!r) return gone();
       local.add(draw);
       void finished.then(() => local.delete(draw));
       requestAnimationFrame(draw);
@@ -301,15 +319,15 @@ function drawHere(plan: LiquidPlan, finished: Promise<void>, gone: () => void): 
     finished,
   };
   const draw = () => {
-    if (!ctx) return;
+    if (!r) return;
     const t = frozenAt ?? performance.now() - t0;
     const f = liquidAt(handle.plan, t);
     if (fade >= 0) f.alpha *= Math.max(0, 1 - (t - fade) / 120);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, el.width, el.height);
-    if ((f.done || (fade >= 0 && t - fade > 120)) && frozenAt == null) return gone();
-    ctx.setTransform(scale, 0, 0, scale, -b.left * scale, -b.top * scale);
-    drawLiquid(ctx, f);
+    if ((f.done || (fade >= 0 && t - fade > 120)) && frozenAt == null) {
+      r.clear();
+      return gone();
+    }
+    r.draw([f], { x: b.left, y: b.top });
     if (frozenAt == null) requestAnimationFrame(draw);
   };
   return handle;
