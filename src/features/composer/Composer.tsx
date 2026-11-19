@@ -229,7 +229,7 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
   const sendWithEnter = useStore((s) => s.settings.sendWithEnter);
   const status = useStore((s) => (sessionId ? s.sessions[sessionId]?.status : undefined));
   const suggestion = useStore((s) => (sessionId ? s.data[sessionId]?.suggestion : undefined));
-  const cwd = useStore((s) => (sessionId ? (s.sessions[sessionId]?.cwd ?? null) : s.ui.homeCwd));
+  const cwd = useStore((s) => (sessionId ? (s.sessions[sessionId]?.cwd ?? null) : s.ui.homeChat ? null : s.ui.homeCwd));
   const queue = useStore((s) => (sessionId ? (s.data[sessionId]?.queue ?? NO_QUEUE) : NO_QUEUE));
   const storedUltra = useStore((s) => (sessionId ? !!s.sessions[sessionId]?.ultracode : !!s.ui.homeUltracode));
   const toast = useStore((s) => s.toast);

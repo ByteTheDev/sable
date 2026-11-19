@@ -21,7 +21,8 @@ export function Shortcuts() {
         { label: 'Open a folder', keys: k('mod+o') },
         { label: 'Show or hide the sidebar', keys: k('mod+b') },
         { label: 'Show or hide the panel', keys: k('mod+j') },
-        { label: 'Answer what waits in every chat', keys: k('mod+i') },        { label: 'Settings', keys: k('mod+,') },
+        { label: 'Everything waiting on you', keys: k('mod+i') },
+        { label: 'Settings', keys: k('mod+,') },
       ],
     },
     {
@@ -91,6 +92,24 @@ export function Shortcuts() {
         { label: 'Decline', keys: k('esc') },
       ],
     },
+    {
+      title: 'Waiting on you',
+      items: [
+        { label: 'Allow', keys: k('enter') },
+        { label: 'Always allow', keys: k('shift+enter') },
+        { label: 'Deny', keys: k('d') },
+        {
+          label: 'Next and previous',
+          keys: (
+            <span className="kbd-range">
+              {k('j')}
+              {k('k')}
+            </span>
+          ),
+        },
+        { label: 'Open the chat', keys: k('o') },
+      ],
+    },
   ];
 
   const render = (g: (typeof groups)[number]) => (
@@ -109,10 +128,10 @@ export function Shortcuts() {
     </section>
   );
 
-  // Two balanced columns: the app and the session on one side, the composer and the prompts on the other.
+  // Two balanced columns: the app, the session and the deck on one side, the composer and the prompts on the other.
   return (
     <div className="keys-grid">
-      <div className="set-stack">{[groups[0], groups[2]].map(render)}</div>
+      <div className="set-stack">{[groups[0], groups[2], groups[4]].map(render)}</div>
       <div className="set-stack">{[groups[1], groups[3]].map(render)}</div>
     </div>
   );
