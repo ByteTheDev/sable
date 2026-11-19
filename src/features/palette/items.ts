@@ -6,6 +6,7 @@ import { skillLabeller } from '@/lib/skills';
 import { SECTIONS as SETTINGS_SECTIONS } from '@/features/settings/sections';
 import { openImport } from '@/features/history/History';
 import { continueInAgent, goHome, interrupt, openSession, openSettings } from '@/state/actions';
+import { RAIL_TABS, railTabKeys } from '@/features/rail/tabs';
 import { focusComposer } from '@/state/hooks';
 import { useStore, type RailTab } from '@/state/store';
 
@@ -25,15 +26,12 @@ export interface PaletteItem {
   run: () => void;
 }
 
-const RAIL_TABS: { id: RailTab; label: string; icon: IconName }[] = [
-  { id: 'changes', label: 'Changes', icon: 'diff' },
-  { id: 'files', label: 'Files', icon: 'folder-open' },
-  { id: 'browser', label: 'Browser', icon: 'globe' },
-  { id: 'terminal', label: 'Terminal', icon: 'terminal' },
-  { id: 'tasks', label: 'Tasks', icon: 'tasks' },
-  { id: 'context', label: 'Context', icon: 'context' },
-  { id: 'agents', label: 'Agents', icon: 'robot' },
-];
+/** Extra words for the panel's tabs in the palette. */
+const RAIL_WORDS: Partial<Record<RailTab, string>> = {
+  browser: 'panel show web page preview localhost url',
+  device: 'panel show android phone emulator screen app mobile',
+  changes: 'panel show diff git review',
+};
 
 const SKILL_TONE = 'var(--ember)';
 
@@ -97,8 +95,8 @@ export function buildItems(opts: {
     const id = opts.active.id;
     act('toggle-panel', ui().railOpen ? 'Hide panel' : 'Show panel', 'sidebar', () => setUi({ railOpen: !ui().railOpen }), { keys: 'mod+j', keywords: 'toggle panel rail' });
     for (const t of RAIL_TABS) {
-      if (t.id === 'browser') act('panel:browser', 'Open browser', t.icon, () => setUi({ railOpen: true, railTab: 'browser' }), { sub: 'Panel', keywords: 'panel show web page preview localhost url' });
-      else act(`panel:${t.id}`, t.label, t.icon, () => setUi({ railOpen: true, railTab: t.id }), { sub: 'Panel', keywords: 'panel show open' });
+      const title = t.id === 'browser' ? 'Open browser' : t.label;
+      act(`panel:${t.id}`, title, t.icon, () => setUi({ railOpen: true, railTab: t.id }), { sub: 'Panel', keys: railTabKeys(t.id), keywords: RAIL_WORDS[t.id] ?? 'panel show open' });
     }
     // Continue in the other agent: Claude Code to Codex and back, starting from a summary.
     const other: ProviderId | undefined = opts.active.provider === 'claude' ? 'codex' : opts.active.provider === 'codex' ? 'claude' : undefined;

@@ -83,9 +83,11 @@
   border-bottom: 1px solid var(--line);
 }
 
-/* The tab row reads as one set with the top bar's icon buttons and the window controls: 28 px pills,
-   16 px line icons in --text-3, a fill step on hover, 2 px apart. The selected tab is a dithered pill
-   with its name (when there is room), the name opening on a spring. */
+/* One quiet row: the most used tabs and More at the left, the panel's toggle at the right, where
+   the top bar's toggle stands while the panel is closed (in the desktop app, left of the window
+   controls and the hairline before them). The tabs read as one set with the top bar's icon
+   buttons: 28 px pills, 16 px line icons in --text-3, a fill step on hover, 2 px apart. The selected
+   tab is a dithered pill with its name (when there is room), the name opening on a spring. */
 .rail-tabs {
   flex: 1;
   min-width: 0;
@@ -94,6 +96,52 @@
   gap: 2px;
   overflow: hidden;
   position: relative;
+}
+
+.rail-tablist {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* More: three dots, or the tab chosen from it with a small caret that says it is a menu. */
+.rail-more-caret {
+  margin-left: 3px;
+  margin-right: -1px;
+  color: var(--text-3);
+  transition: rotate var(--d-2) var(--ease-out);
+}
+
+.rail-more[data-state='open'] {
+  background-color: var(--fill-2);
+  color: var(--text);
+}
+
+.rail-more[data-on][data-state='open'] {
+  background-color: transparent;
+}
+
+.rail-more[data-state='open'] .rail-more-caret {
+  rotate: 180deg;
+}
+
+/* The panel's toggle: the same glyph and state as the top bar's (a brighter glyph, no block of fill). */
+.rail-head .rail-hide {
+  flex-shrink: 0;
+}
+
+.rail-head .rail-hide[data-active='true'] {
+  background-color: transparent;
+  color: var(--text);
+}
+
+.rail-head .rail-hide[data-active='true']:hover {
+  background-color: var(--fill-2);
+}
+
+.rail-head .rail-hide[data-active='true']:active {
+  background-color: var(--fill-3);
 }
 
 .rail-tab {
@@ -180,10 +228,6 @@
 
 .rail-tab:focus-visible {
   outline-offset: var(--focus-inset);
-}
-
-.rail-close {
-  margin-left: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -4,101 +4,59 @@
   position: relative;
 }
 
-/* ── tabs ── */
+/* ── pages ──
+   The session's pages live in the address row: a small framed count (from two pages on) that opens
+   the list. A row in it: the page's icon, its title, a check on the one in front, and a close mark
+   that takes the check's place while the row is lit. */
 
-/* A quiet strip above the toolbar: 28 px tabs that share the width, the one in front a step lighter,
-   a close mark that shows on hover. */
-.bw-tabs {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-  height: 36px;
-  padding: 4px 7px 0;
-  overflow: hidden;
+.bw-pages-count {
+  display: grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 3px;
+  border: 1.25px solid currentColor;
+  border-radius: 5px;
+  font-size: var(--t-micro);
+  font-weight: var(--w-medium);
+  line-height: 1;
 }
 
-.bw-tab {
-  position: relative;
-  display: flex;
-  align-items: center;
-  flex: 0 1 184px;
-  min-width: 46px;
-  height: 28px;
-  border-radius: var(--r-sm);
-  color: var(--text-2);
-  transition:
-    background-color var(--d-1) var(--ease),
-    color var(--d-1) var(--ease);
-  animation: bw-tab-in var(--d-3) var(--ease-out);
-}
-
-.bw-tab:hover {
-  background-color: var(--fill-1);
-  color: var(--text);
-}
-
-.bw-tab[data-active] {
+.bw-pages[data-state='open'] {
   background-color: var(--fill-2);
   color: var(--text);
-}
-
-@keyframes bw-tab-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-}
-
-.bw-tab-main {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  padding: 0 4px 0 9px;
-  border: 0;
-  border-radius: inherit;
-  background: none;
-  color: inherit;
-  font: inherit;
-  font-size: var(--t-small);
-  text-align: left;
-  cursor: default;
-}
-
-.bw-tab-main:focus-visible {
-  outline: var(--focus-w) solid var(--focus);
-  outline-offset: var(--focus-inset);
 }
 
 .bw-tab-icon {
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
-.bw-tab-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.bw-page {
+  padding-right: 4px;
 }
 
-.bw-tab-close {
+.bw-page[data-active] {
+  color: var(--text);
+}
+
+.bw-page-check {
+  margin-right: 2px;
+}
+
+.bw-page-close {
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  margin-right: 5px;
+  width: 20px;
+  height: 20px;
+  margin-left: -2px;
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   background: none;
   color: var(--text-3);
   opacity: 0;
@@ -106,39 +64,32 @@
     opacity var(--d-1) var(--ease),
     background-color var(--d-1) var(--ease),
     color var(--d-1) var(--ease),
-    transform var(--d-1) var(--ease);
+    scale var(--d-1) var(--ease);
 }
 
-.bw-tab:hover .bw-tab-close,
-.bw-tab-close:focus-visible {
+/* Lit: the close mark shows (and the check steps aside for it). */
+.bw-page:is(:hover, [data-highlighted]) .bw-page-close {
   opacity: 1;
 }
 
-.bw-tab-close:hover {
+.bw-page:is(:hover, [data-highlighted]) .bw-page-check {
+  display: none;
+}
+
+.bw-page-close:hover {
   background-color: var(--fill-3);
   color: var(--text);
 }
 
-.bw-tab-close:active {
-  transform: scale(0.9);
+.bw-page-close:active {
+  scale: 0.9;
 }
 
-.bw-tab-close:focus-visible {
-  outline: var(--focus-w) solid var(--focus);
-  outline-offset: 0;
-}
-
-/* A narrow tab keeps its icon; the close mark takes the name's place on hover. */
-.bw-tabs .bw-tab-new {
-  --ib: 28px;
-  flex-shrink: 0;
-  border-radius: var(--r-sm);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .bw-tab {
-    animation: none;
-  }
+/* At rest the mark takes no room: the row ends on its check (or its title). */
+.bw-page:not(:hover, [data-highlighted]) .bw-page-close {
+  width: 0;
+  margin-left: 0;
+  overflow: hidden;
 }
 
 /* ── toolbar ── */

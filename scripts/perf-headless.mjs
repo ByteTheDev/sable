@@ -891,6 +891,45 @@ const SCENARIOS = {
       await sleep(300);
     });
   },
+  // The side panel: three opens and closes, 700 ms apart, on Changes (or --rail-tab name).
+  'rail-open': async () => {
+    await finishedSession();
+    await ev((tab) => window.sable.store.getState().setUi({ railTab: tab }), opt('rail-tab', 'changes'));
+    await sleep(300);
+    return measure('rail-open', async () => {
+      for (let i = 0; i < 3; i++) {
+        await ev(() => window.sable.store.getState().setUi({ railOpen: true }));
+        await sleep(700);
+        await ev(() => window.sable.store.getState().setUi({ railOpen: false }));
+        await sleep(700);
+      }
+    });
+  },
+  // Every tab but Device (which would talk to a real emulator) twice, 300 ms apart: the first round
+  // mounts each pane, the second only switches.
+  'rail-tabs': async () => {
+    await finishedSession();
+    await ev(() => window.sable.store.getState().setUi({ railOpen: true, railTab: 'changes' }));
+    await sleep(1200);
+    const tabs = ['files', 'browser', 'terminal', 'tasks', 'context', 'agents', 'changes'];
+    return measure('rail-tabs', async () => {
+      for (const t of [...tabs, ...tabs]) {
+        await ev((tab) => window.sable.store.getState().setUi({ railTab: tab }), t);
+        await sleep(300);
+      }
+    });
+  },
+  // Every tab visited, then the panel rests on Changes for 8 s: the hidden panes must do nothing.
+  'rail-idle': async () => {
+    await finishedSession();
+    for (const t of ['files', 'browser', 'terminal', 'tasks', 'context', 'agents', 'changes']) {
+      await ev((tab) => window.sable.store.getState().setUi({ railOpen: true, railTab: tab }), t);
+      await sleep(250);
+    }
+    await page.mouse.move(size[0] / 2, size[1] - 40);
+    await sleep(1500);
+    return measure('rail-idle', () => sleep(8000));
+  },
   'drag-rail': async () => {
     await finishedSession();
     await ev(() => window.sable.store.getState().setUi({ railOpen: true, railTab: 'files' }));

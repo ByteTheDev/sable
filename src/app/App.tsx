@@ -17,15 +17,13 @@ import { useActiveProvider, useHotkey } from '@/state/hooks';
 import { SessionAccount } from '@/features/accounts';
 import { shallow } from 'zustand/shallow';
 import { useLaggedStore } from '@/lib/lagged';
-import { useStore, type RailTab } from '@/state/store';
+import { railTabAt } from '@/features/rail/tabs';
+import { useStore } from '@/state/store';
 import { IconButton, Tip, TipProvider, Toasts } from '@/ui';
 import { CapabilitiesButton } from './Capabilities';
 import { loadSessionView, sessionViewNow } from './views';
 import { WindowControls } from './WindowControls';
 import './app.css';
-
-/** The side panel's tabs in the order of their shortcuts (Alt+1 to Alt+7), as the panel lists them. */
-const RAIL_TAB_ORDER: RailTab[] = ['changes', 'files', 'browser', 'terminal', 'tasks', 'context', 'agents'];
 
 // Surfaces that are not part of the first paint load on demand (and are prefetched once idle).
 const loadPalette = () => import('@/features/palette/Palette');
@@ -186,6 +184,12 @@ export function App() {
   const handingOff = useSyncExternalStore(subscribeHandoff, () => railOpen && handoffPhase() === 'flying');
   const railShown = railOpen && !!sessionId && !handingOff;
   useRailMotion(railShown);
+  // A closed panel keeps its contents while the session stays (inert, zero wide, its panes told
+  // they are hidden): opening it again mounts nothing, and the Browser's pages are not loaded again.
+  // Another session drops it; its own panel mounts when first opened.
+  const [railKept, setRailKept] = useState<string | null>(null);
+  if (railShown && sessionId && railKept !== sessionId) setRailKept(sessionId);
+  const railMounted = !!sessionId && (railShown || railKept === sessionId);
 
   useEffect(() => {
     document.title = title ? `${title} · Sable` : 'Sable';
@@ -222,13 +226,13 @@ export function App() {
   useHotkey('mod+,', useCallback((e) => (e.preventDefault(), openSettings()), []));
   useHotkey('mod+shift+o', useCallback((e) => (e.preventDefault(), goHome()), []));
   useHotkey('mod+o', useCallback((e) => (e.preventDefault(), setUi({ projectPicker: true })), [setUi]));
-  // Alt+1 to Alt+7: the side panel's tabs, in order (opens the panel when it is closed).
+  // Alt+1 to Alt+8: the side panel's tabs in their order (features/rail/tabs.ts); opens the panel when it is closed.
   useEffect(() => {
     if (!sessionId) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-      const tab = RAIL_TAB_ORDER[Number(e.code.replace('Digit', '')) - 1];
-      if (!/^Digit[1-7]$/.test(e.code) || !tab) return;
+      const tab = /^Digit[1-8]$/.test(e.code) ? railTabAt(Number(e.code.slice(5))) : undefined;
+      if (!tab) return;
       e.preventDefault();
       setUi({ railOpen: true, railTab: tab });
     };
@@ -246,7 +250,7 @@ export function App() {
           </aside>
 
           <main className="stage" inert={onboarding}>
-            <Topbar />
+            <Topbar panelShown={railShown} />
             <div className="stage-body" ref={stageBody}>
               {launching && <Launch ready={ready} onDone={endLaunch} />}
               {/* The session's band of light, one field for every session (like the dock): a switch
@@ -289,23 +293,26 @@ export function App() {
           </main>
 
           <AnimatePresence initial={false} onExitComplete={railGone}>
-            {railShown && (
+            {railMounted && (
               <motion.aside
                 key="rail"
                 className="app-rail"
+                data-open={railShown || undefined}
+                inert={!railShown}
                 // The panel's contents resolve through the dither veil (and dissolve into it on close),
                 // so only reduced motion fades them.
                 initial={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
-                animate={{ width: 'var(--rail-fit)', opacity: 1 }}
+                animate={railShown ? { width: 'var(--rail-fit)', opacity: 1 } : { width: 0, opacity: reducedMotion() ? 0 : 1 }}
                 exit={{ width: 0, opacity: reducedMotion() ? 0 : 1 }}
                 // Just past critical damping: the edge arrives without passing its place, so nothing
                 // beside it ever moves back.
                 transition={{ type: 'spring', stiffness: 400, damping: 42 }}
-                onAnimationComplete={releaseRail}
+                // Closed but kept: the same clean-up as when it leaves the page.
+                onAnimationComplete={railShown ? releaseRail : railGone}
               >
                 <div className="app-rail-inner">
                   <Suspense fallback={null}>
-                    <Rail sessionId={sessionId} />
+                    <Rail sessionId={sessionId} open={railShown} />
                   </Suspense>
                 </div>
               </motion.aside>
@@ -366,11 +373,21 @@ function releaseRail() {
 function railGone() {
   cancelFrame(railTick);
   releaseRail();
+  clearRailCover();
   document.querySelector<HTMLElement>('.stage > .topbar')?.style.removeProperty('--rail-live');
+}
+
+/**
+ * A cover stays in its host once played (the host normally goes with it). A panel that is closed but
+ * kept keeps its host: the cover is taken off once the panel has closed, and before it opens again.
+ */
+function clearRailCover() {
+  for (const v of document.querySelectorAll<HTMLElement>('.app-rail-inner > .veil')) v.remove();
 }
 
 function freezeForRail(opening: boolean) {
   releaseRail();
+  if (opening) clearRailCover();
   if (reducedMotion()) return;
   // A narrow window trades the sidebar for the panel at the same time: the stage moves at both edges.
   if (isNarrow() && useStore.getState().ui.sidebarOpen) return;
@@ -568,7 +585,8 @@ function selectBarSession(s: ReturnType<typeof useStore.getState>) {
 /** The bar follows the stage a task behind, and after a sent message has landed (see useLaggedStore). */
 const BAR_LAG = { gate: afterSend };
 
-function Topbar() {
+/** `panelShown`: the side panel is on screen and carries its own toggle, in the place this one leaves. */
+function Topbar({ panelShown }: { panelShown: boolean }) {
   const sidebarOpen = useSidebarShown();
   const railOpen = useStore((s) => s.ui.railOpen);
   const setUi = useStore((s) => s.setUi);
@@ -610,15 +628,19 @@ function Topbar() {
         {session && <CapabilitiesButton sessionId={session.id} />}
         {/* The sidebar's top row has the search; the bar shows it only while the sidebar is away. */}
         {!sidebarOpen && <IconButton icon="search" label="Search and commands" keys="mod+k" onClick={() => setUi({ paletteOpen: true })} />}
+        {/* While the panel shows, its own header carries this toggle at this same spot (beside the
+            window controls), so one place opens and closes it: this one folds away meanwhile. */}
         {session && (
-          <IconButton
-            icon="sidebar"
-            label={railOpen ? 'Hide panel' : 'Show panel'}
-            keys="mod+j"
-            active={railOpen}
-            className="flip-x"
-            onClick={() => setUi({ railOpen: !railOpen })}
-          />
+          <span className="topbar-panel" data-away={panelShown || undefined} inert={panelShown}>
+            <IconButton
+              icon="sidebar"
+              label={railOpen ? 'Hide panel' : 'Show panel'}
+              keys="mod+j"
+              active={railOpen}
+              className="flip-x"
+              onClick={() => setUi({ railOpen: !railOpen })}
+            />
+          </span>
         )}
       </div>
     </header>

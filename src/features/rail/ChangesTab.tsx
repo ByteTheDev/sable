@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FileDiff, GitFileStatus, ToolItem } from '@shared/protocol';
 import { Collapse } from '@/components/Collapse';
 import { DiffView } from '@/components/DiffView';
@@ -80,13 +80,18 @@ function RepoChanges({ cwd }: { cwd: string }) {
     for (const p of open) if (needs(repo.diffs[p])) loadDiff(cwd, p);
   }, [small, open, repo.diffs, repo.rev, status, cwd]);
 
-  const toggle = (p: string) =>
-    setOpen((o) => {
-      const n = new Set(o);
-      if (n.has(p)) n.delete(p);
-      else n.add(p);
-      return n;
-    });
+  // Stable, so a refresh re-renders only the rows whose file changed (FileRow is memoised).
+  const toggle = useCallback(
+    (p: string) =>
+      setOpen((o) => {
+        const n = new Set(o);
+        if (n.has(p)) n.delete(p);
+        else n.add(p);
+        return n;
+      }),
+    [],
+  );
+  const shown = useRowLimit(status.files.length);
 
   return (
     <div className="rail-col">
@@ -137,8 +142,8 @@ function RepoChanges({ cwd }: { cwd: string }) {
           <p className="rail-empty">The working tree is clean.</p>
         ) : (
           <LeaveList className="ch-list" order={status.files.map((f) => f.path).join('|')}>
-            {status.files.map((f) => (
-              <FileRow key={f.path} file={f} fresh={arrived.has(f.path)} open={open.has(f.path)} entry={repo.diffs[f.path]} onToggle={toggle} onRetry={() => loadDiff(cwd, f.path)} />
+            {(shown < status.files.length ? status.files.slice(0, shown) : status.files).map((f) => (
+              <FileRow key={f.path} cwd={cwd} file={f} fresh={arrived.has(f.path)} open={open.has(f.path)} entry={repo.diffs[f.path]} onToggle={toggle} />
             ))}
           </LeaveList>
         )}
@@ -244,60 +249,91 @@ function needs(d: DiffEntry | undefined) {
   return !d || (d.state === 'ok' && d.stale);
 }
 
-const FileRow = memo(function FileRow({
-  file,
-  fresh,
-  open,
-  entry,
-  onToggle,
-  onRetry,
-}: {
-  file: GitFileStatus;
-  /** It joined the list while the list was on screen. */
-  fresh?: boolean;
-  open: boolean;
-  entry: DiffEntry | undefined;
-  onToggle: (p: string) => void;
-  onRetry: () => void;
-}) {
-  const [dir, base] = splitPath(file.path);
-  const diff = entry?.state === 'ok' ? entry.diff : entry?.state === 'loading' ? entry.prev : undefined;
-  return (
-    <div role="listitem" data-flip={file.path} className="ch-item rail-row-host" data-open={open || undefined} data-new={fresh || undefined}>
-      <button type="button" className="ch-row" aria-expanded={open} onClick={() => onToggle(file.path)}>
-        <StatusLetter status={file.status} />
-        <span className="ch-path">
-          {dir && <span className="ch-dir">{dir}</span>}
-          <span className="ch-base">{base}</span>
-        </span>
-        <span className="ch-stat num rail-row-deco">
-          {!!file.additions && <span className="dv-add">+{file.additions}</span>}
-          {!!file.deletions && <span className="dv-del">−{file.deletions}</span>}
-        </span>
-        <Icon name="caret-right" size={10} className="ch-caret" />
-      </button>
-      <RowActions path={file.path} deleted={file.status === 'D'} />
-      <Collapse open={open}>
-        <div className="ch-diff">
-          {diff ? (
-            <DiffView diff={diff} showHeader={false} maxLines={240} />
-          ) : entry?.state === 'error' ? (
-            <p className="ch-note">
-              Could not load this diff. <button type="button" className="rail-link" onClick={onRetry}>Try again</button>
-            </p>
-          ) : entry?.state === 'ok' ? (
-            <p className="ch-note">{file.status === 'D' ? 'File deleted' : 'No textual changes'}</p>
-          ) : (
-            <div className="ch-note">
-              <Spinner size={12} />
-              Loading diff
-            </div>
-          )}
-        </div>
-      </Collapse>
-    </div>
-  );
-});
+/**
+ * Rows drawn at first: what fills a tall panel. A long list draws the rest once the window is idle,
+ * so opening the panel or the tab never waits on rows below the fold.
+ */
+const FIRST_ROWS = 36;
+
+function useRowLimit(total: number): number {
+  const [limit, setLimit] = useState(FIRST_ROWS);
+  const more = total > limit;
+  useEffect(() => {
+    if (!more) return;
+    const w = window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(() => setLimit(Infinity), { timeout: 700 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const t = window.setTimeout(() => setLimit(Infinity), 300);
+    return () => window.clearTimeout(t);
+  }, [more]);
+  return limit;
+}
+
+/** A refresh brings new objects for unchanged files: a row draws again only when what it shows changed. */
+const sameFile = (a: GitFileStatus, b: GitFileStatus) => a === b || (a.path === b.path && a.status === b.status && a.additions === b.additions && a.deletions === b.deletions);
+
+const FileRow = memo(
+  function FileRow({
+    cwd,
+    file,
+    fresh,
+    open,
+    entry,
+    onToggle,
+  }: {
+    cwd: string;
+    file: GitFileStatus;
+    /** It joined the list while the list was on screen. */
+    fresh?: boolean;
+    open: boolean;
+    entry: DiffEntry | undefined;
+    onToggle: (p: string) => void;
+  }) {
+    const [dir, base] = splitPath(file.path);
+    const diff = entry?.state === 'ok' ? entry.diff : entry?.state === 'loading' ? entry.prev : undefined;
+    // The row's actions are built the first time it is hovered or focused, not with the list.
+    const [hot, setHot] = useState(false);
+    const wake = hot ? undefined : () => setHot(true);
+    return (
+      <div role="listitem" data-flip={file.path} className="ch-item rail-row-host" data-open={open || undefined} data-new={fresh || undefined} onPointerEnter={wake} onFocus={wake}>
+        <button type="button" className="ch-row" aria-expanded={open} onClick={() => onToggle(file.path)}>
+          <StatusLetter status={file.status} />
+          <span className="ch-path">
+            {dir && <span className="ch-dir">{dir}</span>}
+            <span className="ch-base">{base}</span>
+          </span>
+          <span className="ch-stat num rail-row-deco">
+            {!!file.additions && <span className="dv-add">+{file.additions}</span>}
+            {!!file.deletions && <span className="dv-del">−{file.deletions}</span>}
+          </span>
+          <Icon name="caret-right" size={10} className="ch-caret" />
+        </button>
+        {hot && <RowActions path={file.path} deleted={file.status === 'D'} />}
+        <Collapse open={open}>
+          <div className="ch-diff">
+            {diff ? (
+              <DiffView diff={diff} showHeader={false} maxLines={240} />
+            ) : entry?.state === 'error' ? (
+              <p className="ch-note">
+                Could not load this diff. <button type="button" className="rail-link" onClick={() => loadDiff(cwd, file.path)}>Try again</button>
+              </p>
+            ) : entry?.state === 'ok' ? (
+              <p className="ch-note">{file.status === 'D' ? 'File deleted' : 'No textual changes'}</p>
+            ) : (
+              <div className="ch-note">
+                <Spinner size={12} />
+                Loading diff
+              </div>
+            )}
+          </div>
+        </Collapse>
+      </div>
+    );
+  },
+  (a, b) => a.cwd === b.cwd && a.fresh === b.fresh && a.open === b.open && a.entry === b.entry && a.onToggle === b.onToggle && sameFile(a.file, b.file),
+);
 
 /**
  * A changed file's secondary actions: they take the place of its line counts while the row is

@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { veil } from '@/art/veil';
 import { Icon, type IconName } from '@/icons';
 import { clamp } from '@/lib/format';
 import { reducedMotion } from '@/lib/motion';
 import { useStore, type RailTab } from '@/state/store';
-import { IconButton, Tip } from '@/ui';
+import { IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Tip } from '@/ui';
 import { AgentsTab, useLiveAgentCount } from './AgentsTab';
 import { BrowserTab } from './BrowserTab';
 import { ChangesTab, useChangeCount } from './ChangesTab';
@@ -14,20 +14,10 @@ import { DeviceTab } from './DeviceTab';
 import { FilesTab } from './FilesTab';
 import { useGitAutoRefresh } from './git-state';
 import { TasksTab, useOpenTaskCount } from './TasksTab';
+import { RAIL_TABS, railTabKeys } from './tabs';
 import { runCommand } from './term-store';
 import { TerminalTab } from './TerminalTab';
 import './rail.css';
-
-const TABS: { id: RailTab; label: string; icon: IconName }[] = [
-  { id: 'changes', label: 'Changes', icon: 'diff' },
-  { id: 'files', label: 'Files', icon: 'folder' },
-  { id: 'browser', label: 'Browser', icon: 'globe' },
-  { id: 'device', label: 'Device', icon: 'device' },
-  { id: 'terminal', label: 'Terminal', icon: 'terminal' },
-  { id: 'tasks', label: 'Tasks', icon: 'tasks' },
-  { id: 'context', label: 'Context', icon: 'context' },
-  { id: 'agents', label: 'Agents', icon: 'robot' },
-];
 
 const WIDTH_KEY = 'sable.rail.w';
 const DEFAULT_W = 396;
@@ -50,15 +40,19 @@ function applyWidth(w: number | null) {
   else app.style.setProperty('--rail-w', `${Math.round(w)}px`);
 }
 
-/** The side panel: working-tree changes, files, a browser, a command runner, tasks, context and sub-agents for one session. */
-export function Rail({ sessionId }: { sessionId: string }) {
-  return <RailInner key={sessionId} sessionId={sessionId} />;
+/**
+ * The side panel: working-tree changes, files, a browser, a command runner, tasks, context, sub-agents
+ * and a device for one session. `open` is false while the panel is closed but kept (App.tsx): every
+ * pane is told it is hidden, and the working tree is not read until it opens again.
+ */
+export function Rail({ sessionId, open = true }: { sessionId: string; open?: boolean }) {
+  return <RailInner key={sessionId} sessionId={sessionId} open={open} />;
 }
 
 /** The session whose panel was last on screen, and when it left: tells a change of session from the panel opening. */
 const lastPanel = { sessionId: '', leftAt: -1e9 };
 
-function RailInner({ sessionId }: { sessionId: string }) {
+function RailInner({ sessionId, open }: { sessionId: string; open: boolean }) {
   const tab = useStore((s) => s.ui.railTab);
   const body = useRef<HTMLDivElement>(null);
   // Another session's panel took this one's place in the same frame: its contents resolve out of
@@ -80,7 +74,7 @@ function RailInner({ sessionId }: { sessionId: string }) {
     setVisited((v) => (v.has(tab) ? v : new Set([...v, tab])));
   }, [tab]);
 
-  useGitAutoRefresh(sessionId, cwd);
+  useGitAutoRefresh(sessionId, open ? cwd : '');
   usePendingCommand(sessionId, cwd);
 
   // Another part of the app asked to show a file: bring the Files tab forward.
@@ -91,17 +85,7 @@ function RailInner({ sessionId }: { sessionId: string }) {
     lastFile.current = railFile;
   }, [railFile, setUi]);
 
-  const panes: Record<RailTab, ReactNode> = {
-    changes: <ChangesTab sessionId={sessionId} cwd={cwd} />,
-    files: <FilesTab sessionId={sessionId} cwd={cwd} />,
-    browser: <BrowserTab sessionId={sessionId} active={tab === 'browser'} />,
-    device: <DeviceTab active={tab === 'device'} />,
-    terminal: <TerminalTab sessionId={sessionId} cwd={cwd} active={tab === 'terminal'} />,
-    tasks: <TasksTab sessionId={sessionId} />,
-    context: <ContextTab sessionId={sessionId} active={tab === 'context'} />,
-    agents: <AgentsTab sessionId={sessionId} />,
-  };
-  const at = TABS.findIndex((t) => t.id === tab);
+  const at = RAIL_TABS.findIndex((t) => t.id === tab);
   // Which way the selection last travelled along the tab row: the arriving pane comes from that side.
   const [nav, setNav] = useState({ at, dir: 'fwd' });
   if (nav.at !== at) setNav({ at, dir: at < nav.at ? 'back' : 'fwd' });
@@ -111,13 +95,15 @@ function RailInner({ sessionId }: { sessionId: string }) {
       <ResizeHandle />
       <header className="rail-head">
         <RailTabs sessionId={sessionId} cwd={cwd} tab={tab} onPick={(t) => setUi({ railTab: t })} />
-        <IconButton icon="x" label="Close panel" keys="mod+j" className="rail-close" onClick={() => setUi({ railOpen: false })} />
+        {/* Where the top bar's toggle stands while the panel is closed: one place opens and closes
+            it, and nothing that closes sits beside the window's own controls. */}
+        <IconButton icon="sidebar" label="Hide panel" keys="mod+j" active className="flip-x rail-hide" onClick={() => setUi({ railOpen: false })} />
       </header>
       <div className="rail-body" ref={body} data-dir={nav.dir}>
-        {TABS.map((t, i) =>
+        {RAIL_TABS.map((t, i) =>
           visited.has(t.id) ? (
             <section key={t.id} className="rail-pane" data-active={t.id === tab || undefined} data-side={i < at ? 'before' : undefined} inert={t.id !== tab} aria-label={t.label} role="tabpanel" id={`rail-pane-${t.id}`}>
-              {panes[t.id]}
+              <Pane id={t.id} sessionId={sessionId} cwd={cwd} active={open && WATCHES_ACTIVE.has(t.id) && t.id === tab} />
             </section>
           ) : null,
         )}
@@ -126,19 +112,33 @@ function RailInner({ sessionId }: { sessionId: string }) {
   );
 }
 
-/** The tab row's width, observed (it excludes the close button and, in the desktop app, the window controls). */
-function useRowWidth(ref: React.RefObject<HTMLElement | null>): number {
-  const [w, setW] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setW(el.clientWidth);
-    const ro = new ResizeObserver(([e]) => setW(Math.round(e.contentRect.width)));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [ref]);
-  return w;
-}
+/** Panes that pause their own work while hidden: they are told whether they show. */
+const WATCHES_ACTIVE: ReadonlySet<RailTab> = new Set(['browser', 'device', 'terminal', 'context']);
+
+/**
+ * One pane's contents. Memoised: a change of tab re-renders only the panes that are told it (the
+ * one leaving and the one arriving, when they watch it), never the settled others.
+ */
+const Pane = memo(function Pane({ id, sessionId, cwd, active }: { id: RailTab; sessionId: string; cwd: string; active: boolean }) {
+  switch (id) {
+    case 'changes':
+      return <ChangesTab sessionId={sessionId} cwd={cwd} />;
+    case 'files':
+      return <FilesTab sessionId={sessionId} cwd={cwd} />;
+    case 'browser':
+      return <BrowserTab sessionId={sessionId} active={active} />;
+    case 'device':
+      return <DeviceTab active={active} />;
+    case 'terminal':
+      return <TerminalTab sessionId={sessionId} cwd={cwd} active={active} />;
+    case 'tasks':
+      return <TasksTab sessionId={sessionId} />;
+    case 'context':
+      return <ContextTab sessionId={sessionId} active={active} />;
+    case 'agents':
+      return <AgentsTab sessionId={sessionId} />;
+  }
+});
 
 let measureCtx: CanvasRenderingContext2D | null | undefined;
 
@@ -151,42 +151,78 @@ function textWidth(text: string, el: HTMLElement | null): number {
   return measureCtx.measureText(text).width;
 }
 
-/** Fixed parts of the row: the tabs at 28 px, 2 px apart; a name adds its text and 9 px; a count (two figures) about 20 px. */
+/**
+ * Fixed parts of the row: tabs at 28 px, 2 px apart; a name adds its text and 9 px; a count (two
+ * figures) about 20 px; the More button's caret, when it stands for a tab, 14 px.
+ */
 const TAB = 28;
 const TAB_GAP = 2;
 const COUNT_ROOM = 20;
+const CARET = 14;
 
 /** The selected tab's name opens and closes with the same spring as the panel itself. */
 const LABEL_SPRING = { type: 'spring', stiffness: 520, damping: 40, mass: 0.7 } as const;
 
+const PRIMARY = RAIL_TABS.filter((t) => !t.more);
+
+/**
+ * How the row is laid out for its width: how many of the first four fit beside More (room for a
+ * count kept), and whether the selected tab shows its name (only when the row fits the longest name,
+ * so the decision never flips while counts load or from one tab to the next). Observed, and only a
+ * change of decision renders: dragging the panel's edge does not re-render the row on every move.
+ */
+function useRowLayout(ref: React.RefObject<HTMLElement | null>): { fit: number; labels: boolean } {
+  const [key, setKey] = useState('');
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const font = el.querySelector<HTMLElement>('.rail-tab');
+    const longest = Math.ceil(Math.max(...RAIL_TABS.map((t) => textWidth(t.label, font))));
+    const decide = (w: number) => {
+      const fit = clamp(Math.floor((w - TAB - CARET - COUNT_ROOM) / (TAB + TAB_GAP)), 1, PRIMARY.length);
+      const labels = w >= fit * (TAB + TAB_GAP) + TAB + CARET + COUNT_ROOM + longest + 9;
+      setKey(`${fit}|${labels ? 1 : 0}`);
+    };
+    decide(el.clientWidth);
+    const ro = new ResizeObserver(([e]) => decide(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  if (!key) return { fit: PRIMARY.length, labels: false };
+  return { fit: Number(key[0]), labels: key.endsWith('1') };
+}
+
+/**
+ * The header: the most used tabs as quiet icons (the selected one on a dithered pill, with its name
+ * when there is room), then More for the others. A tab chosen from More stands in for the menu's
+ * button while it is selected, so the selection always shows in the row.
+ */
 function RailTabs({ sessionId, cwd, tab, onPick }: { sessionId: string; cwd: string; tab: RailTab; onPick: (t: RailTab) => void }) {
   const changes = useChangeCount(sessionId, cwd);
   const tasks = useOpenTaskCount(sessionId);
   // Agents: how many are working now.
   const agents = useLiveAgentCount(sessionId);
   const counts: Partial<Record<RailTab, number>> = { changes, tasks, agents };
-  const list = useRef<HTMLDivElement>(null);
-  const width = useRowWidth(list);
-  // The selected tab shows its name only when the row fits the longest name and two-figure counts, so
-  // the decision never flips while counts load or from one tab to the next; otherwise the row is icons only.
-  const font = list.current?.querySelector<HTMLElement>('.rail-tab') ?? null;
-  const longest = width > 0 ? Math.max(...TABS.map((t) => textWidth(t.label, font))) : 0;
-  const need = TABS.length * TAB + (TABS.length - 1) * TAB_GAP + 3 * COUNT_ROOM + Math.ceil(longest) + 9;
-  const labels = width > 0 && width >= need;
+  const row = useRef<HTMLDivElement>(null);
+  const { fit, labels } = useRowLayout(row);
+  const shown = PRIMARY.slice(0, fit);
+  const inRow = shown.some((t) => t.id === tab);
+  const rest = RAIL_TABS.filter((t) => !shown.includes(t));
+  const current = RAIL_TABS.find((t) => t.id === tab) ?? RAIL_TABS[0];
 
   // One pill for the row: it glides to the selected tab on the same spring that opens the tab's name.
   // Where it lands is worked out from the row as it will be (each tab without a name, plus the
   // selected one's full name), so it does not wait for the names to finish opening and closing.
   const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
   useLayoutEffect(() => {
-    const row = list.current;
-    if (!row) return;
+    const el = row.current;
+    if (!el) return;
     const z = parseFloat(document.documentElement.style.zoom) || 1;
     let x = 0;
     let next: { x: number; w: number } | null = null;
-    for (const btn of row.querySelectorAll<HTMLElement>('.rail-tab')) {
+    for (const btn of el.querySelectorAll<HTMLElement>('.rail-tab')) {
       const label = btn.querySelector<HTMLElement>('.rail-tab-label');
-      const on = btn.dataset.tab === tab;
+      const on = btn.dataset.on != null;
       const base = (btn.getBoundingClientRect().width - (label ? label.getBoundingClientRect().width : 0)) / z;
       const name = on && label?.firstElementChild ? label.firstElementChild.getBoundingClientRect().width / z : 0;
       if (on) next = { x, w: base + name };
@@ -194,19 +230,21 @@ function RailTabs({ sessionId, cwd, tab, onPick }: { sessionId: string; cwd: str
     }
     const to = next as { x: number; w: number } | null;
     setPill((was) => (was && to && Math.abs(was.x - to.x) < 0.05 && Math.abs(was.w - to.w) < 0.05 ? was : to));
-  }, [tab, labels, width, changes, tasks, agents]);
+  }, [tab, labels, fit, changes, tasks, agents]);
 
+  // Arrows walk every tab in shortcut order; focus follows to the tab, or to More when it stands for it.
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') return;
     e.preventDefault();
-    const i = TABS.findIndex((t) => t.id === tab);
-    const next = e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length;
-    onPick(TABS[next].id);
-    requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(`[data-tab="${TABS[next].id}"]`)?.focus());
+    const i = RAIL_TABS.findIndex((t) => t.id === tab);
+    const n = RAIL_TABS.length;
+    const next = RAIL_TABS[e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + n) % n].id;
+    onPick(next);
+    requestAnimationFrame(() => row.current?.querySelector<HTMLElement>(`[data-tab="${next}"]`)?.focus());
   };
 
   return (
-    <div className="tabs rail-tabs" role="tablist" aria-label="Panel" ref={list} onKeyDown={onKey}>
+    <div className="rail-tabs" ref={row} onKeyDown={onKey}>
       {pill && (
         <motion.span
           className="rail-tabs-pill dither-sel"
@@ -216,45 +254,88 @@ function RailTabs({ sessionId, cwd, tab, onPick }: { sessionId: string; cwd: str
           transition={reducedMotion() ? { duration: 0 } : LABEL_SPRING}
         />
       )}
-      {TABS.map((t, i) => {
-        const active = t.id === tab;
-        const count = counts[t.id];
-        return (
-          <Tip key={t.id} label={t.label} keys={`alt+${i + 1}`}>
-            <button
-              type="button"
-              role="tab"
-              data-tab={t.id}
-              aria-selected={active}
-              aria-controls={`rail-pane-${t.id}`}
-              aria-label={count ? `${t.label}, ${count}` : t.label}
-              tabIndex={active ? 0 : -1}
-              className="rail-tab"
-              data-on={active || undefined}
-              data-count={count ? '' : undefined}
-              onClick={() => onPick(t.id)}
+      <div className="rail-tablist" role="tablist" aria-label="Panel">
+        {shown.map((t) => {
+          const active = t.id === tab;
+          const count = counts[t.id];
+          return (
+            <Tip key={t.id} label={t.label} keys={railTabKeys(t.id)}>
+              <button
+                type="button"
+                role="tab"
+                data-tab={t.id}
+                aria-selected={active}
+                aria-controls={`rail-pane-${t.id}`}
+                aria-label={count ? `${t.label}, ${count}` : t.label}
+                tabIndex={active || (!inRow && t === shown[0]) ? 0 : -1}
+                className="rail-tab"
+                data-on={active || undefined}
+                onClick={() => onPick(t.id)}
+              >
+                <TabFace icon={t.icon} label={t.label} named={active && labels} count={count} />
+              </button>
+            </Tip>
+          );
+        })}
+      </div>
+      <Menu>
+        <Tip label={inRow ? 'More' : current.label} keys={inRow ? undefined : railTabKeys(current.id)}>
+          <MenuTrigger
+            className="rail-tab rail-more"
+            data-tab={inRow ? 'more' : current.id}
+            data-on={!inRow || undefined}
+            aria-label={inRow ? 'More tabs' : `${current.label}, more tabs`}
+          >
+            {inRow ? (
+              <Icon name="dots" size={16} />
+            ) : (
+              <>
+                <TabFace icon={current.icon} label={current.label} named={labels} count={counts[current.id]} />
+                <Icon name="caret-down" size={10} className="rail-more-caret" />
+              </>
+            )}
+          </MenuTrigger>
+        </Tip>
+        <MenuContent align="start" width={208}>
+          {rest.map((t) => (
+            <MenuItem
+              key={t.id}
+              icon={t.icon}
+              keys={railTabKeys(t.id)}
+              checked={t.id === tab}
+              hint={counts[t.id] ? <span className="num">{counts[t.id]}</span> : undefined}
+              onSelect={() => onPick(t.id)}
             >
-              <Icon name={t.icon} size={16} />
-              <AnimatePresence initial={false}>
-                {active && labels && (
-                  <motion.span
-                    key="label"
-                    className="rail-tab-label"
-                    initial={{ width: 0, opacity: 0 }}
-                    animate={{ width: 'auto', opacity: 1 }}
-                    exit={{ width: 0, opacity: 0 }}
-                    transition={LABEL_SPRING}
-                  >
-                    <span>{t.label}</span>
-                  </motion.span>
-                )}
-              </AnimatePresence>
-              {!!count && <span className="rail-tab-count num">{count > 999 ? '999+' : count}</span>}
-            </button>
-          </Tip>
-        );
-      })}
+              {t.label}
+            </MenuItem>
+          ))}
+        </MenuContent>
+      </Menu>
     </div>
+  );
+}
+
+/** A tab's icon, its name while selected (when the row has room) and its count. */
+function TabFace({ icon, label, named, count }: { icon: IconName; label: string; named: boolean; count?: number }) {
+  return (
+    <>
+      <Icon name={icon} size={16} />
+      <AnimatePresence initial={false}>
+        {named && (
+          <motion.span
+            key="label"
+            className="rail-tab-label"
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 'auto', opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={LABEL_SPRING}
+          >
+            <span>{label}</span>
+          </motion.span>
+        )}
+      </AnimatePresence>
+      {!!count && <span className="rail-tab-count num">{count > 999 ? '999+' : count}</span>}
+    </>
   );
 }
 

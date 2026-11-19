@@ -824,7 +824,6 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
 
   return (
     <div className="rail-col bw" onKeyDown={onKey}>
-      <TabStrip sessionId={sessionId} ids={tabs.ids} active={tabId} onNew={newTab} />
       <div className="bw-bar">
         <IconButton icon="arrow-left" label="Back" size={15} disabled={!canBack} onClick={back} />
         <IconButton icon="arrow-right" label="Forward" size={15} disabled={!canForward} onClick={forward} />
@@ -842,6 +841,7 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
           </button>
         </Tip>
         <AddressField key={`addr:${tabId}`} url={page.url} title={page.title} favicon={page.favicon} zoom={page.zoom} agent={page.agent} picking={picking} onResetZoom={() => zoomTo(1)} inputRef={input} onGo={go} />
+        <PagesMenu sessionId={sessionId} ids={tabs.ids} active={tabId} canReopen={tabs.closed.length > 0} onNew={newTab} onReopen={reopen} />
         {native && (
           <>
             <IconButton icon="cursor-click" label={picking ? 'Stop picking' : 'Pick an element'} keys="mod+shift+c" size={15} active={picking} disabled={!page.url || !!page.error || !!page.crashed || !!page.hung} onClick={() => void pick()} />
@@ -855,6 +855,15 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
             </MenuTrigger>
           </Tip>
           <MenuContent align="end" width={292}>
+            {/* From two pages on, the pages control beside the address has New tab. */}
+            {tabs.ids.length < 2 && (
+              <>
+                <MenuItem icon="plus" keys="mod+t" onSelect={newTab}>
+                  New tab
+                </MenuItem>
+                <MenuSep />
+              </>
+            )}
             <MenuItem icon="external" onSelect={openOutside}>
               Open in your browser
             </MenuItem>
@@ -1003,65 +1012,80 @@ function TabFrame({ tabId, shown }: { tabId: string; shown: boolean }) {
 }
 
 /**
- * The tab strip: each page with its icon (a spinner while it loads) and title, the one in front a
- * step lighter, a close mark on hover. Middle-click closes, dragging reorders, the last button
- * opens a new tab.
+ * The session's pages, as one control in the address row (no strip of its own): a small framed
+ * count that opens the list. Each row shows the page's icon and title, the one in front checked;
+ * a close mark answers on hover (Delete from the keyboard, or a middle click). Shown from two pages
+ * on; with one, New tab is in the More menu and on Mod+T.
  */
-function TabStrip({ sessionId, ids, active, onNew }: { sessionId: string; ids: string[]; active: string; onNew: () => void }) {
-  const drag = useRef<string | null>(null);
+function PagesMenu({
+  sessionId,
+  ids,
+  active,
+  canReopen,
+  onNew,
+  onReopen,
+}: {
+  sessionId: string;
+  ids: string[];
+  active: string;
+  canReopen: boolean;
+  onNew: () => void;
+  onReopen: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // Kept while its menu is open, so closing pages down to one does not pull the menu away.
+  if (ids.length < 2 && !open) return null;
+  const label = `${ids.length} ${ids.length === 1 ? 'page' : 'pages'}`;
   return (
-    <div className="bw-tabs" role="tablist" aria-label="Pages">
-      {ids.map((id, i) => (
-        <PageTab
-          key={id}
-          sessionId={sessionId}
-          tabId={id}
-          active={id === active}
-          only={ids.length === 1}
-          onDragStart={() => (drag.current = id)}
-          onDragEnter={() => drag.current && drag.current !== id && moveTab(sessionId, drag.current, i)}
-          onDragEnd={() => (drag.current = null)}
-        />
-      ))}
-      <IconButton icon="plus" label="New tab" keys="mod+t" size={14} className="bw-tab-new" disabled={ids.length >= TABS_MAX} onClick={onNew} />
-    </div>
+    <Menu open={open} onOpenChange={setOpen}>
+      <Tip label={label}>
+        <MenuTrigger className="icon-btn bw-pages" aria-label={label}>
+          <span className="bw-pages-count num" aria-hidden>
+            {ids.length}
+          </span>
+        </MenuTrigger>
+      </Tip>
+      <MenuContent align="end" width={272} className="bw-pages-menu">
+        {ids.map((id) => (
+          <PageItem key={id} sessionId={sessionId} tabId={id} active={id === active} />
+        ))}
+        <MenuSep />
+        <MenuItem icon="plus" keys="mod+t" disabled={ids.length >= TABS_MAX} onSelect={onNew}>
+          New tab
+        </MenuItem>
+        {canReopen && (
+          <MenuItem icon="rewind" keys="mod+shift+t" onSelect={onReopen}>
+            Reopen closed tab
+          </MenuItem>
+        )}
+      </MenuContent>
+    </Menu>
   );
 }
 
-function PageTab({
-  sessionId,
-  tabId,
-  active,
-  only,
-  onDragStart,
-  onDragEnter,
-  onDragEnd,
-}: {
-  sessionId: string;
-  tabId: string;
-  active: boolean;
-  only: boolean;
-  onDragStart: () => void;
-  onDragEnter: () => void;
-  onDragEnd: () => void;
-}) {
+function PageItem({ sessionId, tabId, active }: { sessionId: string; tabId: string; active: boolean }) {
   const p = usePage(tabId);
   const parts = p.url ? addressParts(p.url) : null;
   const name = p.title || parts?.search || parts?.host || 'New tab';
   const close = () => closeTab(sessionId, tabId);
+  // The close mark is a pointer affordance inside the row: it must not reach the row's own press
+  // (which would switch to the page and close the menu).
+  const keep = (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
   return (
-    <div
-      className="bw-tab"
+    <RM.Item
+      className="menu-item bw-page"
       data-active={active || undefined}
-      draggable={!only}
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', p.url || name);
-        onDragStart();
+      aria-label={active ? `${name}, in front` : name}
+      title={p.url ? `${name}\n${prettyUrl(p.url)}` : undefined}
+      onSelect={() => selectTab(sessionId, tabId)}
+      onKeyDown={(e) => {
+        if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+        e.preventDefault();
+        close();
       }}
-      onDragEnter={onDragEnter}
-      onDragOver={(e) => e.preventDefault()}
-      onDragEnd={onDragEnd}
       onMouseDown={(e) => {
         // The middle button would start the page's auto-scroll.
         if (e.button === 1) e.preventDefault();
@@ -1072,26 +1096,23 @@ function PageTab({
         close();
       }}
     >
-      <button type="button" role="tab" aria-selected={active} className="bw-tab-main" title={p.url ? `${name}\n${prettyUrl(p.url)}` : undefined} onClick={() => selectTab(sessionId, tabId)}>
-        <span className="bw-tab-icon" aria-hidden>
-          {p.loading && !p.error && p.url ? (
-            <Spinner size={11} />
-          ) : p.crashed || p.hung ? (
-            <Icon name="warning" size={13} className="bw-site-icon" />
-          ) : p.url ? (
-            <SiteIcon src={p.favicon} fallback={siteFallback(p.url)} size={13} />
-          ) : (
-            <Icon name="globe" size={13} className="bw-site-icon" />
-          )}
-        </span>
-        <span className="bw-tab-name">{name}</span>
+      <span className="bw-tab-icon" aria-hidden>
+        {p.loading && !p.error && p.url ? (
+          <Spinner size={11} />
+        ) : p.crashed || p.hung ? (
+          <Icon name="warning" size={13} className="bw-site-icon" />
+        ) : p.url ? (
+          <SiteIcon src={p.favicon} fallback={siteFallback(p.url)} size={13} />
+        ) : (
+          <Icon name="globe" size={13} className="bw-site-icon" />
+        )}
+      </span>
+      <span className="grow truncate">{name}</span>
+      {active && <Icon name="check" size={14} className="bw-page-check" />}
+      <button type="button" className="bw-page-close" tabIndex={-1} aria-hidden onPointerDown={keep} onPointerUp={keep} onClick={(e) => (keep(e), close())}>
+        <Icon name="x" size={11} />
       </button>
-      {!(only && !p.url) && (
-        <button type="button" className="bw-tab-close" aria-label={`Close ${name}`} tabIndex={active ? 0 : -1} onClick={close}>
-          <Icon name="x" size={11} />
-        </button>
-      )}
-    </div>
+    </RM.Item>
   );
 }
 

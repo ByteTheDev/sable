@@ -88,7 +88,6 @@
   flex-shrink: 0;
   overflow: hidden;
 }
-
 .app-rail-inner {
   /* Positioned: the dither veil that resolves the panel's contents fills this box (App.tsx). */
   position: relative;
@@ -217,6 +216,25 @@
 
 .topbar .icon-btn[data-active='true']:hover {
   background-color: var(--fill-2);
+}
+
+/* The panel's toggle folds away while the panel shows (its header has the toggle then), in step
+   with the panel opening, so the actions beside it travel instead of jumping. */
+.topbar-panel {
+  display: flex;
+  flex-shrink: 0;
+  width: 28px;
+  transition:
+    width calc(var(--d-3) * 1.3) var(--ease-out),
+    margin-left calc(var(--d-3) * 1.3) var(--ease-out),
+    opacity var(--d-2) var(--ease);
+}
+
+.topbar-panel[data-away] {
+  width: 0;
+  margin-left: -2px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .flip-x svg {
@@ -418,8 +436,8 @@ html[data-desktop] .rail-resize {
   -webkit-app-region: no-drag;
 }
 
-/* The panel's tab row (a tablist) fills the header: its empty end still drags; the tabs do not. */
-html[data-desktop] .rail-head .rail-tabs[role='tablist'] {
+/* The panel's tab row fills the header: its empty end still drags; the tabs and More do not. */
+html[data-desktop] .rail-head :is(.rail-tabs, .rail-tablist) {
   -webkit-app-region: drag;
 }
 
@@ -429,10 +447,12 @@ html[data-desktop] .rail-head .rail-tabs[role='tablist'] {
    bar) tall, and their pills sit on the top row's centre line like every other icon there. The row
    under them keeps --wc-w free: the stage's top bar while the panel is closed (eased away as the
    panel opens, see --rail-live in App.tsx), the panel's header while it is open.
-   Geometry: hairline block 15 px (8 + 1 + 6), two 32 px buttons, close 2 + 28 + 17 px, so the close
-   pill ends 17 px from the window edge, where the panel's and the top bar's last icon end. */
+   Geometry: hairline block 21 px (12 + 1 + 8), two 32 px buttons, close 2 + 28 + 17 px, so the close
+   pill ends 17 px from the window edge. The row under them ends 12 px before the hairline: the last
+   icon there (the panel's toggle, in the top bar or the panel's header) stands clearly apart from
+   the window's own controls, 23 px from minimise and about 100 px from close. */
 html[data-wc] {
-  --wc-w: 126px;
+  --wc-w: 132px;
   --strip-h: calc(var(--gap) + var(--topbar-h));
 }
 
@@ -453,7 +473,7 @@ html[data-wc] {
   align-self: center;
   width: 1px;
   height: 16px;
-  margin: calc(var(--gap) + 1px) 6px 0 8px;
+  margin: calc(var(--gap) + 1px) 8px 0 12px;
   background-color: var(--line-2);
   transition: opacity var(--d-2) var(--ease);
 }
@@ -535,17 +555,12 @@ html[data-wc] .topbar {
 }
 
 /* A panel that was open at start-up never animated: the controls are over its header already. */
-html[data-wc] .app:has(> .app-rail) .topbar {
+html[data-wc] .app:has(> .app-rail[data-open]) .topbar {
   --rail-live: 999px;
 }
 
 html[data-wc] .app-rail .rail-head {
   padding-right: calc(var(--wc-w) - var(--gap) - 1px);
-}
-
-/* The panel's own close button would sit beside the window's; the top bar toggle (Mod+J) remains. */
-html[data-wc] .app-rail .rail-close {
-  display: none;
 }
 
 /* Dialogs centre in the window below the strip, so none reaches under the window controls. */
