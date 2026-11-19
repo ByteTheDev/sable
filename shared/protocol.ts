@@ -519,6 +519,8 @@ export interface UserItem extends BaseItem {
   state?: 'queued' | 'sent';
   /** Sent into a running turn (`session.send` with `steer`, or `queue.sendNow`): the agent takes it at its next step. */
   steered?: boolean;
+  /** Sent from elsewhere into this conversation (Remote Control in the Claude app or on claude.ai), not from Sable. */
+  remote?: boolean;
   /** Provider message id, used for rewind. */
   providerId?: string;
   /** Sent by Sable for a failing `/until` check: shown as the check's row, not as a message. */

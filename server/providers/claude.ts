@@ -1690,6 +1690,28 @@ class ClaudeSession implements ProviderSession {
         this.chain.push(m.uuid);
         // Replayed when the agent takes it: a steered message stays where it was sent.
         rt.taken(itemId, { providerId: m.uuid });
+        return;
+      }
+      if (m.parent_tool_use_id) return;
+      const text = replayText(m.message?.content);
+      if (!text) return;
+      // One of ours under another uuid (a steer the CLI folded in): the same words, still waiting.
+      for (const [uuid, id] of this.pendingUsers) {
+        const mine = rt.get<UserItem>(id);
+        if (mine && mine.text.trim() === text.trim()) {
+          this.pendingUsers.delete(uuid);
+          if (m.uuid) this.chain.push(m.uuid);
+          rt.taken(id, { providerId: m.uuid });
+          return;
+        }
+      }
+      // A message sent from elsewhere (Remote Control in the Claude app or on claude.ai): it belongs
+      // in this conversation, and the turn it starts runs here too.
+      if (m.uuid) this.chain.push(m.uuid);
+      rt.add<UserItem>({ type: 'user', text, state: 'sent', providerId: m.uuid, remote: true });
+      if (!rt.turnActive) {
+        this.outstanding++;
+        rt.beginTurn('Thinking');
       }
       return;
     }
@@ -2102,4 +2124,15 @@ export function startSettings(meta: Pick<SessionMeta, 'ultracode' | 'speed'>): O
   if (meta.ultracode) out.ultracode = true;
   out.fastMode = meta.speed === 'fast';
   return Object.keys(out).length ? (out as Options['settings']) : undefined;
+}
+
+/** The words of a replayed user message (a string, or its text blocks); empty for tool results and images only. */
+function replayText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return (content as Obj[])
+    .filter((b) => b?.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text as string)
+    .join('\n')
+    .trim();
 }

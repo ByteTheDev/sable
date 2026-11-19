@@ -338,11 +338,32 @@ describe('steering with Claude Code', () => {
     expect(h.pushed.map((m) => m.priority)).toEqual([undefined, 'next']);
     // The first message is replayed; the steer never is (or under another uuid).
     h.message({ type: 'user', isReplay: true, uuid: h.pushed[0].uuid, parent_tool_use_id: null, message: { role: 'user', content: 'first' } });
-    h.message({ type: 'user', isReplay: true, uuid: 'some-other-uuid', parent_tool_use_id: null, message: { role: 'user', content: 'steer me' } });
     expect(h.rt.get<UserItem>(steer.id)?.state).toBe('queued');
     h.message(result([h.pushed[0].uuid, h.pushed[1].uuid]));
     expect(h.rt.turnActive).toBe(false);
     expect(h.rt.get<UserItem>(steer.id)).toMatchObject({ state: 'sent', steered: true });
+  });
+
+  it('a steer replayed under another uuid with the same words is taken at once, not shown twice', async () => {
+    const h = await claude();
+    const first = h.add('first');
+    await h.session.send(first);
+    const steer = h.add('steer me');
+    await h.session.send(steer);
+    h.message({ type: 'user', isReplay: true, uuid: 'some-other-uuid', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'text', text: 'steer me' }] } });
+    expect(h.rt.get<UserItem>(steer.id)).toMatchObject({ state: 'sent', providerId: 'some-other-uuid' });
+    expect(users(h.rt).map((u) => u.text)).toEqual(['first', 'steer me']);
+  });
+
+  it('a message sent from the Claude app joins the conversation and its turn runs here', async () => {
+    const h = await claude();
+    expect(h.rt.turnActive).toBe(false);
+    h.message({ type: 'user', isReplay: true, uuid: 'from-phone', parent_tool_use_id: null, message: { role: 'user', content: 'check the build from my phone' } });
+    const remote = users(h.rt).pop();
+    expect(remote).toMatchObject({ text: 'check the build from my phone', state: 'sent', remote: true, providerId: 'from-phone' });
+    expect(h.rt.turnActive).toBe(true);
+    h.message(result(['from-phone']));
+    expect(h.rt.turnActive).toBe(false);
   });
 
   it('a turn that ends with every result in but no replay for the steer still marks it taken', async () => {

@@ -124,6 +124,12 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
             <Icon name="enter" size={11} />
             {queued ? 'Steered, not taken yet' : 'Steered'}
           </span>
+        ) : item.remote ? (
+          // Sent from elsewhere (Remote Control in the Claude app or on claude.ai).
+          <span className="user-mark">
+            <Icon name="phone" size={11} />
+            From the Claude app
+          </span>
         ) : (
           queued && (
             <span className="user-mark" data-waiting>
