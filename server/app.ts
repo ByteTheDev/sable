@@ -2043,6 +2043,14 @@ export class App {
       const rt = this.runtime(sessionId);
       await rt.handle?.setMode(mode);
       rt.update({ mode });
+      // The mode that never asks (Bypass, Full access) answers what already waits too; questions stay.
+      if (rt.caps?.modes.find((m) => m.id === mode)?.tone === 'danger') {
+        for (const p of rt.prompts().permissions) {
+          if (p.toolName === 'ExitPlanMode') continue;
+          const allow = p.options.find((o) => o.tone === 'allow');
+          if (allow) rt.answerPermission(p.id, { optionId: allow.id });
+        }
+      }
       return { ok: true };
     });
     this.register('session.setFast', async ({ sessionId, fast }) => {

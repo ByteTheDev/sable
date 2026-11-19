@@ -836,6 +836,11 @@ const MODEL_WINDOW_DEFAULT = 'model_Fable';
 const isModelWindow = (id: string) => id.startsWith('model_');
 const modelWindowLabel = (id: string) => `Weekly · ${id.slice('model_'.length)}`;
 
+/** A mode in which nothing waits for a yes (Bypass): permission prompts are answered at once, questions still wait. */
+export function bypassesAsking(mode: string | undefined): boolean {
+  return mode === 'bypassPermissions';
+}
+
 /** The 5-hour window, the weekly one, Opus and Sonnet, then the per-model ones and anything else. */
 export function sortWindows(rows: RateLimit[]): RateLimit[] {
   const rank = (id: string) => LIMIT_ORDER.indexOf(id) + 1 || (id.startsWith('five_hour') ? 10 : isModelWindow(id) ? 15 : 20);
@@ -1495,6 +1500,14 @@ class ClaudeSession implements ProviderSession {
       }
       if (item) rt.patch<ToolItem>(item.id, { status: 'running', result: { answers } });
       return { behavior: 'allow', updatedInput: { ...input, answers: Object.fromEntries(Object.entries(answers).map(([q, a]) => [q, a.join(', ')])) } };
+    }
+
+    // Bypass runs everything without asking. Claude Code's own safety checks still send some calls
+    // here in that mode (compound commands, deletes with a glob, protected paths): they run too. Only
+    // real questions (AskUserQuestion, above) wait for the person.
+    if (bypassesAsking(rt.meta.mode)) {
+      if (item && name === 'ExitPlanMode' && input.plan) rt.patch<ToolItem>(item.id, { input, detail: describeTool(name, input).detail });
+      return { behavior: 'allow', updatedInput: input };
     }
 
     const view = describeTool(name, input);
