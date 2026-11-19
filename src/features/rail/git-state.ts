@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
-import type { FileDiff, GitCommitResult, GitStatus } from '@shared/protocol';
+import type { FileDiff, GitCommitResult, GitStatus, TimelineItem } from '@shared/protocol';
 import { bridge } from '@/lib/bridge';
-import { useStore } from '@/state/store';
+import { changedSince, useStore } from '@/state/store';
 
 /**
  * Working-tree state for the panel, keyed by folder. Shared by Changes (list + diffs)
@@ -156,25 +156,36 @@ export function loadAllDiffs(cwd: string) {
     .finally(() => allInflight.delete(k));
 }
 
-/** A cheap signature of the session's settled file-touching tools: changes when one finishes. */
-function settledSignature(sessionId: string) {
+const settledFileTool = (it: TimelineItem | undefined) =>
+  it?.type === 'tool' && (it.kind === 'edit' || it.kind === 'write' || it.kind === 'bash') && (it.status === 'done' || it.status === 'error' || it.status === 'cancelled');
+
+/**
+ * A cheap signature of the session's settled file-touching tools: changes when one finishes.
+ * A write looks only at the items it changed (`changedSince`). Exported for tests.
+ */
+export function settledSignature(sessionId: string) {
   let lastItems: unknown = null;
-  let last = '';
+  let lastRev = -1;
+  let settled = new Set<string>();
   return (s: ReturnType<typeof useStore.getState>): string => {
     const d = s.data[sessionId];
     const status = s.sessions[sessionId]?.status ?? '';
     if (!d) return status;
-    if (d.items !== lastItems) {
+    if (d.items !== lastItems || d.rev !== lastRev) {
+      const changed = d.items === lastItems ? changedSince(d, lastRev) : null;
       lastItems = d.items;
-      let n = 0;
-      for (const id in d.items) {
-        const it = d.items[id];
-        if (it.type !== 'tool' || (it.kind !== 'edit' && it.kind !== 'write' && it.kind !== 'bash')) continue;
-        if (it.status === 'done' || it.status === 'error' || it.status === 'cancelled') n++;
+      lastRev = d.rev;
+      if (changed) {
+        for (const id of changed) {
+          if (settledFileTool(d.items[id])) settled.add(id);
+          else settled.delete(id);
+        }
+      } else {
+        settled = new Set();
+        for (const id in d.items) if (settledFileTool(d.items[id])) settled.add(id);
       }
-      last = String(n);
     }
-    return `${status}|${last}`;
+    return `${status}|${settled.size}`;
   };
 }
 

@@ -53,7 +53,7 @@ const perm = (id: string, sessionId: string, createdAt: number, options?: Permis
 });
 const ask = (id: string, sessionId: string, createdAt: number): QuestionRequest => ({ id, sessionId, questions: [{ question: 'Which logger?', options: [{ label: 'pino' }, { label: 'winston' }] }], createdAt });
 
-const blank = (patch: Partial<SessionData> = {}): SessionData => ({ loaded: true, items: {}, roots: [], children: {}, permissions: [], questions: [], todos: [], queue: [], ...patch });
+const blank = (patch: Partial<SessionData> = {}): SessionData => ({ loaded: true, items: {}, rev: 0, roots: [], children: {}, permissions: [], questions: [], todos: [], queue: [], ...patch });
 
 describe('what waits, across sessions', () => {
   const sessions = { a: meta('a'), b: meta('b'), c: meta('c') };

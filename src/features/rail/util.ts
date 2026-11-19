@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react';
 import type { ToolItem } from '@shared/protocol';
-import { useStore } from '@/state/store';
+import { changedSince, useStore } from '@/state/store';
 
 export function splitPath(path: string): [dir: string, base: string] {
   const p = path.replace(/\\/g, '/');
@@ -16,32 +16,63 @@ const NONE: string[] = [];
  * streaming text elsewhere in the session does not re-render the caller.
  */
 export function useToolIds(sessionId: string, test: (it: ToolItem) => boolean): string[] {
-  const selector = useMemo(() => {
-    let lastItems: unknown = null;
-    let lastKey = '';
-    let lastIds: string[] = NONE;
-    return (s: ReturnType<typeof useStore.getState>): string[] => {
-      const d = s.data[sessionId];
-      if (!d) return NONE;
-      if (d.items === lastItems) return lastIds;
-      lastItems = d.items;
-      const ids: string[] = [];
-      for (const id in d.items) {
-        const it = d.items[id];
-        if (it.type === 'tool' && test(it)) ids.push(id);
-      }
-      ids.sort((a, b) => (d.items[a].ts - d.items[b].ts) || 0);
-      const key = ids.join('\u0000');
-      if (key !== lastKey) {
-        lastKey = key;
-        lastIds = ids.length ? ids : NONE;
-      }
-      return lastIds;
-    };
-    // `test` is expected to be a stable predicate; callers pass inline arrows that only read the item.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  const selector = useMemo(() => toolIdsSelector(sessionId, test), [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
   return useStore(selector);
+}
+
+/**
+ * The selector behind `useToolIds`. A write re-tests only the items it changed (`changedSince`);
+ * every item is read again only for a new timeline. Exported for tests.
+ * `test` is expected to be a stable predicate; callers pass inline arrows that only read the item.
+ */
+export function toolIdsSelector(sessionId: string, test: (it: ToolItem) => boolean) {
+  let lastItems: unknown = null;
+  let lastRev = -1;
+  let lastKey = '';
+  let lastIds: string[] = NONE;
+  // Matching ids, and every item's place in the order items joined (equal times keep that order).
+  let match = new Set<string>();
+  let order = new Map<string, number>();
+  let seq = 0;
+  return (s: ReturnType<typeof useStore.getState>): string[] => {
+    const d = s.data[sessionId];
+    if (!d) return NONE;
+    if (d.items === lastItems && d.rev === lastRev) return lastIds;
+    const changed = d.items === lastItems ? changedSince(d, lastRev) : null;
+    lastItems = d.items;
+    lastRev = d.rev;
+    let moved = false;
+    const take = (id: string) => {
+      const it = d.items[id];
+      if (!it) {
+        order.delete(id);
+        if (match.delete(id)) moved = true;
+        return;
+      }
+      if (!order.has(id)) order.set(id, seq++);
+      const want = it.type === 'tool' && test(it);
+      if (want === match.has(id)) return;
+      if (want) match.add(id);
+      else match.delete(id);
+      moved = true;
+    };
+    if (changed) changed.forEach(take);
+    else {
+      match = new Set();
+      order = new Map();
+      seq = 0;
+      for (const id in d.items) take(id);
+      moved = true;
+    }
+    if (!moved) return lastIds;
+    const ids = [...match].sort((a, b) => d.items[a].ts - d.items[b].ts || order.get(a)! - order.get(b)!);
+    const key = ids.join('\u0000');
+    if (key !== lastKey) {
+      lastKey = key;
+      lastIds = ids.length ? ids : NONE;
+    }
+    return lastIds;
+  };
 }
 
 export function isImagePath(p: string): boolean {

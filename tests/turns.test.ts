@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TimelineItem } from '@shared/protocol';
-import { groupTurns, shapeOf, type FlowChunk, type TurnGroup } from '@/features/timeline/turns';
+import { groupTurns, shapeOf, turnsIndex, type FlowChunk, type TurnGroup } from '@/features/timeline/turns';
 
 /** Builds ids and a shape string from a compact spec: "U1 w2 t3 T4" (shape char + id). */
 function spec(s: string) {
@@ -257,5 +257,69 @@ describe('groupTurns', () => {
     const s = onlyTurn('U1 w2 w3 T4').segments[0];
     expect(s.answer).toBeNull();
     expect(s.steps).toBe(2);
+  });
+});
+
+describe('turnsIndex (groupTurns followed run by run)', () => {
+  it('always equals groupTurns, through added steps, changed and removed items, checks and busy changes', () => {
+    const CHARS = 'UUUUUSSQxtttcpwwwwwwnhkkieeTTTFgZ..';
+    let seed = 12345;
+    const rnd = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return Math.floor((seed / 2147483648) * n);
+    };
+    for (let walk = 0; walk < 120; walk++) {
+      const index = turnsIndex();
+      let ids: string[] = [];
+      let chars: string[] = [];
+      let next = 0;
+      let busy = false;
+      const owner = new Map<string, string>();
+      const checkOf = (id: string) => owner.get(id);
+      for (let step = 0; step < 100; step++) {
+        const r = rnd(100);
+        if (r < 55 || !ids.length) {
+          const c = CHARS[rnd(CHARS.length)];
+          const id = `i${next++}`;
+          ids = [...ids, id];
+          chars = [...chars, c];
+          const sent = ids.filter((_, i) => chars[i] === 'U');
+          if (c === 'x' && sent.length && rnd(4)) owner.set(id, sent[rnd(sent.length)]);
+        } else if (r < 75) {
+          chars = chars.slice();
+          chars[rnd(chars.length)] = CHARS[rnd(CHARS.length)];
+        } else if (r < 82) {
+          const i = rnd(ids.length);
+          ids = ids.filter((_, j) => j !== i);
+          chars = chars.filter((_, j) => j !== i);
+        } else if (r < 92) busy = !busy;
+        else {
+          const k = rnd(ids.length + 1);
+          ids = ids.slice(0, k);
+          chars = chars.slice(0, k);
+        }
+        const shape = chars.join('');
+        expect(index(ids, shape, busy, checkOf)).toEqual(groupTurns(ids, shape, busy, checkOf));
+      }
+    }
+  });
+
+  it('keeps the turns before the running one as they were (the same objects) when a step joins', () => {
+    const index = turnsIndex();
+    const a = spec('U1 w2 t3 T4 U5 w6 t7 T8 U9 w10');
+    const first = index(a.ids, a.shape, true);
+    const b = spec('U1 w2 t3 T4 U5 w6 t7 T8 U9 w10 w11');
+    const second = index(b.ids, b.shape, true);
+    expect(second.groups[0]).toBe(first.groups[0]);
+    expect(second.groups[1]).toBe(first.groups[1]);
+    expect(second.groups[2]).not.toBe(first.groups[2]);
+    expect((second.groups[2] as TurnGroup).ids).toEqual(['9', '10', '11']);
+    // What it returned before is left as it was.
+    expect((first.groups[2] as TurnGroup).ids).toEqual(['9', '10']);
+    // A check attached to an earlier turn is a copy: the kept turn itself carries none.
+    const c = spec('U1 w2 t3 T4 U5 w6 t7 T8 U9 w10 w11 x12');
+    const third = index(c.ids, c.shape, true, (id) => (id === '12' ? '1' : undefined));
+    expect((third.groups[0] as TurnGroup).checks).toEqual(['12']);
+    expect((second.groups[0] as TurnGroup).checks).toBeUndefined();
   });
 });

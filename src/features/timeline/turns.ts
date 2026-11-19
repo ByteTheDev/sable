@@ -1,4 +1,5 @@
 import type { TimelineItem } from '@shared/protocol';
+import { changedSince, type ItemsRevision } from '@/state/revision';
 
 /**
  * Turn structure for the conversation: which root items belong to which turn, how each segment
@@ -112,6 +113,65 @@ export function shapeOf(item: TimelineItem | undefined): string {
   }
 }
 
+/**
+ * The shape of a session's roots (one `shapeOf` character per root), followed write by write: a
+ * write re-reads only the items it changed (`changedSince`), roots that grew at their end add their
+ * new characters, and anything else (a new timeline, a removed root, a write it did not see) reads
+ * every root again. The result is always the string `roots.map((id) => shapeOf(items[id])).join('')`.
+ */
+export function shapeIndex() {
+  let ids: readonly string[] = [];
+  let items: object | null = null;
+  let rev = -1;
+  let chars: string[] = [];
+  let pos = new Map<string, number>();
+  let out = '';
+  return (d: (ItemsRevision & { items: Record<string, TimelineItem | undefined> }) | undefined, roots: readonly string[]): string => {
+    if (!d) {
+      items = null;
+      return '';
+    }
+    if (d.items === items && d.rev === rev && roots === ids) return out;
+    const changed = d.items === items ? changedSince(d, rev) : null;
+    const n = ids.length;
+    // Roots change only by joining at the end or leaving: the old last root still in its place
+    // means nothing before it left (as `grow` in the Agents tab reads it).
+    const grew = roots === ids || (roots.length >= n && (n === 0 || (roots[0] === ids[0] && roots[n - 1] === ids[n - 1])));
+    if (!changed || !grew) {
+      chars = new Array<string>(roots.length);
+      pos = new Map();
+      for (let i = 0; i < roots.length; i++) {
+        chars[i] = shapeOf(d.items[roots[i]]);
+        pos.set(roots[i], i);
+      }
+      out = chars.join('');
+    } else {
+      let edited = false;
+      for (const id of changed) {
+        const i = pos.get(id);
+        if (i === undefined) continue;
+        const c = shapeOf(d.items[id]);
+        if (c === chars[i]) continue;
+        chars[i] = c;
+        edited = true;
+      }
+      let tail = '';
+      for (let i = n; i < roots.length; i++) {
+        const c = shapeOf(d.items[roots[i]]);
+        chars.push(c);
+        pos.set(roots[i], i);
+        tail += c;
+      }
+      if (edited) out = chars.join('');
+      else if (tail) out += tail;
+    }
+    items = d.items;
+    rev = d.rev;
+    ids = roots;
+    return out;
+  };
+}
+
 const ANSWER = new Set(['t', 'c', 'p']);
 /** Always in view, in their place: command output, widgets, plans. */
 const SHOW = new Set(['c', 'g', 'p']);
@@ -211,9 +271,32 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
  * wherever it sits in the timeline, or stands on its own where it is when that turn is gone.
  */
 export function groupTurns(ids: readonly string[], shape: string, busy: boolean, checkOf?: (id: string) => string | undefined): TurnLayout {
-  const groups: Group[] = [];
-  const queued: string[] = [];
-  const checks: { id: string; at: number }[] = [];
+  const g: Grouping = { groups: [], queued: [], checks: [] };
+  groupFrom(g, ids, shape, busy, 0);
+  return { groups: withChecks(g.groups, g.checks, checkOf), queued: g.queued };
+}
+
+/** What grouping has gathered so far; a check's `at` is how many groups stood before it. */
+interface Grouping {
+  groups: Group[];
+  queued: string[];
+  checks: { id: string; at: number }[];
+}
+
+/** A sent message with nothing open before it: everything grouped before it is final (see `turnsIndex`). */
+interface Cut {
+  at: number;
+  groups: number;
+  queued: number;
+  checks: number;
+}
+
+/**
+ * Groups `ids[from..]` onto `g`, which holds the grouping of `ids[..from)` with nothing open at
+ * `from` (so `from` is 0 or a cut). Notes each sent message in `cuts`, with what stood before it.
+ */
+function groupFrom(g: Grouping, ids: readonly string[], shape: string, busy: boolean, from: number, cuts?: Cut[]) {
+  const { groups, queued, checks } = g;
   let open: Open | null = null;
 
   const close = (end: string | null, failedEnd: boolean, atEnd: boolean) => {
@@ -233,7 +316,7 @@ export function groupTurns(ids: readonly string[], shape: string, busy: boolean,
     open = { ids: [id], chars: [], segs: [{ lead: id, steered, ids: [], chars: [] }], interrupted: false, failed: false };
   };
 
-  for (let i = 0; i < ids.length; i++) {
+  for (let i = from; i < ids.length; i++) {
     const id = ids[i];
     const ch = shape[i] ?? '.';
     if (ch === 'Q') {
@@ -247,6 +330,9 @@ export function groupTurns(ids: readonly string[], shape: string, busy: boolean,
     }
     if (ch === 'U' || (ch === 'S' && !open)) {
       close(null, false, false);
+      // Nothing is open here and nothing after this point reaches back before it (an "Interrupted"
+      // only joins a turn closed right before it, and this message opens one).
+      if (ch === 'U') cuts?.push({ at: i, groups: groups.length, queued: queued.length, checks: checks.length });
       start(id, ch === 'S');
       continue;
     }
@@ -293,17 +379,65 @@ export function groupTurns(ids: readonly string[], shape: string, busy: boolean,
     else if (ANSWER.has(ch)) o.failed = false;
   }
   close(null, false, true);
-  if (checks.length) {
-    const turns = new Map<string, TurnGroup>();
-    for (const g of groups) if (g.kind === 'turn') turns.set(g.key, g);
-    const loose: { id: string; at: number }[] = [];
-    for (const c of checks) {
-      const turn = turns.get(checkOf?.(c.id) ?? '');
-      if (turn) (turn.checks ??= []).push(c.id);
-      else loose.push(c);
+}
+
+/**
+ * The groups with their checks: under the turn each checks (a copy of that turn, so the groups
+ * passed in are left as they are), or on their own where they stand when that turn is gone.
+ */
+function withChecks(groups: Group[], checks: Grouping['checks'], checkOf?: (id: string) => string | undefined): Group[] {
+  const out = groups.slice();
+  if (!checks.length) return out;
+  const turns = new Map<string, number>();
+  for (let i = 0; i < out.length; i++) if (out[i].kind === 'turn') turns.set(out[i].key, i);
+  const loose: { id: string; at: number }[] = [];
+  for (const c of checks) {
+    const at = turns.get(checkOf?.(c.id) ?? '');
+    if (at === undefined) {
+      loose.push(c);
+      continue;
     }
-    // From the end, so the places counted before stay right.
-    for (let i = loose.length - 1; i >= 0; i--) groups.splice(loose[i].at, 0, { kind: 'item', key: loose[i].id, id: loose[i].id });
+    const turn = out[at] as TurnGroup;
+    out[at] = { ...turn, checks: [...(turn.checks ?? []), c.id] };
   }
-  return { groups, queued };
+  // From the end, so the places counted before stay right.
+  for (let i = loose.length - 1; i >= 0; i--) out.splice(loose[i].at, 0, { kind: 'item', key: loose[i].id, id: loose[i].id });
+  return out;
+}
+
+/**
+ * `groupTurns`, followed run by run (one per TurnList): the groups before the last sent message
+ * that the timeline has not changed since the last run are kept as they are (the same objects),
+ * and only what follows it is grouped again. A step joining a running turn regroups that turn,
+ * not the whole conversation. Always equal to `groupTurns` of the same arguments.
+ */
+export function turnsIndex() {
+  let ids: readonly string[] = [];
+  let shape = '';
+  let g: Grouping = { groups: [], queued: [], checks: [] };
+  let cuts: Cut[] = [];
+  return (nextIds: readonly string[], nextShape: string, busy: boolean, checkOf?: (id: string) => string | undefined): TurnLayout => {
+    // The first place this timeline differs from the last one grouped.
+    const n = Math.min(ids.length, nextIds.length);
+    let d = 0;
+    while (d < n && ids[d] === nextIds[d] && (shape[d] ?? '.') === (nextShape[d] ?? '.')) d++;
+    // The last cut before it: grouping starts again there (the cut itself is noted again).
+    let k = cuts.length - 1;
+    while (k >= 0 && cuts[k].at >= d) k--;
+    if (k >= 0) {
+      const cut = cuts[k];
+      g.groups.length = cut.groups;
+      g.queued.length = cut.queued;
+      g.checks.length = cut.checks;
+      cuts.length = k;
+      groupFrom(g, nextIds, nextShape, busy, cut.at, cuts);
+    } else {
+      g = { groups: [], queued: [], checks: [] };
+      cuts = [];
+      groupFrom(g, nextIds, nextShape, busy, 0, cuts);
+    }
+    ids = nextIds;
+    shape = nextShape;
+    return { groups: withChecks(g.groups, g.checks, checkOf), queued: g.queued.slice() };
+  };
 }

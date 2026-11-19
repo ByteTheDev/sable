@@ -24,6 +24,8 @@ import type {
 import { DEFAULT_ACCOUNT, DEFAULT_SETTINGS } from '@shared/protocol';
 import { bridge, type ConnStatus } from '@/lib/bridge';
 
+export { changedSince } from './revision';
+
 /**
  * Key for per-account state (`limits`, `auth`): the bare provider id for the built-in default
  * account, so `limits[provider]` and `auth[provider]` keep meaning what they always did.
@@ -34,10 +36,23 @@ export const accountKey = (provider: ProviderId, accountId?: string | null) =>
 /** Per-session view state, rebuilt from a snapshot and kept current by events. */
 export interface SessionData {
   loaded: boolean;
+  /**
+   * Items by id. The container is changed in place: a streamed word or a patch replaces one item
+   * without copying the others (a long chat holds thousands; a copy per frame cost milliseconds).
+   * Each item object stays immutable (a change is a new object), so selecting one item works as
+   * ever. Never compare `items` by identity or keep it as a memo dependency: compare `rev`.
+   */
   items: Record<string, TimelineItem>;
-  /** Top-level item ids in order. */
+  /** Changes with every change to `items` (a word, a patch, an item added or removed, a new timeline). Never reused, across sessions too. */
+  rev: number;
+  /**
+   * What the write that made `rev` changed: the ids whose items were set or removed, when the
+   * revision before it was `since`. Absent after a new timeline (snapshot, reset). See `changedSince`.
+   */
+  changed?: { since: number; ids: readonly string[] };
+  /** Top-level item ids in order. A new array whenever it changes. */
   roots: string[];
-  /** Sub-agent item ids by parent tool id. */
+  /** Sub-agent item ids by parent tool id. A new object (and a new array for that parent) whenever one changes. */
   children: Record<string, string[]>;
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
@@ -153,9 +168,14 @@ const persistedUi = loadUi();
 /** Whether the user has picked a home agent yet (a fresh profile follows `settings.defaultProvider`). */
 let homeChosen = !!persistedUi.homeProvider;
 
-const emptyData = (): SessionData => ({ loaded: false, items: {}, roots: [], children: {}, permissions: [], questions: [], todos: [], queue: [] });
+/** Revisions of `SessionData.items`: one counter for every session, so a revision is never seen twice. */
+let revSeq = 0;
+const nextRev = () => ++revSeq;
 
-function indexItems(items: TimelineItem[]) {
+const emptyData = (): SessionData => ({ loaded: false, items: {}, rev: nextRev(), roots: [], children: {}, permissions: [], questions: [], todos: [], queue: [] });
+
+/** A whole new timeline: a fresh container and a revision that tells every reader to read it all. */
+function indexItems(items: TimelineItem[]): Pick<SessionData, 'items' | 'rev' | 'changed' | 'roots' | 'children'> {
   const map: Record<string, TimelineItem> = {};
   const roots: string[] = [];
   const children: Record<string, string[]> = {};
@@ -164,7 +184,12 @@ function indexItems(items: TimelineItem[]) {
     if (item.parentId) (children[item.parentId] ??= []).push(item.id);
     else roots.push(item.id);
   }
-  return { items: map, roots, children };
+  return { items: map, rev: nextRev(), changed: undefined, roots, children };
+}
+
+/** The next revision of `d` after its items changed in place (`ids` set or removed), with other fields to change. */
+function touched(d: SessionData, ids: readonly string[], patch?: Partial<SessionData>): SessionData {
+  return { ...d, ...patch, rev: nextRev(), changed: { since: d.rev, ids } };
 }
 
 let toastId = 1;
@@ -241,29 +266,32 @@ type DeltaKey = string; // `${sessionId}\u0000${itemId}\u0000${field}`
 const deltaBuffer = new Map<DeltaKey, string>();
 let deltaFrame = 0;
 
-/** Streaming deltas arrive far faster than frames: coalesce them into one store write per frame. */
+/**
+ * Streaming deltas arrive far faster than frames: coalesce them into one store write per frame.
+ * The items they grow are replaced in place (see `SessionData.items`): the write costs what the
+ * changed items cost, however long the chat.
+ */
 export function flushDeltas() {
   deltaFrame = 0;
   if (!deltaBuffer.size) return;
   const batch = [...deltaBuffer];
   deltaBuffer.clear();
   useStore.setState((s) => {
-    const data = { ...s.data };
-    const touched = new Map<string, Record<string, TimelineItem>>();
+    const ids = new Map<string, string[]>();
     for (const [key, delta] of batch) {
       const [sessionId, itemId, field] = key.split('\u0000');
-      const d = data[sessionId];
+      const d = s.data[sessionId];
       if (!d?.loaded) continue;
-      let items = touched.get(sessionId);
-      if (!items) {
-        items = { ...d.items };
-        touched.set(sessionId, items);
-      }
-      const item = items[itemId] as (TimelineItem & Record<string, unknown>) | undefined;
+      const item = d.items[itemId] as (TimelineItem & Record<string, unknown>) | undefined;
       if (!item) continue;
-      items[itemId] = { ...item, [field]: ((item[field] as string | undefined) ?? '') + delta } as TimelineItem;
+      d.items[itemId] = { ...item, [field]: ((item[field] as string | undefined) ?? '') + delta } as TimelineItem;
+      const list = ids.get(sessionId);
+      if (!list) ids.set(sessionId, [itemId]);
+      else if (!list.includes(itemId)) list.push(itemId);
     }
-    for (const [sessionId, items] of touched) data[sessionId] = { ...data[sessionId], items };
+    if (!ids.size) return s;
+    const data = { ...s.data };
+    for (const [sessionId, list] of ids) data[sessionId] = touched(data[sessionId], list);
     return { data };
   });
 }
@@ -274,6 +302,21 @@ function patchData(sessionId: string, fn: (d: SessionData) => Partial<SessionDat
     const d = s.data[sessionId];
     if (!d?.loaded) return s;
     return { data: { ...s.data, [sessionId]: { ...d, ...fn(d) } } };
+  });
+}
+
+/**
+ * Changes a loaded session's items in place: `fn` sets or deletes entries of `d.items` and returns
+ * the ids it touched with any other fields to change (`roots`, `children`), or null when it changed
+ * nothing (then nothing is written).
+ */
+function editItems(sessionId: string, fn: (d: SessionData) => { ids: readonly string[]; patch?: Partial<SessionData> } | null) {
+  useStore.setState((s) => {
+    const d = s.data[sessionId];
+    if (!d?.loaded) return s;
+    const edit = fn(d);
+    if (!edit) return s;
+    return { data: { ...s.data, [sessionId]: touched(d, edit.ids, edit.patch) } };
   });
 }
 
@@ -318,11 +361,11 @@ export function withPrompts(data: Record<string, SessionData>, prompts: PendingP
  * (`ToolItem.more`). Only that item changes; an item that is no longer cut stays as it is.
  */
 export function applyWholeItem(sessionId: string, item: TimelineItem) {
-  useStore.setState((s) => {
-    const d = s.data[sessionId];
-    const cur = d?.loaded ? d.items[item.id] : undefined;
-    if (cur?.type !== 'tool' || !cur.more) return s;
-    return { data: { ...s.data, [sessionId]: { ...d, items: { ...d.items, [item.id]: item } } } };
+  editItems(sessionId, (d) => {
+    const cur = d.items[item.id];
+    if (cur?.type !== 'tool' || !cur.more) return null;
+    d.items[item.id] = item;
+    return { ids: [item.id] };
   });
 }
 
@@ -399,32 +442,37 @@ export function applyEvent(e: BridgeEvent) {
       return;
     }
     case 'item.added':
+      // Deltas first: they came before this event (the same for a patch).
       flushDeltas();
-      patchData(e.sessionId, (d) => {
-        if (d.items[e.item.id]) return { items: { ...d.items, [e.item.id]: e.item } };
-        const next: Partial<SessionData> = { items: { ...d.items, [e.item.id]: e.item } };
-        if (e.item.parentId) next.children = { ...d.children, [e.item.parentId]: [...(d.children[e.item.parentId] ?? []), e.item.id] };
-        else next.roots = [...d.roots, e.item.id];
-        return next;
+      editItems(e.sessionId, (d) => {
+        const known = !!d.items[e.item.id];
+        d.items[e.item.id] = e.item;
+        const ids = [e.item.id];
+        // An item the timeline already holds is replaced where it stands.
+        if (known) return { ids };
+        if (e.item.parentId) return { ids, patch: { children: { ...d.children, [e.item.parentId]: [...(d.children[e.item.parentId] ?? []), e.item.id] } } };
+        return { ids, patch: { roots: [...d.roots, e.item.id] } };
       });
       return;
     case 'item.patch':
       flushDeltas();
-      patchData(e.sessionId, (d) => {
+      editItems(e.sessionId, (d) => {
         const item = d.items[e.id];
-        if (!item) return {};
-        return { items: { ...d.items, [e.id]: { ...item, ...e.patch } as TimelineItem } };
+        if (!item) return null;
+        d.items[e.id] = { ...item, ...e.patch } as TimelineItem;
+        return { ids: [e.id] };
       });
       return;
     case 'item.removed':
-      patchData(e.sessionId, (d) => {
+      editItems(e.sessionId, (d) => {
         const item = d.items[e.id];
-        if (!item) return {};
-        const items = { ...d.items };
+        if (!item) return null;
         const children = { ...d.children };
+        const ids: string[] = [];
         // The item goes with everything nested under it, as on the bridge.
         const drop = (id: string) => {
-          delete items[id];
+          delete d.items[id];
+          ids.push(id);
           const kids = children[id];
           if (kids) {
             delete children[id];
@@ -432,10 +480,10 @@ export function applyEvent(e: BridgeEvent) {
           }
         };
         drop(e.id);
-        const next: Partial<SessionData> = { items, children };
+        const patch: Partial<SessionData> = { children };
         if (item.parentId) children[item.parentId] = (children[item.parentId] ?? []).filter((x) => x !== e.id);
-        else next.roots = d.roots.filter((x) => x !== e.id);
-        return next;
+        else patch.roots = d.roots.filter((x) => x !== e.id);
+        return { ids, patch };
       });
       return;
     case 'timeline.reset':

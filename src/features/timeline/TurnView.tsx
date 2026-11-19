@@ -14,7 +14,7 @@ import { REVEAL_EVENT, rootOf, type RevealDetail } from './reveal';
 import { changesOf } from './changes';
 import { Tail } from './Tail';
 import { TurnFoot } from './Turn';
-import { groupTurns, LINE, shapeOf, type FlowChunk, type Group, type Segment, type TurnGroup, type TurnLayout } from './turns';
+import { LINE, shapeIndex, turnsIndex, type FlowChunk, type Group, type Segment, type TurnGroup, type TurnLayout } from './turns';
 import { shortDuration, thinkingHeadline, useHeld, useTick } from './util';
 
 /** Groups built when a transcript opens, and how many more each step up builds. */
@@ -29,45 +29,47 @@ const IDLE_CHUNK = 2;
 /** How long the view must have been still before building ahead (ms). */
 const STILL_MS = 400;
 
-/** One character per root item (see `turns.ts`), recomputed only when the items object changes. */
-function shapeSelector(sessionId: string, ids: string[]) {
-  let lastItems: Record<string, TimelineItem> | undefined;
-  let out = '';
-  return (s: Store): string => {
-    const items = s.data[sessionId]?.items;
-    if (!items) return '';
-    if (items === lastItems) return out;
-    lastItems = items;
-    let next = '';
-    for (let i = 0; i < ids.length; i++) next += shapeOf(items[ids[i]]);
-    out = next;
-    return out;
-  };
-}
-
 const chunkSig = (c: FlowChunk) => (c.kind === 'line' ? '|' : c.kind === 'steps' ? `${c.key}+${c.ids.length}+${c.count}` : c.id);
 const segSig = (s: Segment) => `${s.lead}>${s.flow.map(chunkSig).join(',')}>${s.reply}>${s.answer}>${s.errors.join(',')}`;
 
+/** A turn `turnsIndex` handed back again, the same object (nothing in it changed): its stable object and its cache entries. */
+interface Kept {
+  turn: TurnGroup;
+  entries: [string, unknown][];
+}
+
 /**
  * Keeps the objects of turns and segments that did not change, so their memoized views skip
- * rendering: a new step in the running turn re-renders that turn alone.
+ * rendering: a new step in the running turn re-renders that turn alone. A turn the grouping kept
+ * (`kept`) is not read again: its stable object and cache entries carry over as they are.
  */
-function stabilize(layout: TurnLayout, cache: Map<string, unknown>): TurnLayout {
+function stabilize(layout: TurnLayout, cache: Map<string, unknown>, kept: WeakMap<TurnGroup, Kept>): TurnLayout {
   const next = new Map<string, unknown>();
   const groups = layout.groups.map((g): Group => {
     if (g.kind !== 'turn') return g;
+    const known = kept.get(g);
+    if (known) {
+      for (const [k, v] of known.entries) next.set(k, v);
+      return known.turn;
+    }
+    const entries: [string, unknown][] = [];
+    const put = (k: string, v: unknown) => {
+      next.set(k, v);
+      entries.push([k, v]);
+    };
     const segments = g.segments.map((s) => {
       const k = `s|${segSig(s)}`;
       const prev = (next.get(k) ?? cache.get(k)) as Segment | undefined;
-      const seg = prev ?? { ...s, flow: s.flow.map((c) => keepChunk(c, cache, next)) };
-      if (prev) for (const c of prev.flow) if (c.kind === 'steps') next.set(`c|${c.key}`, c);
-      next.set(k, seg);
+      const seg = prev ?? { ...s, flow: s.flow.map((c) => keepChunk(c, cache, next, put)) };
+      if (prev) for (const c of prev.flow) if (c.kind === 'steps') put(`c|${c.key}`, c);
+      put(k, seg);
       return seg;
     });
     const k = `t|${g.state}|${g.end}|${g.ids.length}|${g.checks?.join(',') ?? ''}|${segments.map(segSig).join(';')}`;
     const prev = (next.get(k) ?? cache.get(k)) as TurnGroup | undefined;
     const turn = prev ?? { ...g, segments };
-    next.set(k, turn);
+    put(k, turn);
+    kept.set(g, { turn, entries });
     return turn;
   });
   cache.clear();
@@ -76,13 +78,13 @@ function stabilize(layout: TurnLayout, cache: Map<string, unknown>): TurnLayout 
 }
 
 /** A run of steps keeps its object while nothing joined it (ids only ever append), so its list skips rendering. */
-function keepChunk(c: FlowChunk, cache: Map<string, unknown>, next: Map<string, unknown>): FlowChunk {
+function keepChunk(c: FlowChunk, cache: Map<string, unknown>, next: Map<string, unknown>, put: (k: string, v: unknown) => void): FlowChunk {
   if (c.kind !== 'steps') return c;
   const k = `c|${c.key}`;
   const old = (next.get(k) ?? cache.get(k)) as FlowChunk | undefined;
   const same = old?.kind === 'steps' && old.count === c.count && old.ids.length === c.ids.length && old.ids[old.ids.length - 1] === c.ids[c.ids.length - 1];
   const chunk = same ? old : c;
-  next.set(k, chunk);
+  put(k, chunk);
   return chunk;
 }
 
@@ -107,18 +109,25 @@ function groupHeight(g: Group, items: Record<string, TimelineItem>): number {
  */
 export const TurnList = memo(function TurnList({ ids }: { ids: string[] }) {
   const { sessionId, scrolled } = useTimeline();
-  const shape = useStore(useMemo(() => shapeSelector(sessionId, ids), [sessionId, ids]));
+  // One character per root item (see `turns.ts`), following the items write by write: a streamed
+  // word re-reads the item it grew, not every root.
+  const [shapes] = useState(shapeIndex);
+  const shape = useStore(useMemo(() => (s: Store) => shapes(s.data[sessionId], ids), [shapes, sessionId, ids]));
   const busy = useStore((s) => {
     const st = s.sessions[sessionId]?.status;
     return st === 'running' || st === 'starting' || st === 'awaiting';
   });
   const cache = useRef(new Map<string, unknown>());
+  // The grouping, regrouping only from the last message the timeline has not changed before (a new
+  // step regroups the running turn, not the conversation), and the turns it kept.
+  const [grouping] = useState(turnsIndex);
+  const [kept] = useState(() => new WeakMap<TurnGroup, Kept>());
   const layout = useMemo(() => {
     // The turn a check belongs to never changes, so reading it here (once per shape) is enough.
     const items = useStore.getState().data[sessionId]?.items;
     const checkOf = (id: string) => (items?.[id] as ToolItem | undefined)?.check?.turn;
-    return stabilize(groupTurns(ids, shape, busy, checkOf), cache.current);
-  }, [ids, shape, busy, sessionId]);
+    return stabilize(grouping(ids, shape, busy, checkOf), cache.current, kept);
+  }, [grouping, kept, ids, shape, busy, sessionId]);
   const groups = layout.groups;
   const running = busy && groups.some((g) => g.kind === 'turn' && g.state === 'running');
 

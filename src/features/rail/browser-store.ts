@@ -494,9 +494,11 @@ function itemTargets(item: TimelineItem): Target[] {
  * per host and port, newest first. Only call it while the start view shows: it follows streaming.
  */
 export function usePreviews(sessionId: string, limit = 4): Target[] {
-  const items = useStore((s) => s.data[sessionId]?.items);
+  // The items change in place: their revision says when (see `SessionData.items`).
+  const rev = useStore((s) => s.data[sessionId]?.rev ?? 0);
   const termV = useTermVersion();
   return useMemo(() => {
+    const items = useStore.getState().data[sessionId]?.items;
     const found: { t: Target; ts: number; order: number }[] = [];
     let order = 0;
     for (const item of Object.values(items ?? {})) for (const t of itemTargets(item)) found.push({ t, ts: item.ts, order: order++ });
@@ -510,9 +512,9 @@ export function usePreviews(sessionId: string, limit = 4): Target[] {
       if (out.push(f.t) >= limit) break;
     }
     return out;
-    // termV marks terminal output changes (the transcript lives outside React).
+    // rev marks changes of the items, termV of terminal output (the transcript lives outside React).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, sessionId, termV]);
+  }, [rev, sessionId, termV]);
 }
 
 /* ── dev servers the panel terminal printed ── */
