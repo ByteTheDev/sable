@@ -8,6 +8,7 @@ import { useStore } from '@/state/store';
 import { Switch } from '@/ui';
 import { CreditsSetting } from '@/features/usage/Limits';
 import { accountName } from '@/state/hooks';
+import { AccountCaps } from '@/features/accounts/Caps';
 import '@/features/accounts/accounts.css';
 
 export function Accounts() {
@@ -38,6 +39,7 @@ export function Accounts() {
           <ConnectCard key={id} provider={id} primary={id === firstOut} />
         ))}
       </div>
+      <AccountCaps agents={order} />
       <label className="acct-auto" data-spot>
         <span className="acct-auto-label">Continue with the next account at a limit</span>
         <Switch checked={carryOn} onChange={(v) => void setSettings({ continueAtLimit: v })} label="Continue with the next account at a limit" />

@@ -457,12 +457,15 @@ export const SessionRow = memo(function SessionRow({ id, enter, mix }: { id: str
   );
 }, (a, b) => a.id === b.id && a.mix === b.mix);
 
+/** The context menu's target when it opened on the list's empty space. */
+const LIST = ':list';
+
 /**
  * One context menu for every row in the list (a context menu per row costs more than the row).
  * The row under the pointer is found from the event; a renaming row keeps the native menu.
  * The keyboard's menu key and Shift+F10 reach it too: the browser sends the focused row the event.
  */
-export function RowContextMenu({ children }: { children: ReactNode }) {
+export function RowContextMenu({ children, background }: { children: ReactNode; /** What the list's empty space offers. */ background?: ReactNode }) {
   const ctx = useContext(SidebarRowContext);
   const [target, setTarget] = useState<string | null>(null);
   const session = useStore((s) => (target ? s.sessions[target] : undefined));
@@ -475,8 +478,14 @@ export function RowContextMenu({ children }: { children: ReactNode }) {
         asChild
         onContextMenu={(e) => {
           const row = (e.target as HTMLElement).closest<HTMLElement>('.srow[data-row]');
-          // Not on a row (or a folder header handled it already): no menu from here.
-          if (!row || e.defaultPrevented) return e.preventDefault();
+          // A folder header handled it already: no menu from here.
+          if (e.defaultPrevented) return;
+          // The list's empty space: what can be added to it.
+          if (!row) {
+            if (!background || (e.target as HTMLElement).closest('.sgroup-head, .sarchived, input')) return e.preventDefault();
+            setTarget(LIST);
+            return;
+          }
           setTarget(row.dataset.row!);
           mark(row.dataset.row!, true);
         }}
@@ -485,7 +494,7 @@ export function RowContextMenu({ children }: { children: ReactNode }) {
       </RC.Trigger>
       <RC.Portal>
         <RC.Content className="pop" collisionPadding={10} style={{ minWidth: 188 }} onCloseAutoFocus={onCloseAutoFocus}>
-          {session && <ContextItems actions={rowActions(session, ctx)} />}
+          {target === LIST ? background : session && <ContextItems actions={rowActions(session, ctx)} />}
         </RC.Content>
       </RC.Portal>
     </RC.Root>

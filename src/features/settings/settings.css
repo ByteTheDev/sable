@@ -1347,3 +1347,23 @@ button.xrow-head:disabled:hover {
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
+
+/* ── General › Chats folder ── */
+
+.set-chats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 420px;
+}
+
+.set-chats-path {
+  min-width: 0;
+  margin-right: 4px;
+  font-size: var(--t-ui);
+}
+
+.set-chats-field {
+  width: 320px;
+}

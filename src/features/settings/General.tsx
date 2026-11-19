@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { FolderOrder, ProviderId, SessionOptions } from '@shared/protocol';
 import { Icon } from '@/icons';
-import { setDefaultSessionOptions, setSettings } from '@/state/actions';
+import { desktop } from '@/lib/desktop';
+import { tildePath } from '@/lib/format';
+import { setChatsFolder, setDefaultSessionOptions, setSettings } from '@/state/actions';
 import { useStore } from '@/state/store';
-import { Kbd, Segmented, Switch } from '@/ui';
+import { Kbd, PathLabel, Segmented, Switch } from '@/ui';
 import { Card, ProviderLabel, Row, useInstalled } from './parts';
 
 export function General() {
@@ -35,6 +37,7 @@ export function General() {
             ]}
           />
         </Row>
+        <ChatsFolderRow />
         <Row
           label="Send with Enter"
           help={
@@ -64,6 +67,63 @@ export function General() {
       </Card>
       <SessionDefaults />
     </div>
+  );
+}
+
+/**
+ * Where a chat started without a folder gets its own folder: the system's folder dialog in the
+ * desktop app, a field in the browser. "Default" goes back to the place Sable picks.
+ */
+function ChatsFolderRow() {
+  const chosen = useStore((s) => s.settings.chatsFolder?.trim() || '');
+  const fallback = useStore((s) => s.chatsDefault);
+  const home = useStore((s) => s.home);
+  const [editing, setEditing] = useState(false);
+  const current = chosen || fallback;
+
+  const change = async () => {
+    if (desktop?.pickFolder) {
+      const picked = await desktop.pickFolder(current).catch(() => null);
+      if (picked) void setChatsFolder(picked);
+      return;
+    }
+    setEditing(true);
+  };
+
+  return (
+    <Row label="Chats folder" help="Each chat started without a folder gets a new folder here.">
+      {editing ? (
+        <input
+          className="field set-chats-field"
+          defaultValue={current}
+          aria-label="Chats folder"
+          spellCheck={false}
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              void setChatsFolder(e.currentTarget.value);
+              setEditing(false);
+            } else if (e.key === 'Escape') setEditing(false);
+          }}
+          onBlur={(e) => {
+            if (e.currentTarget.value.trim() !== current) void setChatsFolder(e.currentTarget.value);
+            setEditing(false);
+          }}
+        />
+      ) : (
+        <div className="set-chats">
+          {current && <PathLabel path={tildePath(current, home)} title={current} className="set-chats-path" />}
+          {chosen && (
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => void setChatsFolder('')}>
+              Default
+            </button>
+          )}
+          <button type="button" className="btn btn-sm" onClick={() => void change()}>
+            Change
+          </button>
+        </div>
+      )}
+    </Row>
   );
 }
 

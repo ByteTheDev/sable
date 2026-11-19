@@ -624,3 +624,103 @@
   line-height: 1.4;
   color: var(--text-3);
 }
+
+/* ── "Use up to" per account (Caps.tsx): one card, a row per signed-in account, two small fields ── */
+
+.acct-caps {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px 8px 16px;
+}
+
+.acct-caps-head,
+.acct-cap-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.acct-caps-head {
+  height: 34px;
+}
+
+.acct-caps-title {
+  font-size: var(--t-ui);
+  color: var(--text);
+}
+
+.acct-caps-col {
+  width: 64px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+  text-align: center;
+}
+
+.acct-cap-row {
+  height: 36px;
+}
+
+.acct-cap-mark {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.acct-cap-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-ui);
+  color: var(--text-2);
+}
+
+.acct-cap-used {
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+/* A well with the figure and its unit; the hairline turns soft ivory on focus. */
+.acct-cap-field {
+  display: flex;
+  align-items: center;
+  width: 64px;
+  height: 28px;
+  padding: 0 8px 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background-color: var(--well);
+  cursor: text;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.acct-cap-field:hover {
+  background-color: var(--well-strong);
+}
+
+.acct-cap-field:focus-within {
+  border-color: var(--focus-field);
+}
+
+.acct-cap-field input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: none;
+  font-size: var(--t-ui);
+  color: var(--text);
+  text-align: right;
+}
+
+.acct-cap-field input::placeholder {
+  color: var(--text-4);
+}
+
+.acct-cap-pct {
+  margin-left: 2px;
+  font-size: var(--t-small);
+  color: var(--text-4);
+}
+
+.acct-cap-field[data-set] .acct-cap-pct {
+  color: var(--text-3);
+}

@@ -1,6 +1,7 @@
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
-import type { AccountFolder, AuthState, ProviderId, RateLimit } from '../../shared/protocol';
+import type { AccountCap, AccountFolder, AuthState, ProviderId, RateLimit } from '../../shared/protocol';
+import { capReached, windowForModel } from '../core/limit-policy';
 
 /**
  * Finding config folders people already keep for an agent ("~/.claude-work",
@@ -102,25 +103,32 @@ export interface NextCandidate {
   limits?: RateLimit[];
   /** False when the account has no plan limits (an API key): always has room. */
   planLimits?: boolean;
+  /** The "use up to" set for the account: an account past it is not taken. */
+  cap?: AccountCap;
+  /** The account's plan ("Ultra", "Max"), to prefer one of the same size. */
+  plan?: string;
 }
 
-/** A window that is used up and has not reset yet. */
-export function atCap(limits: RateLimit[] | undefined, now = Date.now()): boolean {
-  return (limits ?? []).some((l) => l.percent >= 100 && !(l.resetsAt && l.resetsAt <= now));
+/** A window that is used up and has not reset yet (with `model`: only the shared windows and that model's own). */
+export function atCap(limits: RateLimit[] | undefined, now = Date.now(), model?: string): boolean {
+  return (limits ?? []).some((l) => l.percent >= 100 && !(l.resetsAt && l.resetsAt <= now) && (model === undefined || windowForModel(l, model)));
 }
 
 /**
- * The account to continue with when `current` is at a limit: another signed-in account that is not
- * at a limit itself, the one with the most room first (unknown limits count as half used), the
- * default account winning a tie. Undefined when none has room.
+ * The account to continue with when `current` is at a limit or past its cap: another signed-in
+ * account that is neither at a limit nor past its own cap, one on the same plan as `opts.plan`
+ * first, then the one with the most room (unknown limits count as half used), the default account
+ * winning a tie. With `opts.model`, a full window of another model does not count. Undefined when
+ * none has room.
  */
-export function pickNextAccount(current: string, accounts: NextCandidate[], now = Date.now()): string | undefined {
+export function pickNextAccount(current: string, accounts: NextCandidate[], now = Date.now(), opts: { model?: string; plan?: string } = {}): string | undefined {
   const used = (a: NextCandidate) => {
     if (a.planLimits === false) return 0;
-    const live = (a.limits ?? []).filter((l) => !(l.resetsAt && l.resetsAt <= now));
+    const live = (a.limits ?? []).filter((l) => !(l.resetsAt && l.resetsAt <= now) && (opts.model === undefined || windowForModel(l, opts.model)));
     return live.length ? Math.max(...live.map((l) => l.percent)) : 50;
   };
-  const ok = accounts.filter((a) => a.id !== current && a.signedIn && !atCap(a.limits, now));
-  ok.sort((a, b) => used(a) - used(b) || Number(!!b.isDefault) - Number(!!a.isDefault));
+  const tier = (a: NextCandidate) => (opts.plan && a.plan?.toLowerCase() === opts.plan.toLowerCase() ? 0 : 1);
+  const ok = accounts.filter((a) => a.id !== current && a.signedIn && !atCap(a.limits, now, opts.model) && (a.planLimits === false || !capReached(a.limits, a.cap, opts.model, now)));
+  ok.sort((a, b) => tier(a) - tier(b) || used(a) - used(b) || Number(!!b.isDefault) - Number(!!a.isDefault));
   return ok[0]?.id;
 }

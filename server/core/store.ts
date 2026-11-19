@@ -3,7 +3,7 @@ import { writeFile, rename } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { isBackdropImageId, migrateBackdrop, migrateQuietDefault, normalizeBackdrop } from '../../shared/backdrop';
-import { DEFAULT_SETTINGS, type AppSettings, type Project, type ProviderId, type QueuedMessage, type SessionMeta, type TimelineItem, type Todo } from '../../shared/protocol';
+import { DEFAULT_SETTINGS, type AppSettings, type FolderGroup, type Project, type ProviderId, type QueuedMessage, type SessionMeta, type TimelineItem, type Todo } from '../../shared/protocol';
 
 /** An account in the registry. The built-in `default` account of each provider is stored too (for its label). */
 export interface StoredAccount {
@@ -22,6 +22,10 @@ interface StateFile {
   settings: AppSettings;
   sessions: SessionMeta[];
   accounts: StoredAccount[];
+  /** Projects grouping folders (absent in older profiles). */
+  groups?: FolderGroup[];
+  /** The chats group's place in the sidebar's manual order. */
+  chatsOrder?: number;
 }
 
 interface SessionFile {

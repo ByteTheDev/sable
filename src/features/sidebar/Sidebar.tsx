@@ -1,8 +1,8 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type DragEvent, type FocusEvent, type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type DragEvent, type FocusEvent, type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { ContextMenu as RC, DropdownMenu as RM } from 'radix-ui';
 import type { SessionMeta } from '@shared/protocol';
-import { LogoMark, StatusGlyph, Wordmark } from '@/art/Logo';
+import { LogoMark, ProviderMark, StatusGlyph, Wordmark } from '@/art/Logo';
 import { Icon } from '@/icons';
 import { QuickSwitch } from '@/features/session/QuickSwitch';
 import { pathForFile } from '@/lib/desktop';
@@ -11,13 +11,13 @@ import { useLaggedStore } from '@/lib/lagged';
 import { afterSend } from '@/features/composer/settle';
 import { reducedMotion } from '@/lib/motion';
 import { baseName } from '@/lib/format';
-import { addFolders, closeSession, goHome, pinProject, removeProject, renameProject, reorderFolders } from '@/state/actions';
+import { addFolders, addToGroup, arrangeSidebar, closeSession, createGroup, goHome, goHomeChat, pinProject, removeFromGroup, removeGroup, removeProject, renameGroup, renameProject } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { IconButton, Modal, Tip } from '@/ui';
 import { Flip } from './flip';
-import { nudgeFolder, pressFolder, releaseFolderDrag } from './folder-drag';
+import { nudgeFolder, pressFolder, releaseFolderDrag, type FolderDrop } from './folder-drag';
 import { SideResize } from './Resize';
-import { createGroupsSelector, idsOf, loadCollapsed, pathKey, saveCollapsed, type Mix, type ProjectGroup } from './groups';
+import { createGroupsSelector, idsOf, loadCollapsed, pathKey, saveCollapsed, type ChatsGroup, type Mix, type ProjectGroup, type SetGroup, type TopEntry } from './groups';
 import { RowContextMenu, SessionRow, SidebarRowContext, holdFocus, onCloseAutoFocus, setRenaming, type RowCtx } from './SessionRow';
 import { SidebarFooter } from './SidebarFooter';
 import './sidebar.css';
@@ -36,7 +36,7 @@ export const Sidebar = memo(function Sidebar() {
       <SidebarTop />
       <SidebarRowContext.Provider value={ctx}>
         {/* The shared row menu wraps the list from outside, so list renders do not re-render the menu. */}
-        <RowContextMenu>
+        <RowContextMenu background={<ListItems />}>
           <SidebarList />
         </RowContextMenu>
       </SidebarRowContext.Provider>
@@ -117,6 +117,10 @@ const SidebarTop = memo(function SidebarTop() {
 const selectGroups = createGroupsSelector();
 const LAG = { gate: afterSend };
 
+/** When the list first drew its rows: sections that mount later (a folder moved into a project) come in. */
+let listDrawnAt = 0;
+const lateMount = () => listDrawnAt > 0 && performance.now() - listDrawnAt > 400;
+
 /** Props and ref come from the context menu trigger wrapping it. */
 function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDivElement> }) {
   // A task behind the store, and after a sent message has landed: a new session's row, the re-sort
@@ -140,15 +144,16 @@ function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDiv
     });
   }, []);
 
-  // Opening a session that sits in a collapsed folder unfolds that folder (also when the folder was
+  // Opening a session that sits in a collapsed folder (or project) unfolds it (also when it was
   // collapsed after an earlier session in it was opened, hence the subscription to the id).
   useEffect(() => {
     const unfold = (key: string | null) => {
       if (!key) return;
+      const keys = [key, ...selectGroups(useStore.getState()).top.flatMap((e) => (e.kind === 'group' && e.folders.some((f) => f.key === key) ? [e.key] : []))];
       setCollapsed((prev) => {
-        if (!prev.has(key)) return prev;
+        if (!keys.some((k) => prev.has(k))) return prev;
         const next = new Set(prev);
-        next.delete(key);
+        for (const k of keys) next.delete(k);
         saveCollapsed(next);
         return next;
       });
@@ -159,9 +164,13 @@ function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDiv
     });
   }, []);
 
-  const empty = ready && !groups.pinned.length && !groups.projects.length;
-  // Any change of membership, not only of folder order: a folder that grows or shrinks moves the ones below it.
-  const order = `pinned:${idsOf(groups.pinned)}` + groups.projects.map((g) => `\n${g.key}:${idsOf(g.sessions)}:${g.archived.length}`).join('');
+  useEffect(() => {
+    if (ready && !listDrawnAt) listDrawnAt = performance.now();
+  }, [ready]);
+
+  const empty = ready && !groups.pinned.length && !groups.top.length;
+  // Any change of membership, not only of order: an entry that grows or shrinks moves the ones below it.
+  const order = `pinned:${idsOf(groups.pinned)}` + groups.top.map(entryOrder).join('');
 
   return (
     <div {...props} className="side-list scroll" tabIndex={0} aria-label="Sessions list" onKeyDown={onListKey} onFocus={onListFocus} onBlur={onListBlur} onScroll={onListScroll}>
@@ -190,15 +199,25 @@ function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDiv
                 <SessionList ids={idsOf(groups.pinned)} mix={groups.pinnedMix} />
               </section>
             )}
-            {groups.projects.map((g) => (
-              <ProjectSection key={g.key} group={g} collapsed={collapsed.has(g.key)} onToggle={toggle} current={activeKey === g.key} />
-            ))}
+            {groups.top.map((e) =>
+              e.kind === 'folder' ? (
+                <ProjectSection key={e.key} group={e.folder} collapsed={collapsed.has(e.key)} onToggle={toggle} current={activeKey === e.key} />
+              ) : e.kind === 'group' ? (
+                <SetSection key={e.key} set={e} collapsed={collapsed} onToggle={toggle} activeKey={activeKey} />
+              ) : (
+                <ChatsSection key="chats" chats={e.chats} collapsed={collapsed.has('chats')} onToggle={toggle} current={activeKey === 'chats'} />
+              ),
+            )}
           </Flip>
         </MotionConfig>
       )}
     </div>
   );
 }
+
+const folderOrder = (g: ProjectGroup) => `${g.key}:${idsOf(g.sessions)}:${g.archived.length}`;
+const entryOrder = (e: TopEntry) =>
+  e.kind === 'folder' ? `\n${folderOrder(e.folder)}` : e.kind === 'group' ? `\n${e.key}{${e.folders.map(folderOrder).join(',')}}` : `\nchats:${idsOf(e.chats.sessions)}:${e.chats.archived.length}`;
 
 function SkeletonRows() {
   return (
@@ -268,7 +287,7 @@ function removeRow(id: string) {
 
 function selectActiveKey(s: { ui: { activeSessionId: string | null }; sessions: Record<string, SessionMeta> }): string | null {
   const a = s.ui.activeSessionId ? s.sessions[s.ui.activeSessionId] : undefined;
-  return a && !a.pinned ? pathKey(a.cwd) : null;
+  return a && !a.pinned ? (a.chat ? 'chats' : pathKey(a.cwd)) : null;
 }
 
 /** Rows by id (a space-joined string, so the list re-renders only when membership or order changes). */
@@ -283,12 +302,63 @@ const SessionList = memo(function SessionList({ ids, mix }: { ids: string; mix: 
   );
 });
 
+const FOLD = { height: { duration: 0.26, ease: EASE }, opacity: { duration: 0.18, ease: EASE } };
+
+/** A section's rows and its archived ones, folding open and shut. */
+function GroupBody({ open, sessions, archived, mix, children }: { open: boolean; sessions: SessionMeta[]; archived: SessionMeta[]; mix: Mix; children?: ReactNode }) {
+  const [showArchived, setShowArchived] = useState(false);
+  return (
+    <AnimatePresence initial={false}>
+      {open && (
+        <motion.div
+          key="body"
+          className="sgroup-body"
+          initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
+          animate={{ height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } }}
+          exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
+          transition={FOLD}
+        >
+          {children}
+          {sessions.length > 0 && <SessionList ids={idsOf(sessions)} mix={mix} />}
+          {archived.length > 0 && (
+            <>
+              <button type="button" className="sarchived" data-nav tabIndex={-1} aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>
+                <span className="srow-mark">
+                  <Icon name="archive" size={14} />
+                </span>
+                <span className="grow">Archived</span>
+                <span className="sarchived-count num">{archived.length}</span>
+              </button>
+              <AnimatePresence initial={false}>
+                {showArchived && (
+                  <motion.div
+                    key="archived"
+                    className="sgroup-body"
+                    initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
+                    animate={{ height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } }}
+                    exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
+                    transition={{ duration: 0.24, ease: EASE }}
+                  >
+                    <SessionList ids={idsOf(archived)} mix={undefined} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </>
+          )}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 interface SectionProps {
   group: ProjectGroup;
   collapsed: boolean;
   onToggle: (key: string, open?: boolean) => void;
   /** Holds the open session. */
   current: boolean;
+  /** The project this folder sits in. */
+  inSet?: string;
 }
 
 /** Re-render a project only for what its header and lists show; rows update themselves. */
@@ -302,19 +372,26 @@ const sameGroup = (a: ProjectGroup, b: ProjectGroup) =>
     a.attention === b.attention &&
     idsOf(a.sessions) === idsOf(b.sessions) &&
     idsOf(a.archived) === idsOf(b.archived));
-const sameSection = (a: SectionProps, b: SectionProps) => a.collapsed === b.collapsed && a.onToggle === b.onToggle && a.current === b.current && sameGroup(a.group, b.group);
+const sameSection = (a: SectionProps, b: SectionProps) => a.collapsed === b.collapsed && a.onToggle === b.onToggle && a.current === b.current && a.inSet === b.inSet && sameGroup(a.group, b.group);
 
-const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle, current }: SectionProps) {
-  const [showArchived, setShowArchived] = useState(false);
+const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle, current, inSet }: SectionProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenamingFolder] = useState(false);
+  const [enter] = useState(lateMount);
   const rename = useCallback(() => setRenamingFolder(true), []);
   const hasSessions = group.sessions.length > 0 || group.archived.length > 0;
   const open = hasSessions && !collapsed;
-  const ids = idsOf(group.sessions);
 
   return (
-    <section className="sgroup" data-flip={group.key} data-folder={group.key} data-pinned={group.pinned || undefined} aria-label={group.name}>
+    <section
+      className="sgroup"
+      data-flip={group.key}
+      data-folder={group.key}
+      data-kind="folder"
+      data-pinned={group.pinned || undefined}
+      data-enter={enter || undefined}
+      aria-label={group.name}
+    >
       <RC.Root>
         <RC.Trigger asChild>
           <div className="sgroup-head" data-collapsed={!open || undefined} data-current={current || undefined} data-menu={menuOpen || undefined} data-renaming={renaming || undefined}>
@@ -346,7 +423,7 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
                   if (hasSessions) onToggle(group.key);
                   else goHome(group.path);
                 }}
-                onPointerDown={(e) => pressFolder(e, group.key, moveFolders)}
+                onPointerDown={(e) => pressFolder(e, group.key, inSet ? innerDrop(inSet) : TOP_DROP)}
                 onKeyDown={(e) => {
                   if (e.key === 'F2') {
                     e.preventDefault();
@@ -356,7 +433,7 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
                   if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
                   e.preventDefault();
                   e.stopPropagation();
-                  nudge(group, e.key === 'ArrowUp' ? -1 : 1);
+                  nudge(group.key, e.key === 'ArrowUp' ? -1 : 1, inSet);
                 }}
               >
                 <span className="sgroup-icon">
@@ -377,7 +454,7 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
                 </RM.Trigger>
                 <RM.Portal>
                   <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 220 }} onCloseAutoFocus={onCloseAutoFocus}>
-                    <ProjectItems group={group} onRename={rename} Item={RM.Item} Separator={RM.Separator} />
+                    <ProjectItems group={group} inSet={inSet} onRename={rename} M={RM as unknown as MenuParts} />
                   </RM.Content>
                 </RM.Portal>
               </RM.Root>
@@ -391,82 +468,84 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
         </RC.Trigger>
         <RC.Portal>
           <RC.Content className="pop" collisionPadding={10} style={{ minWidth: 220 }} onCloseAutoFocus={onCloseAutoFocus}>
-            <ProjectItems group={group} onRename={rename} Item={RC.Item} Separator={RC.Separator} />
+            <ProjectItems group={group} inSet={inSet} onRename={rename} M={RC as unknown as MenuParts} />
           </RC.Content>
         </RC.Portal>
       </RC.Root>
 
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            key="body"
-            className="sgroup-body"
-            initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
-            animate={{ height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } }}
-            exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
-            transition={{ height: { duration: 0.26, ease: EASE }, opacity: { duration: 0.18, ease: EASE } }}
-          >
-            <SessionList ids={ids} mix={group.mix} />
-            {group.archived.length > 0 && (
-              <>
-                <button type="button" className="sarchived" data-nav tabIndex={-1} aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>
-                  <span className="srow-mark">
-                    <Icon name="archive" size={14} />
-                  </span>
-                  <span className="grow">Archived</span>
-                  <span className="sarchived-count num">{group.archived.length}</span>
-                </button>
-                <AnimatePresence initial={false}>
-                  {showArchived && (
-                    <motion.div
-                      key="archived"
-                      className="sgroup-body"
-                      initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
-                      animate={{ height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } }}
-                      exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
-                      transition={{ duration: 0.24, ease: EASE }}
-                    >
-                      <SessionList ids={idsOf(group.archived)} mix={undefined} />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <GroupBody open={open} sessions={group.sessions} archived={group.archived} mix={group.mix} />
     </section>
   );
 }, sameSection);
 
-type MenuItemPart = ComponentType<{ className?: string; disabled?: boolean; onSelect?: () => void; children?: ReactNode }>;
+/** The parts a menu is built from: a dropdown's or a context menu's (the same shapes). */
+type MenuParts = {
+  Item: ComponentType<{ className?: string; disabled?: boolean; onSelect?: (e: Event) => void; children?: ReactNode }>;
+  Separator: ComponentType<{ className?: string }>;
+  Sub: ComponentType<{ children?: ReactNode }>;
+  SubTrigger: ComponentType<{ className?: string; children?: ReactNode }>;
+  SubContent: ComponentType<{ className?: string; sideOffset?: number; alignOffset?: number; collisionPadding?: number; style?: CSSProperties; children?: ReactNode }>;
+  Portal: ComponentType<{ children?: ReactNode }>;
+};
 
-/** The project header's actions, shared by its "…" menu and its context menu. */
-function ProjectItems({ group, onRename, Item, Separator }: { group: ProjectGroup; onRename: () => void; Item: MenuItemPart; Separator: ComponentType<{ className?: string }> }) {
+/** The folder header's actions, shared by its "…" menu and its context menu. */
+function ProjectItems({ group, inSet, onRename, M }: { group: ProjectGroup; inSet?: string; onRename: () => void; M: MenuParts }) {
+  const sets = useStore((s) => s.groups);
+  const others = sets.filter((g) => g.id !== inSet).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
   return (
     <>
-      <Item className="menu-item" onSelect={() => goHome(group.path)}>
+      <M.Item className="menu-item" onSelect={() => goHome(group.path)}>
         <Icon name="compose" size={16} />
         <span className="grow">New session here</span>
-      </Item>
-      <Item className="menu-item" onSelect={holdFocus(onRename)}>
+      </M.Item>
+      <M.Item className="menu-item" onSelect={holdFocus(onRename)}>
         <Icon name="pencil" size={16} />
         <span className="grow">Rename</span>
-      </Item>
-      <Item className="menu-item" onSelect={() => void pinProject(group.path, !group.pinned)}>
-        <Icon name={group.pinned ? 'pin-off' : 'pin'} size={16} />
-        <span className="grow">{group.pinned ? 'Unpin project' : 'Pin project'}</span>
-      </Item>
-      <Item className="menu-item" onSelect={() => void navigator.clipboard?.writeText(group.path)}>
+      </M.Item>
+      {!inSet && (
+        <M.Item className="menu-item" onSelect={() => void pinProject(group.path, !group.pinned)}>
+          <Icon name={group.pinned ? 'pin-off' : 'pin'} size={16} />
+          <span className="grow">{group.pinned ? 'Unpin folder' : 'Pin folder'}</span>
+        </M.Item>
+      )}
+      <M.Sub>
+        <M.SubTrigger className="menu-item">
+          <Icon name="stack" size={16} />
+          <span className="grow">{inSet ? 'Move to project' : 'Add to project'}</span>
+          <Icon name="caret-right" size={11} />
+        </M.SubTrigger>
+        <M.Portal>
+          <M.SubContent className="pop" sideOffset={6} alignOffset={-4} collisionPadding={10} style={{ minWidth: 200 }}>
+            {others.map((g) => (
+              <M.Item key={g.id} className="menu-item" onSelect={() => void addToGroup(group.path, g.id)}>
+                <Icon name="stack" size={16} />
+                <span className="grow truncate">{g.name}</span>
+              </M.Item>
+            ))}
+            {others.length > 0 && <M.Separator className="menu-sep" />}
+            <M.Item className="menu-item" onSelect={holdFocus(() => void newProject([group.path]))}>
+              <Icon name="plus" size={16} />
+              <span className="grow">New project</span>
+            </M.Item>
+          </M.SubContent>
+        </M.Portal>
+      </M.Sub>
+      {inSet && (
+        <M.Item className="menu-item" onSelect={() => void removeFromGroup(group.path, topArrangeKeys())}>
+          <Icon name="arrow-up" size={16} />
+          <span className="grow">Take out of project</span>
+        </M.Item>
+      )}
+      <M.Item className="menu-item" onSelect={() => void navigator.clipboard?.writeText(group.path)}>
         <Icon name="copy" size={16} />
         <span className="grow">Copy path</span>
-      </Item>
-      <Separator className="menu-sep" />
+      </M.Item>
+      <M.Separator className="menu-sep" />
       {/* With its sessions, nothing deleted: opening the folder again brings them back. */}
-      <Item className="menu-item sgroup-remove" onSelect={() => removeFolder(group.key, group.path)}>
+      <M.Item className="menu-item sgroup-remove" onSelect={() => removeFolder(group.key, group.path)}>
         <Icon name="x" size={16} />
         <span className="grow">Remove from sidebar</span>
-      </Item>
+      </M.Item>
     </>
   );
 }
@@ -477,10 +556,27 @@ function ProjectItems({ group, onRename, Item, Separator }: { group: ProjectGrou
  * Sable's name for the folder changes; the folder on disk keeps its own.
  */
 function FolderRename({ group, onDone }: { group: ProjectGroup; onDone: () => void }) {
-  const ref = useRef<HTMLInputElement>(null);
-  const [value, setValue] = useState(group.name);
-  const done = useRef(false);
   const own = baseName(group.path) || group.path;
+  return (
+    <NameField
+      value={group.name}
+      placeholder={own}
+      label="Folder name"
+      onDone={(name) => {
+        if (name !== undefined && name !== group.name && (name || group.name !== own)) void renameProject(group.path, name);
+        // Back to the folder, so the keys carry on from where they were.
+        requestAnimationFrame(() => document.querySelector<HTMLElement>(`.sgroup-toggle[data-folder="${CSS.escape(group.key)}"]`)?.focus());
+        onDone();
+      }}
+    />
+  );
+}
+
+/** A name edited in place: Enter or leaving keeps it (`onDone(name)`), Escape keeps the old one (`onDone(undefined)`). */
+function NameField({ value: initial, placeholder, label, onDone }: { value: string; placeholder?: string; label: string; onDone: (name: string | undefined) => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [value, setValue] = useState(initial);
+  const done = useRef(false);
 
   useEffect(() => {
     // After a menu has finished closing, so focus lands here and stays.
@@ -494,12 +590,7 @@ function FolderRename({ group, onDone }: { group: ProjectGroup; onDone: () => vo
   const commit = (save: boolean) => {
     if (done.current) return;
     done.current = true;
-    const name = value.replace(/\s+/g, ' ').trim();
-    if (save && name !== group.name && (name || group.name !== own)) void renameProject(group.path, name);
-    onDone();
-    // Back to the folder, so the keys carry on from where they were.
-    if (ref.current === document.activeElement)
-      requestAnimationFrame(() => document.querySelector<HTMLElement>(`.sgroup-toggle[data-folder="${CSS.escape(group.key)}"]`)?.focus());
+    onDone(save ? value.replace(/\s+/g, ' ').trim() : undefined);
   };
 
   return (
@@ -507,8 +598,8 @@ function FolderRename({ group, onDone }: { group: ProjectGroup; onDone: () => vo
       ref={ref}
       className="sgroup-rename"
       value={value}
-      placeholder={own}
-      aria-label="Folder name"
+      placeholder={placeholder}
+      aria-label={label}
       spellCheck={false}
       onChange={(e) => setValue(e.target.value)}
       // The header's own menu and drag stay out of the way: the field keeps the native menu (paste).
@@ -533,31 +624,368 @@ function removeFolder(key: string, path: string) {
   void removeProject(path).finally(() => el?.isConnected && (el.style.visibility = ''));
 }
 
-// ── the manual folder order ──
+// ── projects: several folders under one name ──
 
-/** The folders in the order shown, with one block (pinned or not) in a new order. */
-function moveFolders(blockKeys: string[]) {
-  const s = useStore.getState();
-  const { projects } = selectGroups(s);
-  const moved = new Set(blockKeys);
-  const byKey = new Map(projects.map((g) => [g.key, g]));
-  const others = projects.filter((g) => !moved.has(g.key));
-  const pinnedBlock = projects.some((g) => moved.has(g.key) && g.pinned);
-  const ordered = pinnedBlock
-    ? [...blockKeys.map((k) => byKey.get(k)!), ...others]
-    : [...others.filter((g) => g.pinned), ...blockKeys.map((k) => byKey.get(k)!), ...others.filter((g) => !g.pinned)];
-  void reorderFolders(ordered.filter(Boolean).map((g) => g.path));
+/** A project made from a menu opens its name for typing once its header is there. */
+let renameOnMount: string | null = null;
+const renameListeners = new Set<(id: string) => void>();
+
+async function newProject(paths: string[]) {
+  const g = await createGroup('New project', paths);
+  if (!g) return;
+  renameOnMount = g.id;
+  for (const l of renameListeners) l(g.id);
 }
 
-/** Alt+Up / Alt+Down: one place within its block, the focus staying on the folder. */
-function nudge(group: ProjectGroup, by: -1 | 1) {
-  const block = selectGroups(useStore.getState()).projects.filter((g) => g.pinned === group.pinned);
+interface SetProps {
+  set: SetGroup;
+  collapsed: Set<string>;
+  onToggle: (key: string, open?: boolean) => void;
+  activeKey: string | null;
+}
+
+const SetSection = memo(function SetSection({ set, collapsed, onToggle, activeKey }: SetProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [renaming, setRenamingSet] = useState(() => {
+    if (renameOnMount !== set.id) return false;
+    renameOnMount = null;
+    return true;
+  });
+  const [enter] = useState(lateMount);
+  useEffect(() => {
+    const l = (id: string) => {
+      if (id !== set.id) return;
+      renameOnMount = null;
+      setRenamingSet(true);
+    };
+    renameListeners.add(l);
+    return () => void renameListeners.delete(l);
+  }, [set.id]);
+  const rename = useCallback(() => setRenamingSet(true), []);
+  const open = !collapsed.has(set.key);
+  const current = set.folders.some((f) => f.key === activeKey);
+  const inner = set.folders.map(folderOrder).join('\n');
+  const one = set.folders.length === 1 ? set.folders[0] : undefined;
+
+  return (
+    <section className="sgroup sset" data-flip={set.key} data-folder={set.key} data-kind="group" data-enter={enter || undefined} aria-label={set.name}>
+      <RC.Root>
+        <RC.Trigger asChild>
+          <div className="sgroup-head" data-collapsed={!open || undefined} data-current={current || undefined} data-menu={menuOpen || addOpen || undefined} data-renaming={renaming || undefined}>
+            {renaming ? (
+              <div className="sgroup-toggle">
+                <span className="sgroup-icon">
+                  <Icon name="stack" size={15} />
+                </span>
+                <NameField
+                  value={set.name}
+                  label="Project name"
+                  onDone={(name) => {
+                    setRenamingSet(false);
+                    if (name && name !== set.name) void renameGroup(set.id, name);
+                    requestAnimationFrame(() => document.querySelector<HTMLElement>(`.sgroup-toggle[data-folder="${CSS.escape(set.key)}"]`)?.focus());
+                  }}
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="sgroup-toggle"
+                data-nav
+                data-folder={set.key}
+                tabIndex={-1}
+                aria-expanded={open}
+                aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown F2"
+                onClick={(e) => {
+                  if (e.detail === 2 && (e.target as HTMLElement).closest('.sgroup-name')) {
+                    onToggle(set.key);
+                    rename();
+                    return;
+                  }
+                  if (e.detail > 2) return;
+                  onToggle(set.key);
+                }}
+                onPointerDown={(e) => pressFolder(e, set.key, TOP_DROP)}
+                onKeyDown={(e) => {
+                  if (e.key === 'F2') {
+                    e.preventDefault();
+                    rename();
+                    return;
+                  }
+                  if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  nudge(set.key, e.key === 'ArrowUp' ? -1 : 1);
+                }}
+              >
+                <span className="sgroup-icon">
+                  <Icon name="stack" size={15} />
+                </span>
+                <span className="sgroup-name sset-name truncate">{set.name}</span>
+                <span className="sset-end">
+                  {set.agents.length > 0 && (
+                    <span className="sset-agents" aria-hidden>
+                      {set.agents.map((p) => (
+                        <ProviderMark key={p} provider={p} size={11} className="sset-agent" />
+                      ))}
+                    </span>
+                  )}
+                  {!open && set.attention ? <StatusGlyph tone={set.attention} /> : set.count > 0 && <span className="sgroup-count num">{set.count}</span>}
+                </span>
+              </button>
+            )}
+            <span className="sgroup-tools">
+              <RM.Root modal={false} open={menuOpen} onOpenChange={setMenuOpen}>
+                <RM.Trigger className="sgroup-tool" tabIndex={-1} aria-label={`Actions for ${set.name}`}>
+                  <Icon name="dots" size={15} />
+                </RM.Trigger>
+                <RM.Portal>
+                  <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 200 }} onCloseAutoFocus={onCloseAutoFocus}>
+                    <SetItems set={set} onRename={rename} M={RM as unknown as MenuParts} />
+                  </RM.Content>
+                </RM.Portal>
+              </RM.Root>
+              {one ? (
+                <Tip label={`New session in ${one.name}`}>
+                  <button type="button" className="sgroup-tool" tabIndex={-1} aria-label={`New session in ${one.name}`} onClick={() => goHome(one.path)}>
+                    <Icon name="plus" size={14} />
+                  </button>
+                </Tip>
+              ) : set.folders.length > 1 ? (
+                <RM.Root modal={false} open={addOpen} onOpenChange={setAddOpen}>
+                  <RM.Trigger className="sgroup-tool" tabIndex={-1} aria-label={`New session in ${set.name}`}>
+                    <Icon name="plus" size={14} />
+                  </RM.Trigger>
+                  <RM.Portal>
+                    <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 200 }}>
+                      <RM.Label className="menu-label">New session in</RM.Label>
+                      {set.folders.map((f) => (
+                        <RM.Item key={f.key} className="menu-item" onSelect={() => goHome(f.path)}>
+                          <Icon name="folder" size={16} />
+                          <span className="grow truncate">{f.name}</span>
+                        </RM.Item>
+                      ))}
+                    </RM.Content>
+                  </RM.Portal>
+                </RM.Root>
+              ) : null}
+            </span>
+          </div>
+        </RC.Trigger>
+        <RC.Portal>
+          <RC.Content className="pop" collisionPadding={10} style={{ minWidth: 200 }} onCloseAutoFocus={onCloseAutoFocus}>
+            <SetItems set={set} onRename={rename} M={RC as unknown as MenuParts} />
+          </RC.Content>
+        </RC.Portal>
+      </RC.Root>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="body"
+            className="sgroup-body sset-body"
+            initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
+            animate={{ height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } }}
+            exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
+            transition={FOLD}
+          >
+            {set.folders.length ? (
+              <Flip order={inner} className="sset-folders" beforeMeasure={releaseFolderDrag}>
+                {set.folders.map((f) => (
+                  <ProjectSection key={f.key} group={f} collapsed={collapsed.has(f.key)} onToggle={onToggle} current={activeKey === f.key} inSet={set.id} />
+                ))}
+              </Flip>
+            ) : (
+              <p className="sset-empty">Drag a folder here</p>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </section>
+  );
+});
+
+/** The project header's actions: new session in one of its folders, rename, ungroup. */
+function SetItems({ set, onRename, M }: { set: SetGroup; onRename: () => void; M: MenuParts }) {
+  return (
+    <>
+      {set.folders.length > 0 && (
+        <M.Sub>
+          <M.SubTrigger className="menu-item">
+            <Icon name="compose" size={16} />
+            <span className="grow">New session in</span>
+            <Icon name="caret-right" size={11} />
+          </M.SubTrigger>
+          <M.Portal>
+            <M.SubContent className="pop" sideOffset={6} alignOffset={-4} collisionPadding={10} style={{ minWidth: 180 }}>
+              {set.folders.map((f) => (
+                <M.Item key={f.key} className="menu-item" onSelect={() => goHome(f.path)}>
+                  <Icon name="folder" size={16} />
+                  <span className="grow truncate">{f.name}</span>
+                </M.Item>
+              ))}
+            </M.SubContent>
+          </M.Portal>
+        </M.Sub>
+      )}
+      <M.Item className="menu-item" onSelect={holdFocus(onRename)}>
+        <Icon name="pencil" size={16} />
+        <span className="grow">Rename</span>
+      </M.Item>
+      <M.Separator className="menu-sep" />
+      {/* Its folders stay in the sidebar, loose, where it stood. */}
+      <M.Item className="menu-item" onSelect={() => void removeGroup(set.id)}>
+        <Icon name="x" size={16} />
+        <span className="grow">Ungroup</span>
+      </M.Item>
+    </>
+  );
+}
+
+/** The list's empty space: a new project, a folder, a chat. */
+function ListItems() {
+  const setUi = useStore((s) => s.setUi);
+  return (
+    <>
+      <RC.Item className="menu-item" onSelect={holdFocus(() => void newProject([]))}>
+        <Icon name="stack" size={16} />
+        <span className="grow">New project</span>
+      </RC.Item>
+      <RC.Item className="menu-item" onSelect={() => setUi({ projectPicker: true })}>
+        <Icon name="folder-plus" size={16} />
+        <span className="grow">Open a folder</span>
+      </RC.Item>
+      <RC.Item className="menu-item" onSelect={() => void goHomeChat()}>
+        <Icon name="chat" size={16} />
+        <span className="grow">New chat</span>
+      </RC.Item>
+    </>
+  );
+}
+
+// ── chats started without a folder ──
+
+const ChatsSection = memo(function ChatsSection({ chats, collapsed, onToggle, current }: { chats: ChatsGroup; collapsed: boolean; onToggle: (key: string, open?: boolean) => void; current: boolean }) {
+  const [enter] = useState(lateMount);
+  const open = !collapsed;
+  return (
+    <section className="sgroup" data-flip="chats" data-folder="chats" data-kind="chats" data-enter={enter || undefined} aria-label="Chats">
+      <div className="sgroup-head" data-collapsed={!open || undefined} data-current={current || undefined}>
+        <button
+          type="button"
+          className="sgroup-toggle"
+          data-nav
+          data-folder="chats"
+          tabIndex={-1}
+          aria-expanded={open}
+          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+          onClick={(e) => e.detail < 2 && onToggle('chats')}
+          onPointerDown={(e) => pressFolder(e, 'chats', TOP_DROP)}
+          onKeyDown={(e) => {
+            if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            nudge('chats', e.key === 'ArrowUp' ? -1 : 1);
+          }}
+        >
+          <span className="sgroup-icon">
+            <Icon name="chats" size={15} />
+          </span>
+          <span className="sgroup-name truncate">Chats</span>
+          {collapsed && (
+            <span className="sgroup-end">
+              {chats.attention ? <StatusGlyph tone={chats.attention} /> : <span className="sgroup-count num">{chats.sessions.length || ''}</span>}
+            </span>
+          )}
+        </button>
+        <span className="sgroup-tools">
+          <Tip label="New chat">
+            <button type="button" className="sgroup-tool" tabIndex={-1} aria-label="New chat" onClick={() => void goHomeChat()}>
+              <Icon name="plus" size={14} />
+            </button>
+          </Tip>
+        </span>
+      </div>
+      <GroupBody open={open} sessions={chats.sessions} archived={chats.archived} mix={chats.mix} />
+    </section>
+  );
+});
+
+// ── the manual order ──
+
+/** A top entry as `project.arrange` names it. */
+const arrangeKey = (e: TopEntry) => (e.kind === 'folder' ? e.folder.path : e.key);
+
+/** The top entries as `project.arrange` names them, in the order shown. */
+function topArrangeKeys(): string[] {
+  return selectGroups(useStore.getState()).top.map(arrangeKey);
+}
+
+const folderByKey = (key: string) => selectGroups(useStore.getState()).projects.find((g) => g.key === key);
+
+/** The top entries in the order shown, with one block (pinned folders, or the rest) in a new order. */
+function moveTop(blockKeys: string[]) {
+  const { top } = selectGroups(useStore.getState());
+  const moved = new Set(blockKeys);
+  const byKey = new Map(top.map((e) => [e.key, e]));
+  const isPinned = (e: TopEntry) => e.kind === 'folder' && e.folder.pinned;
+  const others = top.filter((e) => !moved.has(e.key));
+  const block = blockKeys.flatMap((k) => byKey.get(k) ?? []);
+  const pinnedBlock = block.some(isPinned);
+  const ordered = pinnedBlock ? [...block, ...others] : [...others.filter(isPinned), ...block, ...others.filter((e) => !isPinned(e))];
+  void arrangeSidebar(ordered.map(arrangeKey));
+}
+
+/** What a drag at the top does: a new order, or a loose folder into a project. */
+const TOP_DROP: FolderDrop = {
+  reorder: moveTop,
+  into: (key, into) => {
+    const f = folderByKey(key);
+    if (f && into.startsWith('group:')) void addToGroup(f.path, into.slice(6));
+  },
+};
+
+/** What a drag inside a project does: its folders in a new order, or one out of it, beside it. */
+const innerDrops = new Map<string, FolderDrop>();
+function innerDrop(setId: string): FolderDrop {
+  let d = innerDrops.get(setId);
+  if (!d) {
+    d = {
+      reorder: (keys) => void arrangeSidebar([], { [setId]: keys.flatMap((k) => folderByKey(k)?.path ?? []) }),
+      out: (key, from, side) => {
+        const f = folderByKey(key);
+        if (!f) return;
+        const top = topArrangeKeys();
+        const at = top.indexOf(from);
+        top.splice(at < 0 ? top.length : side === 'before' ? at : at + 1, 0, f.path);
+        void arrangeSidebar(top);
+      },
+    };
+    innerDrops.set(setId, d);
+  }
+  return d;
+}
+
+/** Alt+Up / Alt+Down: one place within its block, the focus staying on the header. */
+function nudge(key: string, by: -1 | 1, inSet?: string) {
+  const { top } = selectGroups(useStore.getState());
+  if (inSet) {
+    const set = top.find((e): e is SetGroup => e.kind === 'group' && e.id === inSet);
+    const next = set && nudgeFolder(set.folders.map((f) => f.key), key, by);
+    if (next) innerDrop(inSet).reorder(next);
+    return;
+  }
+  const pinned = (e: TopEntry) => e.kind === 'folder' && e.folder.pinned;
+  const me = top.find((e) => e.key === key);
+  if (!me) return;
+  const block = top.filter((e) => pinned(e) === pinned(me));
   const next = nudgeFolder(
-    block.map((g) => g.key),
-    group.key,
+    block.map((e) => e.key),
+    key,
     by,
   );
-  if (next) moveFolders(next);
+  if (next) moveTop(next);
 }
 
 // ── scrolling: rows passing under a still pointer do not hover ──

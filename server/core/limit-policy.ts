@@ -1,4 +1,4 @@
-import type { LimitsMeta, ProviderId, RateLimit } from '../../shared/protocol';
+import type { AccountCap, LimitsMeta, ProviderId, RateLimit } from '../../shared/protocol';
 
 /**
  * What a session does at a plan limit, in this order: carry on with credits (or extra usage) when
@@ -57,4 +57,81 @@ export function dueResets(accounts: { provider: ProviderId; accountId: string; l
   for (const a of accounts)
     for (const l of a.limits) if (l.percent >= 100 && l.resetsAt && l.resetsAt > since && l.resetsAt <= now) out.push({ at: l.resetsAt, provider: a.provider, accountId: a.accountId, window: l.label });
   return out.sort((x, y) => x.at - y.at);
+}
+
+// ── caps: "use up to" per account ──
+
+/** A cap as a usable percent: 1..100, where 100 (or nothing set) means no cap. */
+export function capPercent(v: number | undefined): number {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n >= 1 && n < 100 ? n : 100;
+}
+
+/** The account has a cap below 100% on some window. */
+export const hasCap = (cap: AccountCap | undefined) => !!cap && (capPercent(cap.weekly) < 100 || capPercent(cap.session) < 100);
+
+/** The weekly window across all models (Claude's `seven_day`, Codex's own weekly), never a per-model one. */
+export function isAllModelsWeekly(l: RateLimit): boolean {
+  if (l.id === 'seven_day') return true;
+  if (l.id.startsWith('codex:')) return l.windowMins ? l.windowMins >= 10_080 : l.id === 'codex:secondary';
+  return false;
+}
+
+/** The 5-hour window (Claude's `five_hour`, Codex's own short window). */
+export function isSessionWindow(l: RateLimit): boolean {
+  if (l.id === 'five_hour') return true;
+  if (l.id.startsWith('codex:')) return l.windowMins ? l.windowMins === 300 : l.id === 'codex:primary';
+  return false;
+}
+
+/**
+ * The model a per-model window belongs to, lower case ("fable" for `model_Fable`, "opus" for
+ * `seven_day_opus`); undefined for the windows every model shares.
+ */
+export function windowModel(l: RateLimit): string | undefined {
+  const m = /^model_(.+)$/.exec(l.id) ?? /^(?:seven_day|five_hour)_(?!overage)(.+)$/.exec(l.id);
+  return m ? m[1].toLowerCase() : undefined;
+}
+
+/** A per-model window counts only for that model (the session's model id names it: "fable", "claude-opus-5"). */
+export function windowForModel(l: RateLimit, model: string | undefined): boolean {
+  const own = windowModel(l);
+  return !own || (!!model && model.toLowerCase().includes(own));
+}
+
+export interface CapReached {
+  /** Which cap: the weekly or 5-hour one the person set, or a full window of the model in use. */
+  kind: 'weekly' | 'session' | 'model';
+  /** The cap in percent (100 for a full model window). */
+  cap: number;
+  percent: number;
+  /** The window as the limit rows name it. */
+  label: string;
+  resetsAt?: number;
+}
+
+/**
+ * Whether an account is past the cap set for it, with the limits known: the all-models weekly
+ * window against the weekly cap, the 5-hour window against the 5-hour cap, and a full per-model
+ * window when the session uses that model. Windows whose reset has passed are not counted.
+ * Undefined when it is under its cap (or has none).
+ */
+export function capReached(limits: RateLimit[] | undefined, cap: AccountCap | undefined, model: string | undefined, now = Date.now()): CapReached | undefined {
+  if (!hasCap(cap)) return undefined;
+  const live = (limits ?? []).filter((l) => !(l.resetsAt && l.resetsAt <= now));
+  const weekly = capPercent(cap!.weekly);
+  const w = weekly < 100 ? live.find(isAllModelsWeekly) : undefined;
+  if (w && w.percent >= weekly) return { kind: 'weekly', cap: weekly, percent: w.percent, label: w.label, resetsAt: w.resetsAt };
+  const session = capPercent(cap!.session);
+  const s = session < 100 ? live.find(isSessionWindow) : undefined;
+  if (s && s.percent >= session) return { kind: 'session', cap: session, percent: s.percent, label: s.label, resetsAt: s.resetsAt };
+  const full = model ? live.find((l) => l.percent >= 100 && windowModel(l) && windowForModel(l, model)) : undefined;
+  if (full) return { kind: 'model', cap: 100, percent: full.percent, label: full.label, resetsAt: full.resetsAt };
+  return undefined;
+}
+
+/** The line in the chat when a session moves (or cannot): "Ultra1 reached its 95% cap". */
+export function capReason(name: string, r: CapReached): string {
+  if (r.kind === 'model') return `${name} used up ${r.label}`;
+  return `${name} reached its ${r.cap}% ${r.kind === 'session' ? '5-hour ' : ''}cap`;
 }

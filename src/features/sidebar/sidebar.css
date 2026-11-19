@@ -785,3 +785,94 @@
 [data-side-resizing] :is(iframe, webview) {
   pointer-events: none;
 }
+
+/* ── projects: folders under one name (Sidebar.tsx SetSection) ── */
+
+/* A project's folders sit one step in, on a faint guide under the project's icon. */
+.sset-body {
+  position: relative;
+}
+
+.sset-folders {
+  position: relative;
+  padding: 2px 0 0 10px;
+}
+
+.sset-folders > .sgroup + .sgroup {
+  margin-top: 4px;
+}
+
+.sset-folders::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 6px;
+  left: 19.5px;
+  width: 1px;
+  background-color: var(--line);
+  pointer-events: none;
+}
+
+.sset-name {
+  color: var(--text-2);
+}
+
+/* At rest: the agents of its chats and how many there are; the tools take their place on hover. */
+.sset-end {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding-left: 8px;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.sset-agents {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.sset-agent {
+  opacity: 0.6;
+}
+
+.sgroup-head:hover .sset-end,
+.sgroup-head:focus-within .sset-end,
+.sgroup-head[data-menu] .sset-end {
+  opacity: 0;
+}
+
+.sset-empty {
+  margin: 0;
+  padding: 5px 10px 6px 36px;
+  font-size: var(--t-small);
+  color: var(--text-4);
+}
+
+/* A folder held over a project's header: the header answers with a soft ivory edge. */
+.sgroup[data-drop-into] > .sgroup-head {
+  background-color: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--focus-field);
+}
+
+/* A project's folder taken out above or below it: a hairline where it will stand. */
+.sgroup[data-drop-out='before'] > .sgroup-head {
+  box-shadow: 0 -1px 0 var(--focus-field);
+}
+
+.sgroup[data-drop-out='after'] {
+  box-shadow: 0 1px 0 var(--focus-field);
+}
+
+/* A section that arrives after the list was drawn (a folder moved into or out of a project). */
+/* Backwards only: once in, it holds nothing, so a drag's transform moves it. */
+.sgroup[data-enter] {
+  animation: srow-in var(--d-3) var(--ease-out) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sgroup[data-enter] {
+    animation: none;
+  }
+}

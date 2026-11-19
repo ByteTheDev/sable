@@ -9,7 +9,7 @@ import { baseName, tildePath } from '@/lib/format';
 import { fuzzy } from '@/lib/fuzzy';
 import { modelName, visibleModels } from '@/lib/models';
 import { currentBranch } from '@/lib/workspace';
-import { continueInAgent, homeAccountId, openSettings, setHomeAccount } from '@/state/actions';
+import { continueInAgent, goHomeChat, homeAccountId, openSettings, setHomeAccount } from '@/state/actions';
 import { accountName } from '@/state/hooks';
 import { capsKey, ensureProviderCaps, refreshStaleCaps, useStore } from '@/state/store';
 import { Kbd, PathLabel, Tip } from '@/ui';
@@ -486,16 +486,21 @@ function AgentMenu({ onClosed }: { onClosed: () => void }) {
 
 function FolderMenu({ onClosed }: { onClosed: () => void }) {
   const cwd = useStore((s) => s.ui.homeCwd);
+  const chat = useStore((s) => !!s.ui.homeChat);
   const projects = useStore((s) => s.projects);
   const home = useStore((s) => s.home);
   const setUi = useStore((s) => s.setUi);
-  const recent = [...projects].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.lastOpened - a.lastOpened).slice(0, 8);
+  const recent = [...projects]
+    .filter((p) => !p.hidden)
+    .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.lastOpened - a.lastOpened)
+    .slice(0, 8);
+  const label = chat ? 'No folder' : cwd ? baseName(cwd) : 'Choose a folder';
   return (
     <RM.Root modal={false}>
       <RM.Trigger asChild>
-        <button type="button" className="hc" data-missing={!cwd || undefined} aria-label={cwd ? `Folder: ${baseName(cwd)}` : 'Choose a folder'}>
-          <Icon name={cwd ? 'folder' : 'folder-plus'} size={15} className="hc-icon" />
-          <Morph k={cwd ?? ''}>{cwd ? baseName(cwd) : 'Choose a folder'}</Morph>
+        <button type="button" className="hc" data-missing={(!cwd && !chat) || undefined} aria-label={chat ? 'Folder: none, a new chat' : cwd ? `Folder: ${baseName(cwd)}` : 'Choose a folder'}>
+          <Icon name={chat ? 'chat' : cwd ? 'folder' : 'folder-plus'} size={15} className="hc-icon" />
+          <Morph k={chat ? ':chat' : (cwd ?? '')}>{label}</Morph>
           <Icon name="caret-down" size={10} className="hc-caret" />
         </button>
       </RM.Trigger>
@@ -516,11 +521,18 @@ function FolderMenu({ onClosed }: { onClosed: () => void }) {
           <Later>
             {() => (
               <>
+                {/* A chat with a fresh folder of its own: nothing from another project in its context. */}
+                <RM.Item className="menu-item cm-row" onSelect={() => void goHomeChat()}>
+                  <Icon name="chat" size={15} className="hc-icon" />
+                  <span className="grow">No folder</span>
+                  <span className="cm-check">{chat && <Icon name="check" size={14} />}</span>
+                </RM.Item>
+                <RM.Separator className="menu-sep" />
                 {recent.map((p) => (
-                  <RM.Item key={p.path} className="menu-item cm-row" onSelect={() => setUi({ homeCwd: p.path })}>
+                  <RM.Item key={p.path} className="menu-item cm-row" onSelect={() => setUi({ homeCwd: p.path, homeChat: false })}>
                     <Icon name={p.pinned ? 'pin' : 'folder'} size={15} className="hc-icon" />
                     <PathLabel path={tildePath(p.path, home)} title={p.path} className="cm-row-path grow" />
-                    <span className="cm-check">{p.path === cwd && <Icon name="check" size={14} />}</span>
+                    <span className="cm-check">{!chat && p.path === cwd && <Icon name="check" size={14} />}</span>
                   </RM.Item>
                 ))}
                 {recent.length > 0 && <RM.Separator className="menu-sep" />}
@@ -539,7 +551,7 @@ function FolderMenu({ onClosed }: { onClosed: () => void }) {
 }
 
 function BranchChip() {
-  const cwd = useStore((s) => s.ui.homeCwd);
+  const cwd = useStore((s) => (s.ui.homeChat ? null : s.ui.homeCwd));
   const branch = useBranch(cwd);
   if (!cwd || !branch) return null;
   return (
