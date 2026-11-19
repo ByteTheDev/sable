@@ -677,6 +677,10 @@
   color: var(--text-3);
 }
 
+.acct-cap-used[data-over] {
+  color: var(--text);
+}
+
 /* A well with the figure and its unit; the hairline turns soft ivory on focus. */
 .acct-cap-field {
   display: flex;

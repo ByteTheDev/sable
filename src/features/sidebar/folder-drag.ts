@@ -14,8 +14,8 @@ import { reducedMotion, uiZoom } from '@/lib/motion';
  *
  * Sections move within their own block: the entries beside them in the same list (pinned folders
  * among pinned ones, the others among the others; a project's folders among themselves). A loose
- * folder held over a project's header goes into that project (the header answers with a soft
- * edge); a project's folder taken above or below its project comes out of it, next to it.
+ * folder held over a project goes into that project (its header answers with a soft edge); a
+ * project's folder taken above or below its project comes out of it, next to it.
  */
 
 export interface FolderDrop {
@@ -189,12 +189,15 @@ function follow() {
   const lr = d.list.getBoundingClientRect();
   const pointer = (d.y - lr.top) / z + d.list.scrollTop;
 
-  // Into a project: the pointer on a project's header (as drawn now).
-  const over = d.block.find((b) => b.head && pointer >= b.head.top + b.off && pointer <= b.head.top + b.off + b.head.height);
+  // Into a project: the pointer anywhere on a project as drawn now, its header or its folders. Only
+  // the header would slip away: a tall project slides aside before the pointer reaches it from below.
+  const over = d.block.find((b) => b.head && pointer >= b.top + b.off && pointer <= b.top + b.off + b.height);
   if (over !== d.into) {
     mark(d.into?.el, 'data-drop-into');
     d.into = over;
     mark(over?.el, 'data-drop-into', '');
+    // The folder in the hand folds to its header below the pointer, so the project's header shows.
+    mark(d.el, 'data-into', over ? '' : undefined);
   }
   if (d.into) return;
 
@@ -208,11 +211,18 @@ function follow() {
     if (out) return shiftTo(d, d.from);
   }
 
-  const centre = me.top + dy + me.height / 2;
-  // The new place: past every section whose middle the dragged section's middle has crossed.
+  // The new place: past every section whose middle the dragged section's leading edge has crossed
+  // (its top going up, its bottom going down). Its own middle would make a tall project travel
+  // past the list's end before it could take the first place.
+  // A project a folder can go into is passed only once the pointer is beyond it: over it, it takes the folder.
+  const top = me.top + dy;
+  const bottom = top + me.height;
+  const passedDown = (b: Item) => (b.head ? pointer > b.top + b.height : bottom > b.top + b.height / 2);
+  const passedUp = (b: Item) => (b.head ? pointer < b.top : top < b.top + b.height / 2);
+  // In order, stopping at the first one not passed: a tall section never skips a project it is over.
   let to = d.from;
-  for (let i = d.from + 1; i < d.block.length; i++) if (centre > d.block[i].top + d.block[i].height / 2) to = i;
-  for (let i = d.from - 1; i >= 0; i--) if (centre < d.block[i].top + d.block[i].height / 2) to = i;
+  for (let i = d.from + 1; i < d.block.length && passedDown(d.block[i]); i++) to = i;
+  if (to === d.from) for (let i = d.from - 1; i >= 0 && passedUp(d.block[i]); i--) to = i;
   shiftTo(d, to);
 }
 
@@ -237,6 +247,7 @@ function finish(cancelled: boolean) {
   cancelAnimationFrame(d.raf);
   delete d.list.dataset.dragging;
   mark(d.into?.el, 'data-drop-into');
+  mark(d.el, 'data-into');
   mark(d.parent?.el, 'data-drop-out');
   const keys = d.block.map((b) => b.key);
   const into = !cancelled ? d.into : undefined;

@@ -275,7 +275,8 @@ export async function forkAt(sessionId: string, itemId: string): Promise<Session
 export async function addProject(path: string) {
   try {
     const project = await bridge.call('project.add', { path });
-    useStore.getState().setUi({ homeCwd: project.path, projectPicker: false });
+    // A folder chosen for the next session ends "No folder".
+    useStore.getState().setUi({ homeCwd: project.path, homeChat: false, projectPicker: false });
     return project;
   } catch (err) {
     fail(err);
@@ -368,6 +369,9 @@ export function arrangeSidebar(top: string[], inside?: Record<string, string[]>)
 
 /** A new project holding `paths` (where the first of them stood). Resolves the project, or null. */
 export async function createGroup(name: string, paths: string[] = []): Promise<FolderGroup | null> {
+  // Projects are not pinned: a pinned folder that starts one is unpinned.
+  const pinned = useStore.getState().projects.filter((p) => p.pinned && paths.some((x) => normPath(x) === normPath(p.path)));
+  await Promise.all(pinned.map((p) => pinProject(p.path, false)));
   try {
     return await bridge.call('group.create', { name, paths });
   } catch (err) {
@@ -386,10 +390,14 @@ export function renameGroup(id: string, name: string) {
 /** Removes a project; its folders stay, loose, where it stood. */
 export const removeGroup = (id: string) => bridge.call('group.remove', { id }).catch(fail);
 
-/** Puts a folder into a project, last among its folders. */
+/** Puts a folder into a project, last among its folders (a pinned folder is unpinned: projects are not pinned). */
 export function addToGroup(path: string, id: string) {
   const s = useStore.getState();
-  const inside = s.projects
+  if (s.projects.some((p) => p.pinned && normPath(p.path) === normPath(path))) {
+    useStore.setState({ projects: s.projects.map((p) => (normPath(p.path) === normPath(path) ? { ...p, pinned: false } : p)) });
+    void pinProject(path, false);
+  }
+  const inside = useStore.getState().projects
     .filter((p) => p.group === id && normPath(p.path) !== normPath(path) && !p.hidden)
     .sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity))
     .map((p) => p.path);

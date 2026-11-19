@@ -653,9 +653,10 @@ export class App {
   /**
    * The signed-in account of `provider` to go on with, other than `current`: under its own cap, one
    * on the same plan first, then the most room (with `model`, other models' full windows do not
-   * count); undefined when none has room.
+   * count); with `byCap`, the next one in the person's order and never an API key. Undefined when
+   * none has room.
    */
-  async nextAccount(provider: ProviderId, current: string, model?: string): Promise<string | undefined> {
+  async nextAccount(provider: ProviderId, current: string, model?: string, byCap = false): Promise<string | undefined> {
     const [info, known] = await Promise.all([this.providerInfo(provider), this.knownLimits(provider)]);
     const accounts = info.accounts ?? [];
     return pickNextAccount(
@@ -670,7 +671,7 @@ export class App {
         plan: a.auth.plan,
       })),
       Date.now(),
-      { model: model || undefined, plan: accounts.find((a) => a.id === current)?.auth.plan },
+      { model: model || undefined, plan: accounts.find((a) => a.id === current)?.auth.plan, byCap },
     );
   }
 
@@ -696,7 +697,7 @@ export class App {
     const known = await this.knownLimits(provider);
     const reached = capReached(known.get(accountId)?.limits, cap, model || undefined);
     if (!reached) return undefined;
-    const next = await this.nextAccount(provider, accountId, model).catch(() => undefined);
+    const next = await this.nextAccount(provider, accountId, model, true).catch(() => undefined);
     if (!next) return undefined;
     return { to: next, line: `Started with ${this.accountLabel(provider, next)}: ${capReason(this.accountLabel(provider, accountId), reached)}` };
   }
@@ -725,7 +726,8 @@ export class App {
     const known = await this.knownLimits(provider);
     const reached = capReached(known.get(from)?.limits, this.capOf(provider, from), model);
     if (!reached) return;
-    const next = await this.nextAccount(provider, from, model).catch(() => undefined);
+    // The next account in the person's order, never an API key (a cap does not start paying per token).
+    const next = await this.nextAccount(provider, from, model, true).catch(() => undefined);
     // Never mid-turn: a turn that started meanwhile runs on, and its end checks again.
     if (rt.turnActive || (rt.meta.accountId ?? DEFAULT_ACCOUNT) !== from || this.sessions.get(rt.id) !== rt) return;
     const name = this.accountLabel(provider, from);

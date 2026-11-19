@@ -11,7 +11,7 @@ import { useLaggedStore } from '@/lib/lagged';
 import { afterSend } from '@/features/composer/settle';
 import { reducedMotion } from '@/lib/motion';
 import { baseName } from '@/lib/format';
-import { addFolders, addToGroup, arrangeSidebar, closeSession, createGroup, goHome, goHomeChat, pinProject, removeFromGroup, removeGroup, removeProject, renameGroup, renameProject } from '@/state/actions';
+import { addFolders, addToGroup, arrangeSidebar, closeSession, createGroup, goHome, goHomeChat, openSettings, pinProject, removeFromGroup, removeGroup, removeProject, renameGroup, renameProject } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { IconButton, Modal, Tip } from '@/ui';
 import { Flip } from './flip';
@@ -696,6 +696,7 @@ const SetSection = memo(function SetSection({ set, collapsed, onToggle, activeKe
                 data-folder={set.key}
                 tabIndex={-1}
                 aria-expanded={open}
+                aria-label={`${set.name}, project${set.count ? `, ${set.count} ${set.count === 1 ? 'session' : 'sessions'}` : ''}`}
                 aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown F2"
                 onClick={(e) => {
                   if (e.detail === 2 && (e.target as HTMLElement).closest('.sgroup-name')) {
@@ -834,10 +835,10 @@ function SetItems({ set, onRename, M }: { set: SetGroup; onRename: () => void; M
         <span className="grow">Rename</span>
       </M.Item>
       <M.Separator className="menu-sep" />
-      {/* Its folders stay in the sidebar, loose, where it stood. */}
+      {/* Its folders stay in the sidebar, loose, where it stood; an empty one just goes. */}
       <M.Item className="menu-item" onSelect={() => void removeGroup(set.id)}>
         <Icon name="x" size={16} />
-        <span className="grow">Ungroup</span>
+        <span className="grow">{set.folders.length ? 'Ungroup' : 'Remove project'}</span>
       </M.Item>
     </>
   );
@@ -871,42 +872,58 @@ const ChatsSection = memo(function ChatsSection({ chats, collapsed, onToggle, cu
   const open = !collapsed;
   return (
     <section className="sgroup" data-flip="chats" data-folder="chats" data-kind="chats" data-enter={enter || undefined} aria-label="Chats">
-      <div className="sgroup-head" data-collapsed={!open || undefined} data-current={current || undefined}>
-        <button
-          type="button"
-          className="sgroup-toggle"
-          data-nav
-          data-folder="chats"
-          tabIndex={-1}
-          aria-expanded={open}
-          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-          onClick={(e) => e.detail < 2 && onToggle('chats')}
-          onPointerDown={(e) => pressFolder(e, 'chats', TOP_DROP)}
-          onKeyDown={(e) => {
-            if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
-            e.preventDefault();
-            e.stopPropagation();
-            nudge('chats', e.key === 'ArrowUp' ? -1 : 1);
-          }}
-        >
-          <span className="sgroup-icon">
-            <Icon name="chats" size={15} />
-          </span>
-          <span className="sgroup-name truncate">Chats</span>
-          {collapsed && (
-            <span className="sgroup-end">
-              {chats.attention ? <StatusGlyph tone={chats.attention} /> : <span className="sgroup-count num">{chats.sessions.length || ''}</span>}
-            </span>
-          )}
-        </button>
-        <span className="sgroup-tools">
-          <Tip label="New chat">
-            <button type="button" className="sgroup-tool" tabIndex={-1} aria-label="New chat" onClick={() => void goHomeChat()}>
-              <Icon name="plus" size={14} />
+      <RC.Root>
+        <RC.Trigger asChild>
+          <div className="sgroup-head" data-collapsed={!open || undefined} data-current={current || undefined}>
+            <button
+              type="button"
+              className="sgroup-toggle"
+              data-nav
+              data-folder="chats"
+              tabIndex={-1}
+              aria-expanded={open}
+              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+              onClick={(e) => e.detail < 2 && onToggle('chats')}
+              onPointerDown={(e) => pressFolder(e, 'chats', TOP_DROP)}
+              onKeyDown={(e) => {
+                if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+                e.preventDefault();
+                e.stopPropagation();
+                nudge('chats', e.key === 'ArrowUp' ? -1 : 1);
+              }}
+            >
+              <span className="sgroup-icon">
+                <Icon name="chats" size={15} />
+              </span>
+              <span className="sgroup-name truncate">Chats</span>
+              {collapsed && (
+                <span className="sgroup-end">
+                  {chats.attention ? <StatusGlyph tone={chats.attention} /> : <span className="sgroup-count num">{chats.sessions.length || ''}</span>}
+                </span>
+              )}
             </button>
-          </Tip>
-        </span>
-      </div>
+            <span className="sgroup-tools">
+              <Tip label="New chat">
+                <button type="button" className="sgroup-tool" tabIndex={-1} aria-label="New chat" onClick={() => void goHomeChat()}>
+                  <Icon name="plus" size={14} />
+                </button>
+              </Tip>
+            </span>
+          </div>
+        </RC.Trigger>
+        <RC.Portal>
+          <RC.Content className="pop" collisionPadding={10} style={{ minWidth: 200 }} onCloseAutoFocus={onCloseAutoFocus}>
+            <RC.Item className="menu-item" onSelect={() => void goHomeChat()}>
+              <Icon name="compose" size={16} />
+              <span className="grow">New chat</span>
+            </RC.Item>
+            <RC.Item className="menu-item" onSelect={() => openSettings('general')}>
+              <Icon name="folder" size={16} />
+              <span className="grow">Chats folder</span>
+            </RC.Item>
+          </RC.Content>
+        </RC.Portal>
+      </RC.Root>
       <GroupBody open={open} sessions={chats.sessions} archived={chats.archived} mix={chats.mix} />
     </section>
   );

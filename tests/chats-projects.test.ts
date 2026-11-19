@@ -85,6 +85,22 @@ describe('chats without a folder', () => {
     const g = buildGroups(sessions, state.projects, 'manual', state.groups, state.chatsOrder);
     expect(g.chats?.sessions.map((s) => s.id)).toEqual([chat.session.id]);
     expect(g.projects.every((p) => p.sessions.every((s) => !s.chat))).toBe(true);
+    // The chats group came with the first chat, on top of the manual order, like a new folder.
+    expect(g.top.map((e) => e.kind)).toEqual(['folder', 'chats']);
+    await again.call('session.create', { provider: 'demo', cwd: '', chat: { text: 'second' } });
+    const later = await again.call('app.hello', {});
+    expect(later.chatsOrder).toBe(state.chatsOrder);
+  });
+
+  it('puts the chats group on top when the first chat starts', async () => {
+    const { make, chats, dirs } = setup();
+    const app = make();
+    await app.call('app.setSettings', { patch: { chatsFolder: chats } });
+    for (const d of dirs) await app.call('project.add', { path: d });
+    await app.call('session.create', { provider: 'demo', cwd: '', chat: { text: 'hello' } });
+    const st = await app.call('app.hello', {});
+    const sessions = Object.fromEntries(st.sessions.map((s) => [s.id, s])) as Record<string, SessionMeta>;
+    expect(buildGroups(sessions, st.projects, 'manual', st.groups, st.chatsOrder).top[0].kind).toBe('chats');
   });
 });
 

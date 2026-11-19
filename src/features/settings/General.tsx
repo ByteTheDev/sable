@@ -91,7 +91,7 @@ function ChatsFolderRow() {
   };
 
   return (
-    <Row label="Chats folder" help="Each chat started without a folder gets a new folder here.">
+    <Row label="Chats folder">
       {editing ? (
         <input
           className="field set-chats-field"

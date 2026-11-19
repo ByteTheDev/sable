@@ -112,6 +112,25 @@ describe('caps: the windows they compare', () => {
     // A Fable session cannot go to u3.
     expect(pickNextAccount('u1', accounts, now, { model: 'fable', plan: 'Ultra' })).toBe('m1');
   });
+
+  it('moves by a cap to the next account in the person’s order, never onto an API key', () => {
+    const lim = (weekly: number): RateLimit[] => [w('seven_day', weekly)];
+    const accounts = [
+      { id: 'key', signedIn: true, planLimits: false },
+      { id: 'u1', signedIn: true, plan: 'Ultra', limits: lim(95), cap: { weekly: 95 } },
+      { id: 'm1', signedIn: true, plan: 'Max', limits: lim(5) },
+      { id: 'u2', signedIn: true, plan: 'Ultra' },
+      { id: 'u3', signedIn: true, plan: 'Ultra', limits: lim(10) },
+    ];
+    // "Ultra1 up to 95%, then Ultra2": the next Ultra in the list, though Ultra3 has more room.
+    expect(pickNextAccount('u1', accounts, now, { plan: 'Ultra', byCap: true })).toBe('u2');
+    // From Ultra3 the list wraps round to Ultra1 (under its cap here would be needed: it is not), then Ultra2.
+    expect(pickNextAccount('u3', accounts, now, { plan: 'Ultra', byCap: true })).toBe('u2');
+    // No plan account left: an API key is not taken by a cap (a limit's move still may).
+    const plansGone = [accounts[0], accounts[1], { id: 'm2', signedIn: true, plan: 'Max', limits: lim(100) }];
+    expect(pickNextAccount('u1', plansGone, now, { plan: 'Ultra', byCap: true })).toBeUndefined();
+    expect(pickNextAccount('u1', plansGone, now, { plan: 'Ultra' })).toBe('key');
+  });
 });
 
 describe('caps: moving a session', () => {
