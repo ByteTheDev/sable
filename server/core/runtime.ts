@@ -71,7 +71,31 @@ export class SessionRuntime {
 
   // ── timeline ──
 
+  /**
+   * Items changed or added since the store last saved them, or 'all' when it cannot tell (a fresh
+   * load, a reset): the store writes a long chat's unchanged start only when it has to
+   * (core/session-file.ts). Everything that changes an item goes through this class.
+   */
+  private dirty: Set<string> | 'all' = 'all';
+
+  /** What changed since the last call (the store's save takes it). */
+  takeDirty(): Set<string> | 'all' {
+    const d = this.dirty;
+    this.dirty = new Set();
+    return d;
+  }
+
+  /** The items are as on disk (just read from it). */
+  markSaved() {
+    this.dirty = new Set();
+  }
+
+  private markDirty(id: string) {
+    if (this.dirty !== 'all') this.dirty.add(id);
+  }
+
   load(items: TimelineItem[], todos: Todo[] = [], queue?: QueuedMessage[]) {
+    this.dirty = 'all';
     this.items = items;
     this.todos = todos;
     if (queue) this.queue = queue;
@@ -166,6 +190,7 @@ export class SessionRuntime {
     const full = { ...item, id: item.id ?? randomUUID(), ts: item.ts ?? Date.now() } as unknown as T;
     this.items.push(full);
     this.index.set(full.id, full);
+    this.markDirty(full.id);
     // Emit a copy: the live object keeps mutating as deltas arrive.
     this.emit({ type: 'item.added', sessionId: this.id, item: { ...full } });
     this.onDirty(this, 'items');
@@ -180,6 +205,7 @@ export class SessionRuntime {
     const item = this.index.get(id) as Record<string, unknown> | undefined;
     if (!item || !delta) return;
     item[field] = ((item[field] as string | undefined) ?? '') + delta;
+    this.markDirty(id);
     this.emit({ type: 'item.delta', sessionId: this.id, id, field, delta });
     this.onDirty(this, 'items');
   }
@@ -194,6 +220,7 @@ export class SessionRuntime {
       if (waited > 0) patch = { ...patch, waitedMs: waited };
     }
     Object.assign(item, patch);
+    this.markDirty(id);
     this.emit({ type: 'item.patch', sessionId: this.id, id, patch: patch as Partial<TimelineItem> });
     this.onDirty(this, 'items');
   }
@@ -216,6 +243,7 @@ export class SessionRuntime {
       return;
     }
     Object.assign(item, patch, { ts: Date.now() });
+    this.markDirty(id);
     this.items.splice(at, 1);
     this.items.push(item);
     this.emit({ type: 'item.removed', sessionId: this.id, id });

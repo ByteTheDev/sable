@@ -587,7 +587,7 @@ export class App {
     if (lazy) this.lazy.add(meta.id);
     const rt = new SessionRuntime(meta, this.emit, (rt, what) => {
       if (what === 'meta') this.store.saveState();
-      else this.store.saveSession(rt.id, () => ({ items: rt.items, todos: rt.todos, queue: rt.queue }));
+      else this.store.saveSession(rt.id, () => ({ items: rt.items, todos: rt.todos, queue: rt.queue, dirty: rt.takeDirty() }));
     });
     rt.onTurnEnd = (r, error) => this.afterTurn(r, error);
     rt.onTurnStart = (r) => {
@@ -602,6 +602,7 @@ export class App {
     if (!this.lazy.delete(rt.id)) return;
     const file = this.store.loadSession(rt.id);
     rt.load(file.items, file.todos, file.queue ?? []);
+    rt.markSaved();
     rt.settle('cancelled');
     // Messages still waiting for the agent when Sable closed (a steer not taken yet) would wait forever: back to the queue.
     rt.returnUntaken({ all: true, reason: 'closed' });

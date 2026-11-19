@@ -3,6 +3,7 @@ import { writeFile, rename } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { isBackdropImageId, migrateBackdrop, migrateQuietDefault, normalizeBackdrop } from '../../shared/backdrop';
+import { SessionFiles, type SessionSave } from './session-file';
 import { DEFAULT_SETTINGS, type AppSettings, type FolderGroup, type Project, type ProviderId, type QueuedMessage, type SessionMeta, type TimelineItem, type Todo } from '../../shared/protocol';
 
 /** An account in the registry. The built-in `default` account of each provider is stored too (for its label). */
@@ -57,6 +58,10 @@ export class Store {
   state: StateFile;
   private timers = new Map<string, NodeJS.Timeout>();
   private pending = new Map<string, () => unknown>();
+  /** Session timelines: a base and a small tail, so a long chat is not written whole after every word (session-file.ts). */
+  private sessionFiles = new SessionFiles((id) => this.sessionPath(id));
+  private sessionTimers = new Map<string, NodeJS.Timeout>();
+  private sessionPending = new Map<string, () => SessionSave>();
 
   constructor(dir?: string) {
     this.dir = dir ?? process.env.SABLE_HOME ?? path.join(homedir(), '.sable');
@@ -141,24 +146,35 @@ export class Store {
   }
 
   loadSession(id: string): SessionFile {
-    return this.readJson<SessionFile>(this.sessionPath(id)) ?? { items: [], todos: [] };
+    return this.sessionFiles.load(id);
   }
 
-  saveSession(id: string, data: () => SessionFile) {
-    this.schedule(this.sessionPath(id), data, 1500);
+  /** `data` is read when the write happens; its `dirty` names the items changed since the last save. */
+  saveSession(id: string, data: () => SessionSave) {
+    this.sessionPending.set(id, data);
+    if (this.sessionTimers.has(id)) return;
+    this.sessionTimers.set(
+      id,
+      setTimeout(() => {
+        this.sessionTimers.delete(id);
+        this.flushSession(id);
+      }, 1500),
+    );
+  }
+
+  private flushSession(id: string) {
+    const data = this.sessionPending.get(id);
+    if (!data) return Promise.resolve();
+    this.sessionPending.delete(id);
+    return this.sessionFiles.save(id, data);
   }
 
   deleteSession(id: string) {
-    const file = this.sessionPath(id);
-    const t = this.timers.get(file);
+    const t = this.sessionTimers.get(id);
     if (t) clearTimeout(t);
-    this.timers.delete(file);
-    this.pending.delete(file);
-    try {
-      rmSync(file, { force: true });
-    } catch {
-      /* ignore */
-    }
+    this.sessionTimers.delete(id);
+    this.sessionPending.delete(id);
+    this.sessionFiles.remove(id);
   }
 
   async flush() {
@@ -166,6 +182,11 @@ export class Store {
       clearTimeout(t);
       this.timers.delete(file);
     }
-    await Promise.all([...this.pending.keys()].map((f) => this.flushFile(f)));
+    for (const [id, t] of this.sessionTimers) {
+      clearTimeout(t);
+      this.sessionTimers.delete(id);
+    }
+    await Promise.all([...[...this.pending.keys()].map((f) => this.flushFile(f)), ...[...this.sessionPending.keys()].map((id) => this.flushSession(id))]);
+    await this.sessionFiles.idle();
   }
 }
