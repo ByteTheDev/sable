@@ -724,16 +724,20 @@ const SetSection = memo(function SetSection({ set, collapsed, onToggle, activeKe
                   <Icon name="stack" size={15} />
                 </span>
                 <span className="sgroup-name sset-name truncate">{set.name}</span>
-                <span className="sset-end">
-                  {set.agents.length > 0 && (
-                    <span className="sset-agents" aria-hidden>
-                      {set.agents.map((p) => (
-                        <ProviderMark key={p} provider={p} size={11} className="sset-agent" />
-                      ))}
-                    </span>
-                  )}
-                  {!open && set.attention ? <StatusGlyph tone={set.attention} /> : set.count > 0 && <span className="sgroup-count num">{set.count}</span>}
-                </span>
+                {/* Folded, like a folder: whose chats are inside and how many (or the most pressing state);
+                    open, its folders and rows say it already. */}
+                {!open && (set.count > 0 || set.attention) && (
+                  <span className="sset-end">
+                    {set.agents.length > 0 && (
+                      <span className="sset-agents" aria-hidden>
+                        {set.agents.map((p) => (
+                          <ProviderMark key={p} provider={p} size={11} className="sset-agent" />
+                        ))}
+                      </span>
+                    )}
+                    {set.attention ? <StatusGlyph tone={set.attention} /> : <span className="sgroup-count num">{set.count}</span>}
+                  </span>
+                )}
               </button>
             )}
             <span className="sgroup-tools">

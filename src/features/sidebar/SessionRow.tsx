@@ -387,9 +387,10 @@ export const SessionRow = memo(function SessionRow({ id, enter, mix }: { id: str
   useStartBeat(rowRef, !!session?.spare, !!session && statusTone(session) === 'working');
   if (!session) return null;
   const tone = statusTone(session);
-  // Waiting to start by itself (Spare): a small clock where the time or the status mark sits.
-  const waits = !!session.spare && (tone === 'idle' || tone === 'unread');
-  const label = statusLabel(session) ?? (waits ? spareLabel(session) : null);
+  // Waiting to start by itself (Spare): a small clock where the time or the status mark sits. A chat
+  // that stopped at a limit and now waits for its reset shows the wait, not the limit's error.
+  const waits = !!session.spare && tone !== 'working' && tone !== 'awaiting';
+  const label = waits ? spareLabel(session) : statusLabel(session);
   const who = whoLabel(session, mix);
   const arm = armed ? undefined : () => setArmed(true);
   const openMenu = () => {

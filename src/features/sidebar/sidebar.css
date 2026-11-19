@@ -553,9 +553,21 @@
   text-align: left;
 }
 
+/* The ring is the row's, on a layer above the hover tools: drawn on the title button it went under
+   their fade, and the row's right end lost its edge. */
 .srow-main:focus-visible {
+  outline: none;
+}
+
+.srow:has(> .srow-in > .srow-main:focus-visible)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
   outline: var(--focus-w) solid var(--focus);
   outline-offset: var(--focus-inset);
+  pointer-events: none;
 }
 
 .srow-title {
@@ -862,7 +874,7 @@
   color: var(--text-2);
 }
 
-/* At rest: the agents of its chats and how many there are; the tools take their place on hover. */
+/* Folded: the agents of its chats and how many there are; the tools take their place on hover. */
 .sset-end {
   display: flex;
   align-items: center;

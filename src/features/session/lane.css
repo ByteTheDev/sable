@@ -7,7 +7,10 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-width: 0;
+  /* In a short header the lane's name gives way first, down to the glyph, and nothing of it is drawn
+     over what follows. */
+  min-width: calc(13px + 12px);
+  overflow: hidden;
   height: 22px;
   margin-left: 4px;
   padding: 0 6px;
@@ -38,6 +41,12 @@
 
 .lane-mark-name {
   min-width: 0;
+}
+
+/* While the lane's name can give way, the folder's name and the account beside it keep theirs (a
+   shrink shared by weight would cut "repo" to "re…" to save a few pixels of a long lane name). */
+.topbar-crumb:has(> .lane-mark) > :is(.truncate, .sa-trigger) {
+  flex-shrink: 0;
 }
 
 .lane-ab {

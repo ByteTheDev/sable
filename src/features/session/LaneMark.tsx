@@ -1,11 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { SessionLane } from '@shared/protocol';
-import { Icon } from '@/icons';
 import { plural } from '@/lib/format';
 import { reducedMotion, uiZoom } from '@/lib/motion';
 import { useStore } from '@/state/store';
 import { Tip } from '@/ui';
-import { useLaneForecast, useLanes, useSessionLane } from './lane';
+import { laneName, useLaneForecast, useLanes, useSessionLane } from './lane';
 import './lane.css';
 
 /**
@@ -93,15 +92,21 @@ export function LaneMark({ sessionId }: { sessionId: string }) {
   if (!shown) return null;
   const f = entry?.forecast;
   const from = shown.from ?? 'its base';
+  // The full branch and how far apart, in words for the tooltip: the Changes tab shows the figures where the lane lands.
+  const apart = lane && f ? [f.ahead ? `${plural(f.ahead, 'commit')} ahead` : '', f.behind ? `${plural(f.behind, 'commit')} behind` : ''].filter(Boolean) : [];
+  const lead = `${shown.branch} from ${from}`;
   const tip = !lane
     ? ended === 'landed'
       ? `Landed on ${f?.target ?? from}`
       : 'Lane closed'
-    : f?.state === 'conflicts'
-      ? `Lane from ${from}, ${plural(f.conflicts.length, 'file')} ${f.conflicts.length === 1 ? 'conflicts' : 'conflict'} with ${f.target}`
-      : f?.state === 'clean'
-        ? `Lane from ${from}, lands cleanly on ${f.target}`
-        : `Lane from ${from}`;
+    : [
+        f?.state === 'conflicts'
+          ? `${lead}, ${plural(f.conflicts.length, 'file')} ${f.conflicts.length === 1 ? 'conflicts' : 'conflict'} with ${f.target}`
+          : f?.state === 'clean'
+            ? `${lead}, lands cleanly on ${f.target}`
+            : lead,
+        ...apart,
+      ].join(', ');
   return (
     <Tip label={tip}>
       <button
@@ -114,19 +119,7 @@ export function LaneMark({ sessionId }: { sessionId: string }) {
         onClick={() => setUi({ railOpen: true, railTab: 'changes' })}
       >
         <LaneGlyph phase={phase} />
-        <span className="truncate lane-mark-name">{shown.branch}</span>
-        {lane && !!f?.ahead && (
-          <span className="lane-ab num" aria-label={`${plural(f.ahead, 'commit')} ahead`}>
-            <Icon name="arrow-up" size={10} />
-            {f.ahead}
-          </span>
-        )}
-        {lane && !!f?.behind && (
-          <span className="lane-ab num" aria-label={`${plural(f.behind, 'commit')} behind`}>
-            <Icon name="arrow-down" size={10} />
-            {f.behind}
-          </span>
-        )}
+        <span className="truncate lane-mark-name">{laneName(shown.branch)}</span>
       </button>
     </Tip>
   );

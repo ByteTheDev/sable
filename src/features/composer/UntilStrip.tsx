@@ -120,7 +120,7 @@ export const UntilStrip = memo(function UntilStrip({ sessionId }: { sessionId: s
             )}
             {!ended && (
               <span className="us-meta num">
-                round {shown.round} of {shown.rounds}
+                Round {shown.round} of {shown.rounds}
                 {shown.failing ? ` · ${shown.failing} failing` : ''}
                 {shown.phase === 'checking' && shown.since && !ended ? <CheckClock since={shown.since} /> : null}
                 {shown.phase === 'paused' ? ' · paused' : ''}

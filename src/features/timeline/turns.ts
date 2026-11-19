@@ -256,6 +256,13 @@ export function groupTurns(ids: readonly string[], shape: string, busy: boolean)
       groups.push({ kind: 'item', key: id, id });
       continue;
     }
+    // An interrupted turn has ended even without its record: a notice after it (a lane landed, a
+    // model changed) stands on its own instead of folding into that turn's work and its time.
+    if (ch === 'n' && (open as Open).interrupted) {
+      close(null, false, false);
+      groups.push({ kind: 'item', key: id, id });
+      continue;
+    }
     const o: Open = open;
     o.ids.push(id);
     if (ch === 'S') {

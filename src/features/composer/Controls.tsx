@@ -484,7 +484,8 @@ function FolderMenu({ onClosed }: { onClosed: () => void }) {
   const recent = [...projects]
     .filter((p) => !p.hidden)
     .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.lastOpened - a.lastOpened)
-    .slice(0, 8);
+    // Seven, with "No folder" above them: the menu still opens below the chip on a 900px tall window at 110%.
+    .slice(0, 7);
   const label = chat ? 'No folder' : cwd ? baseName(cwd) : 'Choose a folder';
   return (
     <RM.Root modal={false}>

@@ -139,6 +139,15 @@ describe('groupTurns', () => {
     expect(b.segments[0].answer).toBe('7');
   });
 
+  it('lets a notice after an interruption stand on its own', () => {
+    const { groups } = turns('U1 w2 t3 i4 n5');
+    expect(groups.map((g) => g.kind)).toEqual(['turn', 'item']);
+    const t = groups[0] as TurnGroup;
+    expect(t.state).toBe('interrupted');
+    expect(t.ids).toEqual(['1', '2', '3', '4']);
+    expect(t.segments[0].work).toEqual(['2']);
+  });
+
   it('is interrupted, not running, when the session is still busy with nothing after the notice', () => {
     expect(onlyTurn('U1 w2 i3', true).state).toBe('interrupted');
   });

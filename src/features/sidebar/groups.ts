@@ -88,7 +88,8 @@ function attentionOf(list: SessionMeta[]): Attention {
   let best: Attention;
   for (const s of list) {
     const a: Attention =
-      s.status === 'awaiting' ? 'awaiting' : s.status === 'error' ? 'error' : s.status === 'running' || s.status === 'starting' ? 'working' : s.unread ? 'unread' : undefined;
+      // A chat waiting for a reset (Spare) after a limit is not an error to look at.
+      s.status === 'awaiting' ? 'awaiting' : s.status === 'error' && !s.spare ? 'error' : s.status === 'running' || s.status === 'starting' ? 'working' : s.unread ? 'unread' : undefined;
     if (a && (!best || RANK[a] > RANK[best])) best = a;
   }
   return best;
