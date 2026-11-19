@@ -12,7 +12,7 @@ import { currentBranch } from '@/lib/workspace';
 import { goHomeChat, homeAccountId, openSettings, setHomeAccount, switchAgent } from '@/state/actions';
 import { accountName } from '@/state/hooks';
 import { capsKey, ensureProviderCaps, refreshStaleCaps, useStore } from '@/state/store';
-import { Kbd, PathLabel, Tip } from '@/ui';
+import { PathLabel, Tip } from '@/ui';
 import { planWord } from '@/features/accounts/model';
 import { LimitDot } from '@/features/usage';
 import { type Choice } from './choice';
@@ -545,7 +545,6 @@ function FolderMenu({ onClosed }: { onClosed: () => void }) {
                 <RM.Item className="menu-item cm-row" onSelect={() => setUi({ projectPicker: true })}>
                   <Icon name="folder-open" size={15} className="hc-icon" />
                   <span className="grow">Open a folder…</span>
-                  <Kbd combo="mod+o" />
                 </RM.Item>
               </>
             )}

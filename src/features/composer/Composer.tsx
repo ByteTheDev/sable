@@ -14,7 +14,7 @@ import { searchFiles, type FileHit } from '@/lib/workspace';
 import { homeChoice, interrupt, sendMessage, setHomeUltracode, setUltracode, startFromHome, takeQueued, updateQueued } from '@/state/actions';
 import { useHotkey } from '@/state/hooks';
 import { useStore } from '@/state/store';
-import { Kbd, Tip } from '@/ui';
+import { Tip } from '@/ui';
 import { readFiles, withTextAttachments } from './attach';
 import { AttachmentRow } from './Attachments';
 import { useChoice } from './choice';
@@ -178,7 +178,6 @@ const AttachMenu = memo(function AttachMenu({ images, side, onAdd, onMention }: 
           <RM.Item className="menu-item" onSelect={onMention}>
             <Icon name="at" size={15} />
             <span className="grow">Mention a file</span>
-            <Kbd combo="@" />
           </RM.Item>
         </RM.Content>
       </RM.Portal>

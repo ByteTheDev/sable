@@ -7,7 +7,7 @@ import { addressParts, isLocalUrl, normalizeAddress, willSearch } from '@/lib/li
 import * as actions from '@/state/actions';
 import { focusComposer } from '@/state/hooks';
 import { useStore } from '@/state/store';
-import { IconButton, Kbd, Menu, MenuContent, MenuItem, MenuSep, MenuTrigger, Spinner, Tip } from '@/ui';
+import { IconButton, Menu, MenuContent, MenuItem, MenuSep, MenuTrigger, Spinner, Tip } from '@/ui';
 import { readScript, registerPage } from './browser-agent';
 import { parseKey, pickCancelScript, pickScript, type Picked } from './browser-scripts';
 import {
@@ -879,11 +879,11 @@ export function BrowserTab({ sessionId, active }: { sessionId: string; active: b
                 <MenuItem icon="image" onSelect={() => void attachShot()}>
                   Add screenshot to message
                 </MenuItem>
-                <MenuItem icon="expand" hint={<Kbd combo="mod+shift+s" />} onSelect={startRegion}>
+                <MenuItem icon="expand" onSelect={startRegion}>
                   Add region to message
                 </MenuItem>
                 <MenuSep />
-                <MenuItem icon="file-search" hint={<Kbd combo="mod+f" />} onSelect={openFind}>
+                <MenuItem icon="file-search" onSelect={openFind}>
                   Find in page
                 </MenuItem>
                 <MenuItem icon="zoom-in" disabled={page.zoom >= ZOOMS[ZOOMS.length - 1]} onSelect={() => zoomStep(1)}>
