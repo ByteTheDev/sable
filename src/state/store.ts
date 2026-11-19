@@ -336,7 +336,9 @@ export function applySnapshot(snap: SessionSnapshot) {
  */
 function onStatusChange(session: SessionMeta, prev: SessionMeta['status']) {
   const s = useStore.getState();
-  const finished = (prev === 'running' || prev === 'awaiting') && (session.status === 'idle' || session.status === 'error');
+  // A turn inside an armed `/until` loop is not the end of the work: only the loop's end is news.
+  const looping = !!session.until && session.status !== 'error';
+  const finished = !looping && (prev === 'running' || prev === 'awaiting') && (session.status === 'idle' || session.status === 'error');
   const needsYou = session.status === 'awaiting' && prev !== 'awaiting';
   if (!finished && !needsYou) return;
   const viewing = s.ui.activeSessionId === session.id;
