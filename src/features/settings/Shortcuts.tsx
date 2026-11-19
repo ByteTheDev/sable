@@ -69,7 +69,7 @@ export function Shortcuts() {
             <span className="kbd-range">
               {k('alt+1')}
               <span className="faint">to</span>
-              {k('7')}
+              {k('8')}
             </span>
           ),
         },
