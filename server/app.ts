@@ -21,6 +21,7 @@ import {
   type RpcName,
   type SessionMeta,
   type SessionOptions,
+  type SpareWait,
   type UserItem,
 } from '../shared/protocol';
 import { normalizeBackdrop } from '../shared/backdrop';
@@ -41,6 +42,7 @@ import { profileOf } from './services/profile';
 import { parseUntil, runCheck, UntilLoops } from './core/until';
 import { Lanes } from './core/lanes';
 import { isAllModelsWeekly } from './core/limit-policy';
+import { planWeight, SpareWaits, type SpareAccount } from './core/spare';
 import { VERSION } from './version';
 
 type Handler<M extends RpcName> = (params: RpcMethods[M]['params']) => Promise<RpcMethods[M]['result']> | RpcMethods[M]['result'];
@@ -140,6 +142,25 @@ export class App {
   });
   /** Loops that were armed when Sable closed: their sessions say so when next opened. */
   private untilLost = new Map<string, NonNullable<SessionMeta['until']>>();
+  /** Spare: chats that start by themselves on quota that would expire, or at a limit's reset (server/core/spare.ts). */
+  private spare = new SpareWaits({
+    sessions: () => this.sessions.values(),
+    hydrate: (rt) => this.hydrate(rt),
+    busy: (rt) => rt.turnActive || this.opening.has(rt.id) || this.delivering.has(rt.id),
+    accounts: (provider) => this.spareAccounts(provider),
+    refresh: async (provider, accountId) => {
+      await this.call('provider.limits', { provider, accountId, force: true });
+    },
+    start: (rt, accountId, wait) => this.startSpare(rt, accountId, wait),
+    send: (rt, q) => this.deliver(rt, q.text, q.attachments),
+    stop: async (rt, line) => {
+      rt.stopRequested = true;
+      await rt.handle?.interrupt();
+      rt.notice('info', line, 'Spare never uses credits or extra usage');
+    },
+    accountLabel: (provider, accountId) => this.accountLabel(provider, accountId),
+    log: (...args) => this.log(...args),
+  });
   /** Lanes: a worktree of its own for a session whose folder another session is working in (server/core/lanes.ts). */
   private lanes = new Lanes({
     home: () => this.store.dir,
@@ -192,6 +213,8 @@ export class App {
     }
     this.seedFolderOrder();
     this.registerCore();
+    // Chats that waited when Sable closed go on waiting (a reset that passed meanwhile is due now).
+    if (this.spare.hasWaits()) this.spare.poke(4000);
   }
 
   log = (...args: unknown[]) => {
@@ -286,7 +309,13 @@ export class App {
         if (e.meta) this.limitsMeta.set(key, { ...this.limitsMeta.get(key), ...e.meta });
         this.limitsSeq.set(key, (this.limitsSeq.get(key) ?? 0) + 1);
         this.scheduleResetAlert();
-        return this.emit({ ...e, accountId });
+        this.emit({ ...e, accountId });
+        // After the usage service has recorded the read (it listens to the event above). Past a
+        // limit on credits now (a full window, not a flag left from before a reset): a spare turn there stops.
+        const now = Date.now();
+        const past = e.limits.some((l) => l.percent >= 100 && !(l.resetsAt && l.resetsAt <= now));
+        this.spare.limitsChanged(e.provider, accountId, past && runningOnCredits(this.limitsMeta.get(key)));
+        return;
       }
       case 'provider.updated':
         if (accountId !== DEFAULT_ACCOUNT) this.infoCache.set(accountKey(e.provider.id, accountId), Promise.resolve(e.provider));
@@ -561,7 +590,10 @@ export class App {
       else this.store.saveSession(rt.id, () => ({ items: rt.items, todos: rt.todos, queue: rt.queue }));
     });
     rt.onTurnEnd = (r, error) => this.afterTurn(r, error);
-    rt.onTurnStart = (r) => this.until.turnStarted(r);
+    rt.onTurnStart = (r) => {
+      this.until.turnStarted(r);
+      this.spare.turnStarted(r);
+    };
     return rt;
   }
 
@@ -837,15 +869,83 @@ export class App {
    * of starting the task over (the conversation came along, or the summary shows what was done),
    * and nothing new appears in the conversation.
    */
-  private resumeMessage(rt: SessionRuntime, refused: UserItem, carried: 'conversation' | 'summary' | 'none'): UserItem {
+  private resumeMessage(rt: SessionRuntime, refused: UserItem, carried: 'conversation' | 'summary' | 'none' | 'reset'): UserItem {
     const from = rt.items.findIndex((i) => i.id === refused.id);
     const progressed = from >= 0 && rt.items.slice(from + 1).some((i) => (i.type === 'text' && i.text.trim()) || i.type === 'tool');
     if (!progressed) return refused;
     const text =
-      carried === 'conversation'
-        ? 'The last turn was cut off by a usage limit; the conversation now continues under another account. Carry on with the task from where it stopped. Do not repeat steps that are already done.'
-        : `${refused.text}\n\n(Part of this was already done before a usage limit cut the turn off: the summary above shows how far it got. Carry on from there.)`;
+      carried === 'reset'
+        ? 'The last turn was cut off by a usage limit, which has reset now. Carry on with the task from where it stopped. Do not repeat steps that are already done.'
+        : carried === 'conversation'
+          ? 'The last turn was cut off by a usage limit; the conversation now continues under another account. Carry on with the task from where it stopped. Do not repeat steps that are already done.'
+          : `${refused.text}\n\n(Part of this was already done before a usage limit cut the turn off: the summary above shows how far it got. Carry on from there.)`;
     return { id: randomUUID(), ts: Date.now(), type: 'user', text, state: 'sent' };
+  }
+
+  // ── Spare: chats that start by themselves (server/core/spare.ts) ──
+
+  /** Each account of `provider` as the Spare planner sees it: the limits book's windows and pace, caps, plan weight, credits. */
+  private async spareAccounts(provider: ProviderId): Promise<SpareAccount[]> {
+    // The last known sign-ins (asking the CLI each time would start processes on every limits event).
+    const cached = this.cache.get<ProviderInfo>(`info:${provider}`);
+    const [info, reports] = await Promise.all([
+      cached?.accounts?.length ? cached : this.providerInfo(provider),
+      this.handlers.has('usage.limits') ? this.call('usage.limits', {}).catch(() => []) : Promise.resolve([]),
+    ]);
+    return (info.accounts ?? []).map((a) => {
+      const key = accountKey(provider, a.id);
+      const r = reports.find((x) => x.provider === provider && x.accountId === a.id);
+      return {
+        id: a.id,
+        signedIn: a.auth.loggedIn,
+        planLimits: r?.planLimits,
+        limits: r?.limits.length ? r.limits : (this.limitsCache.get(key) ?? a.limits ?? []),
+        pace: r?.pace,
+        cap: this.capOf(provider, a.id),
+        weight: planWeight(provider, a.auth),
+        onCredits: runningOnCredits(this.limitsMeta.get(key)),
+      };
+    });
+  }
+
+  /**
+   * Starts a chat that waited. Spare: on the account the planner chose (the session moves there
+   * first, with one line), its first held message goes out. Reset: the refused turn carries on.
+   */
+  private async startSpare(rt: SessionRuntime, accountId: string, wait: SpareWait) {
+    const from = rt.meta.accountId ?? DEFAULT_ACCOUNT;
+    if (wait.reason === 'reset') {
+      // Moved meanwhile: back to the account that reset, with the refused message.
+      if (from !== accountId) {
+        await this.switchAccount(rt, accountId, { retry: true });
+        return;
+      }
+      await this.resumeAtReset(rt);
+      return;
+    }
+    if (from !== accountId) await this.switchAccount(rt, accountId, { line: `Started with ${this.accountLabel(rt.meta.provider, accountId)}` });
+    const id = wait.held?.find((h) => rt.queue.some((q) => q.id === h));
+    const q = id ? rt.takeQueued(id) : undefined;
+    if (q) await this.deliver(rt, q.text, q.attachments);
+  }
+
+  /** The window that refused a turn has reset: the same account carries on (the refused message again, or "carry on"). */
+  private async resumeAtReset(rt: SessionRuntime) {
+    this.hydrate(rt);
+    const accountId = rt.meta.accountId ?? DEFAULT_ACCOUNT;
+    const refused = this.refusedMessage(rt);
+    const open = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
+    if (open) rt.patch<NoticeItem>(open.id, { limit: { ...open.limit, continuedWith: accountId, atReset: true } });
+    const item: UserItem = refused
+      ? this.resumeMessage(rt, refused, 'reset')
+      : { id: randomUUID(), ts: Date.now(), type: 'user', text: 'The usage limit has reset. Carry on with the task from where it stopped.', state: 'sent' };
+    const handle = await this.ensureHandle(rt);
+    try {
+      await handle.send(this.withHandover(rt, item));
+    } catch (err) {
+      rt.notice('error', 'Could not send the message', (err as Error).message);
+      rt.endTurn((err as Error).message);
+    }
   }
 
   /** The message the last limit notice refused: the user message just before it. */
@@ -925,6 +1025,8 @@ export class App {
    * end). After an interrupt, a close or a failure the queue waits for the user.
    */
   private afterTurn(rt: SessionRuntime, error?: string) {
+    // A spare turn's end frees its place; waiting chats are looked at again.
+    this.spare.turnEnded(rt);
     const hit = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.provider);
     if (hit) void this.onLimitHit(rt, hit).catch((err) => this.log('limit follow-up failed', (err as Error).message));
     else {
@@ -947,7 +1049,10 @@ export class App {
       if (rt.turnActive || rt.stopRequested || this.sessions.get(rt.id) !== rt) return;
       // A steered message no turn took and no adapter carried on is never left waiting: it goes out first.
       rt.returnUntaken();
-      const next = rt.takeQueued();
+      // Messages held for Spare stay where they are: the chat starts them by itself.
+      const held = this.spare.held(rt);
+      const nextId = rt.queue.find((q) => !held.has(q.id))?.id;
+      const next = nextId ? rt.takeQueued(nextId) : undefined;
       if (next) void this.deliver(rt, next.text, next.attachments).catch((err) => this.log('queued send failed', (err as Error).message));
       // Nothing waits: an until loop runs its check (the user's messages always go first).
       else this.until.turnEnded(rt);
@@ -1120,6 +1225,8 @@ export class App {
       this.store.saveState();
       this.emit({ type: 'settings.updated', settings: this.store.state.settings });
       if ('notifyLimitReset' in patch || 'returnToPreferred' in patch) this.scheduleResetAlert();
+      // A cap changed: what Spare may use changed with it.
+      if ('accountCaps' in patch && this.spare.hasWaits()) this.spare.poke(300);
       // Which account is the default shows on every account.
       if (patch.defaultAccounts || 'returnToPreferred' in patch) for (const id of this.providers.keys()) void this.emitProvider(id).catch(() => {});
       return this.store.state.settings;
@@ -1506,6 +1613,8 @@ export class App {
       void opened.finally(() => {
         if (this.opening.get(rt.id) === opened) this.opening.delete(rt.id);
         this.persistSessions();
+        // A chat started with `/spare` from home waited for its agent to be there.
+        if (rt.meta.spare) this.spare.poke();
       });
       // A slow start answers early (status "starting"): the UI opens the session and the first
       // message shows at once, waiting in deliver() for the agent.
@@ -1539,12 +1648,15 @@ export class App {
     this.register('queue.update', ({ sessionId, id, text, attachments }) => {
       const rt = this.runtime(sessionId);
       this.hydrate(rt);
-      return { ok: rt.updateQueued(id, text, attachments) };
+      const ok = rt.updateQueued(id, text, attachments);
+      this.spare.queueChanged(rt);
+      return { ok };
     });
     this.register('queue.take', ({ sessionId, id }) => {
       const rt = this.runtime(sessionId);
       this.hydrate(rt);
       const message = rt.takeQueued(id);
+      this.spare.queueChanged(rt);
       return message ? { message } : {};
     });
     this.register('queue.reorder', ({ sessionId, ids }) => {
@@ -1556,12 +1668,15 @@ export class App {
     this.register('queue.remove', ({ sessionId, id }) => {
       const rt = this.runtime(sessionId);
       this.hydrate(rt);
-      return { ok: !!rt.takeQueued(id) };
+      const ok = !!rt.takeQueued(id);
+      this.spare.queueChanged(rt);
+      return { ok };
     });
     this.register('queue.sendNow', async ({ sessionId, id }) => {
       const rt = this.runtime(sessionId);
       this.hydrate(rt);
       const q = rt.takeQueued(id);
+      this.spare.queueChanged(rt);
       if (!q) return { ok: false };
       // Mid-turn this is steered into the running turn.
       await this.deliver(rt, q.text, q.attachments);
@@ -1644,6 +1759,28 @@ export class App {
     });
     this.register('until.stop', ({ sessionId }) => ({ ok: this.until.stop(this.runtime(sessionId)) }));
     this.register('until.check', ({ sessionId }) => ({ ok: this.until.checkNow(this.runtime(sessionId)) }));
+
+    // Spare (server/core/spare.ts): `/spare <message>` and "Continue at reset".
+    this.register('spare.send', ({ sessionId, text, attachments }) => {
+      const rt = this.runtime(sessionId);
+      this.hydrate(rt);
+      const body = typeof text === 'string' ? text.trim() : '';
+      if (!body && !attachments?.length) return { ok: false, error: 'Add a message after /spare' };
+      // A new chat is named by the message it waits with, not "New session" for hours.
+      if (rt.meta.titleSource === 'auto' && !rt.items.some((i) => i.type === 'user') && !rt.meta.spare) rt.update({ title: autoTitle(body) });
+      return { ok: true, spare: this.spare.hold(rt, body, attachments) };
+    });
+    this.register('spare.atReset', ({ sessionId }) => this.spare.atReset(this.runtime(sessionId)));
+    this.register('spare.cancel', ({ sessionId }) => ({ ok: this.spare.cancel(this.runtime(sessionId)) }));
+    this.register('spare.startNow', async ({ sessionId }) => ({ ok: await this.spare.startNow(this.runtime(sessionId)) }));
+    // Development only: the Demo's limits never reset by themselves; this makes one do so soon.
+    this.register('demo.limitResetIn', ({ accountId, ms }) => {
+      if (!this.providers.has('demo')) throw new Error('The Demo agent is not available');
+      const p = this.provider('demo', accountId) as Provider & { limitResetIn?: (ms: number) => void };
+      if (!p.limitResetIn) return { ok: false };
+      p.limitResetIn(Math.max(0, Number(ms) || 0));
+      return { ok: true };
+    });
 
     // Lanes (server/core/lanes.ts).
     this.register('lane.forecast', ({ sessionId }) => this.lanes.forecast(this.runtime(sessionId)));
@@ -1783,6 +1920,7 @@ export class App {
     this.disposed = true;
     clearTimeout(this.resetTimer);
     this.until.dispose();
+    this.spare.dispose();
     for (const fn of this.disposers.splice(0)) await Promise.resolve(fn()).catch(() => {});
     for (const rt of this.sessions.values()) {
       rt.cancelPrompts();

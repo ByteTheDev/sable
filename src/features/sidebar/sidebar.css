@@ -621,6 +621,15 @@
   color: var(--text);
 }
 
+/* Waiting to start by itself (Spare): a quiet clock, one step up on the open row. */
+.srow-state[data-tone='spare'] {
+  color: var(--text-3);
+}
+
+.srow[data-active] .srow-state[data-tone='spare'] {
+  color: var(--text-2);
+}
+
 .srow-acts {
   position: absolute;
   top: 0;

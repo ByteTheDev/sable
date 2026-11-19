@@ -87,6 +87,8 @@ export interface LimitHit {
   next?: string;
   /** The session carried on with this account. */
   continuedWith?: string;
+  /** It carried on with the same account once the window reset ("Continue at reset", `SpareWait`). */
+  atReset?: boolean;
 }
 
 /** Reasoning effort, lowest first. `ultra` is Codex's level above `max` (the model may delegate to sub-agents). */
@@ -417,6 +419,27 @@ export interface SessionMeta {
   until?: UntilState | null;
   /** The session works in a lane of its own (a git worktree on a branch of its own); `cwd` is inside it. Null once it landed or was discarded (patches travel as JSON). */
   lane?: SessionLane | null;
+  /** The chat waits to start by itself: on spare quota, or at a limit's reset (`SpareWait`). Null once it started or was cancelled (patches travel as JSON). */
+  spare?: SpareWait | null;
+}
+
+/**
+ * Spare (`server/core/spare.ts`): a chat that starts by itself. `spare`: its held messages start
+ * when an account of its agent has weekly quota that would go unused at the current pace, room in
+ * its 5-hour window and under its cap (never credits, never a reset grant), at most two such turns
+ * at once. `reset`: "Continue at reset" after a turn a plan limit refused, at `at` on `accountId`.
+ * Waits survive a restart.
+ */
+export interface SpareWait {
+  reason: 'spare' | 'reset';
+  /** When the chat began to wait (first come, first served). */
+  since: number;
+  /** reset: when the account's window resets. spare: when it is expected to start, when a window that resets then is what holds it. */
+  at?: number;
+  /** reset: the account it continues on. spare: the account it is expected to start on at `at`. */
+  accountId?: string;
+  /** Queued messages (`QueuedMessage` ids) held back until it starts, in the order sent; the first goes out when it starts. */
+  held?: string[];
 }
 
 /**
@@ -1659,6 +1682,16 @@ export interface RpcMethods {
   'lane.create': { params: { sessionId: string }; result: { ok: boolean; error?: string; lane?: SessionLane } };
   /** Opens the lane's folder in the system's file manager. */
   'lane.open': { params: { sessionId: string }; result: { ok: boolean; error?: string } };
+  /** Spare (`SpareWait`): queues a message held until there is spare quota (`/spare`). Answers the wait, or why not. */
+  'spare.send': { params: { sessionId: string; text: string; attachments?: Attachment[] }; result: { ok: boolean; spare?: SpareWait; error?: string } };
+  /** "Continue at reset": the chat's last limit notice continues on its account once its window resets. */
+  'spare.atReset': { params: { sessionId: string }; result: { ok: boolean; spare?: SpareWait; error?: string } };
+  /** Stops waiting; held messages stay in the queue. */
+  'spare.cancel': { params: { sessionId: string }; result: { ok: boolean } };
+  /** Sends the first held message now, as a normal send, and stops waiting. */
+  'spare.startNow': { params: { sessionId: string }; result: { ok: boolean } };
+  /** Development only (the Demo agent): the demo account's full windows reset `ms` from now (they never do by themselves). */
+  'demo.limitResetIn': { params: { accountId: string; ms: number }; result: { ok: boolean } };
 
   /**
    * Replaces a queued message's text, and its attachments when `attachments` is given (an empty

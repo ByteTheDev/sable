@@ -655,6 +655,38 @@ export async function switchSessionAccount(sessionId: string, accountId: string,
   }
 }
 
+// ── Spare: chats that start by themselves (server/core/spare.ts) ──
+
+/** `/spare`: the message waits in the chat's queue until an account of its agent has spare quota. */
+export async function spareSend(sessionId: string, text: string, attachments?: Attachment[]): Promise<boolean> {
+  try {
+    const r = await bridge.call('spare.send', { sessionId, text, ...(attachments?.length ? { attachments } : {}) });
+    if (!r.ok && r.error) useStore.getState().toast(r.error);
+    return r.ok;
+  } catch (err) {
+    fail(err);
+    return false;
+  }
+}
+
+/** "Continue at reset": the chat carries on with the refused turn once its account's window resets. */
+export async function continueAtReset(sessionId: string): Promise<boolean> {
+  try {
+    const r = await bridge.call('spare.atReset', { sessionId });
+    if (!r.ok && r.error) useStore.getState().toast(r.error);
+    return r.ok;
+  } catch (err) {
+    fail(err);
+    return false;
+  }
+}
+
+/** Stops a chat waiting to start by itself; its held messages stay in the queue. */
+export const cancelSpare = (sessionId: string) => bridge.call('spare.cancel', { sessionId }).catch(fail);
+
+/** Sends a waiting chat's first held message now, as an ordinary send. */
+export const startSpareNow = (sessionId: string) => bridge.call('spare.startNow', { sessionId }).catch(fail);
+
 /** Makes an account the one new sessions with this agent use. The home choice follows it. */
 export function setDefaultAccount(provider: ProviderId, accountId: string) {
   const s = useStore.getState();

@@ -4,7 +4,8 @@ import { PROVIDER_NAME } from '@/art/Logo';
 import { Icon } from '@/icons';
 import { resetIn } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
-import { spendLimitReset, switchSessionAccount } from '@/state/actions';
+import { continueAtReset, spendLimitReset, switchSessionAccount } from '@/state/actions';
+import { SpareClock } from '@/features/composer/SpareStrip';
 import { useResets } from '@/features/usage/LimitReset';
 import { accountName, useLimitLevel } from '@/state/hooks';
 import { useStore } from '@/state/store';
@@ -54,6 +55,25 @@ export const LimitNotice = memo(function LimitNotice({ item, sessionId }: { item
 
   const who = accounts && accounts.length > 1 && self ? accountName(self) : provider ? PROVIDER_NAME[provider] : 'This account';
   const reset = resetLine(limit.resetsAt, now);
+
+  // Spare: with no other account to go on with, the chat can wait for this window's reset and carry on then.
+  const waiting = useStore((s) => (sid ? !!s.sessions[sid]?.spare : false));
+  const [pinning, setPinning] = useState(false);
+  const canWait = !offer && !limit.continuedWith && !!sid && !waiting && !!limit.resetsAt && limit.resetsAt > now;
+  const waitButton = canWait && (
+    <button
+      type="button"
+      className="btn btn-sm lim-go"
+      disabled={pinning || busy}
+      onClick={() => {
+        setPinning(true);
+        void continueAtReset(sid!).finally(() => setPinning(false));
+      }}
+    >
+      {pinning ? <Spinner size={12} /> : <SpareClock size={14} />}
+      Continue at reset
+    </button>
+  );
 
   // A reset the agent granted this account: one action, asked first, never spent without the click.
   const resets = useResets(provider ?? 'demo', limit.accountId ?? DEFAULT_ACCOUNT);
@@ -131,12 +151,15 @@ export const LimitNotice = memo(function LimitNotice({ item, sessionId }: { item
               Continue with {accountName(offer)}
             </button>
           )}
+          {waitButton}
         </span>
       ) : limit.continuedWith ? (
         <span className="lim-went">
           <Icon name="check" size={13} />
-          Continued with {went ? accountName(went) : 'another account'}
+          {limit.atReset ? 'Continued at reset' : `Continued with ${went ? accountName(went) : 'another account'}`}
         </span>
+      ) : waitButton ? (
+        waitButton
       ) : (
         offer &&
         sid && (

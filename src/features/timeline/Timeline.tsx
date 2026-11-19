@@ -330,7 +330,9 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [busy, sessionId]);
 
-  const empty = loaded && count === 0;
+  // A chat whose first message waits for spare quota (or a reset) is not empty: the strip above the composer says when it starts.
+  const waiting = useStore((s) => !!s.sessions[sessionId]?.spare);
+  const empty = loaded && count === 0 && !waiting;
 
   return (
     <TimelineCtx.Provider value={ctx}>

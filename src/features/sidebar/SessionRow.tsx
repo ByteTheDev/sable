@@ -1,7 +1,9 @@
 import { createContext, memo, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 import { ContextMenu as RC, DropdownMenu as RM } from 'radix-ui';
-import type { SessionMeta } from '@shared/protocol';
+import { DEFAULT_ACCOUNT, type SessionMeta } from '@shared/protocol';
 import { PROVIDER_NAME, ProviderMark, StatusGlyph, type StatusTone } from '@/art/Logo';
+import { fieldBeat } from '@/art/events';
+import { SpareClock, spareLine } from '@/features/composer/SpareStrip';
 import { Icon, type IconName } from '@/icons';
 import { timeAgo } from '@/lib/format';
 import { interrupt, openSession, renameSession, updateSession } from '@/state/actions';
@@ -34,7 +36,7 @@ const useRenaming = (id: string) => useSyncExternalStore(subscribeRename, () => 
 export const SidebarRowContext = createContext<RowCtx>({ setRenaming, askDelete: () => {} });
 
 /** The fields a row shows. Anything else changing on a session (usage, model, options) must not re-render it. */
-const SHOWN = ['id', 'title', 'status', 'unread', 'pinned', 'archived', 'updatedAt', 'activity', 'lastError', 'provider', 'accountId'] as const;
+const SHOWN = ['id', 'title', 'status', 'unread', 'pinned', 'archived', 'updatedAt', 'activity', 'lastError', 'provider', 'accountId', 'spare'] as const;
 const sameShown = (a: SessionMeta, b: SessionMeta) => SHOWN.every((k) => a[k] === b[k]) && a.until?.phase === b.until?.phase;
 
 // ── what each row shows, from one store subscription for the whole list ──
@@ -203,6 +205,33 @@ export function statusLabel(s: SessionMeta): string | null {
 
 type RowMix = Mix;
 
+/** A chat waiting to start by itself (Spare), as its row's tooltip says it: "Continues at 14:00 on Ultra2". */
+function spareLabel(s: SessionMeta): string | null {
+  const wait = s.spare;
+  if (!wait) return null;
+  const accounts = useStore.getState().providers[s.provider]?.accounts;
+  const account = wait.accountId && accounts && accounts.length > 1 ? accountName(accounts.find((a) => a.id === (wait.accountId ?? DEFAULT_ACCOUNT))) : undefined;
+  const line = spareLine(wait, Date.now(), account);
+  return [line.lead, line.at, line.on && `on ${line.on}`].filter(Boolean).join(' ');
+}
+
+/**
+ * When a chat that waited starts by itself, the field answers from its row once. Only a start
+ * counts: the wait has to end with the chat working (a cancelled wait ends idle).
+ */
+function useStartBeat(row: { current: HTMLElement | null }, waiting: boolean, working: boolean) {
+  const waited = useRef(waiting);
+  useEffect(() => {
+    if (waiting) {
+      waited.current = true;
+      return;
+    }
+    if (!waited.current) return;
+    waited.current = false;
+    if (working) fieldBeat('pulse', row.current, 0.8);
+  }, [waiting, working, row]);
+}
+
 // ── row menu (dropdown and context menu share one list) ──
 
 interface MenuAction {
@@ -354,10 +383,14 @@ export const SessionRow = memo(function SessionRow({ id, enter, mix }: { id: str
   const [armed, setArmed] = useState(false);
   const [menuArmed, setMenuArmed] = useState(false);
   const [animateIn] = useState(!!enter);
+  const rowRef = useRef<HTMLDivElement>(null);
+  useStartBeat(rowRef, !!session?.spare, !!session && statusTone(session) === 'working');
   if (!session) return null;
-  const label = statusLabel(session);
-  const who = whoLabel(session, mix);
   const tone = statusTone(session);
+  // Waiting to start by itself (Spare): a small clock where the time or the status mark sits.
+  const waits = !!session.spare && (tone === 'idle' || tone === 'unread');
+  const label = statusLabel(session) ?? (waits ? spareLabel(session) : null);
+  const who = whoLabel(session, mix);
   const arm = armed ? undefined : () => setArmed(true);
   const openMenu = () => {
     setArmed(true);
@@ -383,6 +416,7 @@ export const SessionRow = memo(function SessionRow({ id, enter, mix }: { id: str
 
   return (
     <div
+      ref={rowRef}
       className={cx('srow', session.archived && 'srow-archived')}
       role="listitem"
       data-flip={id}
@@ -423,7 +457,11 @@ export const SessionRow = memo(function SessionRow({ id, enter, mix }: { id: str
         )}
         {!renaming && (
           <span className="srow-end">
-            {tone === 'idle' ? (
+            {waits ? (
+              <span className="srow-state" data-tone="spare">
+                <SpareClock size={12} />
+              </span>
+            ) : tone === 'idle' ? (
               <RowTime ts={session.updatedAt} />
             ) : (
               <span className="srow-state" data-tone={tone}>

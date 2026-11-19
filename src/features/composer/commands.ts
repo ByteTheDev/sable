@@ -8,6 +8,7 @@ import { fileIcon } from './file-icon';
 import { goHome, interrupt, openSettings, renameSession } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { untilCommand } from './until';
+import { spareCommand } from './spare';
 
 /** Slash commands Sable handles itself, before anything reaches the agent. */
 
@@ -104,6 +105,12 @@ export const APP_COMMANDS: AppCommand[] = [
     argumentHint: '<check> [--rounds n]',
     session: true,
     run: ({ sessionId }, arg) => sessionId && void untilCommand(sessionId, arg),
+  },
+  {
+    name: 'spare',
+    description: 'Send when an account has quota that would go unused',
+    argumentHint: '<message>',
+    run: ({ sessionId }, arg) => void spareCommand(sessionId, arg),
   },
   { name: 'stop', description: 'Stop the current turn', session: true, run: ({ sessionId }) => sessionId && void interrupt(sessionId) },
   { name: 'copy', description: 'Copy the last answer', session: true, run: ({ sessionId }) => sessionId && copyLastAnswer(sessionId) },

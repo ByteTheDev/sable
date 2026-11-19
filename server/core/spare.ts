@@ -1,0 +1,515 @@
+/**
+ * Spare: work that runs on quota that would otherwise expire. A chat can wait to start by itself:
+ *
+ * - `spare` (`/spare <message>`): its held messages start when an account of its agent has weekly
+ *   quota that will go unused at the current pace, room in its 5-hour window, and is under the cap
+ *   the person set. Credits and extra usage are never used, a reset grant is never spent, and at
+ *   most two such turns run at once.
+ * - `reset` ("Continue at reset" on a limit notice): the refused turn continues on its account once
+ *   the window that refused it resets.
+ *
+ * `planSpare` decides (pure, tested); `SpareWaits` keeps one timer to the next moment worth looking
+ * again while something waits, re-plans when limits, caps or turns change, reads an account's limits
+ * once more before a turn starts on it, and does nothing at all while nothing waits.
+ */
+import { DEFAULT_ACCOUNT, type AccountCap, type Attachment, type AuthState, type LimitPace, type NoticeItem, type ProviderId, type QueuedMessage, type RateLimit, type SpareWait } from '../../shared/protocol';
+import { capPercent, capReached, isAllModelsWeekly, isSessionWindow, windowForModel } from './limit-policy';
+import type { SessionRuntime } from './runtime';
+
+/** Spare turns that may run at once (the laptop). */
+export const SPARE_MAX_PARALLEL = 2;
+/** Points of the week that must be projected to go unused before Spare spends any of them. */
+export const SPARE_FLOOR = 10;
+/** The 5-hour window must be below this percent (or below the account's own 5-hour cap). */
+export const SPARE_SESSION_CEILING = 80;
+/** With nothing in particular to wait for, the planner looks again after this long. */
+export const SPARE_RECHECK_MS = 30 * 60_000;
+/** A spare wait never looks again sooner than this (a pinned reset may). */
+const MIN_WAKE_MS = 60_000;
+/** An account's limits are read again before a start at most this often. */
+const REFRESH_GAP_MS = 60_000;
+const HOUR = 3_600_000;
+
+// ───────────────────────────────── plan weights ─────────────────────────────────
+
+/**
+ * How big an account's plan is, in units of Pro, as the Usage page counts it
+ * (`src/features/usage/plans.ts`, kept equal by tests/spare.test.ts): Claude Max 5x 5, a premium
+ * Team seat 6.25, Ultra 10, Max 20x 20; 1 when not known (Codex weights are known only within one plan).
+ */
+export function planWeight(provider: ProviderId, auth: AuthState | undefined): number {
+  if (!auth?.loggedIn || provider === 'codex') return 1;
+  const method = (auth.method ?? '').toLowerCase().replace(/[\s_-]/g, '');
+  if (method === 'apikey' || method === 'console' || method === 'api') return 1;
+  const shown = (auth.plan ?? '').toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+plan$/, '').trim();
+  if (!shown || /api\s?key/.test(shown)) return 1;
+  const table: [RegExp, number, string][] = [
+    [/\bultra\b/, 10, 'ultra'],
+    [/20x/, 20, 'max20'],
+    [/\b5x/, 5, 'max5'],
+    [/\b(team|seat)\b.*\bstandard\b|\bstandard\b.*\b(team|seat)\b/, 1.25, 'team'],
+    [/\b(team|seat|premium)\b/, 6.25, 'team'],
+    [/\bmax\b/, 5, 'max'],
+    [/\bpro\b/, 1, 'pro'],
+  ];
+  const hit = table.find(([re]) => re.test(shown));
+  if (hit && hit[2] !== 'max') return hit[1];
+  const text = `${shown} ${(auth.planId ?? '').toLowerCase().replace(/[_-]+/g, ' ')}`;
+  return table.find(([re]) => re.test(text))?.[1] ?? 1;
+}
+
+// ───────────────────────────────── the planner ─────────────────────────────────
+
+/** One account of an agent as the planner sees it. */
+export interface SpareAccount {
+  id: string;
+  signedIn: boolean;
+  /** False: plan limits do not apply (an API key): never spare. */
+  planLimits?: boolean;
+  limits: RateLimit[];
+  /** Per window id, how fast it fills (the limits book). */
+  pace?: Record<string, LimitPace>;
+  cap?: AccountCap;
+  /** Plan size in units of Pro (`planWeight`). */
+  weight?: number;
+  /** The agent carries the account past a limit on credits or extra usage right now. */
+  onCredits?: boolean;
+}
+
+/** How much an account has to give a spare turn. */
+export interface SpareRoom {
+  /** It may take a spare turn now. */
+  ok: boolean;
+  /** Points of the week projected to go unused at its reset, within the account's weekly cap. */
+  unused: number;
+  /** Unused points times plan weight per hour left: quota that expires sooner wins. */
+  score: number;
+  /** Held only by windows that reset then (the 5-hour window, a full window): it may qualify at this time. */
+  until?: number;
+}
+
+const live = (limits: RateLimit[], now: number) => limits.filter((l) => !(l.resetsAt && l.resetsAt <= now));
+
+/** Where the window ends up at its reset at the current pace; undefined when that cannot be told. */
+function projected(l: RateLimit, p: LimitPace | undefined, now: number): number | undefined {
+  if (!p) return undefined;
+  if (p.atReset !== undefined) return p.atReset;
+  if (!l.resetsAt) return undefined;
+  return Math.min(100, l.percent + p.perHour * ((l.resetsAt - now) / HOUR));
+}
+
+/**
+ * What an account can give a spare turn of `model`; undefined when it cannot this week (signed out,
+ * no plan limits, no weekly figure or pace, too little projected to go unused, at its weekly cap, on credits).
+ */
+export function spareRoom(a: SpareAccount, now: number, model?: string, floor = SPARE_FLOOR): SpareRoom | undefined {
+  if (!a.signedIn || a.planLimits === false || a.onCredits) return undefined;
+  const windows = live(a.limits, now);
+  const week = windows.find(isAllModelsWeekly);
+  if (!week?.resetsAt) return undefined;
+  const end = projected(week, a.pace?.[week.id], now);
+  if (end === undefined) return undefined;
+  const ceiling = capPercent(a.cap?.weekly);
+  if (week.percent >= ceiling) return undefined;
+  const unused = Math.round((ceiling - Math.max(end, week.percent)) * 10) / 10;
+  if (unused < floor) return undefined;
+  if (capReached(a.limits, a.cap, model, now)?.kind === 'weekly') return undefined;
+  const score = (unused * (a.weight ?? 1)) / Math.max(1, (week.resetsAt - now) / HOUR);
+
+  // Windows that hold it for now, each until its reset.
+  const holds: (number | undefined)[] = [];
+  for (const l of windows) if (l.percent >= 100 && windowForModel(l, model)) holds.push(l.resetsAt);
+  const five = windows.find(isSessionWindow);
+  if (five && five.percent >= Math.min(SPARE_SESSION_CEILING, capPercent(a.cap?.session))) holds.push(five.resetsAt);
+  if (!holds.length) return { ok: true, unused, score };
+  const known = holds.every((t) => t !== undefined);
+  return { ok: false, unused, score, ...(known ? { until: Math.max(...(holds as number[])) } : {}) };
+}
+
+/** The latest reset among the account's windows that are still full for `model`; undefined when none is. */
+export function stillFull(limits: RateLimit[], now: number, model?: string): number | undefined {
+  const full = live(limits, now).filter((l) => l.percent >= 100 && windowForModel(l, model) && l.resetsAt);
+  return full.length ? Math.max(...full.map((l) => l.resetsAt!)) : undefined;
+}
+
+export interface SpareItem {
+  sessionId: string;
+  provider: ProviderId;
+  model?: string;
+  wait: SpareWait;
+  /** Its session is working or starting: nothing starts there now. */
+  busy?: boolean;
+}
+
+export interface SpareStart {
+  sessionId: string;
+  accountId: string;
+  reason: SpareWait['reason'];
+}
+
+export interface SparePlan {
+  start: SpareStart[];
+  /** What each waiting session waits for now: the expected time and account when known, else nothing. */
+  waits: Record<string, { at?: number; accountId?: string }>;
+  /** When to look again, while something still waits. */
+  wakeAt?: number;
+}
+
+export interface SpareInput {
+  now: number;
+  /** Each agent's accounts as last known. */
+  accounts: Partial<Record<ProviderId, SpareAccount[]>>;
+  items: SpareItem[];
+  /** Spare turns running now. */
+  running: number;
+  maxParallel?: number;
+  floor?: number;
+}
+
+/**
+ * Which waiting chats start now, and on which account. Pinned resets start at their time on their
+ * account (unless the account still reads full: then at that window's reset). Spare chats go first
+ * come, first served, each on the qualifying account whose unused quota expires soonest by plan
+ * weight, at most one new start per account and `maxParallel` spare turns in all.
+ */
+export function planSpare(input: SpareInput): SparePlan {
+  const { now, items, floor = SPARE_FLOOR } = input;
+  const out: SparePlan = { start: [], waits: {} };
+  const wake = (t: number | undefined) => {
+    if (t !== undefined && (out.wakeAt === undefined || t < out.wakeAt)) out.wakeAt = t;
+  };
+  const taken = new Set<string>();
+  let slots = (input.maxParallel ?? SPARE_MAX_PARALLEL) - input.running;
+  const queue = [...items].sort((a, b) => a.wait.since - b.wait.since);
+
+  for (const it of queue) {
+    if (it.wait.reason !== 'reset') continue;
+    const accountId = it.wait.accountId ?? DEFAULT_ACCOUNT;
+    const at = it.wait.at ?? now;
+    if (at > now) {
+      out.waits[it.sessionId] = { at, accountId };
+      wake(at);
+      continue;
+    }
+    // Due, but its chat is busy (a turn the person started): the turn's end looks again.
+    if (it.busy) {
+      out.waits[it.sessionId] = { at, accountId };
+      continue;
+    }
+    const acc = input.accounts[it.provider]?.find((a) => a.id === accountId);
+    const later = acc ? stillFull(acc.limits, now, it.model) : undefined;
+    if (later && later > now) {
+      out.waits[it.sessionId] = { at: later, accountId };
+      wake(later);
+      continue;
+    }
+    out.start.push({ sessionId: it.sessionId, accountId, reason: 'reset' });
+    taken.add(`${it.provider}:${accountId}`);
+  }
+
+  for (const it of queue) {
+    if (it.wait.reason !== 'spare') continue;
+    const rooms = (input.accounts[it.provider] ?? []).flatMap((a) => {
+      const r = spareRoom(a, now, it.model, floor);
+      return r ? [{ a, r }] : [];
+    });
+    const ready = rooms.filter((x) => x.r.ok && !taken.has(`${it.provider}:${x.a.id}`)).sort((x, y) => y.r.score - x.r.score);
+    if (ready.length && slots > 0 && !it.busy) {
+      out.start.push({ sessionId: it.sessionId, accountId: ready[0].a.id, reason: 'spare' });
+      taken.add(`${it.provider}:${ready[0].a.id}`);
+      slots--;
+      continue;
+    }
+    // An account with room waits only for a turn to end (or another round); otherwise the soonest
+    // window that holds one back says when to look again.
+    const soon = ready.length ? undefined : rooms.filter((x) => x.r.until !== undefined).sort((x, y) => x.r.until! - y.r.until! || y.r.score - x.r.score)[0];
+    out.waits[it.sessionId] = soon ? { at: soon.r.until, accountId: soon.a.id } : {};
+    if (soon) wake(Math.max(soon.r.until!, now + MIN_WAKE_MS));
+    wake(now + SPARE_RECHECK_MS);
+  }
+  return out;
+}
+
+// ───────────────────────────────── the waits ─────────────────────────────────
+
+export interface SpareHost {
+  now?: () => number;
+  sessions: () => Iterable<SessionRuntime>;
+  /** Loads a restored session's timeline and queue (where its held messages are). */
+  hydrate: (rt: SessionRuntime) => void;
+  /** The session is working, starting or sending. */
+  busy: (rt: SessionRuntime) => boolean;
+  accounts: (provider: ProviderId) => Promise<SpareAccount[]>;
+  /** Reads the account's limits again (no tokens). */
+  refresh: (provider: ProviderId, accountId: string) => Promise<void>;
+  /** Starts what waits: moves the session to `accountId` when needed, then sends its first held message (spare) or carries on with the refused turn (reset). */
+  start: (rt: SessionRuntime, accountId: string, wait: SpareWait) => Promise<void>;
+  /** Sends a held message now, as an ordinary send. */
+  send: (rt: SessionRuntime, q: QueuedMessage) => Promise<void>;
+  /** Stops a spare turn whose account went onto credits. */
+  stop: (rt: SessionRuntime, line: string) => Promise<void>;
+  accountLabel: (provider: ProviderId, accountId: string) => string;
+  log: (...args: unknown[]) => void;
+}
+
+/** The chats waiting to start by themselves, and the one timer that wakes them. */
+export class SpareWaits {
+  /** Sessions whose current turn Spare started: they count toward the parallel limit until it ends. */
+  readonly running = new Set<string>();
+  /** Sessions Spare is starting right now (their turn start is Spare's own, not the person's). */
+  private starting = new Set<string>();
+  private timer?: NodeJS.Timeout;
+  private poker?: NodeJS.Timeout;
+  private pokeAt = 0;
+  private planning = false;
+  private again = false;
+  private refreshedAt = new Map<string, number>();
+  private disposed = false;
+
+  constructor(private host: SpareHost) {}
+
+  private now() {
+    return this.host.now?.() ?? Date.now();
+  }
+
+  private waiting(): SessionRuntime[] {
+    return [...this.host.sessions()].filter((rt) => !!rt.meta.spare);
+  }
+
+  hasWaits() {
+    for (const rt of this.host.sessions()) if (rt.meta.spare) return true;
+    return false;
+  }
+
+  /** `/spare`: the message joins the queue, held back until the chat starts by itself. */
+  hold(rt: SessionRuntime, text: string, attachments?: Attachment[]): SpareWait {
+    this.host.hydrate(rt);
+    const q = rt.enqueue(text, attachments);
+    const cur = rt.meta.spare;
+    const wait: SpareWait = cur ? { ...cur, held: [...(cur.held ?? []), q.id] } : { reason: 'spare', since: this.now(), held: [q.id] };
+    rt.update({ spare: wait });
+    this.poke();
+    return wait;
+  }
+
+  /** "Continue at reset": the chat's last open limit notice continues on its account at its reset. */
+  atReset(rt: SessionRuntime): { ok: boolean; spare?: SpareWait; error?: string } {
+    this.host.hydrate(rt);
+    const notice = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
+    if (!notice) return { ok: false, error: 'There is no limit to wait for' };
+    const at = notice.limit!.resetsAt;
+    if (!at) return { ok: false, error: 'The reset time is not known yet' };
+    const held = rt.meta.spare?.held?.length ? { held: rt.meta.spare.held } : {};
+    const wait: SpareWait = { reason: 'reset', since: this.now(), at, accountId: notice.limit!.accountId ?? rt.meta.accountId ?? DEFAULT_ACCOUNT, ...held };
+    rt.update({ spare: wait });
+    this.poke();
+    return { ok: true, spare: wait };
+  }
+
+  /** Stops waiting. Held messages stay in the queue, to send, edit or remove by hand. */
+  cancel(rt: SessionRuntime): boolean {
+    if (!rt.meta.spare) return false;
+    rt.update({ spare: null });
+    this.poke();
+    return true;
+  }
+
+  /** "Start now": the first held message goes out as an ordinary send, and the wait ends. */
+  async startNow(rt: SessionRuntime): Promise<boolean> {
+    const wait = rt.meta.spare;
+    if (!wait) return false;
+    this.host.hydrate(rt);
+    const id = wait.held?.find((h) => rt.queue.some((q) => q.id === h));
+    rt.update({ spare: null });
+    this.poke();
+    const q = id ? rt.takeQueued(id) : undefined;
+    if (q) await this.host.send(rt, q);
+    return !!q;
+  }
+
+  /** Queued messages a turn's end must leave where they are. */
+  held(rt: SessionRuntime): Set<string> {
+    return new Set(rt.meta.spare?.held ?? []);
+  }
+
+  /** The queue changed by hand (a held message sent, edited or removed): the wait lets go of what left. */
+  queueChanged(rt: SessionRuntime) {
+    const wait = rt.meta.spare;
+    if (!wait?.held?.length) return;
+    const held = wait.held.filter((h) => rt.queue.some((q) => q.id === h));
+    if (held.length === wait.held.length) return;
+    if (wait.reason === 'spare' && !held.length) {
+      rt.update({ spare: null });
+      this.poke();
+    } else rt.update({ spare: { ...wait, held } });
+  }
+
+  turnStarted(rt: SessionRuntime) {
+    if (this.starting.has(rt.id)) return;
+    // Continued by hand: waiting for the reset is over (held messages go on with the queue).
+    if (rt.meta.spare?.reason === 'reset') {
+      rt.update({ spare: null });
+      this.poke();
+    }
+  }
+
+  turnEnded(rt: SessionRuntime) {
+    if (this.running.delete(rt.id) || this.hasWaits()) this.poke(400);
+  }
+
+  /** An account's limits changed: a spare turn on it that went onto credits stops; waits are planned again. */
+  limitsChanged(provider: ProviderId, accountId: string, onCredits: boolean) {
+    if (onCredits) {
+      for (const rt of this.host.sessions()) {
+        if (!this.running.has(rt.id) || !rt.turnActive || rt.meta.provider !== provider || (rt.meta.accountId ?? DEFAULT_ACCOUNT) !== accountId) continue;
+        this.running.delete(rt.id);
+        void this.host.stop(rt, `Stopped at the limit of ${this.host.accountLabel(provider, accountId)}`).catch((err) => this.host.log('spare stop failed', (err as Error).message));
+      }
+    }
+    if (this.hasWaits()) this.poke(1500);
+  }
+
+  /** Plans again after `delay` (coalesced: the earliest asked wins). */
+  poke(delay = 0) {
+    if (this.disposed) return;
+    const at = this.now() + delay;
+    if (this.poker && this.pokeAt <= at) return;
+    clearTimeout(this.poker);
+    this.pokeAt = at;
+    this.poker = setTimeout(() => {
+      this.poker = undefined;
+      void this.run();
+    }, delay);
+    this.poker.unref?.();
+  }
+
+  /** Plans now and starts what is due; resolves when that round is done (tests). */
+  async run(): Promise<void> {
+    if (this.disposed) return;
+    if (this.planning) {
+      this.again = true;
+      return;
+    }
+    this.planning = true;
+    try {
+      for (const rt of this.waiting()) {
+        this.host.hydrate(rt);
+        this.queueChanged(rt);
+      }
+      const waits = this.waiting();
+      if (!waits.length) return this.arm(undefined);
+      const plan = await this.plan(waits);
+      this.show(waits, plan);
+      for (const s of plan.start) {
+        const rt = waits.find((r) => r.id === s.sessionId);
+        if (rt) await this.begin(rt, s);
+      }
+      this.arm(this.hasWaits() ? (plan.wakeAt ?? this.now() + SPARE_RECHECK_MS) : undefined);
+    } catch (err) {
+      this.host.log('spare planning failed', (err as Error).message);
+      this.arm(this.now() + SPARE_RECHECK_MS);
+    } finally {
+      this.planning = false;
+      if (this.again) {
+        this.again = false;
+        void this.run();
+      }
+    }
+  }
+
+  private items(waits: SessionRuntime[]): SpareItem[] {
+    return waits.map((rt) => ({
+      sessionId: rt.id,
+      provider: rt.meta.provider,
+      model: rt.meta.model || undefined,
+      wait: rt.meta.spare!,
+      busy: this.host.busy(rt) || this.starting.has(rt.id),
+    }));
+  }
+
+  private async plan(waits: SessionRuntime[]): Promise<SparePlan> {
+    const providers = [...new Set(waits.map((rt) => rt.meta.provider))];
+    const accounts: Partial<Record<ProviderId, SpareAccount[]>> = {};
+    for (const p of providers) accounts[p] = await this.host.accounts(p).catch(() => []);
+    return planSpare({ now: this.now(), accounts, items: this.items(waits), running: this.running.size + this.starting.size });
+  }
+
+  /** What each chat waits for, as its line says it (only when that changed). */
+  private show(waits: SessionRuntime[], plan: SparePlan) {
+    for (const rt of waits) {
+      const w = plan.waits[rt.id];
+      const cur = rt.meta.spare;
+      if (!w || !cur) continue;
+      if (cur.at === w.at && cur.accountId === w.accountId) continue;
+      if (cur.reason === 'reset' && !w.at) continue;
+      const next: SpareWait = { ...cur };
+      if (w.at === undefined) delete next.at;
+      else next.at = w.at;
+      if (w.accountId === undefined) delete next.accountId;
+      else next.accountId = w.accountId;
+      rt.update({ spare: next });
+    }
+  }
+
+  /** Reads the account's limits once more, checks the start still holds, and starts it. */
+  private async begin(rt: SessionRuntime, s: SpareStart) {
+    const provider = rt.meta.provider;
+    this.starting.add(rt.id);
+    try {
+      const key = `${provider}:${s.accountId}`;
+      if (this.now() - (this.refreshedAt.get(key) ?? 0) >= REFRESH_GAP_MS) {
+        this.refreshedAt.set(key, this.now());
+        await this.host.refresh(provider, s.accountId).catch((err) => this.host.log('spare: limits read failed', (err as Error).message));
+      }
+      const wait = rt.meta.spare;
+      if (!wait || this.disposed) return;
+      // The account as just read must still take it (another may lead now: this one is still fine).
+      const fresh = (await this.host.accounts(provider).catch(() => [] as SpareAccount[])).filter((a) => a.id === s.accountId);
+      const item: SpareItem = { sessionId: rt.id, provider, model: rt.meta.model || undefined, wait, busy: this.host.busy(rt) };
+      const again = planSpare({ now: this.now(), accounts: { [provider]: fresh }, items: [item], running: this.running.size + this.starting.size - 1 });
+      if (!again.start.some((x) => x.sessionId === rt.id && x.accountId === s.accountId)) {
+        this.show([rt], again);
+        return;
+      }
+      this.running.add(rt.id);
+      try {
+        await this.host.start(rt, s.accountId, wait);
+      } catch (err) {
+        this.running.delete(rt.id);
+        throw err;
+      }
+      // On its way: the chat no longer waits (any other held messages go on with the queue).
+      if (rt.meta.spare) rt.update({ spare: null });
+    } catch (err) {
+      this.host.log('spare start failed', (err as Error).message);
+      rt.notice('error', 'Could not start the waiting message', (err as Error).message);
+      if (rt.meta.spare) rt.update({ spare: null });
+    } finally {
+      this.starting.delete(rt.id);
+    }
+  }
+
+  /** The one timer: to `at`, re-armed in steps over long waits (a laptop may sleep through one). */
+  private arm(at: number | undefined) {
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    if (at === undefined || this.disposed) return;
+    const ms = Math.min(Math.max(1000, at - this.now() + 250), 6 * HOUR);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.run();
+    }, ms);
+    this.timer.unref?.();
+  }
+
+  /** Whether the timer is armed (tests). */
+  get armed() {
+    return !!this.timer;
+  }
+
+  dispose() {
+    this.disposed = true;
+    clearTimeout(this.timer);
+    clearTimeout(this.poker);
+  }
+}

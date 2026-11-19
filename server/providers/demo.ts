@@ -159,15 +159,46 @@ export class DemoProvider implements Provider {
     return capabilities();
   }
 
-  /** Resets this demo account spent (kept beside its pretend sign-in); the default account has none. */
+  /**
+   * Resets this demo account spent (kept beside its pretend sign-in); the default account has none.
+   * `at` is when its windows last started over: a spent reset, or a window end set with `limitResetIn` that has passed.
+   */
   private resetState(): { used: number; at?: number } {
     if (!this.authFile) return { used: 0 };
+    const end = this.windowEnd();
+    const passed = end !== undefined && end <= Date.now() ? end : undefined;
     try {
       const r = JSON.parse(readFileSync(path.join(path.dirname(this.authFile), 'demo-resets.json'), 'utf8')) as { used?: number; at?: number };
-      return { used: Math.max(0, Number(r.used) || 0), at: typeof r.at === 'number' ? r.at : undefined };
+      const at = typeof r.at === 'number' ? r.at : undefined;
+      return { used: Math.max(0, Number(r.used) || 0), at: passed && (!at || passed > at) ? passed : at };
     } catch {
-      return { used: 0 };
+      return { used: 0, at: passed };
     }
+  }
+
+  /** Development only: when this account's full windows reset, as set with `limitResetIn` (they never do by themselves). */
+  private windowEnd(): number | undefined {
+    if (!this.authFile) return undefined;
+    try {
+      const at = (JSON.parse(readFileSync(path.join(path.dirname(this.authFile), 'demo-window.json'), 'utf8')) as { at?: number }).at;
+      return typeof at === 'number' ? at : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Development only (`demo.limitResetIn`): the account's full windows reset `ms` from now; after that it is fresh, as after a reset. */
+  limitResetIn(ms: number) {
+    if (!this.authFile) return;
+    writeFileSync(path.join(path.dirname(this.authFile), 'demo-window.json'), JSON.stringify({ at: Date.now() + ms }));
+    void this.limits();
+  }
+
+  /** The windows as they stand now: full ones end when `limitResetIn` said, if it did. */
+  private windowsNow(profile: DemoLimitProfile, now = Date.now()): RateLimit[] {
+    const end = this.windowEnd();
+    const limits = rateLimits(now, profile);
+    return end && end > now ? limits.map((l) => (l.percent >= 100 ? { ...l, resetsAt: end } : l)) : limits;
   }
 
   /** The limit state a turn meets: an account at its cap is free again after a reset. */
@@ -181,7 +212,7 @@ export class DemoProvider implements Provider {
     if (!profile) return [];
     const now = Date.now();
     const state = this.resetState();
-    const limits = state.at ? freshLimits(rateLimits(state.at, profile), state.at) : rateLimits(now, profile);
+    const limits = state.at ? freshLimits(rateLimits(state.at, profile), state.at) : this.windowsNow(profile, now);
     const granted = this.authFile ? demoResetCredits(profile) : 0;
     // After a reset the account is off credits again (said explicitly: the limits book keeps what a read leaves out).
     const meta: LimitsMeta = { planLimits: profile !== 'none', ...(state.at ? { credits: { has: false } } : demoCredits(profile, limits)) };
@@ -221,7 +252,7 @@ export class DemoProvider implements Provider {
     rt.update(patch);
     if (resumeId && opts.loadTranscript) rt.reset(transcript(rt, resumeId));
     this.ctx.log(`demo session ${rt.id} opened (${resumeId ? 'resumed' : 'new'})`);
-    const session = new DemoSession(rt, this.speed, this.ctx, () => this.turnProfile());
+    const session = new DemoSession(rt, this.speed, this.ctx, () => this.turnProfile(), (profile) => this.windowsNow(profile));
     if (rt.meta.options) void session.setOptions(rt.meta.options);
     return session;
   }
@@ -294,6 +325,7 @@ class DemoSession implements ProviderSession {
     private speed: number,
     private ctx: ProviderContext,
     private limitProfile: () => DemoLimitProfile | undefined = () => undefined,
+    private windows: (profile: DemoLimitProfile) => RateLimit[] = (profile) => rateLimits(Date.now(), profile),
   ) {
     this.model = rt.meta.model;
     this.effort = rt.meta.effort;
@@ -346,7 +378,7 @@ class DemoSession implements ProviderSession {
     // An account at its cap refuses the turn the way a real agent does: the limit is reported, nothing runs.
     if (this.limitProfile() === 'cap') {
       await s.sleep(300).catch(() => {});
-      const limits = rateLimits(Date.now(), 'cap');
+      const limits = this.windows('cap');
       this.ctx.emit({ type: 'limits.updated', provider: 'demo', limits, meta: { planLimits: true } });
       const full = limits.find((l) => l.percent >= 100);
       this.rt.add<NoticeItem>({ type: 'notice', variant: 'error', text: 'You have reached your usage limit.', limit: { resetsAt: full?.resetsAt, window: full?.label } });

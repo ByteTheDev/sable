@@ -27,6 +27,7 @@ import { ModelEffort } from './Thinking';
 import { Highlight } from './Highlight';
 import { NO_QUEUE, QueueTray } from './QueueTray';
 import { UntilStrip } from './UntilStrip';
+import { SpareStrip } from './SpareStrip';
 import { SendKey } from './SendKey';
 import { SuggestMenu } from './SuggestMenu';
 import { UltraEdge } from './Ultracode';
@@ -858,6 +859,7 @@ ${cur}` : draft.text, attachments: draft.attachments });
       )}
 
       {variant === 'session' && sessionId && <UntilStrip sessionId={sessionId} />}
+      {variant === 'session' && sessionId && <SpareStrip sessionId={sessionId} />}
       {variant === 'session' && sessionId && <QueueTray sessionId={sessionId} queue={queue} running={busy} steerable={steerable} onEdit={editQueued} onFocusComposer={focus} />}
 
       <div
