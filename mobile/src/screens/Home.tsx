@@ -253,22 +253,24 @@ export function Home({ under }: { under: boolean }) {
                 const open = more[g.key] || !!q;
                 const shown = open ? g.sessions : g.sessions.slice(0, PER_FOLDER);
                 return (
-                  <section key={g.key} className="group">
+                  <motion.section key={g.key} className="group" layout="position" transition={SNAP}>
                     <h2 className="group-name">
                       <span>{g.name}</span>
                       {g.sessions.length > 1 && <span className="group-count num">{g.sessions.length}</span>}
                     </h2>
                     <ul className="rows">
-                      {shown.map((s) => (
-                        <Row key={s.id} s={s} leaving={leaving.has(s.id)} onLeft={archived} onMenu={(rect) => setPeek({ id: s.id, rect })} />
-                      ))}
+                      <AnimatePresence initial={false}>
+                        {shown.map((s) => (
+                          <Row key={s.id} s={s} leaving={leaving.has(s.id)} onLeft={archived} onMenu={(rect) => setPeek({ id: s.id, rect })} />
+                        ))}
+                      </AnimatePresence>
                     </ul>
                     {g.sessions.length > shown.length && (
                       <button type="button" className="more-row" onClick={() => (haptic('tap'), setMore((m) => ({ ...m, [g.key]: true })))}>
                         {g.sessions.length - shown.length} more
                       </button>
                     )}
-                  </section>
+                  </motion.section>
                 );
               })
             )}
@@ -455,7 +457,15 @@ const Row = memo(function Row({ s, leaving, onLeft, onMenu }: { s: SessionMeta; 
   }, [leaving]);
 
   return (
-    <li ref={li}>
+    <motion.li
+      ref={li}
+      layout="position"
+      initial={{ height: 0, opacity: 0 }}
+      animate={{ height: 'auto', opacity: 1 }}
+      exit={{ height: 0, opacity: 0, transition: { duration: 0.2 } }}
+      transition={SNAP}
+      style={{ overflow: 'hidden' }}
+    >
       <button
         type="button"
         className="row"
@@ -478,7 +488,7 @@ const Row = memo(function Row({ s, leaving, onLeft, onMenu }: { s: SessionMeta; 
           <span className="row-time num">{timeAgo(s.updatedAt, now)}</span>
         </span>
       </button>
-    </li>
+    </motion.li>
   );
 });
 

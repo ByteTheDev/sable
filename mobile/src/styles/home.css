@@ -522,8 +522,8 @@
   left: 12px;
   right: 12px;
   bottom: calc(var(--sab) + 12px);
-  padding: 6px 6px 6px 18px;
-  border-radius: 28px;
+  padding: 6px 6px 6px 8px;
+  border-radius: 26px;
   background: var(--glass);
   -webkit-backdrop-filter: var(--blur);
   backdrop-filter: var(--blur);
@@ -545,7 +545,6 @@
 }
 
 .home-dock[data-open] {
-  padding-left: 16px;
   background-color: var(--glass-up);
 }
 
@@ -560,16 +559,27 @@
   background: rgb(0 0 0 / 0.55);
 }
 
+/* the words: the agent's mark and the field, the same in both states (the key keeps its corner) */
 .dock-line {
   display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  min-height: 46px;
+  align-items: flex-start;
+  gap: 4px;
+  padding-right: 46px;
 }
 
-.dock-mark {
-  align-self: center;
-  margin-right: -2px;
+.dock-agent {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 46px;
+  border-radius: 14px;
+  transition: background-color 100ms, transform 100ms;
+}
+
+.home-dock[data-open] .dock-agent:active {
+  background: var(--fill-2);
+  transform: scale(0.94);
 }
 
 .dock-input {
@@ -596,17 +606,63 @@
   color: var(--text-4);
 }
 
-.dock-chips {
+/* open: where the chat starts and how the agent works, in a row under the words */
+.dock-bar-wrap {
   overflow: hidden;
-  margin: 0 -2px 0 -10px;
 }
 
-.dock-chips .chips {
-  padding: 2px 0 4px;
+.dock-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 46px;
+  margin-top: 2px;
+  padding-right: 46px;
 }
 
-.home-dock .send {
-  margin-bottom: 2px;
+.where-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 42%;
+  height: 40px;
+  padding: 0 12px 0 11px;
+  border-radius: var(--r-pill);
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: var(--t-sm);
+  font-weight: 540;
+  white-space: nowrap;
+  color: var(--text);
+  transition: background-color 100ms, transform 100ms;
+}
+
+.where-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.where-chip svg {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.where-chip:active {
+  background: var(--fill-3);
+  transform: scale(0.96);
+}
+
+.dock-bar .setup-chip {
+  flex-shrink: 1;
+}
+
+/* the key: pinned to the bar's lower right corner, so it never moves when the bar opens */
+.home-dock .dock-send {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
 }
 
 /* ── a long press: the chat lifted out, its actions beside it ── */

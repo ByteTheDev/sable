@@ -1,4 +1,5 @@
 import { Marked, type Tokens } from 'marked';
+import { ICON_DATA } from '@m/ui/icon-data';
 
 /**
  * Markdown for answers. Raw HTML is shown as text (answers come from agents: nothing in them may
@@ -9,6 +10,24 @@ import { Marked, type Tokens } from 'marked';
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 const safeHref = (href: string) => (/^(https?:|mailto:)/i.test(href.trim()) ? href.trim() : '');
+
+/** Extensions that make `name.ext` a file even without a folder in front (`res.status` stays code). */
+const FILE_EXT = new Set('ts tsx js jsx mjs cjs json jsonc md mdx css scss less html htm py rs go java kt kts swift c h cc cpp hpp cs rb php sh ps1 bat yml yaml toml lock txt log sql vue svelte xml gradle apk aab zip tar gz png jpg jpeg gif webp svg pdf env ini cfg conf dart lua csv tsv wasm'.split(' '));
+const FILE_RE = /^((?:[A-Za-z]:)?(?:[\w@.+~-]*[\\/])*)([\w@+~-][\w@.+~-]*\.([A-Za-z][A-Za-z0-9]{0,7}))(:\d+(?:[:-]\d+)?)?$/;
+const FILE_ICON = `<svg viewBox="0 0 256 256" aria-hidden="true">${ICON_DATA.file[0]}</svg>`;
+
+/** `src/server/admin.ts:42` as a chip: the file's name (and line); a tap copies the whole path. */
+function fileChip(text: string): string | null {
+  const t = text.trim();
+  if (t.length > 240 || /\s/.test(t)) return null;
+  const m = FILE_RE.exec(t);
+  if (!m) return null;
+  const [, dir, name, ext, line] = m;
+  if (!dir && !FILE_EXT.has(ext.toLowerCase())) return null;
+  return `<span class="md-file" role="button" tabindex="0" data-path="${esc(t)}" aria-label="${esc(name)}, copy path">${FILE_ICON}<span class="md-file-name">${esc(name)}</span>${line ? `<span class="md-file-line">${esc(line)}</span>` : ''}</span>`;
+}
+
+const unescape = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 
 const md = new Marked({
   gfm: true,
@@ -25,6 +44,10 @@ const md = new Marked({
     image({ href, text }: Tokens.Image) {
       const h = safeHref(href);
       return h ? `<a href="${esc(h)}" target="_blank" rel="noopener noreferrer">${esc(text || 'Image')}</a>` : esc(text || '');
+    },
+    codespan({ text }: Tokens.Codespan) {
+      // marked hands the span escaped: read it back as plain text for the file test.
+      return fileChip(unescape(text)) ?? `<code>${text}</code>`;
     },
     code({ text, lang }: Tokens.Code) {
       const l = (lang ?? '').trim().split(/\s+/)[0].toLowerCase();
@@ -61,7 +84,8 @@ export function renderMarkdown(text: string, streaming = false): string {
   }
   let html: string;
   try {
-    html = md.parse(text, { async: false }) as string;
+    // Tables scroll sideways inside a card of their own.
+    html = (md.parse(text, { async: false }) as string).replace(/<table>/g, '<div class="md-table"><table>').replace(/<\/table>/g, '</table></div>');
   } catch {
     html = `<p>${esc(text)}</p>`;
   }

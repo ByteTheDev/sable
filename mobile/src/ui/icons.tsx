@@ -60,6 +60,18 @@ export const ICON_NAMES = {
   unpin: 'PushPinSlash',
   sliders: 'SlidersHorizontal',
   files: 'Files',
+  download: 'DownloadSimple',
+  share: 'Export',
+  fileZip: 'FileZip',
+  fileImage: 'FileImage',
+  fileCode: 'FileCode',
+  filePdf: 'FilePdf',
+  android: 'AndroidLogo',
+  folderPlus: 'FolderPlus',
+  checks: 'Checks',
+  arrowRight: 'ArrowRight',
+  updown: 'CaretUpDown',
+  speed: 'Gauge',
 } as const;
 
 
@@ -99,5 +111,6 @@ export const TOOL_ICON: Record<ToolKind, IconName> = {
   widget: 'cube',
   browser: 'globe',
   device: 'phone',
+  share: 'share',
   other: 'tool',
 };

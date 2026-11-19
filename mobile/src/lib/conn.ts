@@ -106,6 +106,14 @@ class Conn {
   state: ConnState = 'unpaired';
   pairing: Pairing | null = null;
   error?: string;
+
+  /** A plain HTTP address on the desktop's phone endpoint, at the host last reached (a shared file's download link). */
+  httpUrl(path: string): string | null {
+    const p = this.pairing;
+    const host = p?.lastHost ?? p?.hosts[0];
+    if (!p || !host) return null;
+    return `http://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}:${p.port}${path}`;
+  }
   private ws?: WebSocket;
   private nextId = 1;
   private pending = new Map<number, Pending>();

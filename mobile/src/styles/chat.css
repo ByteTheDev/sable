@@ -267,53 +267,41 @@
   color: var(--text-3);
 }
 
-/* ── a finished turn's work: one quiet line ── */
-.steps {
+/* ── the work behind a segment: one line (live: a capsule that stays under the header; settled: a quiet summary) ── */
+.seg-work {
   display: flex;
   flex-direction: column;
+  gap: 14px;
 }
 
-.steps-sum {
+.work {
   display: flex;
+  min-width: 0;
+}
+
+.work-line {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  width: calc(100% + 16px);
-  min-height: 42px;
-  margin: 0 -8px;
-  padding: 0 10px 0 8px;
-  border-radius: 14px;
+  gap: 7px;
+  min-width: 0;
+  max-width: calc(100% + 20px);
+  /* the same height live and settled: a turn that ends moves nothing under it */
+  height: 42px;
+  margin: 0 -10px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--r-pill);
   font-size: var(--t-sm);
-  text-align: left;
   color: var(--text-3);
-  transition: background-color 100ms;
+  text-align: left;
+  transition: background-color 100ms, transform 100ms;
 }
 
-.steps-sum:active {
-  background: var(--fill-1);
+.work-line:not(:disabled):active {
+  background-color: var(--fill-2);
+  transform: scale(0.98);
 }
 
-.glyphs {
-  display: flex;
-  flex-shrink: 0;
-  padding-left: 2px;
-}
-
-.glyphs i {
-  display: grid;
-  place-items: center;
-  width: 25px;
-  height: 25px;
-  border-radius: 50%;
-  background: var(--ink-3);
-  box-shadow: 0 0 0 2px var(--bg), var(--edge);
-  color: var(--text-2);
-}
-
-.glyphs i + i {
-  margin-left: -7px;
-}
-
-.steps-label {
+.work-title {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -322,144 +310,134 @@
   color: var(--text-2);
 }
 
-.steps-meta {
-  color: var(--text-4);
-  white-space: nowrap;
-}
-
-.steps-sum .diffstat {
-  margin-left: 2px;
-}
-
-.steps-caret {
-  margin-left: auto;
-  color: var(--text-4);
+.work-meta {
   flex-shrink: 0;
-  transition: transform 220ms var(--ease-out);
-}
-
-.steps[data-open] .steps-caret {
-  transform: rotate(180deg);
-}
-
-.steps-list {
-  overflow: hidden;
-}
-
-.steps-card {
-  margin-top: 6px;
-  padding: 6px;
-  border-radius: 20px;
-  background: var(--grain-bg), var(--card);
-  box-shadow: var(--edge), var(--lift);
-}
-
-/* ── a running turn: the live line and the trail of steps before it ── */
-.tail {
-  display: flex;
-  flex-direction: column;
-}
-
-.tail-line {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: calc(100% + 16px);
-  min-height: 44px;
-  margin: 0 -8px;
-  padding: 0 10px;
-  border-radius: 14px;
-  text-align: left;
-  overflow: hidden;
-}
-
-.tail-line:active {
-  background: var(--fill-1);
-}
-
-.tail-label {
-  flex: 1;
-  min-width: 0;
-  font-size: 14.5px;
-  font-weight: 560;
-  color: var(--text);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tail[data-waiting] .tail-label {
-  color: var(--amber);
-}
-
-.tail-count {
-  font-size: var(--t-xs);
-  color: var(--text-4);
-  flex-shrink: 0;
-}
-
-.tail-trail {
-  position: relative;
-  margin: 0 0 0 6px;
-  padding-left: 12px;
-}
-
-.tail-trail::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 2px;
-  bottom: 14px;
-  width: 1px;
-  background: linear-gradient(var(--line-3), rgb(255 255 255 / 0));
-}
-
-.tail-trail .step-line {
-  min-height: 34px;
   color: var(--text-3);
 }
 
-/* a step joins the trail from the live line above it; the words of a new step rise into the line */
-.trail-item {
-  animation: trail-in 260ms var(--ease-out) both;
+.work-meta::before {
+  content: '·';
+  margin-right: 7px;
+  color: var(--text-4);
 }
 
-.tail-label {
-  animation: label-in 220ms var(--ease-out) both;
+.work-line .diffstat {
+  flex-shrink: 0;
+  margin-left: 3px;
 }
 
-@keyframes trail-in {
+.work-caret {
+  flex-shrink: 0;
+  margin-left: 1px;
+  color: var(--text-4);
+  transition: transform 240ms var(--ease-out);
+}
+
+.work[data-open] .work-caret {
+  transform: rotate(180deg);
+}
+
+.work[data-live] {
+  position: sticky;
+  top: calc(var(--sat) + var(--bar-h) + 2px);
+  z-index: 3;
+}
+
+.work[data-live] {
+  display: block;
+}
+
+/* live: one full-width capsule, so a new title of another length never moves its edge or its figures */
+.work[data-live] .work-line {
+  display: flex;
+  gap: 9px;
+  width: calc(100% + 12px);
+  max-width: none;
+  margin: 0 -6px;
+  padding: 0 15px 0 13px;
+  background: var(--grain-bg), rgb(21 21 24 / 0.95);
+  box-shadow: var(--edge), 0 14px 30px -16px rgb(0 0 0 / 0.95);
+}
+
+.work[data-live] .work-title {
+  flex: 1;
+  font-weight: 560;
+  color: var(--text);
+}
+
+.work-title.shimmer {
+  animation: label-in 240ms var(--ease-out) both, shimmer 2.4s linear infinite;
+}
+
+.work[data-waiting] .work-title {
+  color: var(--amber);
+  animation: label-in 240ms var(--ease-out) both;
+}
+
+.work-ind {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* the live capsule settles into the quiet summary: its ink thins away, the words step back */
+.work[data-landed] .work-line {
+  animation: work-land 560ms var(--ease-out) both;
+}
+
+.work[data-landed] .work-title {
+  animation: work-title-land 560ms var(--ease-out) both;
+}
+
+@keyframes work-land {
   from {
-    opacity: 0;
-    transform: translateY(-8px);
+    background-color: rgb(21 21 24 / 0.95);
+  }
+}
+
+@keyframes work-title-land {
+  from {
+    color: var(--text);
   }
 }
 
 @keyframes label-in {
   from {
     opacity: 0;
-    transform: translateY(7px);
+    transform: translateY(6px);
   }
 }
 
-.tail-trail > .trail-item:first-child .step-line {
-  color: var(--text-2);
-}
-
-.tail-trail .step-text {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+/* a run of steps, opened in its place between the texts */
+.run {
   overflow: hidden;
+}
+
+.run-card {
+  padding: 4px 6px;
+  border-radius: var(--r-lg);
+  background: var(--grain-bg), var(--card);
+  box-shadow: var(--edge);
+}
+
+.run-card > .block {
+  margin: 4px -2px;
+}
+
+.step-note {
   margin-left: 37px;
+  color: var(--text-3);
 }
 
-.tail[data-open] .tail-trail .step-text {
-  display: block;
-}
-
-.tail[data-open] .tail-trail .step-line {
-  color: var(--text-2);
+.turn-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--t-sm);
+  color: var(--text-3);
 }
 
 /* ── steps ── */
@@ -851,6 +829,18 @@
   overflow-wrap: anywhere;
 }
 
+/* a report along the way: one tone back, a step smaller */
+.md[data-tone='mid'] {
+  font-size: 15px;
+  line-height: 1.58;
+  color: var(--text-2);
+}
+
+.md[data-tone='mid'] code,
+.md[data-tone='mid'] .md-file {
+  color: var(--text-2);
+}
+
 .md > :first-child {
   margin-top: 0;
 }
@@ -871,38 +861,103 @@
 .md h2,
 .md h3,
 .md h4 {
-  margin: 24px 0 9px;
+  margin: 26px 0 10px;
   font-weight: 640;
-  line-height: 1.28;
-  letter-spacing: -0.016em;
+  line-height: 1.26;
+  letter-spacing: -0.018em;
+  color: var(--text);
 }
 
 .md h1 {
-  font-size: 22px;
+  font-size: 21px;
 }
 
 .md h2 {
-  font-size: 19px;
+  font-size: 18.5px;
 }
 
-.md h3,
+.md h3 {
+  margin-top: 22px;
+  font-size: 16px;
+  font-weight: 620;
+}
+
 .md h4 {
-  font-size: 16.5px;
+  margin-top: 18px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-2);
 }
 
 .md ul,
 .md ol {
-  margin: 0 0 13px;
+  margin: 0 0 14px;
   padding-left: 22px;
 }
 
+.md ul {
+  list-style: none;
+  padding-left: 19px;
+}
+
 .md li {
-  margin: 5px 0;
+  position: relative;
+  margin: 6px 0;
   padding-left: 2px;
 }
 
-.md li::marker {
+.md ul > li::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 0.68em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.md ul ul > li::before {
+  background: none;
+  box-shadow: inset 0 0 0 1.25px var(--text-3);
+}
+
+.md ol > li::marker {
   color: var(--text-3);
+  font-size: 0.92em;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+}
+
+.md li > ul,
+.md li > ol {
+  margin: 4px 0 2px;
+}
+
+.md li > p {
+  margin-bottom: 6px;
+}
+
+/* a task list: square marks, ivory once done */
+.md li:has(> input[type='checkbox'])::before {
+  display: none;
+}
+
+.md li > input[type='checkbox'] {
+  appearance: none;
+  position: absolute;
+  left: -20px;
+  top: 0.34em;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1.5px var(--text-4);
+}
+
+.md li > input[type='checkbox']:checked {
+  background: var(--text) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.4l2.6 2.5L12 5.5' fill='none' stroke='%23070708' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 13px no-repeat;
+  box-shadow: none;
 }
 
 .md a {
@@ -914,10 +969,54 @@
 
 .md code {
   font-family: var(--mono);
-  font-size: 0.85em;
+  font-size: 0.8em;
   padding: 2px 5px;
   border-radius: 6px;
   background: var(--fill-2);
+  color: var(--text);
+}
+
+/* a file named in the text: its name in a chip; a tap copies the path */
+.md-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0 7px 0 5px;
+  border-radius: 7px;
+  background: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 0.88em;
+  font-weight: 540;
+  line-height: 1.62;
+  vertical-align: 0.5px;
+  white-space: nowrap;
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color 100ms;
+}
+
+.md-file svg {
+  flex-shrink: 0;
+  width: 1.08em;
+  height: 1.08em;
+  fill: currentColor;
+  color: var(--text-3);
+}
+
+.md-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.md-file-line {
+  margin-left: -4px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.md-file:active {
+  background: var(--fill-4);
 }
 
 .md-code {
@@ -943,6 +1042,10 @@
 .md-pre {
   margin: 0;
   padding: 13px 15px;
+  /* the block's own line box at the code's size (a 16px strut made every line 26px tall) */
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -954,8 +1057,8 @@
 .md-pre code {
   padding: 0;
   background: none;
-  font-size: 12.5px;
-  line-height: 1.6;
+  font-size: inherit;
+  line-height: inherit;
   color: var(--text-2);
   white-space: pre;
 }
@@ -996,25 +1099,47 @@
   color: var(--text-2);
 }
 
-.md table {
-  display: block;
+.md-table {
+  margin: 8px 0 16px;
+  border-radius: var(--r-md);
+  background: rgb(255 255 255 / 0.018);
+  box-shadow: inset 0 0 0 1px var(--line-2);
   overflow-x: auto;
-  border-collapse: collapse;
-  margin: 6px 0 16px;
-  font-size: var(--t-sm);
+  -webkit-overflow-scrolling: touch;
 }
 
-.md th,
-.md td {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line-2);
+.md-table table {
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.md-table th,
+.md-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
   text-align: left;
   white-space: nowrap;
 }
 
-.md th {
+.md-table th {
+  font-size: var(--t-xs);
+  font-weight: 560;
+  color: var(--text-3);
+  background: rgb(255 255 255 / 0.02);
+}
+
+.md-table td {
   color: var(--text-2);
-  font-weight: 580;
+}
+
+.md-table td:first-child {
+  color: var(--text);
+}
+
+.md-table tr:last-child td {
+  border-bottom: 0;
 }
 
 .md hr {
@@ -1128,8 +1253,8 @@
 
 .composer {
   position: relative;
-  padding: 4px 6px 6px;
-  border-radius: 28px;
+  padding: 2px 6px 6px;
+  border-radius: 26px;
   background: var(--glass);
   -webkit-backdrop-filter: var(--blur);
   backdrop-filter: var(--blur);
@@ -1155,9 +1280,9 @@
 .composer-input {
   display: block;
   width: 100%;
-  min-height: 48px;
+  min-height: 50px;
   max-height: 168px;
-  padding: 13px 12px 5px;
+  padding: 14px 12px 6px;
   background: none;
   border: 0;
   outline: none;
@@ -1167,7 +1292,7 @@
 }
 
 .composer-input::placeholder {
-  color: var(--text-2);
+  color: var(--text-3);
   transition: color 260ms var(--ease-out);
 }
 
@@ -1175,85 +1300,86 @@
   color: var(--text-4);
 }
 
+.composer[data-pouring] .composer-input::placeholder,
+.home-dock[data-pouring] .dock-input::placeholder {
+  color: transparent;
+  transition: none;
+}
+
+/* the bar under the words: a tool key, the one setup chip, and the send key on the right */
 .composer-bar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-height: 44px;
+  gap: 6px;
+  height: 44px;
 }
 
-/* chips that do not fit (large text) scroll and fade out before the send key */
-.chips-wrap {
-  position: relative;
+.bar-gap {
   flex: 1;
   min-width: 0;
 }
 
-.chips-wrap::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 16px;
-  background: linear-gradient(90deg, rgb(21 21 24 / 0), rgb(21 21 24 / 0.9));
-  pointer-events: none;
+.tool-key {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-pill);
+  background: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
+  transition: background-color 100ms, transform 100ms;
 }
 
-.chips {
-  display: flex;
-  gap: 2px;
-  overflow-x: auto;
-  scrollbar-width: none;
+.tool-key:active {
+  background: var(--fill-4);
+  transform: scale(0.93);
 }
 
-.chips::-webkit-scrollbar {
-  display: none;
-}
-
-.chip-btn {
+.setup-chip {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
   height: 40px;
   padding: 0 12px;
-  border-radius: 20px;
+  border-radius: var(--r-pill);
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
   font-size: var(--t-sm);
-  font-weight: 540;
-  color: var(--text-2);
+  font-weight: 560;
+  color: var(--text);
   white-space: nowrap;
+  transition: background-color 100ms, transform 100ms;
+}
+
+.setup-chip:active {
+  background: var(--fill-3);
+  transform: scale(0.96);
+}
+
+.setup-chip-mode {
   flex-shrink: 0;
-  transition: background-color 100ms, transform 120ms var(--ease-out), color 100ms;
-}
-
-.chip-btn:active {
-  background: var(--fill-2);
-  transform: scale(0.95);
-  color: var(--text);
-}
-
-.chip-btn svg {
   color: var(--text-2);
 }
 
-.chip-btn.round {
-  width: 40px;
-  padding: 0;
-  justify-content: center;
-  background: var(--fill-3);
-  color: var(--text);
+.setup-chip-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.chip-btn.round svg {
-  color: var(--text);
-}
-
-.chip-btn[data-tone='danger'] svg {
-  color: var(--red);
-}
-
-.chip-dim {
+.setup-chip-dim {
+  flex-shrink: 0;
+  font-weight: 500;
   color: var(--text-3);
+}
+
+.setup-chip-caret {
+  flex-shrink: 0;
+  margin-left: -1px;
+  color: var(--text-4);
 }
 
 .send {
@@ -1269,7 +1395,8 @@
 }
 
 .send:disabled {
-  background: var(--fill-3);
+  background: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line);
   color: var(--text-4);
 }
 
@@ -1361,12 +1488,229 @@
   text-overflow: ellipsis;
 }
 
-.tail-label.shimmer {
-  animation: label-in 220ms var(--ease-out) both, shimmer 2.4s linear infinite;
-}
 
 .chat[data-moving] .composer {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   background-color: rgb(22 22 25 / 0.95);
+}
+
+/* ── the send as liquid (lib/flight.ts): the ink on a canvas of its own, the words pouring out of the field ── */
+.liquid {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+}
+
+.send-pour {
+  position: fixed;
+  z-index: 59;
+  overflow: hidden;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.send-pour > div {
+  position: absolute;
+  left: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* ── files the agent handed over: a card each, with Download ── */
+.share {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.share-caption {
+  margin: 0 0 2px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.share-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 76px;
+  padding: 14px 12px 14px 14px;
+  border-radius: var(--r-lg);
+  background: var(--grain-bg), var(--card);
+  box-shadow: var(--edge), var(--lift);
+}
+
+.share-glyph {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
+}
+
+.share-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.share-name {
+  font-size: var(--t-ui);
+  font-weight: 580;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-meta {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.share-get {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  height: 40px;
+  padding: 0 15px 0 12px;
+  border-radius: var(--r-pill);
+  background: var(--text);
+  color: var(--ink);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  transition: transform 100ms, opacity 100ms;
+}
+
+.share-get:active {
+  transform: scale(0.95);
+}
+
+.share-get:disabled {
+  opacity: 0.7;
+}
+
+/* ── a turn checked by the other agent ── */
+.check {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 6px 6px 12px;
+  border-radius: var(--r-lg);
+  background: var(--grain-bg), var(--card);
+  box-shadow: var(--edge);
+}
+
+.check:not(:has(.check-findings, .check-clean, .run)) {
+  padding-bottom: 6px;
+}
+
+.check-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.check-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 10px;
+  border-radius: 14px;
+  font-size: var(--t-sm);
+  color: var(--text-3);
+  text-align: left;
+  transition: background-color 100ms;
+}
+
+.check-line:not(:disabled):active {
+  background: var(--fill-2);
+}
+
+.check-mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  flex-shrink: 0;
+}
+
+.check-title {
+  min-width: 0;
+  font-weight: 560;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.check[data-status='error'] .check-title,
+.check[data-status='cancelled'] .check-title {
+  color: var(--text-2);
+}
+
+.check-stop {
+  flex-shrink: 0;
+}
+
+.stop-square.sm {
+  width: 10px;
+  height: 10px;
+  border-radius: 2.5px;
+  background: var(--text-2);
+}
+
+.check-findings {
+  padding: 0 10px;
+}
+
+.check-fix {
+  align-self: flex-start;
+  margin: 0 8px;
+}
+
+.check-clean {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+
+.check-offer {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  height: 36px;
+  margin-top: -2px;
+  padding: 0 14px 0 11px;
+  border-radius: var(--r-pill);
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  font-size: var(--t-sm);
+  font-weight: 540;
+  color: var(--text-2);
+  transition: background-color 100ms, transform 100ms;
+}
+
+.check-offer:active {
+  background: var(--fill-3);
+  transform: scale(0.97);
+}
+
+.work[data-live] .work-title + .work-meta::before {
+  content: none;
 }

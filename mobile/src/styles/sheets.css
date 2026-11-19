@@ -112,37 +112,50 @@
 .choices {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  border-radius: 20px;
+  background: rgb(255 255 255 / 0.03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
 }
 
 .choice {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 14px;
   width: 100%;
   min-height: 56px;
-  padding: 8px 14px;
-  border-radius: 18px;
+  padding: 8px 16px 8px 16px;
   text-align: left;
   font-size: var(--t-body);
   color: var(--text);
-  transition: background-color 100ms, transform 120ms var(--ease-out);
+  transition: background-color 100ms;
+}
+
+.choice + .choice::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 52px;
+  right: 0;
+  height: 1px;
+  background: var(--line);
+}
+
+.choice:not(:has(.choice-icon)) + .choice::before,
+.choice-mark + .choice-mark::before {
+  left: 16px;
 }
 
 .choice:active {
   background: var(--fill-2);
-  transform: scale(0.985);
-}
-
-.choice[data-selected] {
-  background: rgb(255 255 255 / 0.07);
 }
 
 .choice-icon {
   display: grid;
   place-items: center;
   width: 22px;
-  color: var(--text-2);
+  color: var(--text-3);
   flex-shrink: 0;
 }
 
@@ -195,7 +208,7 @@
 }
 
 .choice-mark[data-selected] {
-  background: rgb(255 255 255 / 0.05);
+  background: rgb(255 255 255 / 0.04);
 }
 
 .pick {
@@ -270,9 +283,8 @@
   display: grid;
   grid-template-columns: repeat(var(--n), 1fr);
   padding: 4px;
-  margin: 0 2px;
   border-radius: 18px;
-  background: rgb(0 0 0 / 0.35);
+  background: rgb(255 255 255 / 0.03);
   box-shadow: inset 0 0 0 1px var(--line);
 }
 
@@ -283,8 +295,8 @@
   left: 4px;
   width: calc((100% - 8px) / var(--n));
   border-radius: 14px;
-  background: rgb(255 255 255 / 0.12);
-  box-shadow: var(--edge), 0 6px 14px -8px rgb(0 0 0 / 0.9);
+  background: rgb(255 255 255 / 0.11);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08), 0 6px 14px -8px rgb(0 0 0 / 0.9);
   transform: translateX(calc(var(--i) * 100%));
   transition: transform 340ms var(--ease-spring);
 }
@@ -295,15 +307,263 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
+  min-width: 0;
   height: 44px;
+  padding: 0 6px;
   font-size: 14.5px;
   font-weight: 540;
+  white-space: nowrap;
   color: var(--text-3);
   transition: color 160ms;
 }
 
 .seg-opt[data-on] {
   color: var(--text);
+}
+
+/* ── the setup sheet: model, effort, speed, permissions ── */
+.setup {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  padding: 10px 4px 4px;
+}
+
+.setup-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.setup-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0 6px;
+  font-size: var(--t-sm);
+  font-weight: 560;
+  color: var(--text-3);
+}
+
+.setup-value {
+  font-size: 14.5px;
+  font-weight: 580;
+  color: var(--text);
+}
+
+.setup-list {
+  display: flex;
+  flex-direction: column;
+  border-radius: 20px;
+  background: rgb(255 255 255 / 0.03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+
+.setup-skel {
+  gap: 22px;
+  padding: 19px 18px;
+}
+
+.setup-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 0 16px 0 18px;
+  font-size: var(--t-body);
+  font-weight: 500;
+  color: var(--text-2);
+  text-align: left;
+  transition: background-color 100ms, color 160ms;
+}
+
+.setup-row + .setup-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 18px;
+  right: 0;
+  height: 1px;
+  background: var(--line);
+}
+
+.setup-row:active {
+  background: var(--fill-2);
+}
+
+.setup-row[data-on] {
+  color: var(--text);
+  font-weight: 560;
+}
+
+.setup-row-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.setup-radio {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--line-3);
+  transition: background-color 160ms var(--ease-out);
+}
+
+.setup-radio i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink);
+  transform: scale(0);
+  transition: transform 260ms var(--ease-spring);
+}
+
+.setup-row[data-on] .setup-radio {
+  background: var(--text);
+  box-shadow: none;
+}
+
+.setup-row[data-on] .setup-radio i {
+  transform: scale(1);
+}
+
+/* effort: a track with a stop per level, filled to the chosen one; the knob follows the finger */
+.dial {
+  position: relative;
+  padding: 19px 13px 0;
+  outline: none;
+  touch-action: none;
+}
+
+.dial-track {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 0.08);
+}
+
+.dial-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(var(--u) * 100%);
+  border-radius: inherit;
+  background: var(--text);
+  transition: width 300ms var(--ease-spring);
+}
+
+.dial-stop {
+  position: absolute;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.28);
+}
+
+.dial-stop[data-on] {
+  background: rgb(10 10 11 / 0.55);
+}
+
+.dial-knob {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--u) * 100%);
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 0 0 4px rgb(21 21 24), 0 6px 16px -4px rgb(0 0 0 / 0.8);
+  transition: left 300ms var(--ease-spring), transform 160ms var(--ease-out);
+}
+
+.dial[data-drag] .dial-fill {
+  transition: none;
+}
+
+.dial[data-drag] .dial-knob {
+  transition: transform 160ms var(--ease-out);
+  transform: scale(1.1);
+}
+
+.dial:focus-visible .dial-knob {
+  box-shadow: 0 0 0 4px rgb(21 21 24), 0 0 0 6px rgb(242 241 238 / 0.5);
+}
+
+.dial-ends {
+  display: flex;
+  justify-content: space-between;
+  margin: 15px -13px 0;
+  padding: 0 2px;
+  font-size: var(--t-xs);
+  color: var(--text-4);
+}
+
+/* permissions: a tile each, the chosen one lifted */
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+
+.mode-tile {
+  grid-column: span 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 86px;
+  padding: 14px 14px 13px;
+  border-radius: 18px;
+  background: rgb(255 255 255 / 0.03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 14px;
+  font-weight: 540;
+  line-height: 1.25;
+  text-align: left;
+  color: var(--text-3);
+  transition: background-color 140ms, color 140ms, transform 120ms var(--ease-out);
+}
+
+.mode-tile span {
+  color: var(--text-2);
+  transition: color 140ms;
+}
+
+.mode-tile:active {
+  transform: scale(0.96);
+}
+
+.mode-tile[data-on] {
+  background: rgb(255 255 255 / 0.1);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16);
+  color: var(--text);
+}
+
+.mode-tile[data-on] span {
+  color: var(--text);
+}
+
+.mode-grid[data-n='5'] .mode-tile:nth-child(n + 4),
+.mode-grid[data-n='4'] .mode-tile,
+.mode-grid[data-n='2'] .mode-tile {
+  grid-column: span 3;
+}
+
+.mode-grid[data-n='1'] .mode-tile {
+  grid-column: span 6;
 }
 
 .form-error {
@@ -331,7 +591,8 @@
 }
 
 .browser-list {
-  min-height: 220px;
+  align-self: flex-start;
+  width: 100%;
 }
 
 /* ── limits ── */
@@ -736,4 +997,33 @@
   margin-bottom: 12px;
   font-size: var(--t-ui);
   color: var(--text-2);
+}
+
+/* a new folder: the row turns into its name field */
+.new-folder {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.new-folder-input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  font: inherit;
+  color: var(--text);
+}
+
+.new-folder-input::placeholder {
+  color: var(--text-4);
+}
+
+.new-folder-error {
+  flex-basis: 100%;
+  padding: 0 0 6px 36px;
+  font-size: var(--t-xs);
+  color: var(--red);
 }

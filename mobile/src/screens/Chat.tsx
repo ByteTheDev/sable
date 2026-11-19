@@ -1,12 +1,13 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ToolItem } from '@shared/protocol';
 import { baseName } from '@desk/lib/format';
 import { conn } from '@m/lib/conn';
 import { onKeyboard } from '@m/lib/keyboard';
 import { haptic, openExternal } from '@m/lib/native';
 import { nav } from '@m/lib/nav';
 import { applyOlder, fetchOlder, getState, openSession, sessionData, showCached, useStore } from '@m/lib/store';
-import { buildTurns, reuseTurns, shapeKey, type Turn } from '@m/lib/turns';
+import { groupTurns, shapeString, stabilize } from '@m/lib/turns';
 import { Field, paletteFor } from '@m/ui/Field';
 import { Icon } from '@m/ui/icons';
 import { ProviderMark, Ring } from '@m/ui/marks';
@@ -14,7 +15,7 @@ import { IME_EASE, SNAP } from '@m/ui/motion';
 import { Sheet } from '@m/ui/Sheet';
 import { Composer } from './Composer';
 import { Prompts } from './Prompts';
-import { TurnView } from './Timeline';
+import { ItemRow, TurnView } from './Timeline';
 
 const PAGE = 24;
 const FIRST = 5;
@@ -113,19 +114,23 @@ function ChatHead({ title, sub, status, mark, onBack, right }: { title: string; 
 
 function Thread({ id }: { id: string }) {
   const roots = useStore((st) => sessionData(st, id).roots);
-  const items = useStore((st) => sessionData(st, id).items);
+  // One character per root (lib/turns.ts): the grouping is read again only when that string changes, never on a streamed word.
+  const shape = useStore((st) => {
+    const d = sessionData(st, id);
+    return shapeString(d.roots, d.items);
+  });
   const status = useStore((st) => st.sessions[id]?.status);
   const cursor = useStore((st) => sessionData(st, id).cursor);
-  const key = shapeKey(roots, items);
-  // Turn structure depends only on order and kinds: recomputed when those change, not on every streamed word.
-  // Turns that did not change keep their object, so their rows do not render again.
-  const prevTurns = useRef<Turn[]>([]);
-  const turns = useMemo(() => {
-    const t = reuseTurns(buildTurns(roots, items), prevTurns.current);
-    prevTurns.current = t;
-    return t;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  const busy = status === 'running' || status === 'starting' || status === 'awaiting';
+  // Turns and segments that did not change keep their object, so their views do not render again.
+  const kept = useRef(new Map<string, unknown>());
+  const layout = useMemo(() => {
+    // The turn a check belongs to never changes, so reading it once per shape is enough.
+    const items = sessionData(getState(), id).items;
+    const checkOf = (x: string) => (items[x] as ToolItem | undefined)?.check?.turn;
+    return stabilize(groupTurns(roots, shape, busy, checkOf), kept.current);
+  }, [roots, shape, busy, id]);
+  const turns = layout.groups;
   const [older, setOlder] = useState(false);
   const olderBusy = useRef(false);
   // The newest few turns first (the chat opens at once), the rest of the page right after it has opened.
@@ -139,7 +144,6 @@ function Thread({ id }: { id: string }) {
   const atBottom = useRef(true);
   const [showJump, setShowJump] = useState(false);
   const anchor = useRef<{ h: number; top: number } | null>(null);
-  const live = status === 'running' || status === 'starting' || status === 'awaiting';
   const start = Math.max(0, turns.length - count);
   const shown = turns.slice(start);
 
@@ -252,7 +256,17 @@ function Thread({ id }: { id: string }) {
   olderRef.current = loadOlder;
 
   // Sending scrolls to the newest.
-  const lastUser = useMemo(() => [...turns].reverse().find((t) => t.user)?.user, [turns]);
+  const newestTurn = useMemo(() => {
+    for (let i = turns.length - 1; i >= 0; i--) if (turns[i].kind === 'turn') return turns[i];
+    return undefined;
+  }, [turns]);
+  const lastUser = useMemo(() => {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const g = turns[i];
+      if (g.kind === 'turn') return g.key;
+    }
+    return undefined;
+  }, [turns]);
   useEffect(() => {
     atBottom.current = true;
     toBottom(true);
@@ -274,8 +288,9 @@ function Thread({ id }: { id: string }) {
           </div>
         )}
         {turns.length === 0 && <p className="empty thread-empty">Send a message to start.</p>}
-        {shown.map((t, i) => (
-          <TurnView key={t.user ?? `t${start + i}`} sid={id} turn={t} live={live && start + i === turns.length - 1} />
+        {shown.map((g) => (g.kind === 'turn' ? <TurnView key={g.key} sid={id} turn={g} newest={g === newestTurn} /> : <ItemRow key={g.key} sid={id} id={g.id} />))}
+        {layout.queued.map((q) => (
+          <ItemRow key={q} sid={id} id={q} queued />
         ))}
       </div>
       <AnimatePresence>

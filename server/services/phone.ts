@@ -139,17 +139,19 @@ export const PAGE_BYTES = 90_000;
 /** How far a page reaches back for the message that opened its first turn. */
 const TURN_REACH = 160;
 /** Text lengths: an answer or a message, text between steps, thinking, a notice. */
-export const LIMITS = { answer: 8000, step: 320, thinking: 320, notice: 1200, field: 400 };
+export const LIMITS = { answer: 8000, step: 1600, thinking: 320, notice: 1200, field: 400 };
 /** `phone.item`: how much of one item. */
 const FULL = { text: 200_000, thinking: 40_000, field: 4000, outLines: 200, outChars: 12_000, files: 6, hunks: 4, hunkLines: 80, children: 40 };
 
-const DETAIL_TEXT = ['command', 'description', 'cwd', 'path', 'url', 'query', 'pattern', 'glob', 'subagent', 'server', 'tool', 'skill'] as const;
+const DETAIL_TEXT = ['command', 'description', 'cwd', 'path', 'url', 'query', 'pattern', 'glob', 'subagent', 'server', 'tool', 'skill', 'caption'] as const;
 
 function trimDetail(d: ToolDetail | undefined, n: number, full = false): ToolDetail {
   const out: ToolDetail = {};
   if (!d) return out;
   for (const k of DETAIL_TEXT) if (typeof d[k] === 'string') out[k] = cap(d[k] as string, n);
   if (d.range) out.range = d.range;
+  // A `share` step: the files' names and sizes for its cards (the phone downloads one through `phone.fileLink`).
+  if (d.files) out.files = d.files.slice(0, 12).map((f) => ({ path: cap(f.path, 400), name: cap(f.name, 200), ...(typeof f.size === 'number' ? { size: f.size } : {}) }));
   if (d.background) out.background = true;
   if (full) {
     for (const k of ['oldText', 'newText', 'content', 'prompt', 'plan'] as const) if (typeof d[k] === 'string') out[k] = cap(d[k] as string, n);
@@ -203,7 +205,7 @@ function hasMore(t: ToolItem): boolean {
 
 /**
  * An item as a phone gets it. `role` says where it shows: an answer or a message (long texts),
- * text between steps (a line), or `full` for `phone.item`.
+ * text between steps (shortened), or `full` for `phone.item`.
  */
 export function phoneItem(it: TimelineItem, opts: { role?: 'answer' | 'step' | 'full'; kids?: number } = {}): PhoneItem {
   const full = opts.role === 'full';
@@ -239,9 +241,12 @@ export function phoneItem(it: TimelineItem, opts: { role?: 'answer' | 'step' | '
         ...(it.waitedMs ? { waitedMs: it.waitedMs } : {}),
         ...(it.result ? { result: trimResult(it.result, full) } : {}),
         ...(it.workflow ? { workflow: trimWorkflow(it.workflow) } : {}),
+        // A check of a turn by the other agent: which turn and who, and its findings (they are its answer).
+        ...(it.check ? { check: it.check } : {}),
         ...(opts.kids ? { kids: opts.kids } : {}),
         ...(!full && hasMore(it) ? { more: true } : {}),
       };
+      if (it.check && it.result?.text && out.result) (out.result as ToolResult).text = cap(it.result.text, full ? FULL.text : LIMITS.answer);
       // A widget shows by its title only.
       if (it.kind === 'widget') {
         const title = (it.input as { title?: unknown } | undefined)?.title;
@@ -278,7 +283,7 @@ const turnStart = (it: TimelineItem) => it.type === 'user' && !it.steered;
 /**
  * One page of a conversation's root items, newest last: up to `limit` before `before` (or the
  * newest), reaching back to the message that opened the first turn when that is near, within a
- * byte budget. Text between steps is cut to a line; answers keep their length.
+ * byte budget. Text between steps is shortened (`LIMITS.step`); answers keep their length.
  */
 export function phonePage(items: TimelineItem[], opts: { before?: string; limit?: number; budget?: number } = {}): { items: PhoneItem[]; cursor?: string; total: number } {
   const roots: TimelineItem[] = [];
@@ -295,7 +300,7 @@ export function phonePage(items: TimelineItem[], opts: { before?: string; limit?
   }
   const limit = Math.max(1, Math.min(PAGE_MAX, opts.limit ?? PAGE_ITEMS));
   const budget = opts.budget ?? PAGE_BYTES;
-  // A text item is an answer unless a step follows it in its turn (then it shows as a step's line).
+  // A text item is an answer unless a step follows it in its turn (then it is a report along the way, shortened).
   const roleAt = (i: number): 'answer' | 'step' => {
     if (roots[i].type !== 'text') return 'answer';
     for (let j = i + 1; j < total; j++) {
@@ -685,6 +690,26 @@ export class PhoneService {
     return { path: `/f/${token}/${encodeURIComponent(file.name)}`, name: file.name, size };
   }
 
+  /** `phone.mkdir`: one new folder in an existing one, by a plain name (no separators, nothing hidden, no overwrite). */
+  private makeFolder(parent: string, name: string): { path: string } {
+    const n = name.trim();
+    if (!n || n.length > 120 || n.startsWith('.') || /[\\/:*?"<>|\x00-\x1f]/.test(n) || /[. ]$/.test(n)) throw new Error('That name cannot be a folder name.');
+    if (!path.isAbsolute(parent)) throw new Error('That folder is not on this computer.');
+    try {
+      if (!statSync(parent).isDirectory()) throw new Error();
+    } catch {
+      throw new Error('That folder is not on this computer.');
+    }
+    const target = path.join(parent, n);
+    if (path.dirname(target) !== path.resolve(parent)) throw new Error('That name cannot be a folder name.');
+    try {
+      mkdirSync(target);
+    } catch (err) {
+      throw new Error((err as NodeJS.ErrnoException).code === 'EEXIST' ? 'A folder with that name is already there.' : 'The folder could not be made there.');
+    }
+    return { path: target };
+  }
+
   private serveFile(req: IncomingMessage, res: ServerResponse) {
     const token = (req.url ?? '').split('/')[2] ?? '';
     const entry = this.files.get(token);
@@ -865,6 +890,8 @@ export class PhoneService {
         let result: unknown;
         if (own === 'phone.fileLink') {
           result = await this.fileLink(String(raw.sessionId ?? ''), String(raw.itemId ?? ''), Number(raw.index ?? 0));
+        } else if (own === 'phone.mkdir') {
+          result = this.makeFolder(String(raw.parent ?? ''), String(raw.name ?? ''));
         } else if (own === 'phone.tail' || own === 'phone.item') {
           const sessionId = String(raw.sessionId ?? '');
           // The session's own snapshot (loads it from disk the first time, marks it read), then trimmed.

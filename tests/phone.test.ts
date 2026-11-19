@@ -1,5 +1,5 @@
 /** The phone endpoint (server/services/phone.ts): pairing with approval, token hello, the allowlist, rate limits, revocation; the QR encoder; Claude's Remote Control default. */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -361,6 +361,44 @@ describe('files the agent hands over', () => {
     expect(((await c.call('phone.fileLink', { sessionId: id, itemId: 'read1', index: 0 })) as { ok: boolean }).ok).toBe(false);
     expect(((await c.call('phone.fileLink', { sessionId: id, itemId: 'share1', index: 3 })) as { ok: boolean }).ok).toBe(false);
     expect((await fetch(`http://127.0.0.1:${port}/f/not-a-token/build.apk`)).status).toBe(404);
+    c.ws.close();
+  });
+});
+
+describe('a turn checked by the other agent', () => {
+  it('keeps the check and its findings on the phone, so it shows under the turn it checks', () => {
+    const items: TimelineItem[] = [
+      { id: 'u', ts: 0, type: 'user', text: 'go' },
+      { id: 'x', ts: 1, type: 'tool', name: 'Check', kind: 'agent', title: 'Check', status: 'done', detail: {}, check: { turn: 'u', agent: 'codex' }, result: { text: 'One finding: the guard skips admins.' } },
+    ];
+    const page = phonePage(items);
+    const check = page.items[1] as ToolItem;
+    expect(check.check).toEqual({ turn: 'u', agent: 'codex' });
+    expect(check.result?.text).toBe('One finding: the guard skips admins.');
+  });
+});
+
+describe('a new folder from the phone', () => {
+  it('makes one plain folder inside an existing one, and nothing else', async () => {
+    const { app, port, home } = await setup();
+    const { c } = await pairPhone(app, port);
+    const made = (await c.call('phone.mkdir', { parent: home, name: 'Weekend app' })) as { ok: boolean; result: { path: string } };
+    expect(made.ok).toBe(true);
+    expect(made.result.path).toBe(path.join(home, 'Weekend app'));
+    expect(statSync(made.result.path).isDirectory()).toBe(true);
+    // Already there, a path instead of a name, hidden, a relative or missing parent: refused.
+    for (const p of [
+      { parent: home, name: 'Weekend app' },
+      { parent: home, name: '../escape' },
+      { parent: home, name: 'a/b' },
+      { parent: home, name: '.hidden' },
+      { parent: 'relative', name: 'x' },
+      { parent: path.join(home, 'missing'), name: 'x' },
+    ])
+      expect(((await c.call('phone.mkdir', p)) as { ok: boolean }).ok).toBe(false);
+    expect(existsSync(path.join(home, '..', 'escape'))).toBe(false);
+    // Only for phones.
+    await expect(app.call('phone.mkdir' as never, { parent: home, name: 'y' } as never)).rejects.toThrow();
     c.ws.close();
   });
 });

@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useState } from 'react';
-import type { Capabilities, DirEntry, ProviderId } from '@shared/protocol';
+import { STANDARD_SPEED, type Capabilities, type DirEntry, type Effort, type ModeInfo, type ModelInfo, type ProviderId } from '@shared/protocol';
+import { offeredSpeeds } from '@shared/speed';
 import { baseName, dirName } from '@desk/lib/format';
 import { modelName, visibleModels } from '@desk/lib/models';
 import { pushBack } from '@m/lib/back';
@@ -17,7 +18,7 @@ import { Choice, Sheet } from '@m/ui/Sheet';
  * model. The last choice is kept; the field on home shows it as three chips.
  */
 const KEY = 'sable.newchat';
-type Saved = { agent?: ProviderId; folder?: string; none?: boolean; model?: string };
+type Saved = { agent?: ProviderId; folder?: string; none?: boolean; model?: string; effort?: Effort; mode?: string; speed?: string };
 const load = (): Saved => {
   try {
     return (JSON.parse(localStorage.getItem(KEY) ?? '{}') as Saved) ?? {};
@@ -44,6 +45,17 @@ export interface NewChoice {
   models: { id: string; name: string }[];
   model?: string;
   setModel: (id: string) => void;
+  /** The chosen model's levels of effort, and the one a new chat starts with. */
+  efforts: Effort[];
+  effort?: Effort;
+  setEffort: (e: Effort) => void;
+  /** Speeds beyond standard, with standard first (empty when the model has none). */
+  speeds: { id: string; name: string }[];
+  speed: string;
+  setSpeed: (id: string) => void;
+  modes: ModeInfo[];
+  mode?: string;
+  setMode: (id: string) => void;
 }
 
 export function useNewChat(active: boolean): NewChoice {
@@ -95,21 +107,41 @@ export function useNewChat(active: boolean): NewChoice {
   }, [active, agent, capsFolder]);
 
   const models = useMemo(() => (agent && caps ? visibleModels(agent, caps.models, settings?.modelVisibility).map((m) => ({ id: m.id, name: modelName(m) ?? m.name })) : []), [agent, caps, settings?.modelVisibility]);
+  const mine = saved.agent === agent;
   const model =
-    saved.agent === agent && saved.model && models.some((m) => m.id === saved.model)
+    mine && saved.model && models.some((m) => m.id === saved.model)
       ? saved.model
       : (settings?.defaultModels[agent ?? 'claude'] ?? caps?.models.find((m) => m.isDefault)?.id ?? models[0]?.id);
+  const info: ModelInfo | undefined = caps?.models.find((m) => m.id === model);
+  const efforts = info?.efforts ?? [];
+  const pickEffort = (e?: Effort) => (e && efforts.includes(e) ? e : undefined);
+  const effort = pickEffort(mine ? saved.effort : undefined) ?? pickEffort(settings?.defaultEfforts[agent ?? 'claude']) ?? info?.defaultEffort ?? efforts[0];
+  const extra = offeredSpeeds(info, false);
+  const speeds = extra.length ? [{ id: STANDARD_SPEED, name: 'Standard' }, ...extra.map((x) => ({ id: x.id, name: x.name }))] : [];
+  const speed = mine && saved.speed && speeds.some((x) => x.id === saved.speed) ? saved.speed : STANDARD_SPEED;
+  const modes = caps?.modes ?? [];
+  const pickMode = (m?: string) => (m && modes.some((x) => x.id === m) ? m : undefined);
+  const mode = pickMode(mine ? saved.mode : undefined) ?? pickMode(settings?.defaultModes[agent ?? 'claude']) ?? modes[0]?.id;
 
   return {
     agents,
     agent,
-    setAgent: (a) => update({ agent: a, model: undefined }),
+    setAgent: (a) => update({ agent: a, model: undefined, effort: undefined, mode: undefined, speed: undefined }),
     recent,
     folder,
     setFolder: (p) => update(p === null ? { none: true } : { none: false, folder: p }),
     models,
     model,
-    setModel: (id) => update({ agent: agent ?? undefined, model: id }),
+    setModel: (id) => update({ agent: agent ?? undefined, model: id, effort: undefined, speed: undefined }),
+    efforts,
+    effort,
+    setEffort: (e) => update({ agent: agent ?? undefined, model, effort: e }),
+    speeds,
+    speed,
+    setSpeed: (id) => update({ agent: agent ?? undefined, model, speed: id }),
+    modes,
+    mode,
+    setMode: (id) => update({ agent: agent ?? undefined, model, mode: id }),
   };
 }
 
@@ -119,7 +151,15 @@ export async function createChat(c: NewChoice, text: string) {
   const cwd = c.folder ?? c.recent[0]?.path ?? '';
   return conn.call(
     'session.create',
-    { provider: c.agent, cwd, ...(c.model ? { model: c.model } : {}), ...(c.folder === null ? { chat: { text } } : {}) },
+    {
+      provider: c.agent,
+      cwd,
+      ...(c.model ? { model: c.model } : {}),
+      ...(c.effort ? { effort: c.effort } : {}),
+      ...(c.mode ? { mode: c.mode } : {}),
+      ...(c.speed !== STANDARD_SPEED ? { speed: c.speed } : {}),
+      ...(c.folder === null ? { chat: { text } } : {}),
+    },
     90_000,
   );
 }
@@ -127,51 +167,29 @@ export async function createChat(c: NewChoice, text: string) {
 export function AgentSheet({ open, onClose, c }: { open: boolean; onClose: () => void; c: NewChoice }) {
   return (
     <Sheet open={open} onClose={onClose} title="Agent">
-      <div className="choices">
+      <div className="setup-list" role="radiogroup" aria-label="Agent">
         {c.agents.map((id) => (
-          <Choice
+          <button
             key={id}
-            selected={c.agent === id}
-            icon={<ProviderMark provider={id} size={18} />}
-            onPick={() => {
+            type="button"
+            role="radio"
+            aria-checked={c.agent === id}
+            className="setup-row setup-row-mark"
+            data-on={c.agent === id || undefined}
+            onClick={() => {
               haptic('select');
               c.setAgent(id);
               onClose();
             }}
           >
-            {PROVIDER_NAME[id]}
-          </Choice>
+            <ProviderMark provider={id} size={20} />
+            <span className="setup-row-name">{PROVIDER_NAME[id]}</span>
+            <span className="setup-radio" aria-hidden>
+              <i />
+            </span>
+          </button>
         ))}
       </div>
-    </Sheet>
-  );
-}
-
-export function ModelSheet({ open, onClose, c }: { open: boolean; onClose: () => void; c: NewChoice }) {
-  return (
-    <Sheet open={open} onClose={onClose} title="Model">
-      {c.models.length ? (
-        <div className="choices">
-          {c.models.map((m) => (
-            <Choice
-              key={m.id}
-              selected={c.model === m.id}
-              onPick={() => {
-                haptic('select');
-                c.setModel(m.id);
-                onClose();
-              }}
-            >
-              {m.name}
-            </Choice>
-          ))}
-        </div>
-      ) : (
-        <div className="list-skel" aria-hidden>
-          <span className="skel" style={{ width: '62%' }} />
-          <span className="skel" style={{ width: '48%' }} />
-        </div>
-      )}
     </Sheet>
   );
 }
@@ -293,6 +311,7 @@ function FolderBrowser({ start, onPick, onCancel }: { start: string | null; onPi
           exit={{ opacity: 0, x: dir * -36 }}
           transition={SPRING}
         >
+          {here?.path && <NewFolder parent={here.path} onMade={(p) => void load(p, 1)} />}
           {here?.entries.map((e) => (
             <button key={e.path} type="button" className="choice" onClick={() => (haptic('tap'), void load(e.path, 1))}>
               <span className="choice-icon">
@@ -302,7 +321,7 @@ function FolderBrowser({ start, onPick, onCancel }: { start: string | null; onPi
               <Icon name="next" size={15} className="choice-caret" />
             </button>
           ))}
-          {here && !here.entries.length && <p className="empty">No folders here.</p>}
+          {here && !here.entries.length && !here.path && <p className="empty">No folders here.</p>}
         </motion.div>
       </AnimatePresence>
       {here?.path && (
@@ -312,6 +331,66 @@ function FolderBrowser({ start, onPick, onCancel }: { start: string | null; onPi
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** A new folder where the browser stands: the row becomes a name field; made, the browser opens it. */
+function NewFolder({ parent, onMade }: { parent: string; onMade: (path: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const make = async () => {
+    const n = name.trim();
+    if (!n || busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const r = await conn.call('phone.mkdir', { parent, name: n });
+      haptic('success');
+      setEditing(false);
+      setName('');
+      onMade(r.path);
+    } catch (err) {
+      haptic('deny');
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!editing)
+    return (
+      <button type="button" className="choice choice-quiet" onClick={() => (haptic('tap'), setEditing(true))}>
+        <span className="choice-icon">
+          <Icon name="folderPlus" size={18} />
+        </span>
+        <span className="choice-label">New folder</span>
+      </button>
+    );
+  return (
+    <div className="choice new-folder">
+      <span className="choice-icon">
+        <Icon name="folderPlus" size={18} />
+      </span>
+      <input
+        className="new-folder-input"
+        autoFocus
+        value={name}
+        placeholder="Folder name"
+        aria-label="Folder name"
+        enterKeyHint="done"
+        autoCapitalize="none"
+        onChange={(e) => (setName(e.target.value), setError(undefined))}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void make();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+      />
+      <button type="button" className="btn btn-sm btn-primary" disabled={!name.trim() || busy} onClick={() => void make()}>
+        {busy ? <span className="dots" /> : 'Make'}
+      </button>
+      {error && <span className="new-folder-error">{error}</span>}
     </div>
   );
 }

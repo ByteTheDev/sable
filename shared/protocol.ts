@@ -1596,6 +1596,8 @@ export const PHONE_METHODS = [
   'usage.limits',
   'fs.roots',
   'fs.list',
+  'turn.check',
+  'turn.checkStop',
 ] as const satisfies readonly RpcName[];
 
 /**
@@ -1633,9 +1635,14 @@ export interface PhoneMethods {
    * file for 15 minutes. Nothing else on the computer can be fetched this way.
    */
   'phone.fileLink': { params: { sessionId: string; itemId: string; index: number }; result: { path: string; name: string; size?: number } };
+  /**
+   * A new, empty folder inside an existing one (a new chat's folder, from the folder browser): one
+   * plain name, no path separators, nothing hidden; never overwrites. Returns its path.
+   */
+  'phone.mkdir': { params: { parent: string; name: string }; result: { path: string } };
 }
 
-export const PHONE_OWN_METHODS = ['phone.tail', 'phone.item', 'phone.fileLink'] as const satisfies readonly (keyof PhoneMethods)[];
+export const PHONE_OWN_METHODS = ['phone.tail', 'phone.item', 'phone.fileLink', 'phone.mkdir'] as const satisfies readonly (keyof PhoneMethods)[];
 
 /** `timeline.reset` as a phone gets it: the newest page, trimmed, with its cursor. */
 export interface PhoneReset {

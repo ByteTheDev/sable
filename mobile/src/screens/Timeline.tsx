@@ -1,71 +1,411 @@
-import { animate } from 'motion';
 import { AnimatePresence, motion } from 'motion/react';
-import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { NoticeItem, PhoneItem, TextItem, ThinkingItem, TimelineItem, ToolItem, TurnItem, UntilCheck, UserItem } from '@shared/protocol';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { NoticeItem, PhoneItem, ProviderId, TextItem, ThinkingItem, TimelineItem, ToolItem, TurnItem, UntilCheck, UserItem } from '@shared/protocol';
 import { formatDuration, formatTokens, plural, resetIn } from '@desk/lib/format';
+import { leadTitle } from '@desk/features/timeline/lead-in';
 import { useNow } from '@m/lib/useNow';
 import { conn } from '@m/lib/conn';
 import { diffLines, renderMarkdown } from '@m/lib/md';
-import { haptic } from '@m/lib/native';
-import { applyChildren, applyFull, fetchItem, getState, sessionData, setState, useStore } from '@m/lib/store';
-import { takeFlight } from '@m/lib/flight';
-import type { Turn } from '@m/lib/turns';
+import { haptic, openExternal } from '@m/lib/native';
+import { putDraft } from '@m/lib/put-draft';
+import { applyChildren, applyFull, fetchItem, getState, sessionData, setState, useStore, type State } from '@m/lib/store';
+import { claimFlight } from '@m/lib/flight';
+import { LINE, type FlowChunk, type Segment, type TurnGroup } from '@m/lib/turns';
 import { Icon, TOOL_ICON, type IconName } from '@m/ui/icons';
-import { Ring, StatusMark, Tiles } from '@m/ui/marks';
-import { REVEAL } from '@m/ui/motion';
+import { PROVIDER_NAME, ProviderMark, Ring, StatusMark, Tiles } from '@m/ui/marks';
+import { REVEAL, reduced } from '@m/ui/motion';
 
-const useItem = <T extends TimelineItem>(sid: string, id: string | undefined) => useStore((s) => (id ? (sessionData(s, sid).items[id] as T | undefined) : undefined));
+const useItem = <T extends TimelineItem>(sid: string, id: string | null | undefined) => useStore((s) => (id ? (sessionData(s, sid).items[id] as T | undefined) : undefined));
 
-/** One turn: your message, the steps folded to a line, sub-agents and workflows as blocks, notices, the answer. */
-export const TurnView = memo(function TurnView({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) {
+/** "8s", "1m 12s": whole seconds, as the desktop's work line says them. */
+function shortDuration(ms: number): string {
+  const s = Math.max(1, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m < 60) return rem ? `${m}m ${rem}s` : `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+/** A reasoning summary's own heading ("**Checking the store**"): what the thinking is about. */
+function thinkingHeadline(text: string): string {
+  const tail = text.length > 3000 ? text.slice(-3000) : text;
+  const re = /(?:^|\n)\s*\*\*([^*\n]{3,80})\*\*\s*(?:\n|$)/g;
+  let last = '';
+  for (let m = re.exec(tail); m; m = re.exec(tail)) last = m[1].trim();
+  return last;
+}
+
+/** Holds each value at least `ms`: quick steps in a row read as a calm sequence of titles, not a flicker. */
+function useHeld<T>(value: T, ms: number): T {
+  const [shown, setShown] = useState(value);
+  const at = useRef(0);
+  useEffect(() => {
+    if (Object.is(value, shown)) return;
+    const show = () => {
+      at.current = performance.now();
+      setShown(value);
+    };
+    const wait = at.current + ms - performance.now();
+    if (wait <= 0) return show();
+    const t = window.setTimeout(show, wait);
+    return () => window.clearTimeout(t);
+  }, [value, shown, ms]);
+  return shown;
+}
+
+/** The time, once a second while `active`. */
+function useSecond(active: boolean): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [active]);
+  return now;
+}
+
+/**
+ * One turn, as the desktop reads it: each segment (your message, what the agent said along the
+ * way, one line for the work, the answer), and how it ended when that needs saying.
+ */
+export const TurnView = memo(function TurnView({ sid, turn, newest }: { sid: string; turn: TurnGroup; newest?: boolean }) {
+  const last = turn.segments.length - 1;
+  const running = turn.state === 'running';
   return (
-    <section className="turn" data-live={live || undefined}>
-      {turn.user && <UserBubble sid={sid} id={turn.user} />}
-      {(turn.steps.length > 0 || live) && <Steps sid={sid} turn={turn} live={live} />}
-      {turn.blocks.map((id) => (
-        <Block key={id} sid={sid} id={id} />
+    <section className="turn" data-live={running || undefined}>
+      {turn.segments.map((seg, i) => (
+        <SegmentView key={seg.key} sid={sid} seg={seg} turn={turn} index={i} live={running && i === last} />
       ))}
-      {turn.steered.map((id) => (
-        <UserBubble key={id} sid={sid} id={id} steered />
+      <TurnFoot sid={sid} turn={turn} />
+      {turn.checks?.map((id) => (
+        <CheckBlock key={id} sid={sid} id={id} />
       ))}
-      {turn.notices.map((id) => (
-        <Notice key={id} sid={sid} id={id} />
-      ))}
-      {turn.answer.map((id) => (
-        <Answer key={id} sid={sid} id={id} />
-      ))}
-      {turn.ends.map((id) => (
-        <Notice key={id} sid={sid} id={id} />
-      ))}
+      {newest && <CheckOffer sid={sid} turn={turn} />}
     </section>
   );
 });
 
-const UserBubble = memo(function UserBubble({ sid, id, steered }: { sid: string; id: string; steered?: boolean }) {
+/** Under a turn: an interruption, or an error the turn ended with that no notice showed. */
+function TurnFoot({ sid, turn }: { sid: string; turn: TurnGroup }) {
+  const end = useItem<TurnItem>(sid, turn.end);
+  if (turn.state === 'interrupted')
+    return (
+      <div className="turn-note">
+        <Icon name="hand" size={14} /> Interrupted
+      </div>
+    );
+  if (turn.state === 'failed' && end?.type === 'turn' && end.error && !turn.segments.some((s) => s.errors.length))
+    return (
+      <div className="notice" data-variant="error">
+        <span className="notice-dot" aria-hidden />
+        <span className="notice-body">{end.error}</span>
+      </div>
+    );
+  return null;
+}
+
+/**
+ * A segment as it reads: the message, each thing the agent says in order (reports one tone back,
+ * the answer and a steered message's reply at full strength), and one line for the work: live
+ * while it runs (what it does now, the time, how many steps), the summary once it settled. A tap
+ * on the line opens every run of steps in its place between the texts.
+ */
+const SegmentView = memo(function SegmentView({ sid, seg, turn, index, live }: { sid: string; seg: Segment; turn: TurnGroup; index: number; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  const hasWork = seg.work.length > 0;
+  const toggle = hasWork
+    ? () => {
+        haptic('select');
+        setOpen((v) => !v);
+      }
+    : undefined;
+  const shown = open && hasWork;
+  const at = seg.flow.indexOf(LINE);
+  const piece = (c: FlowChunk) => {
+    if (c.kind === 'line') return null;
+    if (c.kind === 'steps') return <Run key={`s:${c.key}`} sid={sid} ids={c.ids} open={shown} />;
+    if (c.kind === 'show') return <Show key={c.id} sid={sid} id={c.id} />;
+    return <Answer key={c.id} sid={sid} id={c.id} tone={c.id === seg.answer || c.id === seg.reply ? 'answer' : 'mid'} />;
+  };
+  return (
+    <>
+      {seg.lead && <UserBubble sid={sid} id={seg.lead} steered={seg.steered} />}
+      {(at < 0 ? seg.flow : seg.flow.slice(0, at)).map(piece)}
+      {at >= 0 && (
+        <div className="seg-work">
+          <WorkHead sid={sid} seg={seg} turn={turn} index={index} live={live} open={shown} onToggle={toggle} />
+          {seg.flow.slice(at + 1).map(piece)}
+        </div>
+      )}
+      {seg.errors.map((id) => (
+        <Notice key={id} sid={sid} id={id} />
+      ))}
+    </>
+  );
+});
+
+/** A run of steps between two texts: nothing while folded (not even mounted), a card of rows when opened. */
+const Run = memo(function Run({ sid, ids, open }: { sid: string; ids: string[]; open: boolean }) {
+  return (
+    <AnimatePresence initial={false}>
+      {open && (
+        <motion.div className="run" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={REVEAL}>
+          <div className="run-card">
+            {ids.map((id) => (
+              <StepRow key={id} sid={sid} id={id} />
+            ))}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+});
+
+/** One piece of the work: a step, a thought, a lead-in, a notice, or a sub-agent or workflow as its block. */
+const StepRow = memo(function StepRow({ sid, id }: { sid: string; id: string }) {
+  const it = useItem<TimelineItem>(sid, id);
+  if (!it) return null;
+  if (it.type === 'tool' && (it.kind === 'agent' || it.workflow || it.name === 'Workflow')) return <Block sid={sid} id={id} />;
+  if (it.type === 'notice') return <div className="step-text step-note">{it.text}</div>;
+  return <Step sid={sid} id={id} />;
+});
+
+/** In view in its place: command output, a widget, a plan. */
+function Show({ sid, id }: { sid: string; id: string }) {
+  const it = useItem<TimelineItem>(sid, id);
+  if (!it) return null;
+  if (it.type === 'notice') return <Notice sid={sid} id={id} />;
+  if (it.type === 'tool' && it.kind === 'plan') return <PlanBlock sid={sid} it={it} />;
+  if (it.type === 'tool' && it.kind === 'share') return <ShareCards sid={sid} it={it} />;
+  return <Block sid={sid} id={id} />;
+}
+
+/** A plan: one row; a tap fetches it from the desktop and shows it. */
+function PlanBlock({ sid, it }: { sid: string; it: ToolItem }) {
+  const [open, setOpen] = useState(false);
+  const [plan, setPlan] = useState<string>();
+  const html = useMemo(() => (plan ? renderMarkdown(plan, false) : ''), [plan]);
+  const toggle = () => {
+    haptic('select');
+    if (plan === undefined && !open) void fetchItem(sid, it.id).then((r) => setPlan((r.item as ToolItem).detail?.plan ?? ''), () => setPlan(''));
+    setOpen((v) => !v);
+  };
+  return (
+    <div className="block" data-open={open || undefined}>
+      <button type="button" className="block-toggle" aria-expanded={open} onClick={toggle}>
+        <span className="block-head">
+          <span className="block-icon">
+            <Icon name="plan" size={16} />
+          </span>
+          <span className="block-title">Plan</span>
+          <Icon name="caretDown" size={12} weight="bold" className="block-caret" />
+        </span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div className="block-steps" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={REVEAL}>
+            {plan === undefined ? <span className="skel step-detail-wait" aria-label="Loading" /> : <div className="md md-plan" dangerouslySetInnerHTML={{ __html: html }} />}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** The work line in its place: live while the segment runs, the summary once it settled. */
+function WorkHead({ sid, seg, turn, index, live, open, onToggle }: { sid: string; seg: Segment; turn: TurnGroup; index: number; live: boolean; open: boolean; onToggle?: () => void }) {
+  const hasWork = seg.work.length > 0;
+  const was = useRef(live);
+  const [landed, setLanded] = useState(false);
+  useLayoutEffect(() => {
+    const ended = was.current && !live;
+    was.current = live;
+    if (!ended || !hasWork || reduced()) return;
+    setLanded(true);
+    const t = window.setTimeout(() => setLanded(false), 700);
+    return () => window.clearTimeout(t);
+  }, [live, hasWork]);
+  if (!live && !hasWork) return null;
+  return live ? <LiveLine sid={sid} seg={seg} open={open} onToggle={onToggle} /> : <WorkLine sid={sid} seg={seg} turn={turn} index={index} open={open} onToggle={onToggle} landed={landed} />;
+}
+
+/** Start to end of a settled segment (ms), or null. */
+function segmentSpan(items: Record<string, TimelineItem>, turn: TurnGroup, index: number): number | null {
+  const seg = turn.segments[index];
+  const first = seg.flow.find((c): c is Exclude<FlowChunk, { kind: 'line' }> => c.kind !== 'line');
+  const firstId = !first ? '' : first.kind === 'steps' ? first.ids[0] : first.id;
+  const start = (seg.lead ? items[seg.lead]?.ts : undefined) ?? items[firstId]?.ts;
+  if (!start) return null;
+  const nextLead = turn.segments[index + 1]?.lead;
+  if (nextLead && items[nextLead]) return items[nextLead].ts - start;
+  const end = turn.end ? items[turn.end] : undefined;
+  if (end?.type === 'turn') {
+    const wall = end.ts - start;
+    if (turn.segments.length === 1 && end.durationMs > wall) return end.durationMs;
+    return wall;
+  }
+  let last = start;
+  for (const id of seg.work) {
+    const it = items[id];
+    if (it) last = Math.max(last, it.ts, ('endedAt' in it && it.endedAt) || 0);
+  }
+  return last - start;
+}
+
+/** "Worked 12s · 20 steps", and the change: the folded work of a settled segment. */
+function WorkLine({ sid, seg, turn, index, open, onToggle, landed }: { sid: string; seg: Segment; turn: TurnGroup; index: number; open: boolean; onToggle?: () => void; landed: boolean }) {
+  const { span, add, del, thought } = useMemo(() => {
+    const items = sessionData(getState(), sid).items;
+    let a = 0;
+    let d = 0;
+    for (const id of seg.work) {
+      const it = items[id];
+      if (it?.type === 'tool') for (const f of it.result?.diff ?? []) (a += f.additions), (d += f.deletions);
+    }
+    return { span: segmentSpan(items, turn, index), add: a, del: d, thought: !seg.steps && seg.work.some((id) => items[id]?.type === 'thinking') };
+  }, [sid, turn, index, seg]);
+  const took = span && span >= 1000 ? shortDuration(span) : '';
+  return (
+    <div className="work" data-landed={landed || undefined} data-open={open || undefined}>
+      <button type="button" className="work-line" aria-expanded={open} onClick={onToggle}>
+        <span className="work-title">{thought ? (took ? `Thought for ${took}` : 'Thought') : took ? `Worked ${took}` : 'Worked'}</span>
+        {seg.steps > 0 && <span className="work-meta num">{plural(seg.steps, 'step')}</span>}
+        {(add > 0 || del > 0) && (
+          <span className="diffstat num">
+            {add > 0 && <span className="add">+{add}</span>}
+            {del > 0 && <span className="del">−{del}</span>}
+          </span>
+        )}
+        <Icon name="caretDown" size={12} weight="bold" className="work-caret" />
+      </button>
+    </div>
+  );
+}
+
+const TITLE_HOLD_MS = 600;
+const RECENT_MS = 2000;
+
+/** The newest lead-in since the agent last said something in view, while the steps it announced run; else ''. */
+function currentLead(items: Record<string, TimelineItem>, seg: Segment): string {
+  const id = seg.narr[seg.narr.length - 1];
+  const it = id ? items[id] : undefined;
+  if (it?.type !== 'text' || it.streaming) return '';
+  const at = seg.work.lastIndexOf(id);
+  let ended = Infinity;
+  for (let i = at + 1; i < seg.work.length; i++) {
+    const step = items[seg.work[i]];
+    if (!step) continue;
+    if (step.type !== 'tool' || step.ts > ended) return '';
+    if (step.endedAt) ended = Math.min(ended, step.endedAt);
+  }
+  return leadTitle(it.text);
+}
+
+/** What the running segment does right now, as `${waiting}|${title}` (a string, so the line renders only when it changes). */
+function liveSelector(sid: string, seg: Segment, held: { title: string }) {
+  const pieces: string[] = [];
+  for (let i = seg.flow.length - 1; i >= 0 && pieces.length < 4; i--) {
+    const c = seg.flow[i];
+    if (c.kind === 'text' || c.kind === 'show') pieces.push(c.id);
+  }
+  return (s: State): string => {
+    const d = s.data[sid];
+    const meta = s.sessions[sid];
+    if (!d || !meta) return '0|Working';
+    let waiting = meta.status === 'awaiting' || d.permissions.length > 0 || d.questions.length > 0;
+    let title = '';
+    let agents = 0;
+    let recent = '';
+    let writing = false;
+    for (let i = seg.work.length - 1, n = 0; i >= 0 && n < 60; i--, n++) {
+      const it = d.items[seg.work[i]];
+      if (!it) continue;
+      if (it.type === 'tool' && (it.status === 'running' || it.status === 'pending' || it.status === 'awaiting')) {
+        if (it.status === 'awaiting') waiting = true;
+        if (it.kind === 'agent') agents++;
+        if (!title) title = it.title;
+      } else if (it.type === 'thinking' && it.streaming && !title) title = thinkingHeadline((it as ThinkingItem).text) || 'Thinking';
+      else if (n === 0 && it.type === 'text' && it.streaming) writing = true;
+      else if (n === 0 && it.type === 'tool' && it.endedAt && Date.now() - it.endedAt < RECENT_MS) recent = it.title;
+    }
+    if (agents > 1) title = `Running ${agents} sub-agents`;
+    else if (writing && held.title) title = held.title;
+    else title = currentLead(d.items, seg) || title;
+    for (const id of pieces) {
+      if (title) break;
+      const it = d.items[id];
+      if (it?.type === 'tool' && (it.status === 'pending' || it.status === 'running')) title = it.title;
+      else if (it?.type === 'text' && it.streaming) title = 'Writing';
+    }
+    if (!title) title = recent || (meta.status === 'starting' ? 'Starting' : meta.activity || 'Working');
+    held.title = title;
+    return `${waiting ? 1 : 0}|${title}`;
+  };
+}
+
+/**
+ * The running segment's one line: the working tiles, what it does now (the agent's own words while
+ * the steps it announced run), the time so far and how many steps. It stays in view under the
+ * header while what the agent says grows past the top. Waiting on you, it stills in amber.
+ */
+function LiveLine({ sid, seg, open, onToggle }: { sid: string; seg: Segment; open: boolean; onToggle?: () => void }) {
+  const [last] = useState(() => ({ title: '' }));
+  const info = useStore(useMemo(() => liveSelector(sid, seg, last), [sid, seg, last]));
+  const lead = useItem<TimelineItem>(sid, seg.lead ?? seg.work[0]);
+  const now = useSecond(true);
+  const cut = info.indexOf('|');
+  const waiting = info.slice(0, cut) === '1';
+  const title = useHeld(info.slice(cut + 1), TITLE_HOLD_MS);
+  const elapsed = lead ? now - lead.ts : 0;
+  const tiles = useMemo(() => <Tiles size={13} />, []);
+  return (
+    <div className="work" data-live data-waiting={waiting || undefined} data-open={open || undefined} role="status" aria-live="off">
+      <button type="button" className="work-line" aria-expanded={onToggle ? open : undefined} onClick={onToggle} disabled={!onToggle}>
+        <span className="work-ind">{waiting ? <StatusMark tone="awaiting" size={11} /> : tiles}</span>
+        <span key={waiting ? '\u0000' : title} className={waiting ? 'work-title' : 'work-title shimmer'}>
+          {waiting ? 'Waiting for you' : title}
+        </span>
+        {elapsed >= 1000 && <span className="work-meta num">{shortDuration(elapsed)}</span>}
+        {seg.steps > 0 && <span className="work-meta num">{plural(seg.steps, 'step')}</span>}
+        {onToggle && <Icon name="caretDown" size={12} weight="bold" className="work-caret" />}
+      </button>
+    </div>
+  );
+}
+
+/** A root item outside any turn (a /until loop's end, a queued message, a page that starts mid-turn). */
+export const ItemRow = memo(function ItemRow({ sid, id, queued }: { sid: string; id: string; queued?: boolean }) {
+  const it = useItem<TimelineItem>(sid, id);
+  if (!it) return null;
+  if (it.type === 'user') return <UserBubble sid={sid} id={id} queued={queued} />;
+  if (it.type === 'text') return <Answer sid={sid} id={id} tone="answer" />;
+  if (it.type === 'notice') return <Notice sid={sid} id={id} />;
+  if (it.type === 'tool' && it.check) return <CheckBlock sid={sid} id={id} />;
+  if (it.type === 'tool' && it.kind === 'share') return <ShareCards sid={sid} it={it} />;
+  if (it.type === 'tool')
+    return (
+      <div className="run-card">
+        <StepRow sid={sid} id={id} />
+      </div>
+    );
+  return null;
+});
+
+const UserBubble = memo(function UserBubble({ sid, id, steered, queued }: { sid: string; id: string; steered?: boolean; queued?: boolean }) {
   const it = useItem<UserItem>(sid, id);
   const ref = useRef<HTMLDivElement>(null);
   const [long, setLong] = useState(false);
   const [open, setOpen] = useState(false);
 
-  // The message flies from where it was written to where it lands (lib/flight.ts records where it left):
-  // one spring per axis, the bubble growing out of the field's shape.
+  // A message just sent arrives as liquid (lib/flight.ts): the bubble stays hidden while the drop
+  // rises from the prompt bar and spreads into its shape, then takes over in one frame.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !it) return;
     setLong(el.scrollHeight > 260);
-    const f = takeFlight(it.text);
-    if (!f) return;
-    // Land where it will rest: the conversation is at its newest line before measuring.
-    const sc = el.closest('.thread');
-    if (sc) sc.scrollTop = sc.scrollHeight;
-    const r = el.getBoundingClientRect();
-    // From the words in the field: its left edge at theirs, its foot at the field's foot.
-    const dx = Math.min(0, f.rect.left + 4 - r.left);
-    const dy = f.rect.bottom - r.bottom;
-    animate(el, { x: [dx, 0] }, { type: 'spring', stiffness: 360, damping: 34, mass: 0.9 });
-    animate(el, { y: [dy, 0] }, { type: 'spring', stiffness: 400, damping: 36, mass: 0.9 });
-    animate(el, { scale: [0.94, 1] }, { type: 'spring', stiffness: 420, damping: 30 });
-    animate(el, { opacity: [0.35, 1] }, { duration: 0.16 });
+    claimFlight(it.text, el);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!it]);
 
@@ -74,8 +414,9 @@ const UserBubble = memo(function UserBubble({ sid, id, steered }: { sid: string;
   if (it.until?.check) return <CheckRow check={it.until.check} />;
   const images = it.attachments?.filter((a) => a.dataUrl && a.kind === 'image') ?? [];
   const files = it.attachments?.filter((a) => !(a.dataUrl && a.kind === 'image')) ?? [];
+  const waitingSteer = steered && it.state === 'queued';
   return (
-    <div className="user-row" data-steered={steered || undefined}>
+    <div className="user-row" data-steered={steered || undefined} data-queued={queued || waitingSteer || undefined}>
       <div ref={ref} className="user-bubble" data-long={long && !open ? true : undefined} onClick={() => long && (haptic('select'), setOpen((v) => !v))}>
         {images.length > 0 && (
           <div className="user-images">
@@ -96,126 +437,14 @@ const UserBubble = memo(function UserBubble({ sid, id, steered }: { sid: string;
         {it.text && <div className="user-text">{it.text}</div>}
         {long && !open && <div className="user-more">Show more</div>}
       </div>
-      {steered && (
+      {(steered || queued) && (
         <span className="user-note">
-          <Icon name="steer" size={12} /> Steered
+          <Icon name="steer" size={12} /> {queued ? 'Queued' : waitingSteer ? 'Steering' : 'Steered'}
         </span>
       )}
     </div>
   );
 });
-
-/** What a turn's steps did, for its folded line: the kinds of work (most frequent first) and the change. */
-function summarize(sid: string, steps: string[]) {
-  const items = sessionData(getState(), sid).items;
-  const kinds = new Map<IconName, number>();
-  let add = 0;
-  let del = 0;
-  for (const id of steps) {
-    const it = items[id];
-    if (!it) continue;
-    const icon: IconName = it.type === 'tool' ? (TOOL_ICON[it.kind] ?? 'tool') : it.type === 'thinking' ? 'brain' : 'chat';
-    if (it.type !== 'text') kinds.set(icon, (kinds.get(icon) ?? 0) + 1);
-    if (it.type === 'tool')
-      for (const f of it.result?.diff ?? []) {
-        add += f.additions;
-        del += f.deletions;
-      }
-  }
-  const glyphs = [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
-  return { glyphs, add, del };
-}
-
-/**
- * The steps of a turn. Running: a live line (the step in progress) over a short trail of the ones
- * before it, newest first, each dropping in as the next begins. Done: one quiet line (the kinds of
- * work, how long, the change) that opens into the whole list.
- */
-function Steps({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) {
-  const [open, setOpen] = useState(false);
-  const activity = useStore((s) => s.sessions[sid]?.activity);
-  // Waiting on you: the line stills (amber), as the desktop's field does.
-  const waiting = useStore((s) => live && s.sessions[sid]?.status === 'awaiting');
-  const end = useItem<TurnItem>(sid, turn.end);
-  const lastStep = useItem<TimelineItem>(sid, turn.steps[turn.steps.length - 1]);
-  const n = turn.steps.length;
-  const sum = useMemo(() => summarize(sid, turn.steps), [sid, turn]);
-
-  if (live) {
-    // While it runs, the step in progress is the line itself; the trail under it shows the ones before.
-    const current = (lastStep?.type === 'thinking' && lastStep.streaming) || (lastStep?.type === 'tool' && (lastStep.status === 'running' || lastStep.status === 'pending'));
-    const before = current ? turn.steps.slice(0, -1) : turn.steps;
-    const trail = open ? turn.steps : before.slice(-3).reverse();
-    const label = waiting ? 'Waiting for you' : activity || (lastStep?.type === 'tool' ? lastStep.title : lastStep?.type === 'thinking' ? 'Thinking' : 'Working');
-    return (
-      <div className="tail" data-waiting={waiting || undefined} data-open={open || undefined}>
-        <button type="button" className="tail-line" onClick={() => n && (haptic('select'), setOpen((v) => !v))} aria-expanded={open}>
-          {waiting ? <StatusMark tone="awaiting" size={14} /> : <Tiles size={14} />}
-          {/* Each new step's words rise into the line (CSS, on mount: no exits to pile up when steps are quick). */}
-          <span key={label} className={waiting ? 'tail-label' : 'tail-label shimmer'}>
-            {label}
-          </span>
-          {n > 0 && <span className="tail-count num">{n}</span>}
-        </button>
-        {trail.length > 0 && (
-          <div className="tail-trail">
-            {trail.map((id) => (
-              <div key={id} className="trail-item">
-                <Step sid={sid} id={id} quiet={!open} />
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  const label = end ? `Worked ${formatDuration(end.durationMs)}` : plural(n, 'step');
-  return (
-    <div className="steps" data-open={open || undefined}>
-      <button
-        type="button"
-        className="steps-sum"
-        onClick={() => {
-          if (!n) return;
-          haptic('select');
-          setOpen((v) => !v);
-        }}
-        aria-expanded={open}
-      >
-        {sum.glyphs.length > 0 && (
-          <span className="glyphs" aria-hidden>
-            {sum.glyphs.map((g) => (
-              <i key={g}>
-                <Icon name={g} size={12} />
-              </i>
-            ))}
-          </span>
-        )}
-        <span className="steps-label">{label}</span>
-        {end && n > 0 && <span className="steps-meta num">{plural(n, 'step')}</span>}
-        {(sum.add > 0 || sum.del > 0) && (
-          <span className="diffstat num">
-            {sum.add > 0 && <span className="add">+{sum.add}</span>}
-            {sum.del > 0 && <span className="del">−{sum.del}</span>}
-          </span>
-        )}
-        {n > 0 && <Icon name="caretDown" size={13} weight="bold" className="steps-caret" />}
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div className="steps-list" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={REVEAL}>
-            <div className="steps-card">
-              {turn.steps.map((id) => (
-                <Step key={id} sid={sid} id={id} />
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
 
 const Step = memo(function Step({ sid, id, quiet }: { sid: string; id: string; quiet?: boolean }) {
   const it = useItem<TimelineItem>(sid, id);
@@ -390,6 +619,8 @@ function AgentBlock({ sid, id, it, name, running, background, kids }: { sid: str
   const children = useStore((s) => (open ? sessionData(s, sid).children[id] : undefined));
   const stats = it.result?.agent;
   const steps = (children ?? []).slice(-40);
+  // A sub-agent from the other agent (delegate_to_codex / delegate_to_claude): its own mark.
+  const other = otherAgent(it);
   const toggle = () => {
     haptic('select');
     // Its steps stay on the desktop until asked for (the last 40).
@@ -400,7 +631,7 @@ function AgentBlock({ sid, id, it, name, running, background, kids }: { sid: str
     <div className="block" data-open={open || undefined} data-running={running || undefined}>
       <button type="button" className="block-toggle" aria-expanded={open} disabled={!kids} onClick={toggle}>
         <span className="block-head">
-          <span className="block-icon">{running ? <Tiles size={13} /> : <Icon name="agent" size={16} />}</span>
+          <span className="block-icon">{running ? <Tiles size={13} /> : other ? <ProviderMark provider={other} size={16} /> : <Icon name="agent" size={16} />}</span>
           <span className="block-title">{name}</span>
           <span className="block-aside">{it.status === 'error' ? 'Failed' : running ? (background ? 'In the background' : 'Working') : 'Done'}</span>
         </span>
@@ -421,6 +652,14 @@ function AgentBlock({ sid, id, it, name, running, background, kids }: { sid: str
       </AnimatePresence>
     </div>
   );
+}
+
+/** The agent a cross-agent sub-agent runs on, from its tool's name or the name it carries. */
+function otherAgent(it: ToolItem): ProviderId | undefined {
+  const n = it.name.toLowerCase();
+  if (n.includes('delegate_to_codex') || it.detail.subagent === 'Codex') return 'codex';
+  if (n.includes('delegate_to_claude') || it.detail.subagent === 'Claude Code') return 'claude';
+  return undefined;
 }
 
 const statusWord = (s: string) => (s === 'running' ? 'Running' : s === 'done' ? 'Done' : s === 'failed' ? 'Failed' : 'Stopped');
@@ -538,7 +777,7 @@ function LimitCard({ sid, it, next, went }: { sid: string; it: NoticeItem; next?
   );
 }
 
-const Answer = memo(function Answer({ sid, id }: { sid: string; id: string }) {
+const Answer = memo(function Answer({ sid, id, tone = 'answer' }: { sid: string; id: string; tone?: 'answer' | 'mid' }) {
   const it = useItem<TextItem>(sid, id);
   const html = useMemo(() => (it ? renderMarkdown(it.text, it.streaming) : ''), [it]);
   const [busy, setBusy] = useState(false);
@@ -546,7 +785,7 @@ const Answer = memo(function Answer({ sid, id }: { sid: string; id: string }) {
   const cut = (it as PhoneItem).cut && !it.streaming;
   return (
     <>
-      <div className="md" data-streaming={it.streaming || undefined} data-cut={cut || undefined} onClick={copyCode} dangerouslySetInnerHTML={{ __html: html }} />
+      <div className="md" data-tone={tone} data-streaming={it.streaming || undefined} data-cut={cut || undefined} onClick={copyCode} dangerouslySetInnerHTML={{ __html: html }} />
       {cut && (
         <button
           type="button"
@@ -567,8 +806,16 @@ const Answer = memo(function Answer({ sid, id }: { sid: string; id: string }) {
   );
 });
 
-/** The copy key on a code block: its text to the clipboard, a short confirmation on the key itself. */
+/** The copy key on a code block: its text to the clipboard, a short confirmation on the key itself. A file chip copies its path. */
 function copyCode(e: React.MouseEvent) {
+  const file = (e.target as HTMLElement).closest<HTMLElement>('.md-file');
+  if (file?.dataset.path) {
+    void navigator.clipboard
+      ?.writeText(file.dataset.path)
+      .then(() => (haptic('success'), setState({ toast: { text: 'Path copied', level: 'success', at: Date.now() } })))
+      .catch(() => {});
+    return;
+  }
   const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.md-copy');
   const code = btn?.closest('.md-code')?.querySelector('code');
   if (!btn || !code) return;
@@ -581,6 +828,219 @@ function copyCode(e: React.MouseEvent) {
       window.setTimeout(() => delete btn.dataset.done, 1400);
     })
     .catch(() => {});
+}
+
+// ───────────────────────── files the agent handed over, checks by the other agent ─────────────────────────
+
+const KB = 1024;
+function fileSize(n?: number): string {
+  if (n == null) return '';
+  if (n < KB) return `${n} B`;
+  if (n < KB * KB) return `${Math.round(n / KB)} KB`;
+  if (n < KB * KB * KB) return `${(n / KB / KB).toFixed(n < 10 * KB * KB ? 1 : 0)} MB`;
+  return `${(n / KB / KB / KB).toFixed(1)} GB`;
+}
+
+const CODE_EXT = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'json', 'py', 'rs', 'go', 'java', 'kt', 'swift', 'c', 'cpp', 'h', 'cs', 'rb', 'php', 'sh', 'html', 'css', 'xml', 'yml', 'yaml', 'toml', 'sql']);
+function fileIcon(name: string): IconName {
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'apk' || ext === 'aab') return 'android';
+  if (['zip', 'tar', 'gz', 'tgz', '7z', 'rar'].includes(ext)) return 'fileZip';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic'].includes(ext)) return 'fileImage';
+  if (ext === 'pdf') return 'filePdf';
+  if (CODE_EXT.has(ext)) return 'fileCode';
+  return 'file';
+}
+const kindOf = (name: string) => {
+  const ext = name.includes('.') ? name.split('.').pop()!.toUpperCase() : '';
+  return ext.length <= 5 ? ext : '';
+};
+
+/**
+ * Files the agent handed over (`share`): each a card (its kind as a plain glyph, name, size) with
+ * Download. The desktop makes a one-file link for 15 minutes (`phone.fileLink`); Android's own
+ * browser fetches it (an APK then offers to install).
+ */
+function ShareCards({ sid, it }: { sid: string; it: ToolItem }) {
+  const files = it.detail.files ?? [];
+  const caption = it.detail.caption?.trim();
+  if (!files.length) return null;
+  return (
+    <div className="share">
+      {caption && <p className="share-caption">{caption}</p>}
+      {files.map((f, i) => (
+        <ShareCard key={`${f.path}:${i}`} sid={sid} itemId={it.id} index={i} name={f.name} size={f.size} />
+      ))}
+    </div>
+  );
+}
+
+function ShareCard({ sid, itemId, index, name, size }: { sid: string; itemId: string; index: number; name: string; size?: number }) {
+  const [state, setState2] = useState<'idle' | 'busy' | 'done'>('idle');
+  const meta = [fileSize(size), kindOf(name)].filter(Boolean).join(' · ');
+  const go = async () => {
+    if (state === 'busy') return;
+    haptic('tap');
+    setState2('busy');
+    try {
+      const r = await conn.call('phone.fileLink', { sessionId: sid, itemId, index });
+      const url = conn.httpUrl(r.path);
+      if (!url) throw new Error('The computer is not connected');
+      openExternal(url);
+      haptic('success');
+      setState2('done');
+      window.setTimeout(() => setState2('idle'), 2400);
+    } catch (err) {
+      haptic('deny');
+      setState2('idle');
+      setState({ toast: { text: (err as Error).message, level: 'error', at: Date.now() } });
+    }
+  };
+  return (
+    <div className="share-card">
+      <span className="share-glyph">
+        <Icon name={fileIcon(name)} size={24} />
+      </span>
+      <span className="share-text">
+        <span className="share-name">{name}</span>
+        {meta && <span className="share-meta num">{meta}</span>}
+      </span>
+      <button type="button" className="share-get" aria-label={`Download ${name}`} disabled={state === 'busy'} onClick={() => void go()}>
+        {state === 'busy' ? <Ring size={14} /> : <Icon name={state === 'done' ? 'check' : 'download'} size={18} weight={state === 'done' ? 'bold' : 'regular'} />}
+        <span>{state === 'done' ? 'Opened' : 'Download'}</span>
+      </button>
+    </div>
+  );
+}
+
+/** The agent that checks a turn of `provider`: the other one (a Demo chat checks with Demo). */
+export const checkerOf = (p?: ProviderId): ProviderId | undefined => (p === 'claude' ? 'codex' : p === 'codex' ? 'claude' : p === 'demo' ? 'demo' : undefined);
+const hasFindings = (text: string) => !!text.trim() && !/^no problems found\.?$/i.test(text.trim());
+const findingsMessage = (checker: string, findings: string) => `${checker} reviewed your changes and found:\n\n${findings.trim()}\n\nLook into each finding and fix the ones that hold.`;
+
+/**
+ * A turn checked by the other agent, under the turn it checks: its mark and what it does; while it
+ * works, the time and a stop; done, its findings in view with one action that puts them in the
+ * composer for the chat's own agent. A tap on the line opens the steps it took.
+ */
+const CheckBlock = memo(function CheckBlock({ sid, id }: { sid: string; id: string }) {
+  const it = useItem<ToolItem>(sid, id);
+  const [open, setOpen] = useState(false);
+  const children = useStore((s) => (open ? sessionData(s, sid).children[id] : undefined));
+  const known = useStore((s) => sessionData(s, sid).children[id]?.length ?? 0);
+  const now = useSecond(!!it && (it.status === 'running' || it.status === 'pending'));
+  const asked = useRef(false);
+  const findings = it?.status === 'done' ? (it.result?.text ?? '').trim() : '';
+  const html = useMemo(() => (findings ? renderMarkdown(findings, false) : ''), [findings]);
+  // The findings stay on the desktop until asked for (a page carries only the step's line).
+  useEffect(() => {
+    if (!it || it.status !== 'done' || findings || asked.current) return;
+    asked.current = true;
+    void fetchItem(sid, id).then((r) => applyFull(sid, r.item), () => {});
+  }, [it, findings, sid, id]);
+  if (!it?.check) return null;
+  const who = PROVIDER_NAME[it.check.agent] ?? it.check.agent;
+  const live = it.status === 'running' || it.status === 'pending';
+  const steps = Math.max(known, (it as PhoneItem).kids ?? 0, it.result?.agent?.steps ?? 0);
+  const title = live ? `${who} is checking this turn` : it.status === 'done' ? `${who} checked this turn` : it.status === 'cancelled' ? 'Check stopped' : `${who} could not check this turn`;
+  const took = it.endedAt ? it.endedAt - it.ts : live ? now - it.ts : 0;
+  const toggle = () => {
+    if (!steps) return;
+    haptic('select');
+    if (!open) void fetchItem(sid, id).then((r) => applyChildren(sid, id, r.children), () => {});
+    setOpen((v) => !v);
+  };
+  return (
+    <div className="check" data-status={it.status} data-live={live || undefined} data-open={open || undefined}>
+      <div className="check-head">
+        <button type="button" className="check-line" aria-expanded={steps ? open : undefined} disabled={!steps} onClick={toggle}>
+          <span className="check-mark">{live ? <Tiles size={12} /> : <ProviderMark provider={it.check.agent} size={15} />}</span>
+          <span className={live ? 'check-title shimmer' : 'check-title'}>{title}</span>
+          {took >= 1000 && <span className="work-meta num">{shortDuration(took)}</span>}
+          {steps > 0 && <Icon name="caretDown" size={12} weight="bold" className="work-caret" />}
+        </button>
+        {live && (
+          <button type="button" className="icon-btn sm check-stop" aria-label="Stop the check" onClick={() => (haptic('warning'), void conn.call('turn.checkStop', { sessionId: sid, itemId: id }).catch(() => {}))}>
+            <span className="stop-square sm" />
+          </button>
+        )}
+      </div>
+      <AnimatePresence initial={false}>
+        {open && (children?.length ?? 0) > 0 && (
+          <motion.div className="run" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={REVEAL}>
+            <div className="run-card">
+              {children!.slice(-40).map((cid) => (
+                <Step key={cid} sid={sid} id={cid} />
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {findings &&
+        (hasFindings(findings) ? (
+          <>
+            <div className="md check-findings" data-tone="mid" onClick={copyCode} dangerouslySetInnerHTML={{ __html: html }} />
+            <button
+              type="button"
+              className="btn check-fix"
+              onClick={() => {
+                haptic('select');
+                putDraft(sid, findingsMessage(who, findings));
+              }}
+            >
+              <Icon name="edit" size={16} /> Fix these
+            </button>
+          </>
+        ) : (
+          <div className="check-clean">
+            <Icon name="check" size={14} weight="bold" /> No problems found
+          </div>
+        ))}
+    </div>
+  );
+});
+
+/** Under the newest settled turn that changed files: the other agent can check it. */
+function CheckOffer({ sid, turn }: { sid: string; turn: TurnGroup }) {
+  const provider = useStore((s) => s.sessions[sid]?.provider);
+  const checker = checkerOf(provider);
+  const ready = useStore((s) => (checker ? !!s.providers[checker]?.installed && !!s.providers[checker]?.auth?.loggedIn : false));
+  const online = useStore((s) => s.conn === 'open');
+  const changed = useMemo(() => {
+    const items = sessionData(getState(), sid).items;
+    return turn.ids.some((x) => {
+      const t = items[x];
+      return t?.type === 'tool' && (!!t.result?.diff?.length || ((t.kind === 'edit' || t.kind === 'write') && t.status === 'done'));
+    });
+  }, [sid, turn]);
+  const checked = useStore((s) =>
+    (turn.checks ?? []).some((x) => {
+      const t = sessionData(s, sid).items[x];
+      return t?.type === 'tool' && (t.status === 'running' || t.status === 'pending' || t.status === 'done');
+    }),
+  );
+  const [busy, setBusy] = useState(false);
+  if (!checker || !ready || !changed || checked || turn.state !== 'done') return null;
+  const who = PROVIDER_NAME[checker];
+  return (
+    <button
+      type="button"
+      className="check-offer"
+      disabled={busy || !online}
+      onClick={() => {
+        haptic('tap');
+        setBusy(true);
+        void conn
+          .call('turn.check', { sessionId: sid, turnId: turn.key })
+          .then((r) => !r.ok && r.error && setState({ toast: { text: r.error, level: 'error', at: Date.now() } }))
+          .catch((err: Error) => setState({ toast: { text: err.message, level: 'error', at: Date.now() } }))
+          .finally(() => setBusy(false));
+      }}
+    >
+      {busy ? <Ring size={13} /> : <ProviderMark provider={checker} size={14} />}
+      <span>Check with {who}</span>
+    </button>
+  );
 }
 
 export function Empty({ children }: { children: ReactNode }) {

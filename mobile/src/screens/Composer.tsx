@@ -1,19 +1,17 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useRef, useState } from 'react';
-import { STANDARD_SPEED, type Attachment, type Effort, type ModeTone, type QueuedMessage } from '@shared/protocol';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { STANDARD_SPEED, type Attachment, type QueuedMessage } from '@shared/protocol';
 import { offeredSpeeds, speedFor } from '@shared/speed';
 import { effortName, modelName, modelNameById, visibleModels } from '@desk/lib/models';
 import { conn } from '@m/lib/conn';
-import { launchFlight } from '@m/lib/flight';
+import { claimFlight, dropFlight, inFlight, launchFlight } from '@m/lib/flight';
 import { onKeyboard } from '@m/lib/keyboard';
+import { onPutDraft } from '@m/lib/put-draft';
 import { haptic } from '@m/lib/native';
 import { ensureFolderCaps, sessionData, setState, useStore } from '@m/lib/store';
-import { fieldBeat } from '@m/ui/Field';
-import { Icon, type IconName } from '@m/ui/icons';
+import { Icon } from '@m/ui/icons';
 import { SNAP } from '@m/ui/motion';
-import { Choice, Sheet } from '@m/ui/Sheet';
-
-const MODE_ICON: Record<ModeTone, IconName> = { ask: 'hand', edit: 'edit', plan: 'plan', auto: 'bolt', danger: 'shield' };
+import { MODE_ICON, SetupSheet, type SetupState } from './Setup';
 
 /** Unsent words per chat, kept across restarts (Android may close the app in the background). */
 const DRAFTS = 'sable.drafts';
@@ -79,7 +77,7 @@ export function Composer({ sid }: { sid: string }) {
     return undefined;
   });
   const [files, setFiles] = useState<Attachment[]>([]);
-  const [sheet, setSheet] = useState<'model' | 'mode' | null>(null);
+  const [sheet, setSheet] = useState(false);
   const [focused, setFocused] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -106,6 +104,23 @@ export function Composer({ sid }: { sid: string }) {
   // The keyboard put away (back, the keyboard's own key): the field lets go too, so it does not stay lifted.
   useEffect(() => onKeyboard((lift, prev) => lift === 0 && prev > 0 && document.activeElement === area.current && area.current?.blur()), []);
 
+  // Words put here from the chat (a check's findings): into the field, ready to edit and send.
+  useEffect(
+    () =>
+      onPutDraft(sid, (t) => {
+        setText(t);
+        drafts.set(sid, t);
+        saveDrafts();
+        const el = area.current;
+        if (!el) return;
+        el.value = t;
+        el.style.height = 'auto';
+        el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+        el.focus();
+      }),
+    [sid],
+  );
+
   // The field takes the height of a draft that came back from storage.
   useEffect(() => {
     const el = area.current;
@@ -127,32 +142,64 @@ export function Composer({ sid }: { sid: string }) {
   const speeds = offeredSpeeds(model, false);
   const speed = speedFor(model, s.speed);
   const modelLabel = modelName(model) ?? modelNameById(s.model, caps?.models) ?? 'Model';
+  const setup: SetupState = {
+    models: models.map((m) => ({ id: m.id, name: modelName(m) ?? m.name })),
+    model: s.model,
+    onModel: (id) => void conn.call('session.setModel', { sessionId: sid, model: id }).catch(() => {}),
+    efforts,
+    effort,
+    onEffort: (e) => void conn.call('session.setEffort', { sessionId: sid, effort: e }).catch(() => {}),
+    speeds: speeds.length ? [{ id: STANDARD_SPEED, name: 'Standard' }, ...speeds.map((x) => ({ id: x.id, name: x.name }))] : [],
+    speed,
+    onSpeed: (v) => void conn.call('session.setSpeed', { sessionId: sid, speed: v }).catch(() => {}),
+    modes: caps?.modes ?? [],
+    mode: s.mode,
+    onMode: (id) => void conn.call('session.setMode', { sessionId: sid, mode: id }).catch(() => {}),
+  };
 
-  const update = (v: string) => {
+  const update = (v: string, hold = false) => {
     setText(v);
     drafts.set(sid, v);
     saveDrafts();
     const el = area.current;
-    if (el) {
-      el.style.height = 'auto';
-      el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+    if (!el) return;
+    if (hold) {
+      // The bar holds still while the bead forms on its edge, then gathers to one line.
+      const h = el.offsetHeight;
+      el.style.height = `${h}px`;
+      window.setTimeout(() => {
+        if (el.value) return;
+        el.style.height = 'auto';
+        const to = Math.min(el.scrollHeight, 168);
+        if (Math.abs(to - h) < 2) return void (el.style.height = `${to}px`);
+        el.style.height = `${h}px`;
+        void el.offsetHeight;
+        el.style.transition = 'height 240ms cubic-bezier(0.2, 0.8, 0.2, 1)';
+        el.style.height = `${to}px`;
+        window.setTimeout(() => (el.style.transition = ''), 260);
+      }, 290);
+      return;
     }
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
   };
 
   const send = async () => {
     const t = text.trim();
     if ((!t && !files.length) || !online) return;
     const el = area.current;
-    if (el && t) launchFlight(t, el.getBoundingClientRect());
-    haptic('send');
-    fieldBeat('send', sendKey.current);
+    const bar = el?.closest<HTMLElement>('.composer');
+    // The words drain into the bar's corner and leave as a drop (lib/flight.ts: the tick comes at the break).
+    if (el && bar && t) launchFlight(t, el, bar);
+    else haptic('tap');
     const attachments = files.length ? files : undefined;
-    update('');
+    update('', true);
     setFiles([]);
     try {
       await conn.call('session.send', { sessionId: sid, text: t, attachments });
     } catch (err) {
       const msg = (err as Error).message;
+      dropFlight();
       haptic('deny');
       update(t);
       setFiles(attachments ?? []);
@@ -217,28 +264,27 @@ export function Composer({ sid }: { sid: string }) {
         <div className="composer-bar">
           {caps?.features.images !== false && (
             <>
-              <button type="button" className="chip-btn round" aria-label="Add a photo" onPointerDown={(e) => e.preventDefault()} onClick={() => (haptic('tap'), fileInput.current?.click())}>
-                <Icon name="plus" size={18} />
+              <button type="button" className="tool-key" aria-label="Add a photo" onPointerDown={(e) => e.preventDefault()} onClick={() => (haptic('tap'), fileInput.current?.click())}>
+                <Icon name="plus" size={19} />
               </button>
               <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(e) => void pick(e.target.files).then(() => (e.target.value = ''))} />
             </>
           )}
-          <div className="chips-wrap">
-            <div className="chips no-drag">
-              {mode && (
-                <button type="button" className="chip-btn" data-tone={mode.tone} onClick={() => (haptic('tap'), setSheet('mode'))}>
-                  <Icon name={MODE_ICON[mode.tone] ?? 'hand'} size={15} />
-                  <span>{mode.name}</span>
-                </button>
-              )}
-              {(model || s.model) && (
-                <button type="button" className="chip-btn" onClick={() => (haptic('tap'), setSheet('model'))}>
-                  <span>{modelLabel}</span>
-                  {effort && efforts.length > 0 && <span className="chip-dim">{effortName(effort)}</span>}
-                </button>
-              )}
-            </div>
-          </div>
+          {(model || s.model || mode) && (
+            <button
+              type="button"
+              className="setup-chip"
+              aria-label={`${modelLabel}${effort && efforts.length ? `, ${effortName(effort)}` : ''}${mode ? `, ${mode.name}` : ''}`}
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => (haptic('tap'), setSheet(true))}
+            >
+              {mode && <Icon name={MODE_ICON[mode.tone] ?? 'hand'} size={15} className="setup-chip-mode" />}
+              <span className="setup-chip-model">{modelLabel}</span>
+              {effort && efforts.length > 1 && <span className="setup-chip-dim">{effortName(effort)}</span>}
+              <Icon name="updown" size={12} weight="bold" className="setup-chip-caret" />
+            </button>
+          )}
+          <span className="bar-gap" />
           <AnimatePresence mode="popLayout" initial={false}>
             {running && empty ? (
               <motion.button key="stop" type="button" className="send" aria-label="Stop" onClick={stop} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.5, opacity: 0 }} whileTap={{ scale: 0.9 }} transition={SNAP}>
@@ -267,89 +313,7 @@ export function Composer({ sid }: { sid: string }) {
         </div>
       </div>
 
-      <Sheet open={sheet === 'model'} onClose={() => setSheet(null)} title="Model">
-        <div className="choices">
-          {models.map((m) => (
-            <Choice
-              key={m.id}
-              selected={m.id === s.model}
-              onPick={() => {
-                haptic('select');
-                void conn.call('session.setModel', { sessionId: sid, model: m.id }).catch(() => {});
-              }}
-            >
-              {modelName(m) ?? m.name}
-            </Choice>
-          ))}
-        </div>
-        {efforts.length > 1 && (
-          <>
-            <h3 className="sheet-sub">Effort</h3>
-            <Segmented
-              label="Effort"
-              options={efforts.map((e: Effort) => ({ id: e, name: effortName(e) }))}
-              value={effort}
-              onPick={(e) => void conn.call('session.setEffort', { sessionId: sid, effort: e as Effort }).catch(() => {})}
-            />
-          </>
-        )}
-        {speeds.length > 0 && (
-          <>
-            <h3 className="sheet-sub">Speed</h3>
-            <Segmented
-              label="Speed"
-              options={[{ id: STANDARD_SPEED, name: 'Standard' }, ...speeds.map((x) => ({ id: x.id, name: x.name }))]}
-              value={speed}
-              onPick={(v) => void conn.call('session.setSpeed', { sessionId: sid, speed: v }).catch(() => {})}
-            />
-          </>
-        )}
-      </Sheet>
-      <Sheet open={sheet === 'mode'} onClose={() => setSheet(null)} title="Permissions">
-        <div className="choices">
-          {caps?.modes.map((m) => (
-            <Choice
-              key={m.id}
-              selected={m.id === s.mode}
-              icon={<Icon name={MODE_ICON[m.tone] ?? 'hand'} size={18} />}
-              onPick={() => {
-                haptic('select');
-                setSheet(null);
-                void conn.call('session.setMode', { sessionId: sid, mode: m.id }).catch(() => {});
-              }}
-            >
-              {m.name}
-            </Choice>
-          ))}
-        </div>
-      </Sheet>
-    </div>
-  );
-}
-
-/** A row of options with one chosen: the choice is a solid pill that slides to the one you pick. */
-export function Segmented({ label, options, value, onPick }: { label: string; options: { id: string; name: string }[]; value?: string; onPick: (id: string) => void }) {
-  const i = Math.max(0, options.findIndex((o) => o.id === value));
-  return (
-    <div className="seg no-drag" role="radiogroup" aria-label={label} style={{ '--n': options.length, '--i': i } as React.CSSProperties}>
-      {value !== undefined && <span className="seg-thumb" aria-hidden />}
-      {options.map((o) => (
-        <button
-          key={o.id}
-          type="button"
-          role="radio"
-          aria-checked={o.id === value}
-          className="seg-opt"
-          data-on={o.id === value || undefined}
-          onClick={() => {
-            if (o.id === value) return;
-            haptic('select');
-            onPick(o.id);
-          }}
-        >
-          {o.name}
-        </button>
-      ))}
+      <SetupSheet open={sheet} onClose={() => setSheet(false)} s={setup} />
     </div>
   );
 }
@@ -360,11 +324,27 @@ function QueueTray({ sid, queue }: { sid: string; queue: QueuedMessage[] }) {
     <div className="queue">
       <AnimatePresence initial={false}>
         {queue.map((q) => (
+          <QueueRow key={q.id} sid={sid} q={q} />
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** One waiting message; a row its words are flying into lands as liquid instead of rising in. */
+function QueueRow({ sid, q }: { sid: string; q: QueuedMessage }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [liquid] = useState(() => inFlight(q.text));
+  useLayoutEffect(() => {
+    if (liquid && ref.current) claimFlight(q.text, ref.current, 'row');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
           <motion.div
-            key={q.id}
+            ref={ref}
             className="queued"
             layout
-            initial={{ opacity: 0, y: 16, scale: 0.97 }}
+            initial={liquid ? false : { opacity: 0, y: 16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -18, scale: 0.97, transition: { duration: 0.18 } }}
             transition={SNAP}
@@ -393,9 +373,6 @@ function QueueTray({ sid, queue }: { sid: string; queue: QueuedMessage[] }) {
               <Icon name="x" size={15} />
             </button>
           </motion.div>
-        ))}
-      </AnimatePresence>
-    </div>
   );
 }
 
