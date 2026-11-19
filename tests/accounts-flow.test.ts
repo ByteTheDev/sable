@@ -352,7 +352,8 @@ describe('at a plan limit', () => {
     expect(pickNextAccount('a', [accounts[0], { id: 'y', signedIn: true, limits: lim(100, now - 1) }], now)).toBe('y');
     // Unknown limits count as half used; the default wins a tie; an API key always has room.
     expect(pickNextAccount('a', [{ id: 'u', signedIn: true }, { id: 'v', signedIn: true, isDefault: true }], now)).toBe('v');
-    expect(pickNextAccount('a', [{ id: 'k', signedIn: true, planLimits: false }, accounts[2]], now)).toBe('k');
+    // An API key (billed per token) is never moved to by itself.
+    expect(pickNextAccount('a', [{ id: 'k', signedIn: true, planLimits: false }, accounts[2]], now)).toBe('c');
   });
 
   it('says when the window resets and offers the account with room, then continues there with the same message', async () => {

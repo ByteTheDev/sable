@@ -768,7 +768,8 @@ export class App {
         signedIn: a.auth.loggedIn,
         isDefault: a.isDefault,
         limits: known.get(a.id)?.limits ?? a.limits,
-        planLimits: known.get(a.id)?.planLimits,
+        // An API key bills per token: known as such from its sign-in even before its limits were read.
+        planLimits: known.get(a.id)?.planLimits ?? (/api/i.test(a.auth.method ?? '') || /^(api key|console)$/i.test(a.auth.plan ?? '') ? false : undefined),
         cap: this.capOf(provider, a.id),
         plan: a.auth.plan,
       })),

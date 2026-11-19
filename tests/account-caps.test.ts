@@ -126,10 +126,10 @@ describe('caps: the windows they compare', () => {
     expect(pickNextAccount('u1', accounts, now, { plan: 'Ultra', byCap: true })).toBe('u2');
     // From Ultra3 the list wraps round to Ultra1 (under its cap here would be needed: it is not), then Ultra2.
     expect(pickNextAccount('u3', accounts, now, { plan: 'Ultra', byCap: true })).toBe('u2');
-    // No plan account left: an API key is not taken by a cap (a limit's move still may).
+    // No plan account left: an API key is never taken by itself (by a cap or at a limit).
     const plansGone = [accounts[0], accounts[1], { id: 'm2', signedIn: true, plan: 'Max', limits: lim(100) }];
     expect(pickNextAccount('u1', plansGone, now, { plan: 'Ultra', byCap: true })).toBeUndefined();
-    expect(pickNextAccount('u1', plansGone, now, { plan: 'Ultra' })).toBe('key');
+    expect(pickNextAccount('u1', plansGone, now, { plan: 'Ultra' })).toBeUndefined();
   });
 });
 

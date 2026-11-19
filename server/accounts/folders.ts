@@ -120,8 +120,8 @@ export function atCap(limits: RateLimit[] | undefined, now = Date.now(), model?:
  * first, then the one with the most room (unknown limits count as half used), the default account
  * winning a tie. With `opts.model`, a full window of another model does not count. With
  * `opts.byCap` (a move by a cap: "Ultra1 up to 95%, then Ultra2") the person's own order decides
- * instead of room: the next account after `current` in the list (same plan first, wrapping round),
- * and never one without plan limits (an API key, billed per token). Undefined when none has room.
+ * instead of room: the next account after `current` in the list (same plan first, wrapping round).
+ * Never one without plan limits (an API key, billed per token). Undefined when none has room.
  */
 export function pickNextAccount(current: string, accounts: NextCandidate[], now = Date.now(), opts: { model?: string; plan?: string; byCap?: boolean } = {}): string | undefined {
   const used = (a: NextCandidate) => {
@@ -134,7 +134,8 @@ export function pickNextAccount(current: string, accounts: NextCandidate[], now 
   // Places after the current account in the list, wrapping round (the current one itself is never taken).
   const after = (a: NextCandidate) => (accounts.indexOf(a) - at + accounts.length) % accounts.length;
   const ok = accounts.filter(
-    (a) => a.id !== current && a.signedIn && !(opts.byCap && a.planLimits === false) && !atCap(a.limits, now, opts.model) && (a.planLimits === false || !capReached(a.limits, a.cap, opts.model, now)),
+    // Never an account without plan limits (an API key): Sable does not start paying per token by itself.
+    (a) => a.id !== current && a.signedIn && a.planLimits !== false && !atCap(a.limits, now, opts.model) && !capReached(a.limits, a.cap, opts.model, now),
   );
   ok.sort((a, b) => tier(a) - tier(b) || (opts.byCap ? after(a) - after(b) : used(a) - used(b) || Number(!!b.isDefault) - Number(!!a.isDefault)));
   return ok[0]?.id;
