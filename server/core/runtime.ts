@@ -467,9 +467,33 @@ export class SessionRuntime {
     return true;
   }
 
+  /**
+   * Root steps that run on their own, apart from the session's turns (a turn check, core/check.ts):
+   * settling a turn leaves them and everything nested under them as they are. In memory only, so
+   * after a restart they settle like anything else.
+   */
+  readonly apart = new Set<string>();
+
+  /** `roots` and every item nested under them. */
+  private subtree(roots: Iterable<string>): Set<string> {
+    const out = new Set(roots);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const i of this.items) {
+        if (i.parentId && out.has(i.parentId) && !out.has(i.id)) {
+          out.add(i.id);
+          grew = true;
+        }
+      }
+    }
+    return out;
+  }
+
   /** Settles anything left "in flight" (after an interrupt, crash or restart). */
   settle(reason: 'cancelled' | 'error' = 'cancelled') {
+    const keep = this.apart.size ? this.subtree(this.apart) : undefined;
     for (const item of this.items) {
+      if (keep?.has(item.id)) continue;
       if ((item.type === 'text' || item.type === 'thinking') && item.streaming) {
         this.patch(item.id, { streaming: false, ...(item.type === 'thinking' ? { endedAt: Date.now() } : {}) } as Partial<TimelineItem>);
       } else if (item.type === 'tool' && (item.status === 'running' || item.status === 'pending' || item.status === 'awaiting')) {

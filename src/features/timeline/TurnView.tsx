@@ -1,5 +1,5 @@
 import { memo, startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { TimelineItem } from '@shared/protocol';
+import type { TimelineItem, ToolItem } from '@shared/protocol';
 import { Tiles } from '@/art/Logo';
 import { Collapse } from '@/components/Collapse';
 import { Icon } from '@/icons';
@@ -64,7 +64,7 @@ function stabilize(layout: TurnLayout, cache: Map<string, unknown>): TurnLayout 
       next.set(k, seg);
       return seg;
     });
-    const k = `t|${g.state}|${g.end}|${g.ids.length}|${segments.map(segSig).join(';')}`;
+    const k = `t|${g.state}|${g.end}|${g.ids.length}|${g.checks?.join(',') ?? ''}|${segments.map(segSig).join(';')}`;
     const prev = (next.get(k) ?? cache.get(k)) as TurnGroup | undefined;
     const turn = prev ?? { ...g, segments };
     next.set(k, turn);
@@ -96,7 +96,7 @@ function groupHeight(g: Group, items: Record<string, TimelineItem>): number {
     if (s.reply) h += estimate(items[s.reply]);
     h += s.errors.length * 64;
   }
-  return h;
+  return h + (g.checks?.length ?? 0) * 80;
 }
 
 /**
@@ -112,7 +112,12 @@ export const TurnList = memo(function TurnList({ ids }: { ids: string[] }) {
     return st === 'running' || st === 'starting' || st === 'awaiting';
   });
   const cache = useRef(new Map<string, unknown>());
-  const layout = useMemo(() => stabilize(groupTurns(ids, shape, busy), cache.current), [ids, shape, busy]);
+  const layout = useMemo(() => {
+    // The turn a check belongs to never changes, so reading it here (once per shape) is enough.
+    const items = useStore.getState().data[sessionId]?.items;
+    const checkOf = (id: string) => (items?.[id] as ToolItem | undefined)?.check?.turn;
+    return stabilize(groupTurns(ids, shape, busy, checkOf), cache.current);
+  }, [ids, shape, busy, sessionId]);
   const groups = layout.groups;
   const running = busy && groups.some((g) => g.kind === 'turn' && g.state === 'running');
 
@@ -166,7 +171,7 @@ export const TurnList = memo(function TurnList({ ids }: { ids: string[] }) {
       const d = (e as CustomEvent<RevealDetail>).detail;
       if (!d || d.sessionId !== sessionId) return;
       const root = rootOf(useStore.getState().data[sessionId]?.items ?? {}, d.itemId);
-      const idx = groups.findIndex((g) => (g.kind === 'item' ? g.id === root : g.ids.includes(root)));
+      const idx = groups.findIndex((g) => (g.kind === 'item' ? g.id === root : g.ids.includes(root) || !!g.checks?.includes(root)));
       if (idx < 0) return;
       const g = groups[idx];
       if (g.kind === 'turn') {
@@ -239,6 +244,9 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnGroup }) {
         <SegmentView key={seg.key} seg={seg} turn={turn} index={i} live={turn.state === 'running' && i === last} />
       ))}
       <TurnFoot turn={turn} />
+      {turn.checks?.map((id) => (
+        <ItemRow key={id} id={id} />
+      ))}
     </section>
   );
 });

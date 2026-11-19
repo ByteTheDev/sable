@@ -4,11 +4,14 @@ import { CopyButton } from '@/components/CopyButton';
 import { BeforeAfter } from '@/features/compare/BeforeAfter';
 import { LazyTip } from '@/components/LazyTip';
 import { Icon } from '@/icons';
+import { PROVIDER_NAME, ProviderMark } from '@/art/Logo';
 import { formatCost, formatTokens, isMac } from '@/lib/format';
 import { openPreview, previewTargets } from '@/lib/links';
-import { forkAt, sendMessage } from '@/state/actions';
+import { checkTurn, forkAt, sendMessage } from '@/state/actions';
 import { useStore } from '@/state/store';
-import { IconButton } from '@/ui';
+import { IconButton, Tip } from '@/ui';
+import { changesOf } from './changes';
+import { canCheckWith, checkedAlready, checkerOf } from './check-turn';
 import { useItem, useTimeline } from './ctx';
 import type { TurnGroup } from './turns';
 
@@ -44,7 +47,25 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
   const settled = turn.state !== 'running';
   const previews = useMemo(() => (settled ? previewsOf(useStore.getState().data[sessionId]?.items ?? {}, turn) : []), [settled, sessionId, turn]);
   const [forking, setForking] = useState(false);
+  // "Check with Codex": a settled turn that changed files, while the other agent can check.
+  const checker = useStore((s) => checkerOf(s.sessions[sessionId]?.provider));
+  const checkerReady = useStore((s) => (checker ? canCheckWith(s.providers[checker]) : false));
+  const checked = useStore((s) => checkedAlready(s.data[sessionId]?.items, turn.checks));
+  const changed = useMemo(() => {
+    if (!settled) return false;
+    const d = useStore.getState().data[sessionId];
+    return changesOf(d?.items ?? {}, d?.children ?? {}, turn.ids).files > 0;
+  }, [settled, sessionId, turn]);
+  const [checking, setChecking] = useState(false);
   if (!settled) return null;
+  const canCheck = !!checker && checkerReady && changed && !checked;
+
+  const check = async () => {
+    if (checking) return;
+    setChecking(true);
+    await checkTurn(sessionId, turn.key);
+    setChecking(false);
+  };
 
   const fork = async () => {
     const last = turn.ids[turn.ids.length - 1];
@@ -114,6 +135,13 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
           <span className="turn-acts">
             <CopyButton text={() => responseText(items(), turn)} label="Copy response" size={13} className="turn-copy" />
             <IconButton icon="fork" label="Fork from here" size={13} tipSide="top" className="turn-fork" disabled={forking} onClick={fork} />
+            {canCheck && checker && (
+              <Tip label={`Check with ${PROVIDER_NAME[checker]}`} side="top">
+                <button type="button" className="icon-btn turn-check" aria-label={`Check with ${PROVIDER_NAME[checker]}`} disabled={checking} onClick={check}>
+                  <ProviderMark provider={checker} size={12} />
+                </button>
+              </Tip>
+            )}
           </span>
         )}
         <span className="turn-hover">

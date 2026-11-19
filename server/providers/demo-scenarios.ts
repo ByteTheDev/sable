@@ -13,6 +13,7 @@ import * as W from './demo-widgets';
 import { browserLineUrl, stripBrowserLine } from './browser-tool';
 import { demoSite, LOOKS, siteCss, siteHtml } from './demo-site';
 import { AUTH_FIXED, AUTH_JS, SESSION_FIXED, SESSION_JS, seedUntilFixture, untilFixture } from './demo-until';
+import { briefFiles, CHECK_LEAD, NO_PROBLEMS } from '../core/check';
 import path from 'node:path';
 
 // ───────────────────────────────── content file ─────────────────────────────────
@@ -1472,6 +1473,53 @@ const untilFix: Scenario = async ({ s }) => {
   s.finish({});
 };
 
+// ──────────────────────── turn check ("Check with Codex") ────────────────────────
+
+/** What the demo's files look like after its turns, for a check that reads them back. */
+const CHECKED: Record<string, string> = {
+  'src/server/session.ts': C.SESSION_TS_AFTER,
+  'src/auth/middleware.ts': C.MIDDLEWARE_TS_FIXED,
+  'src/auth/rate-limit.ts': C.RATE_LIMIT_TS,
+  'src/server/routes.ts': C.ROUTES_TS_AFTER,
+  'tests/rate-limit.test.ts': C.RATE_LIMIT_TEST_TS,
+};
+
+/**
+ * A read-only review of another agent's turn (server/core/check.ts builds the brief): it reads the
+ * changed files back, searches for their callers and answers with findings in the brief's form,
+ * or "No problems found." The session refactor gets two findings; anything else passes.
+ */
+const turnCheck: Scenario = async ({ s, prompt }) => {
+  const files = briefFiles(prompt);
+  await s.think(
+    `The brief lists ${files.length === 1 ? 'one changed file' : `${files.length} changed files`}. I'll read each as it is now, check the callers of anything whose behaviour changed, and only report what breaks: wrong results, lost behaviour, or a part of the request that is missing.`,
+  );
+  const known = files.filter((f) => CHECKED[f]).slice(0, 3);
+  if (known.length) await s.readMany(known.map((rel) => ({ rel, content: CHECKED[rel] })));
+  if (!files.includes('src/server/session.ts')) {
+    const name = files.length ? path.basename(files[0], path.extname(files[0])) : '';
+    if (name) await s.grep(name, C.grep(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'src/'), { path: 'src' });
+    await s.think('Every change does what the request asked, and nothing that calls it depends on the old behaviour.');
+    await s.say(NO_PROBLEMS);
+    s.finish({});
+    return;
+  }
+  await s.grep('validate\\(|expiresAt|session_expired', C.grep(/validate\(|expiresAt|session_expired/, 'src/'), { path: 'src' });
+  await s.read('tests/auth.test.ts', C.AUTH_TEST_TS);
+  await s.think(
+    "`validate()` now deletes an expired session the first time it sees it. Before, the middleware only denied it, so every later request with that token still answered `session_expired`. Now the second request finds no session and answers `invalid_session`, which clients treat as a forged token, not as a reason to log in again. The other gap: the request asked for an injectable clock so expiry can be tested, but no test drives `validate()` with a fake clock.",
+  );
+  const evict = C.lineOf(C.SESSION_TS_AFTER, 'this.sessions.delete(id)');
+  const validate = C.lineOf(C.SESSION_TS_AFTER, 'validate(id: string)');
+  await s.say(
+    [
+      `- \`src/server/session.ts:${evict}\` Medium: An expired session is deleted on its first failed check, so the next request with the same token answers \`invalid_session\` instead of \`session_expired\` and clients stop prompting a fresh login.`,
+      `- \`src/server/session.ts:${validate}\` Low: The clock was made injectable for tests, but no test drives \`validate()\` with a fake clock, so the expired and revoked paths are not covered.`,
+    ].join('\n'),
+  );
+  s.finish({});
+};
+
 // ─────────────────────────────────── selection ──────────────────────────────────
 
 export const SCENARIOS = {
@@ -1506,6 +1554,7 @@ export const SCENARIOS = {
   beforeafter,
   untilSetup,
   untilFix,
+  turnCheck,
 } satisfies Record<string, Scenario>;
 export type ScenarioId = keyof typeof SCENARIOS;
 
@@ -1553,6 +1602,8 @@ const GREETING = /^\s*(hi|hello|hey|hiya|yo|good (morning|afternoon|evening))\b[
 export function pickScenario(prompt: string, mode: string, rotation: number): { id: ScenarioId; rotated: boolean } {
   const text = prompt.trim();
   if (text.startsWith('/')) return { id: 'command', rotated: false };
+  // A turn check's brief (server/core/check.ts): a read-only review, in plan mode too.
+  if (text.startsWith(CHECK_LEAD)) return { id: 'turnCheck', rotated: false };
   if (mode === 'plan') return { id: 'plan', rotated: false };
   for (const [re, id] of KEYWORDS) if (re.test(text)) return { id, rotated: false };
   if (GREETING.test(text) && text.split(/\s+/).length <= 4) return { id: 'greeting', rotated: false };

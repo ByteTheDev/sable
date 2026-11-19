@@ -35,6 +35,7 @@ import type { Provider, ProviderContext, ProviderSession } from './providers/typ
 import { findAccountFolders, folderLabel, labelFromAuth, pickNextAccount } from './accounts/folders';
 import { handoverText } from './accounts/handover';
 import { runSubAgent } from './core/sub-agent';
+import { readOnlyMode, TurnChecks, withoutChecks } from './core/check';
 import { cutAt } from './core/fork';
 import { orderAccounts } from './accounts/order';
 import { withBrowserLine } from './providers/browser-tool';
@@ -184,6 +185,28 @@ export class App {
     log: (...args) => this.log(...args),
   });
 
+  /** "Check with Codex": the other agent reviewing a finished turn, read-only (server/core/check.ts). */
+  private checks = new TurnChecks({
+    available: (agent) => this.canCheckWith(agent),
+    run: (parent, call, itemId, signal) =>
+      runSubAgent(
+        {
+          provider: (id, account) => this.provider(id, account),
+          accountFor: (id) => this.defaultAccountId(id),
+          defaultModel: (id) => this.store.state.settings.defaultModels[id],
+          modeFor: (id) => readOnlyMode(id),
+          log: this.log,
+        },
+        parent,
+        call,
+        itemId,
+        signal,
+        { readOnly: true },
+      ),
+    busy: (rt) => rt.turnActive || this.opening.has(rt.id) || this.delivering.has(rt.id),
+    log: (...args) => this.log(...args),
+  });
+
   constructor(opts: AppOptions) {
     this.quiet = !!opts.quiet;
     this.delays = opts.refreshDelays ?? {};
@@ -296,6 +319,12 @@ export class App {
       const info = this.cache.get<ProviderInfo>(`info:${id}`);
       return !!info?.installed && !!info.auth?.loggedIn;
     });
+  }
+
+  /** Whether `agent` can check a turn now: the Demo always, Claude Code and Codex where installed and signed in (last known). */
+  private canCheckWith(agent: ProviderId): boolean {
+    if (!this.providers.has(agent)) return false;
+    return agent === 'demo' || this.otherAgents().includes(agent);
   }
 
   /** Tags a provider instance's events with its account and keeps the per-account caches current. */
@@ -992,7 +1021,7 @@ export class App {
       if (adopted) carried = 'conversation';
       else {
         rt.update({ providerSessionId: undefined });
-        const summary = handoverText(rt.items, { skip: refused?.id });
+        const summary = handoverText(withoutChecks(rt.items), { skip: refused?.id });
         if (summary) {
           this.handovers.set(rt.id, summary);
           carried = 'summary';
@@ -1584,7 +1613,7 @@ export class App {
       const source = p.handoverFrom ? this.sessions.get(p.handoverFrom) : undefined;
       if (source) {
         this.hydrate(source);
-        const summary = handoverText(source.items, { from: this.provider(source.meta.provider, source.meta.accountId ?? DEFAULT_ACCOUNT).name });
+        const summary = handoverText(withoutChecks(source.items), { from: this.provider(source.meta.provider, source.meta.accountId ?? DEFAULT_ACCOUNT).name });
         if (summary) {
           this.handovers.set(meta.id, summary);
           rt.notice('info', `Continued from ${source.meta.title}`, 'It starts with a summary of that conversation');
@@ -1769,6 +1798,14 @@ export class App {
     this.register('until.stop', ({ sessionId }) => ({ ok: this.until.stop(this.runtime(sessionId)) }));
     this.register('until.check', ({ sessionId }) => ({ ok: this.until.checkNow(this.runtime(sessionId)) }));
 
+    // "Check with Codex" (server/core/check.ts): the other agent reviews a finished turn, read-only.
+    this.register('turn.check', ({ sessionId, turnId }) => {
+      const rt = this.runtime(sessionId);
+      this.hydrate(rt);
+      return this.checks.start(rt, String(turnId ?? ''));
+    });
+    this.register('turn.checkStop', ({ sessionId, itemId }) => ({ ok: this.checks.stop(this.runtime(sessionId), String(itemId ?? '')) }));
+
     // Spare (server/core/spare.ts): `/spare <message>` and "Continue at reset".
     this.register('spare.send', ({ sessionId, text, attachments }) => {
       const rt = this.runtime(sessionId);
@@ -1810,6 +1847,7 @@ export class App {
     this.register('session.close', async ({ sessionId, remove }) => {
       const rt = this.runtime(sessionId);
       this.until.closed(rt);
+      await this.checks.closed(rt);
       rt.stopRequested = true;
       rt.cancelPrompts();
       await rt.handle?.close().catch(() => {});
@@ -1835,7 +1873,10 @@ export class App {
       const rt = this.runtime(sessionId);
       const handle = await this.ensureHandle(rt);
       if (!handle.rewind) return { ok: false, message: 'This provider cannot rewind.' };
-      return handle.rewind(itemId, restoreFiles);
+      const done = await handle.rewind(itemId, restoreFiles);
+      // A check of a turn the rewind took away stops with it.
+      this.checks.pruned(rt);
+      return done;
     });
     // Fork at an answer: a new session with the same agent and settings that continues from the
     // end of that turn. The agent's own fork carries the real transcript; without one (or when it
@@ -1871,7 +1912,7 @@ export class App {
       const rt = this.runtime(snap.session.id);
       if (resume) rt.notice('info', `Forked from ${m.title}`);
       else {
-        const summary = handoverText(cut.kept, { from: this.provider(m.provider, m.accountId ?? DEFAULT_ACCOUNT).name });
+        const summary = handoverText(withoutChecks(cut.kept), { from: this.provider(m.provider, m.accountId ?? DEFAULT_ACCOUNT).name });
         if (summary) {
           this.handovers.set(rt.id, summary);
           rt.notice('info', `Forked from ${m.title}`, 'It starts with a summary of the conversation up to there');
@@ -1930,6 +1971,7 @@ export class App {
     clearTimeout(this.resetTimer);
     this.until.dispose();
     this.spare.dispose();
+    await this.checks.dispose();
     for (const fn of this.disposers.splice(0)) await Promise.resolve(fn()).catch(() => {});
     for (const rt of this.sessions.values()) {
       rt.cancelPrompts();

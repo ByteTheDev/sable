@@ -279,6 +279,24 @@ export async function rewindTo(sessionId: string, itemId: string, restoreFiles: 
   }
 }
 
+/**
+ * "Check with Codex": the other agent reviews the changes of the finished turn that `turnId` (its
+ * first message) started, read-only; its block shows under that turn. Answers the check's step id.
+ */
+export async function checkTurn(sessionId: string, turnId: string): Promise<string | null> {
+  try {
+    const r = await bridge.call('turn.check', { sessionId, turnId });
+    if (!r.ok && r.error) useStore.getState().toast(r.error, 'error');
+    return r.itemId ?? null;
+  } catch (err) {
+    fail(err);
+    return null;
+  }
+}
+
+/** Stops a running turn check (`itemId`: its step). */
+export const stopCheck = (sessionId: string, itemId: string) => bridge.call('turn.checkStop', { sessionId, itemId }).catch(fail);
+
 /** Fork at an answer: a new session that continues from the end of that turn, opened at once. The original stays as it is. */
 export async function forkAt(sessionId: string, itemId: string): Promise<SessionMeta | null> {
   try {

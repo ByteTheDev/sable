@@ -12,6 +12,7 @@ import { accountName } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { Spinner } from '@/ui';
 import { agentLine, agentProvider, agentTask, agentTrail, agentType, isAgentLive, readTrail, workflowGlance, workflowProgressText } from './agent-line';
+import { CheckBlock } from './Check';
 import { EMPTY, useItem, useTimeline, useWhole } from './ctx';
 import { foldKey, useFold } from './fold';
 import { ItemList } from './items';
@@ -31,6 +32,8 @@ type Store = ReturnType<typeof useStore.getState>;
  */
 /** `scope`: where it is shown, so the conversation and the Agents tab each remember what the reader opened. */
 export const AgentBlock = memo(function AgentBlock(props: { item: ToolItem; tail?: number; extra?: ReactNode; scope?: string }) {
+  // A turn check ("Check with Codex") reads as its own block: who checks, the findings, the hand-over.
+  if (props.item.check) return <CheckBlock item={props.item} tail={props.tail} scope={props.scope} />;
   return props.item.workflow ? <WorkflowBlock {...props} run={props.item.workflow} /> : <SubAgentBlock {...props} />;
 });
 
@@ -131,7 +134,7 @@ function firstLines(text: string | undefined): string {
  * arrives), the rows slide up by what left in one short glide instead of jumping a row at once;
  * the newest comes in from under the window's edge.
  */
-function useTicker(trail: string) {
+export function useTicker(trail: string) {
   const ref = useRef<HTMLDivElement>(null);
   const tops = useRef(new Map<string, number>());
   useLayoutEffect(() => {
@@ -155,7 +158,7 @@ function useTicker(trail: string) {
 }
 
 /** One of the latest steps: the conversation's own step row, a size down. */
-const TrailStep = memo(function TrailStep({ id }: { id: string }) {
+export const TrailStep = memo(function TrailStep({ id }: { id: string }) {
   const item = useItem<ToolItem>(id);
   if (!item || item.type !== 'tool') return null;
   return (

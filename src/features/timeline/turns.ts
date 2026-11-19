@@ -16,6 +16,7 @@ import type { TimelineItem } from '@shared/protocol';
  *   T  turn end                                 F  turn end with an error
  *   g  a widget (generative UI): never folded, shown with the answer
  *   Z  an until loop's end line: closes a turn left open (an interrupted one), stands on its own
+ *   x  a check of a turn by the other agent: never part of a turn, shown under the turn it checks
  *   .  nothing to show (an empty, finished text)
  */
 
@@ -59,6 +60,8 @@ export interface TurnGroup {
   state: TurnState;
   /** Every root id in the turn, in order (for copy, previews and reveal). */
   ids: string[];
+  /** Checks of this turn by the other agent ("Check with Codex"), shown under it, oldest first. */
+  checks?: string[];
 }
 
 export interface ItemGroup {
@@ -86,6 +89,7 @@ export function shapeOf(item: TimelineItem | undefined): string {
     case 'thinking':
       return 'h';
     case 'tool':
+      if (item.check) return 'x';
       return item.kind === 'plan' ? 'p' : item.kind === 'widget' ? 'g' : item.kind === 'todo' ? 'k' : 'w';
     case 'notice':
       if (item.until) return 'Z';
@@ -200,10 +204,13 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
  * its own answer, so a question asked mid-turn gets its reply right under it. Items outside any
  * turn (notices between turns, anything before the first message) stay single items.
  * `busy`: the session is working, so a turn left open at the end is the running one.
+ * `checkOf`: the turn a check (`x`) belongs to (its first message); a check goes under that turn,
+ * wherever it sits in the timeline, or stands on its own where it is when that turn is gone.
  */
-export function groupTurns(ids: readonly string[], shape: string, busy: boolean): TurnLayout {
+export function groupTurns(ids: readonly string[], shape: string, busy: boolean, checkOf?: (id: string) => string | undefined): TurnLayout {
   const groups: Group[] = [];
   const queued: string[] = [];
+  const checks: { id: string; at: number }[] = [];
   let open: Open | null = null;
 
   const close = (end: string | null, failedEnd: boolean, atEnd: boolean) => {
@@ -228,6 +235,11 @@ export function groupTurns(ids: readonly string[], shape: string, busy: boolean)
     const ch = shape[i] ?? '.';
     if (ch === 'Q') {
       queued.push(id);
+      continue;
+    }
+    // A check runs beside the conversation: it never joins (or ends) the turn around it.
+    if (ch === 'x') {
+      checks.push({ id, at: groups.length });
       continue;
     }
     if (ch === 'U' || (ch === 'S' && !open)) {
@@ -278,5 +290,17 @@ export function groupTurns(ids: readonly string[], shape: string, busy: boolean)
     else if (ANSWER.has(ch)) o.failed = false;
   }
   close(null, false, true);
+  if (checks.length) {
+    const turns = new Map<string, TurnGroup>();
+    for (const g of groups) if (g.kind === 'turn') turns.set(g.key, g);
+    const loose: { id: string; at: number }[] = [];
+    for (const c of checks) {
+      const turn = turns.get(checkOf?.(c.id) ?? '');
+      if (turn) (turn.checks ??= []).push(c.id);
+      else loose.push(c);
+    }
+    // From the end, so the places counted before stay right.
+    for (let i = loose.length - 1; i >= 0; i--) groups.splice(loose[i].at, 0, { kind: 'item', key: loose[i].id, id: loose[i].id });
+  }
   return { groups, queued };
 }

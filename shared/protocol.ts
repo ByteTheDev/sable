@@ -802,12 +802,27 @@ export interface ToolItem extends BaseItem {
   waitedMs?: number;
   /** A Workflow call: its phases and agents while it runs in the background and once it is done. */
   workflow?: WorkflowRun;
+  /** A check of a finished turn by the other agent (`turn.check`): a root step, shown under the turn it checks, never part of a turn. */
+  check?: TurnCheck;
   /**
    * Set by the bridge only, on a finished step in a whole timeline sent to a window (a snapshot,
    * `timeline.reset`): its long output or result was cut (the start and end of long texts kept,
    * pictures left out). `session.item` returns it whole. Never on disk.
    */
   more?: boolean;
+}
+
+/**
+ * "Check with Codex" (or Claude Code): the other agent reviews a finished turn's changes read-only,
+ * as a child run whose steps nest under this step. Its findings are the step's `result.text`.
+ */
+export interface TurnCheck {
+  /** The checked turn: the id of the message that started it. */
+  turn: string;
+  /** The agent that checks. */
+  agent: ProviderId;
+  /** The changes were too long for the brief and were cut (the checker was told to read the files). */
+  cut?: boolean;
 }
 
 export interface NoticeItem extends BaseItem {
@@ -1683,6 +1698,13 @@ export interface RpcMethods {
   'until.stop': { params: { sessionId: string }; result: { ok: boolean } };
   /** Runs a paused loop's check now (the session must be idle). */
   'until.check': { params: { sessionId: string }; result: { ok: boolean } };
+  /**
+   * "Check with Codex" (`TurnCheck`): the other agent reviews the changes of the finished turn that
+   * `turnId` (its first message) started, read-only, as a step placed after it. Answers the step's id, or why not.
+   */
+  'turn.check': { params: { sessionId: string; turnId: string }; result: { ok: boolean; itemId?: string; error?: string } };
+  /** Stops a running turn check (`itemId`: its step). */
+  'turn.checkStop': { params: { sessionId: string; itemId: string }; result: { ok: boolean } };
   /** Lanes (`SessionLane`). `forecast` dry-merges the lane into the folder's branch; `land` commits what is uncommitted (with `message`), brings the lane's commits onto that branch and ends the lane; `discard` ends it and drops its work; `create` moves the session into a new lane now. */
   'lane.forecast': { params: { sessionId: string }; result: LaneForecast };
   'lane.land': { params: { sessionId: string; message?: string }; result: LaneLandResult };

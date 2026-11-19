@@ -1304,6 +1304,49 @@ button:hover > .row-caret {
   animation: fade-in var(--d-3) var(--ease) backwards;
 }
 
+/* ── turn check ("Check with Codex") ──
+   Under the turn it checks, after its foot: the checker's mark and what it does, its latest steps
+   while it works (with a stop), then its findings in view and one hand-over to the chat's own agent. */
+.tg > .tl-item:has(> .agent.check) {
+  padding-top: 2px;
+  padding-bottom: 12px;
+}
+
+.check-stop {
+  --ib: 24px;
+  flex-shrink: 0;
+  border-radius: var(--r-ctl-sm);
+  color: var(--text-3);
+}
+
+.check-stop:is(:hover, :focus-visible) {
+  color: var(--text);
+}
+
+.agent-line.check-why {
+  display: block;
+  line-height: 22px;
+}
+
+.check-findings {
+  padding: 2px 0 4px;
+}
+
+.check-findings .md {
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.check-findings .md > :is(ul, ol):first-child {
+  margin-top: 0;
+}
+
+.check-acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 /* Under a sub-agent the plan stopped: the chat itself can go on (only said when true). */
 .agent-goes-on {
   padding: 0 0 4px;
@@ -2216,18 +2259,36 @@ button:hover > .row-caret {
 }
 
 .turn-copy,
-.turn-fork {
+.turn-fork,
+.turn-check {
   --ib: 26px;
   border-radius: var(--r-ctl-sm);
   color: var(--text-4);
 }
 
-.tg:hover :is(.turn-copy, .turn-fork) {
+.tg:hover :is(.turn-copy, .turn-fork, .turn-check) {
   color: var(--text-3);
 }
 
-.turn-acts :is(.turn-copy, .turn-fork):is(:hover, :focus-visible) {
+.turn-acts :is(.turn-copy, .turn-fork, .turn-check):is(:hover, :focus-visible) {
   color: var(--text);
+}
+
+/* The other agent's mark: a filled shape, so a size down from the line icons beside it to carry the
+   same ink, and in their tone (a control carries no colour, the mark's own hue stays with the agent);
+   it answers the pointer with the same one-shot nudge as they do (icons/icons.css). */
+.turn-check .provider-mark {
+  color: inherit;
+}
+
+.turn-check:is(:hover, :focus-visible) .provider-mark {
+  animation: icon-nudge var(--ai-d1) var(--ai-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-check .provider-mark {
+    animation: none;
+  }
 }
 
 .turn[data-state='failed'] .notice-error {

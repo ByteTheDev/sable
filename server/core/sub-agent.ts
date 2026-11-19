@@ -16,12 +16,14 @@ import { SessionRuntime, type PermissionAnswer } from './runtime';
 class ChildRuntime extends SessionRuntime {
   private parent!: SessionRuntime;
   private under?: string;
+  private readOnly = false;
 
-  constructor(meta: SessionMeta, parent: SessionRuntime, under: string | undefined) {
+  constructor(meta: SessionMeta, parent: SessionRuntime, under: string | undefined, readOnly = false) {
     const box: { fwd?: (e: BridgeEvent) => void } = {};
     super(meta, (e) => box.fwd?.(e), () => {});
     this.parent = parent;
     this.under = under;
+    this.readOnly = readOnly;
     box.fwd = (e) => this.forward(e);
   }
 
@@ -53,10 +55,18 @@ class ChildRuntime extends SessionRuntime {
   }
 
   override requestPermission(req: Omit<PermissionRequest, 'id' | 'sessionId' | 'createdAt'>, signal?: AbortSignal): Promise<PermissionAnswer | null> {
+    // Read-only: anything that needs a permission is more than reading, and is turned down at once
+    // (with the deny option, so the agent goes on instead of stopping). The user is never asked.
+    if (this.readOnly) {
+      const deny = req.options.find((o) => o.tone === 'deny');
+      return Promise.resolve(deny ? { optionId: deny.id, message: READ_ONLY_DENIAL } : null);
+    }
     return this.parent.requestPermission({ ...req, itemId: req.itemId ? this.pid(req.itemId) : this.under }, signal);
   }
 
   override ask(questions: Question[], itemId?: string, signal?: AbortSignal): Promise<Record<string, string[]> | null> {
+    // A read-only run works on its own: its questions are not put to the user.
+    if (this.readOnly) return Promise.resolve(null);
     return this.parent.ask(questions, itemId ? this.pid(itemId) : this.under, signal);
   }
 }
@@ -72,8 +82,26 @@ export interface SubAgentDeps {
 
 const MAX_RESULT = 40_000;
 
+/** What a read-only child is told when it asks for more than reading. */
+export const READ_ONLY_DENIAL = 'This is a read-only review: nothing may be changed and nothing beyond reading is allowed. Go on without it and write your findings as your answer.';
+
+export interface SubAgentOptions {
+  /**
+   * Read-only (a turn check): every permission the child asks for is denied at once and its
+   * questions go unanswered, so it can read but never change anything, and the user is never asked.
+   */
+  readOnly?: boolean;
+}
+
 /** Runs `call` as a sub-agent of `parent`, nested under the step `itemId`; resolves with its final answer. */
-export async function runSubAgent(deps: SubAgentDeps, parent: SessionRuntime, call: AgentCall, itemId: string | undefined, signal?: AbortSignal): Promise<{ ok: boolean; text: string }> {
+export async function runSubAgent(
+  deps: SubAgentDeps,
+  parent: SessionRuntime,
+  call: AgentCall,
+  itemId: string | undefined,
+  signal?: AbortSignal,
+  opts: SubAgentOptions = {},
+): Promise<{ ok: boolean; text: string }> {
   const accountId = deps.accountFor(call.agent);
   let provider: Provider;
   try {
@@ -96,7 +124,7 @@ export async function runSubAgent(deps: SubAgentDeps, parent: SessionRuntime, ca
     usage: { inputTokens: 0, outputTokens: 0, turns: 0 },
     ...(accountId ? { accountId } : {}),
   };
-  const child = new ChildRuntime(meta, parent, itemId);
+  const child = new ChildRuntime(meta, parent, itemId, !!opts.readOnly);
   let finished!: (error?: string) => void;
   const ended = new Promise<string | undefined>((resolve) => (finished = resolve));
   child.onTurnEnd = (_rt, error) => finished(error);
