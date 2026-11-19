@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { TextItem, TimelineItem } from '../shared/protocol';
-import { readBaseByLine, SessionFiles, SMALL_BASE, TAIL_KEEP, TAIL_MAX, settledEnd, type SessionSave } from '../server/core/session-file';
+import { READ, readBaseByLine, SessionFiles, SMALL_BASE, TAIL_KEEP, TAIL_MAX, settledEnd, type SessionSave } from '../server/core/session-file';
 import { SessionRuntime } from '../server/core/runtime';
 
 const dirs: string[] = [];
@@ -205,6 +205,25 @@ describe('session files: a base and a small tail', () => {
     expect(read.value?.todos).toHaveLength(1);
     expect(read.value?.queue).toHaveLength(1);
     expect(typeof read.value?.gen).toBe('number');
+  });
+
+  it('reads big files of both kinds: an old one-line file and a new one-item-per-line base', async () => {
+    const { files, pathOf } = setup();
+    const was = READ.byLineAbove;
+    READ.byLineAbove = 1024; // everything here counts as big
+    try {
+      const items = [text('x'.repeat(4096), 'big'), text('a', 'a'), turn('t0')];
+      writeFileSync(pathOf('old'), JSON.stringify({ items, todos: [] }));
+      const old = new SessionFiles(pathOf).load('old');
+      expect(old.unreadable).toBeUndefined();
+      expect(ids(old.items)).toEqual(['big', 'a', 't0']);
+      await files.save('new', save(items, 'all'));
+      const fresh = new SessionFiles(pathOf).load('new');
+      expect(fresh.unreadable).toBeUndefined();
+      expect(fresh.items).toEqual(items);
+    } finally {
+      READ.byLineAbove = was;
+    }
   });
 
   it('settles a base up to the last finished turn, and before a step still running', () => {

@@ -49,7 +49,7 @@ export const SMALL_BASE = 4 * 1024 * 1024;
 /** Items at the end of the chat a new base leaves to the tail (where streaming happens). */
 export const TAIL_KEEP = 24;
 /** Above this size a base is read line by line (one string cannot hold much more than 512 MB). */
-const READ_BY_LINE = 256 * 1024 * 1024;
+export const READ = { byLineAbove: 256 * 1024 * 1024 };
 /** Pieces of the base written per step (characters). */
 const CHUNK = 1 << 20;
 
@@ -165,7 +165,9 @@ export class SessionFiles {
     } catch {
       /* read below says */
     }
-    const read = size > READ_BY_LINE ? readBaseByLine(file) : readJson<SessionData & { gen?: number }>(file);
+    let read: Read<{ gen?: number; items: TimelineItem[]; todos?: Todo[]; queue?: QueuedMessage[] }> = size > READ.byLineAbove ? readBaseByLine(file) : readJson<SessionData & { gen?: number }>(file);
+    // A big file of an older version is one long line (up to about 512 MB): read it whole.
+    if (!read.ok && size > READ.byLineAbove) read = readJson<SessionData & { gen?: number }>(file);
     if (!read.ok) {
       this.unreadable.add(id);
       return { items: [], todos: [], unreadable: true };
