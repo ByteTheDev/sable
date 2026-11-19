@@ -7,6 +7,7 @@ import type { FileHit } from '@/lib/workspace';
 import { fileIcon } from './file-icon';
 import { goHome, interrupt, openSettings, renameSession } from '@/state/actions';
 import { useStore } from '@/state/store';
+import { untilCommand } from './until';
 
 /** Slash commands Sable handles itself, before anything reaches the agent. */
 
@@ -96,6 +97,13 @@ export const APP_COMMANDS: AppCommand[] = [
       }
       void renameSession(sessionId, arg);
     },
+  },
+  {
+    name: 'until',
+    description: 'Run a check after each turn and send failures back until it passes',
+    argumentHint: '<check> [--rounds n]',
+    session: true,
+    run: ({ sessionId }, arg) => sessionId && void untilCommand(sessionId, arg),
   },
   { name: 'stop', description: 'Stop the current turn', session: true, run: ({ sessionId }) => sessionId && void interrupt(sessionId) },
   { name: 'copy', description: 'Copy the last answer', session: true, run: ({ sessionId }) => sessionId && copyLastAnswer(sessionId) },

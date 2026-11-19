@@ -1,0 +1,103 @@
+/* Until green: one quiet strip above the composer (UntilStrip.tsx). */
+
+.us-slot {
+  width: 100%;
+  margin-bottom: 8px;
+  transform-origin: 50% 100%;
+}
+
+.us {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  padding: 0 5px 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background-color: var(--panel);
+  font-size: var(--t-small);
+  color: var(--text-2);
+}
+
+.us-mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.us-ring {
+  overflow: visible;
+}
+
+/* Every arc is ivory; its state is how much of it shows. */
+.us-ring :is(path, circle) {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  opacity: 0.13;
+  transition: opacity var(--d-4) var(--ease-out);
+}
+
+.us-ring [data-s='failed'] {
+  opacity: 0.36;
+}
+
+.us-ring [data-s='now'] {
+  opacity: 0.72;
+}
+
+.us-ring [data-s='pass'] {
+  opacity: 1;
+}
+
+.us-label {
+  flex: 1;
+  min-width: 0;
+  animation: us-swap var(--d-3) var(--ease-out);
+}
+
+/* The command reads as a label in the interface face, one step brighter than the words around it. */
+.us-cmd {
+  color: var(--text);
+}
+
+.us-end {
+  color: var(--text-2);
+}
+
+.us[data-green] .us-end {
+  color: var(--text);
+}
+
+.us-meta {
+  flex-shrink: 0;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.us-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.us-actions .btn-sm {
+  --h: 28px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .us-ring :is(path, circle) {
+    transition: none;
+  }
+}
+
+@keyframes us-swap {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}

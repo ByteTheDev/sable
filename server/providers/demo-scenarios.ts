@@ -12,6 +12,8 @@ import { BASE_CONTEXT, Denied, type OutLine, type Script, between } from './demo
 import * as W from './demo-widgets';
 import { browserLineUrl, stripBrowserLine } from './browser-tool';
 import { demoSite, LOOKS, siteCss, siteHtml } from './demo-site';
+import { AUTH_FIXED, AUTH_JS, SESSION_FIXED, SESSION_JS, seedUntilFixture, untilFixture } from './demo-until';
+import path from 'node:path';
 
 // ───────────────────────────────── content file ─────────────────────────────────
 
@@ -1416,6 +1418,60 @@ const beforeafter: Scenario = async ({ s }) => {
   s.finish({});
 };
 
+// ─────────────────────────────────── until green ──────────────────────────────────
+
+/** The until-green project of this session (demo-until.ts), and its files as the agent names them. */
+function untilProject(s: Script) {
+  const f = untilFixture(s.rt.meta.cwd, s.rt.id, !!s.rt.meta.chat);
+  const rel = (p: string) => path.relative(s.rt.meta.cwd, path.join(f.dir, p)).split(path.sep).join('/');
+  return { f, rel };
+}
+
+/**
+ * "until green": a small project whose tests fail (two source files, three bugs, a real check
+ * script), written for real, so `/until node check.mjs` has something to loop on.
+ */
+const untilSetup: Scenario = async ({ s }) => {
+  const { f, rel } = untilProject(s);
+  const check = content('until-check');
+  await s.think('A small project with a failing test run, so the loop has something to fix: two source files and a check that tests them.');
+  seedUntilFixture(f, check);
+  await s.write(rel('src/session.js'), SESSION_JS, { description: 'Session lifetime' });
+  await s.write(rel('src/auth.js'), AUTH_JS, { description: 'Why a request is turned away' });
+  await s.write(rel('check.mjs'), check, { description: 'The check' });
+  await s.say(`Three tests fail in it right now. Arm the loop with \`/until ${f.command}\` and Sable runs the check after each of my turns until it passes.`);
+  s.finish({ suggestion: `/until ${f.command}` });
+};
+
+/**
+ * Sable's message for a failing check: the Demo fixes one file per turn (both session bugs, then
+ * the auth one), for real, so the next check finds fewer failures and the third passes.
+ */
+const untilFix: Scenario = async ({ s }) => {
+  const { f, rel } = untilProject(s);
+  const session = f.read('src/session.js');
+  const auth = f.read('src/auth.js');
+  if (session && session !== SESSION_FIXED) {
+    await s.think('Two expiry tests fail: the idle window is an hour instead of 30 minutes, and `refresh` writes `expires` where the tests read `expiresAt`.');
+    await s.read(rel('src/session.js'), session);
+    await s.pause(500, 900);
+    await s.edit(rel('src/session.js'), session, SESSION_FIXED, { description: '30 minutes, and expiresAt' });
+    f.write('src/session.js', SESSION_FIXED);
+    await s.say('Fixed both expiry tests in `src/session.js`: the idle window is 30 minutes again, and `refresh` sets `expiresAt`, the field the tests and the middleware read.');
+  } else if (auth && auth !== AUTH_FIXED) {
+    await s.think('One left: a token no session has should be turned away as `invalid_session`, and `rejection` still says `session_missing`.');
+    await s.read(rel('src/auth.js'), auth);
+    await s.pause(400, 700);
+    await s.edit(rel('src/auth.js'), auth, AUTH_FIXED, { description: 'invalid_session for unknown tokens' });
+    f.write('src/auth.js', AUTH_FIXED);
+    await s.say('`rejection` now answers `invalid_session` for a token no session has, as the auth test expects.');
+  } else {
+    await s.think('The check failed, but both files here already have their fixes.');
+    await s.say('I cannot see what still fails: both fixes are in. The output above is all I have to go on.');
+  }
+  s.finish({});
+};
+
 // ─────────────────────────────────── selection ──────────────────────────────────
 
 export const SCENARIOS = {
@@ -1448,6 +1504,8 @@ export const SCENARIOS = {
   previews,
   browser,
   beforeafter,
+  untilSetup,
+  untilFix,
 } satisfies Record<string, Scenario>;
 export type ScenarioId = keyof typeof SCENARIOS;
 
@@ -1455,6 +1513,9 @@ export type ScenarioId = keyof typeof SCENARIOS;
 export const ROTATION: ScenarioId[] = ['flagship', 'agents', 'search', 'questions', 'mcp', 'markdown'];
 
 const KEYWORDS: [RegExp, ScenarioId][] = [
+  // Until green: Sable's message for a failing check, and the project to loop on (demo-until.ts).
+  [/^The check `[^`]+` failed/, 'untilFix'],
+  [/\buntil[\s-]+green\b/i, 'untilSetup'],
   // Before / after captures of a local page (demo-site.ts).
   [/\bbefore\s*\/?\s*after\b|\bbeforeafter\b/i, 'beforeafter'],
   // The Browser tab tools.

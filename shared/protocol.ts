@@ -413,6 +413,62 @@ export interface SessionMeta {
   remote?: { url?: string; code?: string; status: string; tone?: CapabilityState['tone'] };
   /** Live state of the browser and computer-use capabilities, when there is something to say. */
   capState?: { browser?: CapabilityState; computerUse?: CapabilityState };
+  /** `/until <check>` is armed: after each turn Sable runs the check and sends a failure back. Ends with Sable (not resumed after a restart). Null once it ended (patches travel as JSON). */
+  until?: UntilState | null;
+}
+
+/**
+ * Until green: a check command Sable runs in the session's folder after each turn that ends
+ * normally, sending the failure back to the agent until it passes, the rounds run out, the
+ * account's usage share for the loop is spent, or the user stops it (`server/core/until.ts`).
+ */
+export interface UntilState {
+  check: string;
+  /** The round limit. */
+  rounds: number;
+  /** The round in progress, 1-based: its check runs when the agent's turn ends. */
+  round: number;
+  /** `working`: the agent's turn runs; `checking`: Sable runs the check; `paused`: the last turn was stopped or failed, the check waits for the next turn. */
+  phase: 'working' | 'checking' | 'paused';
+  /** When the check in progress (or the last one) started, ms. */
+  since?: number;
+  /** Failing tests or errors in the last failing check, when its output said. */
+  failing?: number;
+  /** Points of the account's weekly window the loop may use. */
+  usage: number;
+  /** Points used so far, when the limits say. */
+  used?: number;
+  startedAt: number;
+}
+
+/** What one check found. */
+export interface UntilCheck {
+  command: string;
+  round: number;
+  rounds: number;
+  passed: boolean;
+  exitCode?: number | null;
+  /** Failing tests or errors, when the output says how many. */
+  failing?: number;
+  /** Passing tests, when the output says. */
+  passing?: number;
+  timedOut?: boolean;
+  durationMs: number;
+  /** The useful part of the output (failures, first errors, the summary), trimmed. */
+  output?: string;
+}
+
+/** How a loop ended. */
+export type UntilEnd = 'passed' | 'rounds' | 'usage' | 'cap' | 'stopped' | 'broken' | 'restart';
+
+/**
+ * Marks the timeline's part of a loop: the message Sable sent for a failing check (a user item with
+ * `check`, shown as the check's row), and the notice that ends the loop (`end`, with the last
+ * check when it ended on one).
+ */
+export interface UntilMark {
+  check?: UntilCheck;
+  end?: UntilEnd;
 }
 
 /** A session that exists on disk at the provider but is not open in Sable. */
@@ -465,6 +521,8 @@ export interface UserItem extends BaseItem {
   steered?: boolean;
   /** Provider message id, used for rewind. */
   providerId?: string;
+  /** Sent by Sable for a failing `/until` check: shown as the check's row, not as a message. */
+  until?: UntilMark;
 }
 
 export interface TextItem extends BaseItem {
@@ -668,6 +726,8 @@ export interface NoticeItem extends BaseItem {
   detail?: string;
   /** The turn was refused at a plan limit (shown by `features/accounts`' LimitNotice). */
   limit?: LimitHit;
+  /** A `/until` loop ended here (shown as its end line, under its last check). */
+  until?: UntilMark;
 }
 
 /** Closes a turn: duration, cost, token counts. */
@@ -1474,6 +1534,15 @@ export interface RpcMethods {
   'session.mcp': { params: { sessionId: string }; result: McpServerInfo[] };
   /** Switches capabilities; an idle agent process restarts to apply them, a running turn finishes first. */
   'session.setOptions': { params: { sessionId: string; options: SessionOptions }; result: { ok: boolean } };
+  /**
+   * Arms until green with what follows `/until` (`pnpm test --rounds 8`, `--usage 15` for the
+   * weekly points); `off` stops it. Replaces a loop already armed. Answers the loop, or why not.
+   */
+  'until.set': { params: { sessionId: string; text: string }; result: { ok: boolean; until?: UntilState; error?: string } };
+  /** Stops the session's loop (its end line says so). */
+  'until.stop': { params: { sessionId: string }; result: { ok: boolean } };
+  /** Runs a paused loop's check now (the session must be idle). */
+  'until.check': { params: { sessionId: string }; result: { ok: boolean } };
 
   /**
    * Replaces a queued message's text, and its attachments when `attachments` is given (an empty

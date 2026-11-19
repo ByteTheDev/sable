@@ -38,6 +38,8 @@ import { cutAt } from './core/fork';
 import { orderAccounts } from './accounts/order';
 import { withBrowserLine } from './providers/browser-tool';
 import { profileOf } from './services/profile';
+import { parseUntil, runCheck, UntilLoops } from './core/until';
+import { isAllModelsWeekly } from './core/limit-policy';
 import { VERSION } from './version';
 
 type Handler<M extends RpcName> = (params: RpcMethods[M]['params']) => Promise<RpcMethods[M]['result']> | RpcMethods[M]['result'];
@@ -118,6 +120,25 @@ export class App {
   private capChecks = new Map<string, Promise<void>>();
   /** Sessions told once that no account is under its cap, as `${sessionId}:${accountId}:${kind}:${resetsAt}`. */
   private capWarned = new Set<string>();
+  /** `/until` loops (until green): the check Sable runs after each turn, and the failures it sends back. */
+  private until = new UntilLoops({
+    busy: (rt) => rt.turnActive || this.opening.has(rt.id) || this.delivering.has(rt.id),
+    settle: (rt) => this.checkCap(rt),
+    weekly: async (rt) => (await this.knownLimits(rt.meta.provider)).get(rt.meta.accountId ?? DEFAULT_ACCOUNT)?.limits?.find(isAllModelsWeekly),
+    capped: async (rt) => {
+      const accountId = rt.meta.accountId ?? DEFAULT_ACCOUNT;
+      const cap = this.capOf(rt.meta.provider, accountId);
+      if (!cap) return undefined;
+      const reached = capReached((await this.knownLimits(rt.meta.provider)).get(accountId)?.limits, cap, rt.meta.model || undefined);
+      return reached ? capReason(this.accountLabel(rt.meta.provider, accountId), reached) : undefined;
+    },
+    accountLabel: (rt) => this.accountLabel(rt.meta.provider, rt.meta.accountId ?? DEFAULT_ACCOUNT),
+    send: (rt, text, mark) => this.deliver(rt, text, undefined, { until: mark }),
+    run: runCheck,
+    log: (...args) => this.log(...args),
+  });
+  /** Loops that were armed when Sable closed: their sessions say so when next opened. */
+  private untilLost = new Map<string, NonNullable<SessionMeta['until']>>();
 
   constructor(opts: AppOptions) {
     this.quiet = !!opts.quiet;
@@ -142,6 +163,8 @@ export class App {
       // Remote links and live capability state belong to the agent process that is gone.
       meta.remote = meta.options?.remoteControl ? { status: 'Reconnects when the agent starts again', tone: 'waiting' } : undefined;
       meta.capState = undefined;
+      // An until loop does not outlive Sable: the session says so when it is opened.
+      if (meta.until) this.untilLost.set(meta.id, meta.until), (meta.until = undefined);
       this.sessions.set(meta.id, this.makeRuntime(meta, true));
     }
     this.seedFolderOrder();
@@ -515,6 +538,7 @@ export class App {
       else this.store.saveSession(rt.id, () => ({ items: rt.items, todos: rt.todos, queue: rt.queue }));
     });
     rt.onTurnEnd = (r, error) => this.afterTurn(r, error);
+    rt.onTurnStart = (r) => this.until.turnStarted(r);
     return rt;
   }
 
@@ -526,18 +550,20 @@ export class App {
     rt.settle('cancelled');
     // Messages still waiting for the agent when Sable closed (a steer not taken yet) would wait forever: back to the queue.
     rt.returnUntaken({ all: true, reason: 'closed' });
+    const lost = this.untilLost.get(rt.id);
+    if (lost) this.untilLost.delete(rt.id), this.until.restored(rt, lost);
   }
 
   /**
    * Puts a message in the timeline and hands it to the agent. Mid-turn it is steered: the agent
    * takes it at its next step and it stays where it was sent.
    */
-  private async deliver(rt: SessionRuntime, text: string, attachments?: UserItem['attachments']) {
+  private async deliver(rt: SessionRuntime, text: string, attachments?: UserItem['attachments'], extra?: Pick<UserItem, 'until'>) {
     // Past its account's cap, the session moves to the next account before the message goes out.
     if (!rt.turnActive && !this.opening.has(rt.id)) await this.checkCap(rt);
     const addUser = () => {
       if (rt.meta.titleSource === 'auto' && !rt.items.some((i) => i.type === 'user')) {
-        rt.update({ title: autoTitle(text) });
+        rt.update({ title: extra?.until?.check ? autoTitle(`Until ${extra.until.check.command} passes`) : autoTitle(text) });
       }
       // The chat just used goes to the top of its folder at once.
       rt.touch();
@@ -547,6 +573,7 @@ export class App {
         attachments: attachments?.length ? attachments : undefined,
         state: rt.turnActive ? 'queued' : 'sent',
         ...(rt.turnActive ? { steered: true } : {}),
+        ...(extra?.until ? { until: extra.until } : {}),
       });
     };
     // The agent is not there yet (a new session still starting, or a restored one whose agent
@@ -878,9 +905,13 @@ export class App {
       void this.checkCap(rt);
       if (!error) void this.onCredits(rt).catch((err) => this.log('credits follow-up failed', (err as Error).message));
     }
+    // An until loop stopped during the turn says so after it.
+    this.until.turnOver(rt);
     if (error || rt.stopRequested) {
       // Steered messages the agent never took go back to the queue, to send or edit again.
       rt.returnUntaken({ reason: error ? 'failed' : 'stopped' });
+      // An until loop waits for the next turn, as the queue waits for the user.
+      this.until.turnHeld(rt);
       return;
     }
     // Let the adapter finish its own bookkeeping (it may start a turn of its own first, with a
@@ -891,6 +922,8 @@ export class App {
       rt.returnUntaken();
       const next = rt.takeQueued();
       if (next) void this.deliver(rt, next.text, next.attachments).catch((err) => this.log('queued send failed', (err as Error).message));
+      // Nothing waits: an until loop runs its check (the user's messages always go first).
+      else this.until.turnEnded(rt);
     }, 0);
   }
 
@@ -1566,6 +1599,18 @@ export class App {
       return { ok: true };
     });
 
+    // Until green: `/until <check>` arms a loop on the session (server/core/until.ts).
+    this.register('until.set', ({ sessionId, text }) => {
+      const rt = this.runtime(sessionId);
+      this.hydrate(rt);
+      const parsed = parseUntil(text ?? '');
+      if ('error' in parsed) return { ok: false, error: parsed.error };
+      if ('off' in parsed) return { ok: this.until.stop(rt) };
+      return { ok: true, until: { ...this.until.arm(rt, parsed.args) } };
+    });
+    this.register('until.stop', ({ sessionId }) => ({ ok: this.until.stop(this.runtime(sessionId)) }));
+    this.register('until.check', ({ sessionId }) => ({ ok: this.until.checkNow(this.runtime(sessionId)) }));
+
     this.register('session.rename', ({ sessionId, title }) => {
       this.runtime(sessionId).update({ title: title.trim() || 'Untitled', titleSource: 'user' });
       return { ok: true };
@@ -1577,6 +1622,7 @@ export class App {
 
     this.register('session.close', async ({ sessionId, remove }) => {
       const rt = this.runtime(sessionId);
+      this.until.closed(rt);
       rt.stopRequested = true;
       rt.cancelPrompts();
       await rt.handle?.close().catch(() => {});
@@ -1693,6 +1739,7 @@ export class App {
   async dispose() {
     this.disposed = true;
     clearTimeout(this.resetTimer);
+    this.until.dispose();
     for (const fn of this.disposers.splice(0)) await Promise.resolve(fn()).catch(() => {});
     for (const rt of this.sessions.values()) {
       rt.cancelPrompts();

@@ -15,6 +15,7 @@ import { Stamp } from './Stamp';
 import { Thinking } from './Thinking';
 import { ToolView } from './Tool';
 import { UserMessage } from './User';
+import { CheckRow, UntilEnd } from './Until';
 import { isExplore, useHeld } from './util';
 
 type Row = { key: string; id: string; run?: undefined } | { key: string; run: string[]; id?: undefined };
@@ -110,6 +111,7 @@ const RowBlock = memo(
 export function estimate(item: TimelineItem | undefined): number {
   switch (item?.type) {
     case 'user':
+      if (item.until) return 44;
       return 70 + Math.ceil(item.text.length / 70) * 24;
     case 'text':
       return item.text ? 20 + Math.ceil(item.text.length / 95) * 27 + (item.text.match(/\n\n/g)?.length ?? 0) * 12 : 0;
@@ -185,7 +187,8 @@ export const ItemRow = memo(function ItemRow({ id, nested = false, answer = fals
   let body;
   switch (item.type) {
     case 'user':
-      body = <UserMessage item={item} />;
+      // A failing until check Sable sent: shown as the check's row, not as a message.
+      body = item.until?.check ? <CheckRow check={item.until.check} sent /> : <UserMessage item={item} />;
       break;
     case 'text':
       if (!item.text && !item.streaming) return null;
@@ -204,7 +207,7 @@ export const ItemRow = memo(function ItemRow({ id, nested = false, answer = fals
       body = item.kind === 'widget' ? <WidgetBlock item={item} sessionId={sessionId} /> : <ToolView item={item} />;
       break;
     case 'notice':
-      body = <Notice item={item} />;
+      body = item.until ? <UntilEnd item={item} /> : <Notice item={item} />;
       break;
     default:
       return null;
@@ -214,7 +217,7 @@ export const ItemRow = memo(function ItemRow({ id, nested = false, answer = fals
       className={nested ? 'tl-sub' : 'tl-item'}
       data-item-id={item.id}
       data-t={item.type}
-      data-k={item.type === 'tool' ? item.kind : undefined}
+      data-k={item.type === 'tool' ? item.kind : item.type === 'user' && item.until ? 'check' : undefined}
       data-answer={answer || undefined}
       data-fresh={fresh || undefined}
     >

@@ -49,6 +49,8 @@ export class SessionRuntime {
   stopRequested = false;
   /** Called after every turn end; `error` is set when the turn failed. */
   onTurnEnd?: (rt: SessionRuntime, error?: string) => void;
+  /** Called as a turn begins (an until loop's check in flight gives way to it). */
+  onTurnStart?: (rt: SessionRuntime) => void;
 
   private index = new Map<string, TimelineItem>();
   private permissions = new Map<string, { request: PermissionRequest; resolve: (a: PermissionAnswer | null) => void }>();
@@ -295,6 +297,7 @@ export class SessionRuntime {
     this.stopRequested = false;
     this.setSuggestion(undefined);
     this.update({ status: 'running', lastError: undefined, activity, updatedAt: Date.now() });
+    this.onTurnStart?.(this);
   }
 
   endTurn(error?: string) {

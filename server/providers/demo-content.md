@@ -590,3 +590,75 @@ A typical line:
 ```
 
 `npx tsc --noEmit` is clean. Set `LOG_LEVEL=debug` locally if you want more detail.
+
+@@ until-check
+// relay-api's tests, small: three real assertions on src/, 22 that always pass. Copied into the
+// Demo's until-green project as check.mjs (see demo-until.ts); `node check.mjs` runs it.
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const load = (f) => import(pathToFileURL(path.join(here, f)).href);
+const session = await load('src/session.js');
+const auth = await load('src/auth.js');
+
+const tests = [
+  [
+    'tests/session.test.ts',
+    'expiry > expires idle sessions after 30 minutes',
+    () => {
+      const ms = session.IDLE_MINUTES * 60000;
+      if (ms !== 1800000) throw new Error(`AssertionError: expected ${ms} to be 1800000 // Object.is equality\n ❯ tests/session.test.ts:58:41`);
+    },
+  ],
+  [
+    'tests/session.test.ts',
+    'expiry > refresh moves expiresAt forward',
+    () => {
+      const at = session.refresh({ id: 's1' }, 0).expiresAt;
+      if (at !== 1800000) throw new Error(`AssertionError: expected ${at} to be 1800000 // Object.is equality\n ❯ tests/session.test.ts:71:47`);
+    },
+  ],
+  [
+    'tests/auth.test.ts',
+    'requireAuth > rejects unknown session tokens with invalid_session',
+    () => {
+      const why = auth.rejection('tok_unknown', new Set());
+      if (why !== 'invalid_session') throw new Error(`AssertionError: expected '${why}' to be 'invalid_session' // Object.is equality\n ❯ tests/auth.test.ts:41:32`);
+    },
+  ],
+];
+const files = [
+  ['tests/tokens.test.ts', 6],
+  ['tests/session.test.ts', 9],
+  ['tests/auth.test.ts', 4],
+  ['tests/routes.test.ts', 6],
+];
+const failed = [];
+for (const [file, name, run] of tests) {
+  try {
+    run();
+  } catch (err) {
+    failed.push({ file, name, error: String(err.message) });
+  }
+}
+const out = ['', ` RUN  v2.1.4 ${process.cwd()}`, ''];
+for (const [file, n] of files) {
+  const bad = failed.filter((f) => f.file === file);
+  if (!bad.length) out.push(` ✓ ${file} (${n} tests) ${8 + n * 7}ms`);
+  else {
+    out.push(` ❯ ${file} (${n} tests | ${bad.length} failed) ${14 + n * 7}ms`);
+    for (const f of bad) out.push(`   × ${f.name} 9ms`, `     → ${f.error.split('\n')[0].replace(/^\w+: /, '')}`);
+  }
+}
+if (failed.length) {
+  out.push('', `⎯⎯⎯⎯⎯⎯⎯ Failed Tests ${failed.length} ⎯⎯⎯⎯⎯⎯⎯`, '');
+  for (const f of failed) out.push(` FAIL  ${f.file} > ${f.name}`, f.error, '');
+  const badFiles = new Set(failed.map((f) => f.file)).size;
+  out.push(` Test Files  ${badFiles} failed | ${files.length - badFiles} passed (${files.length})`, `      Tests  ${failed.length} failed | ${25 - failed.length} passed (25)`);
+} else {
+  out.push('', ` Test Files  ${files.length} passed (${files.length})`, '      Tests  25 passed (25)');
+}
+out.push('   Duration  1.38s', '');
+console.log(out.join('\n'));
+process.exitCode = failed.length ? 1 : 0;

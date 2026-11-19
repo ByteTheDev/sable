@@ -15,6 +15,7 @@ import type { TimelineItem } from '@shared/protocol';
  *   i  "Interrupted"                            e  an error notice
  *   T  turn end                                 F  turn end with an error
  *   g  a widget (generative UI): never folded, shown with the answer
+ *   Z  an until loop's end line: closes a turn left open (an interrupted one), stands on its own
  *   .  nothing to show (an empty, finished text)
  */
 
@@ -87,6 +88,7 @@ export function shapeOf(item: TimelineItem | undefined): string {
     case 'tool':
       return item.kind === 'plan' ? 'p' : item.kind === 'widget' ? 'g' : item.kind === 'todo' ? 'k' : 'w';
     case 'notice':
+      if (item.until) return 'Z';
       if (item.variant === 'interrupted') return 'i';
       if (item.variant === 'error') return 'e';
       if (item.variant === 'command') return 'c';
@@ -231,6 +233,11 @@ export function groupTurns(ids: readonly string[], shape: string, busy: boolean)
     if (ch === 'U' || (ch === 'S' && !open)) {
       close(null, false, false);
       start(id, ch === 'S');
+      continue;
+    }
+    if (ch === 'Z') {
+      close(null, false, false);
+      groups.push({ kind: 'item', key: id, id });
       continue;
     }
     if (ch === 'T' || ch === 'F') {

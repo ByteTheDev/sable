@@ -1,0 +1,36 @@
+/* Until green in the conversation (Until.tsx): check rows and the loop's end line. */
+
+/* A failing check starts the agent's next turn: a step-sized row where a message would be. */
+.tl-item[data-k='check'] {
+  padding-top: 18px;
+  padding-bottom: 2px;
+  contain-intrinsic-size: auto 44px;
+}
+
+/* The output as the agent got it: from the first failure down, not pinned to its end. */
+.term-out.ck-out {
+  flex-direction: column;
+  max-height: 320px;
+}
+
+.ck-line {
+  padding-top: 10px;
+}
+
+.ck-end[data-end='passed'] .notice-label {
+  color: var(--text-2);
+}
+
+.ck-end[data-end='passed'] .notice-label svg {
+  color: var(--text-2);
+}
+
+.ck-cmd {
+  max-width: 260px;
+  color: var(--text-4);
+}
+
+.ck-cmd::before {
+  content: '·';
+  margin-right: 6px;
+}
