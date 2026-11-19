@@ -20,6 +20,7 @@ import { isLeadIn } from './lead-in';
  *   i  "Interrupted"                            e  an error notice
  *   T  turn end                                 F  turn end with an error
  *   g  a widget (generative UI): never folded, shown in its place
+ *   f  files the agent hands over (SendUserFile): their cards, never folded, shown in their place
  *   Z  an until loop's end line: closes a turn left open (an interrupted one), stands on its own
  *   x  a check of a turn by the other agent: never part of a turn, shown under the turn it checks
  *   .  nothing to show (an empty, finished text)
@@ -28,7 +29,7 @@ import { isLeadIn } from './lead-in';
 /**
  * One piece of a segment as it reads, in order:
  * - `text`: something the agent said (a report along the way, the reply to a steered message, the answer): always in view;
- * - `show`: command output, a widget or a plan: always in view;
+ * - `show`: command output, a widget, files handed over or a plan: always in view;
  * - `steps`: a run of work between them (tool calls, thinking, task updates, notices): folded
  *   behind the work line, opened all at once by it;
  * - `line`: where the work line stands (the live line while the agent works, the summary after).
@@ -181,8 +182,8 @@ export function shapeIndex() {
 }
 
 const ANSWER = new Set(['t', 'c', 'p']);
-/** Always in view, in their place: command output, widgets, plans. */
-const SHOW = new Set(['c', 'g', 'p']);
+/** Always in view, in their place: command output, widgets, files handed over, plans. */
+const SHOW = new Set(['c', 'g', 'f', 'p']);
 
 interface Open {
   ids: string[];
@@ -194,14 +195,20 @@ interface Open {
 
 /** What may follow a lead-in for it to fold with the work it announces. */
 const WORK_AFTER = new Set(['w', 'h', 'k', 'n', 'l']);
+/** What the bridge or the agent may write after its last words without doing more work: notices, task list updates, thinking. */
+const QUIET_AFTER = new Set(['.', 'n', 'k', 'h']);
 
 /**
  * The segment's characters with each lead-in settled: it stays one (`l`, folded with the work) when
  * a step follows it, or while it is the newest thing in a running segment; otherwise it is said in
- * view after all (`t`): before more text, as the answer of a settled segment, and always as the
- * reply to a steered message.
+ * view after all (`t`): before more text, as the answer of a settled segment (also when only a
+ * notice or a task list update came after it, as the bridge writes at a turn's end), and always as
+ * the reply to a steered message.
+ * `final`: a settled segment that answers (not failed, not cut by a steer). With nothing else said
+ * in it, its last lead-in is its answer after all ("Let me fix the typo." then the edit): the turn
+ * keeps an answer to copy, fork from and check.
  */
-function settleLeads(chars: string[], live: boolean, steered: boolean): string[] {
+function settleLeads(chars: string[], live: boolean, steered: boolean, final = false): string[] {
   if (!chars.includes('l')) return chars;
   const out = chars.slice();
   let replied = !steered;
@@ -216,13 +223,24 @@ function settleLeads(chars: string[], live: boolean, steered: boolean): string[]
     }
     let j = i + 1;
     while (j < out.length && out[j] === '.') j++;
-    if (j < out.length ? !WORK_AFTER.has(out[j]) : !live) out[i] = 't';
+    let k = j;
+    while (k < out.length && QUIET_AFTER.has(out[k])) k++;
+    // Nothing but quiet entries after it: the last words of the segment.
+    if (k >= out.length) {
+      if (!live) out[i] = 't';
+      continue;
+    }
+    if (!WORK_AFTER.has(out[j])) out[i] = 't';
+  }
+  if (final && !out.some((c) => ANSWER.has(c))) {
+    const last = out.lastIndexOf('l');
+    if (last >= 0) out[last] = 't';
   }
   return out;
 }
 
 function buildSegment(raw: Open['segs'][number], index: number, turnKey: string, failed: boolean, live = false, cut = false): Segment {
-  const seg = { ...raw, chars: settleLeads(raw.chars, live, raw.steered) };
+  const seg = { ...raw, chars: settleLeads(raw.chars, live, raw.steered, !live && !failed && !cut) };
   const errors: string[] = [];
   let answerAt = -1;
   for (let i = seg.chars.length - 1; i >= 0; i--) {
@@ -355,6 +373,16 @@ function groupFrom(g: Grouping, ids: readonly string[], shape: string, busy: boo
     const key = o.ids[0];
     const last = o.segs.length - 1;
     const segments = o.segs.map((s, i) => buildSegment(s, i, key, failed && i === last, state === 'running' && i === last, i < last));
+    // A settled turn whose last segment said nothing (only steps after a steered message): the
+    // newest segment that did say something answers it, so the turn keeps its answer and its foot.
+    if ((state === 'done' || state === 'interrupted') && !segments.some((s) => s.answer)) {
+      for (let i = last - 1; i >= 0; i--) {
+        const seg = buildSegment(o.segs[i], i, key, false);
+        if (!seg.answer) continue;
+        segments[i] = seg;
+        break;
+      }
+    }
     groups.push({ kind: 'turn', key, segments, end, state, ids: o.ids });
   };
 

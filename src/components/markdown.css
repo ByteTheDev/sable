@@ -1,10 +1,14 @@
-/* Markdown: reading type for assistant text. Calm rhythm, tight headings, quiet structure. */
+/* Markdown: reading type for assistant text. A calm column with an even rhythm: paragraphs a
+   breath apart, headings that open a section with room above and stay close to what they head,
+   quiet structure (dots, hairlines, wells) that never competes with the words. */
 
 .md {
-  --md-fg: color-mix(in oklab, var(--text) 91%, var(--text-2));
-  --md-gap: 0.8em;
+  --md-fg: color-mix(in oklab, var(--text) 86%, var(--text-2));
+  --md-gap: 0.86em;
+  /* Half a line: list dots and checks sit on the first line's middle. */
+  --md-half: 0.82em;
   font-size: var(--t-body);
-  line-height: 1.62;
+  line-height: 1.64;
   letter-spacing: -0.003em;
   color: var(--md-fg);
   overflow-wrap: break-word;
@@ -34,7 +38,7 @@
   text-decoration-color: var(--text-4);
 }
 
-/* ── headings ── */
+/* ── headings: one clear scale, tight, with the room above them ── */
 
 .md h1,
 .md h2,
@@ -43,81 +47,88 @@
 .md h5,
 .md h6 {
   color: var(--text);
-  font-weight: 590;
-  line-height: 1.25;
+  font-weight: 600;
+  line-height: 1.28;
   text-wrap: balance;
 }
 
 .md h1 {
-  font-size: 23px;
+  font-size: 22px;
   letter-spacing: -0.024em;
-  font-variation-settings: 'wdth' 103;
 }
 
 .md h2 {
-  font-size: 19px;
-  letter-spacing: -0.02em;
+  font-size: 17.5px;
+  letter-spacing: -0.017em;
 }
 
 .md h3 {
-  font-size: 16px;
-  letter-spacing: -0.012em;
+  font-size: 15px;
+  letter-spacing: -0.01em;
 }
 
 .md h4,
 .md h5,
 .md h6 {
   font-size: var(--t-body);
-  letter-spacing: -0.006em;
+  letter-spacing: -0.004em;
 }
 
-.md > * + h1,
+/* h5 and h6 step back: a label over a short block, not a section. */
+.md h5,
+.md h6 {
+  color: var(--text-2);
+}
+
+.md > * + h1 {
+  margin-top: 1.9em;
+}
+
 .md > * + h2 {
-  margin-top: 1.5em;
+  margin-top: 1.85em;
 }
 
-.md > * + h3,
-.md > * + h4 {
-  margin-top: 1.25em;
+.md > * + :is(h3, h4, h5, h6) {
+  margin-top: 1.45em;
 }
 
-.md > h1 + *,
+/* An answer that opens with its title: the title is the answer's head, with a little more room under it. */
+.md > h1 + * {
+  margin-top: 0.7em;
+}
+
 .md > h2 + * {
-  margin-top: 0.62em;
+  margin-top: 0.55em;
 }
 
-.md > h3 + *,
-.md > h4 + * {
-  margin-top: 0.5em;
+.md > :is(h3, h4, h5, h6) + * {
+  margin-top: 0.42em;
 }
 
 /* ── inline ── */
 
 .md-code {
   font-family: var(--font-mono);
-  font-size: 0.86em;
+  font-size: 0.857em;
   font-variant-ligatures: none;
-  padding: 0.14em 0.4em;
-  border-radius: 6px;
+  padding: 0.12em 0.38em;
+  border-radius: 5px;
   color: var(--text);
-  background: var(--fill-2);
-  box-shadow: inset 0 0 0 1px var(--line);
+  background-color: var(--fill-2);
   overflow-wrap: anywhere;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
 
-.md h1 .md-code,
-.md h2 .md-code,
-.md h3 .md-code {
+.md :is(h1, h2, h3, h4) .md-code {
   font-size: 0.84em;
-  font-weight: 400;
+  font-weight: 450;
 }
 
 .md-link {
   color: var(--text);
   text-decoration: underline;
-  text-decoration-color: color-mix(in oklab, var(--text) 36%, transparent);
+  text-decoration-color: color-mix(in oklab, var(--text) 32%, transparent);
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
   border-radius: 3px;
@@ -132,22 +143,22 @@
   text-decoration-color: var(--text);
 }
 
-/* A linked code chip shows it with a firmer ring instead of an underline. */
+/* A linked code chip shows it with a firmer fill instead of an underline. */
 .md-link:has(> .md-code:only-child) {
   text-decoration: none;
 }
 
 .md-link .md-code {
-  box-shadow: inset 0 0 0 1px var(--line-3);
+  box-shadow: inset 0 0 0 1px var(--line-2);
   transition: background-color var(--d-1) var(--ease);
 }
 
 .md-link[href]:hover .md-code {
-  background: var(--fill-4);
+  background-color: var(--fill-4);
 }
 
-/* A file the answer names (lib/file-links.tsx): in prose a dotted underline, as a code chip the
-   firmer ring of a linked chip. Click previews it, Ctrl+click opens it. */
+/* A file the answer names in prose (lib/file-links.tsx): a dotted underline. Click previews it,
+   Ctrl+click opens it. */
 a.md-file {
   cursor: pointer;
 }
@@ -156,19 +167,48 @@ a.md-link.md-file {
   text-decoration-style: dotted;
 }
 
-a.md-code.md-file {
+a.md-file:focus-visible,
+.md-fileref:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* A file the answer names as code: a chip in the interface face (its kind, the folder dim, the
+   name regular) that opens on click like any file link. */
+.md-fileref {
+  padding: 0.14em 0.42em 0.14em 0.36em;
+  border-radius: 6px;
+  font-size: 0.93em;
+  font-weight: var(--w-medium);
+  color: var(--text);
   text-decoration: none;
-  box-shadow: inset 0 0 0 1px var(--line-3);
+  background-color: var(--fill-2);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
   transition: background-color var(--d-1) var(--ease);
 }
 
-a.md-code.md-file:hover {
-  background: var(--fill-4);
+.md-fileref:hover {
+  background-color: var(--fill-4);
 }
 
-a.md-file:focus-visible {
-  outline: var(--focus-w) solid var(--focus);
-  outline-offset: 2px;
+.md-fileref-icon {
+  display: inline-block;
+  margin-right: 0.36em;
+  vertical-align: -0.1em;
+  color: var(--text-3);
+  transition: color var(--d-1) var(--ease);
+}
+
+.md-fileref:hover .md-fileref-icon {
+  color: var(--text-2);
+}
+
+.md-fileref-dir {
+  font-weight: var(--w-regular);
+  color: var(--text-3);
 }
 
 .md-img {
@@ -181,42 +221,64 @@ a.md-file:focus-visible {
   vertical-align: middle;
 }
 
-/* ── lists ── */
+/* ── lists: a small dot on the first line's middle, numbers in quiet figures ── */
 
 .md ul,
 .md ol {
-  padding-left: 1.45em;
+  padding-left: 1.5em;
 }
 
 .md ul {
-  list-style: disc;
+  list-style: none;
 }
 
 .md ol {
   list-style: decimal;
 }
 
-.md ul ul {
-  list-style: circle;
-}
-
 .md li {
-  padding-left: 0.2em;
+  position: relative;
+  padding-left: 0.15em;
 }
 
-.md li::marker {
+.md ul > li::before {
+  content: '';
+  position: absolute;
+  left: -0.92em;
+  top: calc(var(--md-half) - 2.5px);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--text-3);
+}
+
+/* One level in: a short dash. */
+.md li ul > li::before {
+  top: calc(var(--md-half) - 0.75px);
+  width: 6px;
+  height: 1.5px;
+  border-radius: 1px;
+}
+
+.md ol > li::marker {
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+  font-weight: var(--w-medium);
   font-size: 0.93em;
 }
 
 .md li + li {
-  margin-top: 0.32em;
+  margin-top: 0.36em;
 }
 
 .md li > ul,
 .md li > ol {
-  margin-top: 0.32em;
+  margin-top: 0.36em;
+}
+
+/* A list right under the line that leads into it ("The flow:") reads as one thought. */
+.md > p + :is(ul, ol) {
+  margin-top: 0.55em;
 }
 
 .md [data-loose] > li + li {
@@ -243,9 +305,12 @@ a.md-file:focus-visible {
 .md .md-task {
   display: flex;
   gap: 0.6em;
-  list-style: none;
-  margin-left: -1.45em;
+  margin-left: -1.5em;
   padding-left: 0;
+}
+
+.md .md-task::before {
+  display: none;
 }
 
 .md-check {
@@ -254,7 +319,7 @@ a.md-file:focus-visible {
   flex-shrink: 0;
   width: 15px;
   height: 15px;
-  margin-top: 0.3em;
+  margin-top: calc(var(--md-half) - 7.5px);
   border: 1px solid var(--line-3);
   border-radius: 4px;
   background-color: transparent;
@@ -280,27 +345,72 @@ a.md-file:focus-visible {
 .md blockquote {
   padding: 1px 0 1px 15px;
   color: var(--text-2);
-  border-left: 2px solid var(--line-3);
-  padding-left: 13px;
+  box-shadow: inset 2px 0 0 var(--line-3);
 }
 
 .md blockquote > * + * {
   margin-top: 0.6em;
 }
 
+.md blockquote strong {
+  color: var(--text);
+}
+
+/* GitHub's alerts (> [!NOTE]): a quiet card, the kind named in its head. No colour. */
+.md-callout {
+  padding: 11px 15px 12px;
+  border-radius: var(--r-md);
+  background-color: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.md-callout-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+  font-size: var(--t-ui);
+  font-weight: var(--w-semi);
+  color: var(--text);
+}
+
+.md-callout-head svg {
+  color: var(--text-2);
+}
+
+.md-callout > * + * {
+  margin-top: 0.6em;
+}
+
+.md-callout > .md-callout-head + * {
+  margin-top: 0;
+}
+
+.md > .md-callout {
+  margin-top: 1.05em;
+}
+
+.md > .md-callout + * {
+  margin-top: 1.05em;
+}
+
 .md hr {
   height: 1px;
   border: 0;
-  margin: 1.5em 0;
+  margin: 1.9em 0;
   background: var(--line-2);
 }
 
+.md > hr + * {
+  margin-top: 0;
+}
+
 .md > .cb {
-  margin-top: 0.95em;
+  margin-top: 1em;
 }
 
 .md > .cb + * {
-  margin-top: 0.95em;
+  margin-top: 1em;
 }
 
 .md-raw {
@@ -332,7 +442,7 @@ a.md-file:focus-visible {
   right: 1px;
   bottom: 1px;
   width: 48px;
-  border-radius: 0 var(--r-md) var(--r-md) 0;
+  border-radius: 0 var(--r-lg) var(--r-lg) 0;
   background: linear-gradient(to right, rgb(9 9 11 / 0), rgb(9 9 11 / 0.92));
   pointer-events: none;
   opacity: 0;
@@ -351,9 +461,9 @@ a.md-file:focus-visible {
 }
 
 .md-table {
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background-color: rgb(0 0 0 / 0.22);
+  border-radius: var(--r-lg);
+  background-color: rgb(0 0 0 / 0.2);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .md-table[data-tall] {
@@ -366,8 +476,8 @@ a.md-file:focus-visible {
   position: sticky;
   top: 0;
   z-index: 1;
-  /* Opaque: rows pass beneath it. The well's tone over the sheet, one step lighter. */
-  background-color: #101012;
+  /* Opaque: rows pass beneath it. The well's tone over the sheet. */
+  background-color: #0b0b0d;
 }
 
 .md-table .num {
@@ -421,11 +531,11 @@ a.md-file:focus-visible {
 }
 
 .md > .md-tablewrap {
-  margin-top: 1em;
+  margin-top: 1.05em;
 }
 
 .md > .md-tablewrap + * {
-  margin-top: 1em;
+  margin-top: 1.05em;
 }
 
 /* Widgets and diagrams in an answer get room for their bar above. */
@@ -448,18 +558,23 @@ a.md-file:focus-visible {
 
 .md-table th,
 .md-table td {
-  padding: 8px 14px;
+  padding: 9px 16px;
   text-align: left;
   vertical-align: top;
 }
 
+.md-table :is(th, td):first-child {
+  padding-left: 16px;
+}
+
 .md-table th {
+  padding-top: 10px;
+  padding-bottom: 9px;
   font-weight: var(--w-medium);
-  color: var(--text-2);
+  color: var(--text-3);
   font-size: var(--t-small);
   white-space: nowrap;
-  background: rgb(255 255 255 / 0.025);
-  border-bottom: 1px solid var(--line-2);
+  box-shadow: inset 0 -1px 0 var(--line-2);
 }
 
 .md-table td {

@@ -171,7 +171,8 @@ function WorkflowDetail({ item, run, live }: { item: ToolItem; run: WorkflowRun;
               <div className="agx-wf-head">
                 <span className="agx-wf-index num">{index}</span>
                 <span className="agx-wf-title truncate">{run.phases[i]?.title ?? `Phase ${index}`}</span>
-                <span className="agx-wf-count num">{agents.length ? `${done} of ${agents.length}` : state === 'next' ? 'Not started' : ''}</span>
+                {/* How far a phase is, while it is not all done. */}
+                <span className="agx-wf-count num">{agents.length && done < agents.length ? `${done} of ${agents.length}` : state === 'next' ? 'Not started' : ''}</span>
               </div>
               {agents.map((a) => (
                 <WorkflowAgentRow key={a.index} agent={a} />
@@ -198,7 +199,8 @@ function label(text: string) {
 
 function WorkflowAgentRow({ agent: a }: { agent: WorkflowAgent }) {
   const running = a.state === 'running';
-  const meta = a.state === 'error' ? '' : [a.durationMs && a.durationMs >= 1000 ? shortDuration(a.durationMs) : '', a.tokens ? `${formatTokens(a.tokens)} tokens` : ''].filter(Boolean).join(' · ');
+  // One figure, its time: the workflow's tokens are in its facts line.
+  const meta = a.state === 'error' || !a.durationMs || a.durationMs < 1000 ? '' : shortDuration(a.durationMs);
   return (
     <div className="agx-wf-agent" data-state={a.state}>
       <span className="agx-wf-mark" aria-hidden>

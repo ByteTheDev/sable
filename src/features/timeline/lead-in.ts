@@ -40,9 +40,18 @@ const PHRASES = [
 /** "I'm checking ...", or the bare form "Checking ...": what it is doing now. */
 const DOING = ['checking', 'looking', 'reading', 'searching', 'scanning', 'inspecting', 'reviewing', 'opening', 'exploring', 'investigating', 'verifying', 'tracing', 'pulling', 'grabbing', 'digging'];
 
+/**
+ * Verbs that make an announcement a report after all: "I should note the key is read from .env",
+ * "I need to point out the tests were failing before". What the agent says, not what it does next.
+ */
+const SAYING = ['note', 'mention', 'point out', 'flag', 'say', 'warn', 'add that', 'clarify', 'stress', 'emphasize', 'emphasise', 'highlight', 'admit', 'be clear', 'be honest', 'summarize', 'summarise', 'recap'];
+
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const OPENER = `(?:(?:${OPENERS.map(esc).join('|')})[,!.]?\\s+)`;
 const ANNOUNCE = new RegExp(`^${OPENER}*(?:${[...PHRASES, ...DOING].map(esc).join('|')}|i'm (?:now )?(?:${DOING.join('|')}))\\b`);
+const SAYS = new RegExp(`^${OPENER}*(?:${PHRASES.map(esc).join('|')})\\s+(?:(?:also|just|briefly|quickly|first)\\s+)?(?:${SAYING.map(esc).join('|')})\\b`);
+/** "Looking at the logs, the guard throws first.": a bare doing word that leads into a finding. */
+const FINDING = new RegExp(`^${OPENER}*(?:${DOING.join('|')})\\b[^,]*,\\s*\\S`);
 const FILLER = new RegExp(`^(?:${FILLERS.map(esc).join('|')})[,!.]*$`);
 const LEADING = new RegExp(`^${OPENER}*`);
 const STARTS = [...PHRASES, ...DOING, ...DOING.map((d) => `i'm ${d}`), ...OPENERS];
@@ -79,6 +88,9 @@ export function isLeadIn(text: string, streaming: boolean): boolean {
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i];
     if (p.endsWith('?') || p.startsWith('let me know') || p.startsWith("let's discuss")) return false;
+    if (SAYS.test(p)) return false;
+    // "Looking at the logs, the guard throws": a finding. "Looking good, let me run the tests": not.
+    if (FINDING.test(p) && !ANNOUNCE.test(p.slice(p.indexOf(',') + 1).trim())) return false;
     if (ANNOUNCE.test(p) || FILLER.test(p)) continue;
     // The sentence being written: it may still become one.
     if (streaming && i === parts.length - 1 && mayStart(p)) continue;

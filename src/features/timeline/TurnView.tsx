@@ -406,8 +406,11 @@ function WorkLine({ seg, turn, index, open, onToggle, landed }: { seg: Segment; 
   );
 }
 
-/** The shortest time the live line shows one title (ms). */
-const TITLE_HOLD_MS = 600;
+/**
+ * The shortest time the live line shows one title (ms). Long enough that a burst of quick steps (a
+ * fleet of agents launched one after another) reads as titles, not as a line fading in and out.
+ */
+const TITLE_HOLD_MS = 900;
 /** How long a finished step still names what the agent is doing, when nothing newer has started (ms). */
 const RECENT_MS = 2000;
 
@@ -542,7 +545,7 @@ function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onTogg
     const w = el.offsetWidth;
     if (Math.abs(was - w) < 1) return;
     for (let n = el.nextElementSibling; n; n = n.nextElementSibling) n.animate([{ transform: `translateX(${was - w}px)` }, { transform: 'translateX(0)' }], { duration: 220, easing: 'cubic-bezier(0.2, 0, 0, 1)', composite: 'add' });
-    if (w > was) el.animate([{ opacity: 0 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], { duration: 380, easing: 'ease-out' });
+    if (w > was) el.animate([{ opacity: 0 }, { opacity: 0, offset: 0.4 }, { opacity: 1 }], { duration: 300, easing: 'ease-out' });
   }, [title, waiting]);
   const body = (
     <>

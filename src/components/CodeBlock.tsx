@@ -41,7 +41,7 @@ function previewable(lang: string | undefined, text: string): boolean {
 }
 
 const LINE_H = 18;
-const PAD = 22;
+const PAD = 14;
 
 function countLines(text: string): number {
   let n = 1;

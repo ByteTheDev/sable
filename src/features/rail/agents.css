@@ -1,30 +1,37 @@
 /* ───────────── agents ─────────────
-   What works now sits on cards one step above the panel (its live time, what it does, its steps,
-   how far it is when it says); what is done is a quiet list of one-line rows under the message
-   that started it. Rows open in place. Monochrome: the agents' marks keep their colour, amber is
-   waiting on you, red a failure. */
+   Two tiers, one set of columns. What works now sits on cards one step above the panel: one mark
+   (the ring, amber waiting on you, or the other agent's mark for a hand-over), the task, its live
+   time, and under it what it does now. What is done is a quiet list of one-line rows in the same
+   columns: the task and one figure, a mark only where it tells something (a failure, a hand-over,
+   a workflow). Everything else (steps, tokens, the report) is in the opened row. Monochrome: the
+   agents' marks keep their colour, amber is waiting on you, red a failure. */
 
 .agx-list {
-  --agx-indent: 24px;
+  /* The mark's column and the gap after it: the sub-line and the opened detail start at the title. */
+  --agx-mark: 16px;
+  --agx-indent: calc(var(--agx-mark) + 10px);
+  /* The card's inset (its hairline and padding), shared by the rows so the columns line up. */
+  --agx-inset: 12px;
   display: flex;
   flex-direction: column;
-  padding: 2px 8px 24px;
+  padding: 4px 10px 28px;
 }
 
-/* ── headings: the message behind a group, or "Done" under the cards ── */
+/* ── headings: "Done" under the cards, or the message behind a group ── */
 
 .agx-head {
   display: flex;
   align-items: baseline;
   gap: 12px;
   min-width: 0;
-  padding: 16px 8px 6px;
+  /* In the titles' column: every line of text in the list starts at one edge, the marks hang left of it. */
+  padding: 22px calc(var(--agx-inset) + 1px) 8px calc(var(--agx-inset) + 1px + var(--agx-indent));
   font-size: var(--t-small);
   color: var(--text-3);
 }
 
 .agx-head:first-child {
-  padding-top: 6px;
+  padding-top: 8px;
 }
 
 .agx-head-label {
@@ -32,16 +39,12 @@
   min-width: 0;
 }
 
-.agx-head-time {
-  flex-shrink: 0;
-}
-
 /* ── shared pieces of a line ── */
 
 .agx-mark {
   display: grid;
   place-items: center;
-  width: 16px;
+  width: var(--agx-mark);
   height: 16px;
   flex-shrink: 0;
   color: var(--text-4);
@@ -64,14 +67,6 @@
   background-color: var(--amber);
 }
 
-/* Stopped, interrupted, denied: a small square, as quiet as the tick. */
-.agx-stop {
-  width: 7px;
-  height: 7px;
-  border-radius: 2px;
-  background-color: currentColor;
-}
-
 /* ── working now: a card each ── */
 
 .agx-card {
@@ -81,19 +76,19 @@
 }
 
 .agx-card + .agx-card {
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
-.agx-card + :is(.agx-row, .agx-head) {
-  margin-top: 8px;
+.agx-card + .agx-row {
+  margin-top: 10px;
 }
 
 .agx-card-btn {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   width: 100%;
-  padding: 9px 12px 11px 10px;
+  padding: 12px 14px 13px var(--agx-inset);
   border-radius: inherit;
   text-align: left;
   transition: background-color var(--d-1) var(--ease);
@@ -119,16 +114,12 @@
 .agx-line {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
   height: 20px;
   font-size: var(--t-ui);
   font-weight: var(--w-medium);
   color: var(--text);
-}
-
-.agx-provider {
-  margin-right: -2px;
 }
 
 /* The live time: fixed width, so the figures tick in place. */
@@ -141,11 +132,10 @@
   color: var(--text-3);
 }
 
-/* What it does now, under the title, with its steps at the end. */
+/* What it does now, under the title. */
 .agx-sub {
   display: flex;
   align-items: center;
-  gap: 12px;
   min-width: 0;
   height: 18px;
   padding-left: var(--agx-indent);
@@ -193,19 +183,11 @@
   color: var(--text-2);
 }
 
-.agx-figs {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-/* Its own task list, when it keeps one: the only progress it can honestly show. */
+/* Its own task list, when it keeps one: a thin meter under the line, the figures in the opened card. */
 .agx-progress {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 5px 0 0 var(--agx-indent);
-  font-size: var(--t-small);
-  color: var(--text-3);
+  padding: 7px 0 1px var(--agx-indent);
 }
 
 .agx-meter {
@@ -218,7 +200,7 @@
   display: flex;
   gap: 3px;
   height: 3px;
-  margin: 6px 0 1px var(--agx-indent);
+  margin: 8px 0 1px var(--agx-indent);
 }
 
 .agx-seg {
@@ -250,21 +232,21 @@
 }
 
 .agx-row[data-open] {
-  margin: 4px 0;
+  margin: 6px 0;
   border-color: var(--line);
   background-color: var(--panel);
 }
 
-/* The mark and the title stand in the cards' columns (the card's 10px inset), so working and done
-   read as one list. */
+/* The mark and the title stand in the cards' columns, the figure on the time's right edge, so
+   working and done read as one list. */
 .agx-row-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  height: var(--rail-row-h, 30px);
-  padding: 0 8px 0 10px;
-  border-radius: var(--r-sm);
+  height: 32px;
+  padding: 0 14px 0 var(--agx-inset);
+  border-radius: var(--r-md);
   font-size: var(--t-ui);
   text-align: left;
   color: var(--text-2);
@@ -303,12 +285,10 @@
   color: var(--text-2);
 }
 
-/* Outcome (when it is not plain done), then time and tokens in two columns of figures, so the
-   list reads down as cleanly as across. */
+/* One figure: the time it took, or how it ended when that was not done. */
 .agx-meta {
   display: flex;
   align-items: center;
-  gap: 12px;
   flex-shrink: 0;
   font-size: var(--t-small);
   color: var(--text-3);
@@ -316,16 +296,15 @@
 }
 
 .agx-dur {
-  min-width: 6.5ch;
-  text-align: right;
-}
-
-.agx-tokens {
-  min-width: 10.5ch;
+  min-width: 5ch;
   text-align: right;
 }
 
 .agx-outcome {
+  color: var(--text-3);
+}
+
+.agx-row[data-outcome='failed'] .agx-outcome {
   color: var(--text-2);
 }
 
@@ -340,8 +319,8 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
-  padding: 2px 12px 10px calc(10px + var(--agx-indent));
+  gap: 12px;
+  padding: 2px 14px 14px calc(var(--agx-inset) + var(--agx-indent));
   font-size: var(--t-small);
   color: var(--text-2);
 }
@@ -581,23 +560,6 @@
 .agx-wf-meta {
   flex-shrink: 0;
   white-space: nowrap;
-}
-
-/* A narrow panel keeps the time and lets the tokens go (they are in the opened row). */
-@container rail (max-width: 360px) {
-  .agx-tokens {
-    display: none;
-  }
-}
-
-.agx-facts-tokens {
-  display: none;
-}
-
-@container rail (max-width: 360px) {
-  .agx-facts-tokens {
-    display: inline;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

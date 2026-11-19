@@ -1865,7 +1865,7 @@ button:hover > .row-caret {
   --md-fg: var(--text-2);
 }
 
-.tl-item[data-mid] .md :is(strong, h1, h2, h3, h4, .md-code, .md-link) {
+.tl-item[data-mid] .md :is(strong, h1, h2, h3, h4, .md-code, .md-link, .md-fileref, .md-callout-head) {
   color: var(--text-2);
 }
 

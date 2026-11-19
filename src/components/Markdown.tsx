@@ -1,7 +1,8 @@
 import { memo, useRef, type ReactNode } from 'react';
 import type { Token, Tokens } from 'marked';
-import { Icon } from '@/icons';
-import { FileProse, FileWord } from '@/lib/file-links';
+import { fileIcon } from '@/features/composer/file-icon';
+import { Icon, type IconName } from '@/icons';
+import { FileProse, openFileLink, useFileLinks } from '@/lib/file-links';
 import { onLinkClick } from '@/lib/links';
 import { PENDING_HREF, lexBlocks, repairTail, type LexState } from '@/lib/md';
 import { FenceWidget, MermaidBlock, WIDGET_FENCE } from '@/features/genui/blocks';
@@ -40,6 +41,54 @@ function decode(text: string): string {
   });
 }
 
+/**
+ * Inline code in a settled answer. A real file it names (`src/server/session.ts`) becomes a quiet
+ * chip in the interface face, its kind, the folder dim and the name regular, that opens on click
+ * as any file link does (lib/file-links.tsx); anything else stays code.
+ */
+function CodeWord({ word }: { word: string }) {
+  const links = useFileLinks();
+  const file = links?.files[word];
+  if (!file || !links) return <code className="md-code">{word}</code>;
+  const norm = word.replace(/\\/g, '/').replace(/\/+$/, '');
+  const cut = norm.lastIndexOf('/');
+  const name = norm.slice(cut + 1) || norm;
+  return (
+    <a className="md-fileref" href={`file:///${file.replace(/\\/g, '/')}`} title={file} onClick={(e) => openFileLink(e, file, links.cwd)} onAuxClick={(e) => e.preventDefault()}>
+      <Icon name={fileIcon(name.replace(/:\d+(?::\d+)?$/, ''))} size={12} className="md-fileref-icon" />
+      {cut > 0 && <span className="md-fileref-dir">{norm.slice(0, cut + 1)}</span>}
+      <span className="md-fileref-name">{name}</span>
+    </a>
+  );
+}
+
+/** GitHub's alerts (`> [!NOTE]`): a quiet callout with its kind named, no colour. */
+const ALERT = /^\[!(note|tip|important|warning|caution)\][ \t]*\n?/i;
+const ALERTS: Record<string, { label: string; icon: IconName }> = {
+  note: { label: 'Note', icon: 'info' },
+  tip: { label: 'Tip', icon: 'lightbulb' },
+  important: { label: 'Important', icon: 'info' },
+  warning: { label: 'Warning', icon: 'warning' },
+  caution: { label: 'Caution', icon: 'warning' },
+};
+
+/** The alert a quote opens with, and the quote's blocks without its marker; null for a plain quote. */
+function alertOf(kids: Token[]): { kind: string; kids: Token[] } | null {
+  const first = kids[0];
+  if (first?.type !== 'paragraph') return null;
+  const m = ALERT.exec(first.raw);
+  if (!m) return null;
+  const p = first as Tokens.Paragraph;
+  const head = p.tokens[0];
+  if (head?.type !== 'text' || !ALERT.test((head as Tokens.Text).text)) return null;
+  const text = (head as Tokens.Text).text.replace(ALERT, '');
+  const rest = text ? [{ ...head, text, raw: text, tokens: undefined } as Token, ...p.tokens.slice(1)] : p.tokens.slice(1);
+  // The line break after the marker (answers keep single line breaks) goes with it.
+  while (rest[0]?.type === 'br' || (rest[0]?.type === 'text' && !(rest[0] as Tokens.Text).text.trim())) rest.shift();
+  const body = rest.length ? [{ ...p, tokens: rest, raw: p.raw.replace(ALERT, ''), text: p.text.replace(ALERT, '') } as Token] : [];
+  return { kind: m[1].toLowerCase(), kids: [...body, ...kids.slice(1)] };
+}
+
 const SAFE_HREF = /^(https?:|mailto:|#|\/|\.\.?\/)/i;
 const SAFE_SRC = /^(https?:|data:image\/|blob:)/i;
 
@@ -69,9 +118,7 @@ function inline(tokens: Token[] | undefined, live: boolean, path: string): React
             {text}
           </code>
         ) : (
-          <FileWord key={key} word={text} code>
-            {text}
-          </FileWord>
+          <CodeWord key={key} word={text} />
         );
       }
       case 'br':
@@ -204,10 +251,24 @@ function block(t: Token, live: boolean, key: string, tail = false): ReactNode {
       return <CodeBlock key={key} code={c.text} lang={c.lang || undefined} streaming={live} />;
     }
     case 'blockquote': {
-      const kids = (t as Tokens.Blockquote).tokens;
+      const all = (t as Tokens.Blockquote).tokens;
+      const alert = alertOf(all);
+      const kids = alert ? alert.kids : all;
       let last = kids.length - 1;
       while (last >= 0 && kids[last].type === 'space') last--;
-      return <blockquote key={key}>{kids.map((c, i) => block(c, live, `${key}.${i}`, tail && i === last))}</blockquote>;
+      const body = kids.map((c, i) => block(c, live, `${key}.${i}`, tail && i === last));
+      if (!alert) return <blockquote key={key}>{body}</blockquote>;
+      const a = ALERTS[alert.kind];
+      return (
+        <div key={key} className="md-callout" data-kind={alert.kind} role="note">
+          <div className="md-callout-head">
+            <Icon name={a.icon} size={14} />
+            {a.label}
+          </div>
+          {body}
+          {tail && last < 0 && <Caret />}
+        </div>
+      );
     }
     case 'list': {
       const l = t as Tokens.List;

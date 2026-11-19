@@ -15,6 +15,8 @@ describe('isLeadIn', () => {
       'Checking the webhook path next.',
       'Good, now let me look at `routes.ts`.',
       'Lass mich die Tests ausführen.',
+      'I need to check the config first.',
+      'Looking good, let me run the tests.',
     ])
       expect(isLeadIn(t, false), t).toBe(true);
   });
@@ -30,6 +32,11 @@ describe('isLeadIn', () => {
       'Let me read the handler.\n\nThen the routes.',
       `Let me ${'read every file in the project '.repeat(8)}`,
       'Now the guard throws like everywhere else.',
+      // Openers that lead into something the agent says, not something it does next.
+      'I should note the key is read from .env.',
+      'I need to point out that the tests were already failing.',
+      'Let me also mention that the cache is per process.',
+      'Looking at the logs, the guard throws before the handler runs.',
     ])
       expect(isLeadIn(t, false), t).toBe(false);
   });

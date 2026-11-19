@@ -39,6 +39,7 @@ describe('shapeOf', () => {
       [{ ...base, type: 'thinking', text: '', streaming: false }, 'h'],
       [{ ...base, type: 'tool', name: 'Bash', kind: 'bash', title: 'Run', status: 'done', detail: {} }, 'w'],
       [{ ...base, type: 'tool', name: 'ExitPlanMode', kind: 'plan', title: 'Plan', status: 'awaiting', detail: {} }, 'p'],
+      [{ ...base, type: 'tool', name: 'SendUserFile', kind: 'share', title: 'a.pdf', status: 'done', detail: { files: [{ path: '/a.pdf', name: 'a.pdf' }] } }, 'f'],
       [{ ...base, type: 'notice', variant: 'interrupted', text: 'Interrupted' }, 'i'],
       [{ ...base, type: 'notice', variant: 'error', text: 'Boom' }, 'e'],
       [{ ...base, type: 'notice', variant: 'command', text: '/context' }, 'c'],
@@ -353,6 +354,43 @@ describe('lead-ins', () => {
 
   it('forgets the lead-ins once the agent has said something in view', () => {
     expect(onlyTurn('U1 l2 w3 t4 w5', true).segments[0].narr).toEqual([]);
+  });
+
+  it('answers a settled turn with its lead-in when nothing else was said', () => {
+    // "Let me fix the typo." then the edit, and the turn ends: the announcement is the answer, in view.
+    const s = onlyTurn('U1 l2 w3 T4').segments[0];
+    expect(s).toMatchObject({ answer: '2', work: ['3'], steps: 1 });
+    expect(flowOf(s.flow)).toBe('2 | [3]');
+    // The newest of several.
+    expect(onlyTurn('U1 l2 w3 l4 w5 T6').segments[0]).toMatchObject({ answer: '4', work: ['2', '3', '5'] });
+    // While it runs it stays folded with its step.
+    expect(onlyTurn('U1 l2 w3', true).segments[0]).toMatchObject({ answer: null, work: ['2', '3'] });
+    // A report said along the way stays the answer; the lead-ins after it fold.
+    expect(onlyTurn('U1 t2 l3 w4 T5').segments[0]).toMatchObject({ answer: '2', work: ['3', '4'] });
+    // A failed turn still answers with its error.
+    expect(onlyTurn('U1 l2 w3 F4').segments[0].answer).toBeNull();
+  });
+
+  it('keeps the last words the answer when a notice or a task list update follows them', () => {
+    // "I'll leave the config as it is." and then "Your message is back in the queue".
+    const s = onlyTurn('U1 t2 w3 l4 n5 T6').segments[0];
+    expect(s.answer).toBe('4');
+    expect(flowOf(s.flow)).toBe('2 | [3] 4 [5]');
+    expect(onlyTurn('U1 w2 l3 k4 T5').segments[0]).toMatchObject({ answer: '3', work: ['2', '4'] });
+    expect(onlyTurn('U1 w2 l3 h4 n5 T6').segments[0].answer).toBe('3');
+    // A notice and then a step: the lead-in announced that step.
+    expect(onlyTurn('U1 t2 l3 n4 w5 T6').segments[0]).toMatchObject({ answer: '2', work: ['3', '4', '5'] });
+    // Running, it waits: a step may still come.
+    expect(onlyTurn('U1 t2 w3 l4 n5', true).segments[0].work).toEqual(['3', '4', '5']);
+  });
+
+  it('answers a settled turn from an earlier segment when the last one said nothing', () => {
+    const t = onlyTurn('U1 w2 t3 S4 w5 w6 T7');
+    expect(t.segments.map((s) => s.answer)).toEqual(['3', null]);
+    // While it runs, the cut segment keeps its words as a report.
+    expect(onlyTurn('U1 w2 t3 S4 w5 w6', true).segments.map((s) => s.answer)).toEqual([null, null]);
+    // When the last segment answers, the earlier one stays a report.
+    expect(onlyTurn('U1 w2 t3 S4 w5 t6 T7').segments.map((s) => s.answer)).toEqual([null, '6']);
   });
 
   it('always shows the reply to a steered message, even when it reads as a lead-in', () => {

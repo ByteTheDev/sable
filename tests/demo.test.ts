@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -689,6 +689,28 @@ describe('other scenarios', () => {
     await h.idle();
     const words = h.texts().at(-1)!.text.split(/\s+/).filter(Boolean).length;
     expect(words).toBeGreaterThanOrEqual(2500);
+  });
+
+  it('hands over real files with sizes and a caption, never into the project', async () => {
+    const h = await setup();
+    await h.send('share the audit with me');
+    await h.idle();
+    expectSettled(h);
+    const share = h.tools().find((t) => t.kind === 'share')!;
+    expect(share.name).toBe('SendUserFile');
+    expect(share.status).toBe('done');
+    expect(share.detail.caption).toBeTruthy();
+    const files = share.detail.files!;
+    expect(files.map((f) => f.name)).toEqual(['auth-audit.pdf', 'latency-by-route.csv']);
+    for (const f of files) {
+      expect(existsSync(f.path), f.path).toBe(true);
+      expect(statSync(f.path).size).toBe(f.size);
+      expect(path.relative(h.rt.meta.cwd, f.path).startsWith('..')).toBe(true);
+      cleanups.push(async () => rmSync(path.dirname(path.dirname(f.path)), { recursive: true, force: true }));
+    }
+    expect(readFileSync(files[0].path, 'latin1')).toMatch(/^%PDF-1\.4[\s\S]*%%EOF\n$/);
+    // The answer comes after the cards.
+    expect(h.items().at(-2)?.type).toBe('text');
   });
 
   it('rotates through scenarios for generic prompts', async () => {

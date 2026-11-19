@@ -2,7 +2,8 @@
  * Scripted sessions for the demo provider. Every scenario works on the fictional
  * relay-api project (demo-codebase.ts) so paths, code, diffs and test output agree.
  */
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { Question, TextItem, ThinkingItem, Todo, ToolItem, UserItem } from '../../shared/protocol';
 import { makeFileDiff } from '../../shared/diff';
@@ -1755,6 +1756,97 @@ const progress: Scenario = async ({ s }) => {
   s.finish({});
 };
 
+// ─────────────────────────────── files handed over ───────────────────────────────
+
+/** A one-page PDF in the base font: a title and a few lines. Small, valid, opens in any viewer. */
+function tinyPdf(title: string, lines: string[]): Buffer {
+  const esc = (t: string) => t.replace(/[\\()]/g, '\\$&');
+  const text = ['BT', '/F1 20 Tf', '56 740 Td', `(${esc(title)}) Tj`, '/F1 11 Tf', '0 -34 Td', ...lines.flatMap((l) => [`(${esc(l)}) Tj`, '0 -17 Td']), 'ET'].join('\n');
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${Buffer.byteLength(text, 'latin1')} >>\nstream\n${text}\nendstream`,
+  ];
+  let out = '%PDF-1.4\n';
+  const at: number[] = [];
+  objects.forEach((o, i) => {
+    at.push(Buffer.byteLength(out, 'latin1'));
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(out, 'latin1');
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${at.map((n) => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}`;
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+const AUDIT_LINES = [
+  'relay-api, auth path. 25 tests pass.',
+  '',
+  '1. Expiry is enforced in one place (SessionStore.validate). Fixed today.',
+  '2. Login has no rate limit per account, only per address. Worth fixing this week.',
+  '3. Cookies are httpOnly, secure and sameSite=lax. Fine.',
+  '',
+  'Latency of the auth path (p95): 4 ms for /me, 61 ms for /auth/login (password hashing).',
+];
+
+const LATENCY_CSV = [
+  'route,requests,p50_ms,p95_ms,p99_ms',
+  'GET /me,48210,1.2,4.1,7.9',
+  'POST /auth/login,3120,44.0,61.3,88.2',
+  'POST /auth/logout,2954,1.0,3.2,6.0',
+  'GET /admin/sessions,212,2.8,9.4,15.1',
+  'POST /webhooks/relay,9821,3.1,11.7,24.6',
+  '',
+].join('\n');
+
+/**
+ * The agent hands the person files (Claude Code's SendUserFile): an audit as a PDF and the raw
+ * figures as CSV, written to a folder of their own (the chat's folder, or one under the system's
+ * temporary folder, never the person's project), so Open and Show in folder work on real files.
+ */
+const share: Scenario = async ({ s }) => {
+  const own = !!s.rt.meta.chat;
+  const dir = own ? path.join(s.cwd, 'reports') : path.join(tmpdir(), 'sable-demo', s.rt.id.slice(0, 8), 'reports');
+  await s.think('An audit of the auth path the person can keep: the findings as a one-page PDF, and the raw latencies behind them as CSV.');
+  await s.readMany([
+    { rel: 'src/server/session.ts', content: C.SESSION_TS },
+    { rel: 'src/auth/middleware.ts', content: C.MIDDLEWARE_TS },
+  ]);
+  await s.bash('node scripts/audit.mjs --out reports', {
+    description: 'Write the audit report',
+    readonly: true,
+    lines: [
+      ['Measuring 5 routes over 64,317 requests', 400],
+      ['Wrote reports/auth-audit.pdf', 220],
+      ['Wrote reports/latency-by-route.csv', 120],
+    ],
+  });
+  mkdirSync(dir, { recursive: true });
+  const files = [
+    { name: 'auth-audit.pdf', body: tinyPdf('Auth audit', AUDIT_LINES) },
+    { name: 'latency-by-route.csv', body: Buffer.from(LATENCY_CSV) },
+  ].map((f) => {
+    const file = path.join(dir, f.name);
+    writeFileSync(file, f.body);
+    return { path: file, name: f.name, size: statSync(file).size };
+  });
+  const caption = 'The audit as a one-page PDF, and the latencies behind it.';
+  const id = await s.tool({
+    name: 'SendUserFile',
+    kind: 'share',
+    title: `${files.length} files`,
+    detail: { files, caption },
+    input: { files: files.map((f) => f.path), caption },
+  });
+  s.start(id);
+  await s.pause(120, 200);
+  s.complete(id, { text: `Sent ${files.length} files` });
+  await s.say('Three findings, one worth fixing this week: login is rate limited per address but not per account. Expiry now lives in one place, and the cookie flags are right.');
+  s.finish({ suggestion: 'Add a per-account login limit' });
+};
+
 // ─────────────────────────────────── selection ──────────────────────────────────
 
 export const SCENARIOS = {
@@ -1787,6 +1879,7 @@ export const SCENARIOS = {
   gallery: W.gallery,
   arrive,
   previews,
+  share,
   browser,
   beforeafter,
   untilSetup,
@@ -1806,6 +1899,8 @@ const KEYWORDS: [RegExp, ScenarioId][] = [
   [/\bbefore\s*\/?\s*after\b|\bbeforeafter\b/i, 'beforeafter'],
   // The Browser tab tools.
   [/\bbrowser\b/i, 'browser'],
+  // Files handed to the person (SendUserFile): file cards.
+  [/\b(share|shared|sharing)\b|\bsend me\b/i, 'share'],
   // Generative UI (demo-widgets.ts).
   [/\b(sandbox|hostile)\b/i, 'sandbox'],
   [/\b(whole|arrives?)\b/i, 'arrive'],

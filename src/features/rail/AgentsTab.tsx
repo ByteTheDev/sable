@@ -8,11 +8,10 @@ import { foldKey, useFold } from '@/features/timeline/fold';
 import { shortDuration, useHeld } from '@/features/timeline/util';
 import { clock } from '@/features/usage/format';
 import { Icon } from '@/icons';
-import { formatTokens, plural } from '@/lib/format';
 import { useStore } from '@/state/store';
 import { AgentDetail } from './AgentDetail';
 import { ShownCtx, indexFor, usePaneTick, useProgress, useShown } from './agents-hooks';
-import { OUTCOME_WORD, figuresOf, groupDone, liveKey, outcomeOf, promptLine, readProgress, workflowNow, type Outcome, type Progress } from './agents-model';
+import { OUTCOME_WORD, figuresOf, groupDone, liveKey, outcomeOf, promptLine, readProgress, workflowNow, type Progress } from './agents-model';
 import { LeaveList } from './leave';
 import './agents.css';
 
@@ -93,7 +92,8 @@ function AgentsList({ sessionId }: { sessionId: string }) {
     <div className="rail-col">
       <div className="rail-bar">
         <span className="rail-bar-title">Agents</span>
-        <span className="rail-bar-meta num">{[view.running.length && `${view.running.length} running`, view.done && `${view.done} done`].filter(Boolean).join(' · ')}</span>
+        {/* One figure: how many work now, or once none does, how many there were. */}
+        <span className="rail-bar-meta num">{view.running.length ? `${view.running.length} running` : `${view.done} done`}</span>
       </div>
       <div className="rail-scroll scroll">
         <TimelineCtx.Provider value={ctx}>
@@ -140,14 +140,13 @@ function Heading({ label, fresh }: { label: string; fresh: boolean }) {
   );
 }
 
-/** The message whose turn started the agents under it: its first line and when it was sent. */
+/** The message whose turn started the agents under it: its first line (when it was sent shows on hover). */
 const GroupHeading = memo(function GroupHeading({ sessionId, user, fresh }: { sessionId: string; user: string; fresh: boolean }) {
   const item = useShown((s) => (user ? s.data[sessionId]?.items[user] : undefined));
   const text = item?.type === 'user' ? promptLine(item.text) : 'Earlier';
   return (
-    <div role="listitem" data-flip={`h:${user}`} className="agx-head" data-new={fresh || undefined}>
+    <div role="listitem" data-flip={`h:${user}`} className="agx-head" data-new={fresh || undefined} title={item ? `Sent ${clock(item.ts)}` : undefined}>
       <span className="agx-head-label truncate">{text}</span>
-      {item ? <span className="agx-head-time num">{clock(item.ts)}</span> : null}
     </div>
   );
 });
@@ -166,11 +165,11 @@ const LiveCard = memo(function LiveCard({ sessionId, id, fresh }: { sessionId: s
     <div role="listitem" data-flip={id} className="agx-card" data-spot="" data-open={open || undefined} data-new={fresh || undefined} data-awaiting={awaiting || undefined}>
       <button type="button" className="agx-card-btn" aria-expanded={open} onClick={toggle}>
         <span className="agx-line">
+          {/* One mark: amber while it waits for you, the other agent's mark for a hand-over, else the ring. */}
           <span className="agx-mark" aria-hidden>
-            {awaiting ? <span className="agx-wait-dot" /> : <Ring size={12} label={null} />}
+            {awaiting ? <span className="agx-wait-dot" /> : provider ? <ProviderMark provider={provider} size={13} /> : <Ring size={12} label={null} />}
           </span>
           <span className="sr-only">{awaiting ? 'Waiting for you' : 'Working'}</span>
-          {provider && <ProviderMark provider={provider} size={12} className="agx-provider" />}
           <span className="agx-title truncate">{agentTask(item)}</span>
           <span className="agx-time num">
             <Since ts={item.ts} />
@@ -192,11 +191,13 @@ function Since({ ts }: { ts: number }) {
   return ms >= 1000 ? shortDuration(ms) : null;
 }
 
-/** A sub-agent's live line: what it does now and its steps; its own task list as a meter when it keeps one. */
+/**
+ * A sub-agent's live line: what it does now (its steps are in the opened card). Its own task list,
+ * when it keeps one, as a thin meter: the only honest measure of how far it is.
+ */
 function AgentLive({ item, progress: p, awaiting }: { item: ToolItem; progress: Progress; awaiting: boolean }) {
   // A run of quick steps reads as a calm sequence of titles, not a flicker.
   const now = useHeld(p.now, 700);
-  const steps = Math.max(p.steps, item.result?.agent?.steps ?? 0);
   const bg = item.status === 'done' && item.result?.agent?.background === 'running';
   const doing = awaiting ? 'Needs your approval' : now || (bg && !p.steps ? 'Working in the background' : 'Starting');
   return (
@@ -207,15 +208,18 @@ function AgentLive({ item, progress: p, awaiting }: { item: ToolItem; progress: 
             {doing}
           </span>
         </span>
-        {steps > 0 && <span className="agx-figs num">{plural(steps, 'step')}</span>}
       </span>
       {p.todo && (
         <span className="agx-progress">
-          <span className="meter agx-meter" role="progressbar" aria-label="Tasks done" aria-valuemin={0} aria-valuemax={p.todo.total} aria-valuenow={p.todo.done}>
+          <span
+            className="meter agx-meter"
+            role="progressbar"
+            aria-label={`${p.todo.done} of ${p.todo.total} tasks done`}
+            aria-valuemin={0}
+            aria-valuemax={p.todo.total}
+            aria-valuenow={p.todo.done}
+          >
             <span className="meter-fill" style={{ '--p': p.todo.done / Math.max(1, p.todo.total) } as CSSProperties} />
-          </span>
-          <span className="agx-figs num">
-            {p.todo.done} of {p.todo.total}
           </span>
         </span>
       )}
@@ -238,13 +242,8 @@ function WorkflowLive({ run }: { run: WorkflowRun }) {
             {now || 'Starting'}
           </span>
         </span>
-        {w.agents > 0 && (
-          <span className="agx-figs num">
-            {w.done} of {w.agents} agents
-          </span>
-        )}
       </span>
-      <span className="agx-phases" role="img" aria-label={w.phase || 'One phase'}>
+      <span className="agx-phases" role="img" aria-label={[w.phase || 'One phase', w.agents ? `${w.done} of ${w.agents} agents done` : ''].filter(Boolean).join(', ')}>
         {Array.from({ length: count }, (_, i) => {
           const index = i + 1;
           const state = index < g.phase ? 'done' : index === g.phase || (count === 1 && g.agents > 0) ? 'now' : 'next';
@@ -263,15 +262,12 @@ function WorkflowLive({ run }: { run: WorkflowRun }) {
 
 // ── done ──
 
-const MARK: Record<Outcome, ReactNode> = {
-  done: <Icon name="check" size={11} weight="bold" />,
-  failed: <Icon name="x" size={11} weight="bold" />,
-  stopped: <span className="agx-stop" />,
-  interrupted: <span className="agx-stop" />,
-  denied: <span className="agx-stop" />,
-  unknown: <span className="agx-stop" />,
-};
-
+/**
+ * A finished agent: its task and one figure, in the cards' columns. A plain done row carries no
+ * mark (being in this list says it); a failure has the red cross, a hand-over its agent's mark, a
+ * workflow its tree. An outcome other than done is said in words where the time would stand; its
+ * tokens and steps are in the opened row.
+ */
 const DoneRow = memo(function DoneRow({ sessionId, id, fresh }: { sessionId: string; id: string; fresh: boolean }) {
   const item = useShown((s) => s.data[sessionId]?.items[id]) as ToolItem | undefined;
   const [open, setOpen] = useFold(foldKey(sessionId, id, SCOPE), false);
@@ -280,17 +276,17 @@ const DoneRow = memo(function DoneRow({ sessionId, id, fresh }: { sessionId: str
   const f = figuresOf(item);
   const provider = agentProvider(item) ?? item.check?.agent ?? null;
   const word = outcome === 'done' ? '' : OUTCOME_WORD[outcome];
+  const mark = outcome === 'failed' ? <Icon name="x" size={11} weight="bold" /> : provider ? <ProviderMark provider={provider} size={12} /> : item.workflow ? <Icon name="tree" size={13} /> : null;
   return (
     <div role="listitem" data-flip={id} className="agx-row" data-outcome={outcome} data-open={open || undefined} data-new={fresh || undefined}>
       <button type="button" className="agx-row-btn" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className="agx-mark" aria-hidden>
-          {outcome === 'failed' ? MARK.failed : provider ? <ProviderMark provider={provider} size={12} /> : item.workflow ? <Icon name="tree" size={13} /> : MARK[outcome]}
+          {mark}
         </span>
         <span className="agx-title truncate">{agentTask(item)}</span>
         <span className="agx-meta num">
           {word ? <span className="agx-outcome">{word}</span> : <span className="sr-only">Done</span>}
-          <span className="agx-dur">{f.ms >= 1000 ? shortDuration(f.ms) : !word && !f.tokens && f.steps ? plural(f.steps, 'step') : ''}</span>
-          <span className="agx-tokens">{f.tokens > 0 ? `${formatTokens(f.tokens)} tokens` : ''}</span>
+          {!word && f.ms >= 1000 && <span className="agx-dur">{shortDuration(f.ms)}</span>}
         </span>
       </button>
       <Collapse open={open}>

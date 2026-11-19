@@ -9,6 +9,7 @@ import { FileLinksProvider, useResolvedFiles } from '@/lib/file-links';
 import { plural } from '@/lib/format';
 import { useStore } from '@/state/store';
 import { stepEntrance, useFresh, useItem, useTimeline } from './ctx';
+import { FileShare } from './FileCard';
 import { Notice } from './Notice';
 import { steadyTail, useSmoothLength } from './smooth';
 import { Stamp } from './Stamp';
@@ -117,6 +118,7 @@ export function estimate(item: TimelineItem | undefined): number {
       return item.text ? 20 + Math.ceil(item.text.length / 95) * 27 + (item.text.match(/\n\n/g)?.length ?? 0) * 12 : 0;
     case 'tool':
       if (item.kind === 'widget') return (cachedHeight(item.id) ?? 340) + 24;
+      if (item.kind === 'share') return 20 + (item.detail.files?.length || 1) * 76 + (item.detail.caption ? 34 : 0);
       return item.kind === 'agent' || item.kind === 'plan' ? 72 : 28;
     case undefined:
       return 0;
@@ -207,8 +209,8 @@ export const ItemRow = memo(function ItemRow({ id, nested = false, answer = fals
       body = <Thinking item={item} />;
       break;
     case 'tool':
-      // Generative UI: the call is the widget itself, not a step.
-      body = item.kind === 'widget' ? <WidgetBlock item={item} sessionId={sessionId} /> : <ToolView item={item} />;
+      // Generative UI: the call is the widget itself, not a step; files handed over are their cards.
+      body = item.kind === 'widget' ? <WidgetBlock item={item} sessionId={sessionId} /> : item.kind === 'share' ? <FileShare item={item} /> : <ToolView item={item} />;
       break;
     case 'notice':
       body = item.until ? <UntilEnd item={item} /> : <Notice item={item} />;
