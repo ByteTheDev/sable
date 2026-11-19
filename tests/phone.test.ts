@@ -1,5 +1,5 @@
 /** The phone endpoint (server/services/phone.ts): pairing with approval, token hello, the allowlist, rate limits, revocation; the QR encoder; Claude's Remote Control default. */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -335,6 +335,32 @@ describe('conversations in pages', () => {
     expect(got).toEqual(['here']);
     // Still only for phones: the localhost bridge has no such methods.
     await expect(app.call('phone.tail' as never, { sessionId: id } as never)).rejects.toThrow();
+    c.ws.close();
+  });
+});
+
+describe('files the agent hands over', () => {
+  it('gives a short-lived link for a shared file of the chat, serves only that file, and refuses others', async () => {
+    const { app, port, home } = await setup();
+    const { c } = await pairPhone(app, port);
+    const created = (await c.call('session.create', { provider: 'demo', cwd: path.resolve('.') })) as { result: PhoneTail };
+    const id = created.result.session.id;
+    const file = path.join(home, 'build.apk');
+    writeFileSync(file, 'apk bytes');
+    const rt = app.sessions.get(id)!;
+    rt.add({ id: 'share1', type: 'tool', name: 'SendUserFile', kind: 'share', title: 'build.apk', status: 'done', detail: { files: [{ path: file, name: 'build.apk', size: 9 }] } } as never);
+    rt.add({ id: 'read1', type: 'tool', name: 'Read', kind: 'read', title: 'Read', status: 'done', detail: { path: file } } as never);
+    const link = (await c.call('phone.fileLink', { sessionId: id, itemId: 'share1', index: 0 })) as { ok: boolean; result: { path: string; name: string; size: number } };
+    expect(link.ok).toBe(true);
+    expect(link.result).toMatchObject({ name: 'build.apk', size: 9 });
+    const res = await fetch(`http://127.0.0.1:${port}${link.result.path}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/vnd.android.package-archive');
+    expect(await res.text()).toBe('apk bytes');
+    // Not a share step, an index out of range, or a made-up token: nothing.
+    expect(((await c.call('phone.fileLink', { sessionId: id, itemId: 'read1', index: 0 })) as { ok: boolean }).ok).toBe(false);
+    expect(((await c.call('phone.fileLink', { sessionId: id, itemId: 'share1', index: 3 })) as { ok: boolean }).ok).toBe(false);
+    expect((await fetch(`http://127.0.0.1:${port}/f/not-a-token/build.apk`)).status).toBe(404);
     c.ws.close();
   });
 });

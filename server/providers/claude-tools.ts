@@ -1,4 +1,5 @@
-import type { AgentStats, FileDiff, Question, Todo, ToolDetail, ToolKind, ToolResult, WorkflowAgent, WorkflowRun } from '../../shared/protocol';
+import { statSync } from 'node:fs';
+import type { AgentStats, FileDiff, Question, SharedFile, Todo, ToolDetail, ToolKind, ToolResult, WorkflowAgent, WorkflowRun } from '../../shared/protocol';
 import { countChanges, makeFileDiff } from '../../shared/diff';
 import { WIDGET_SERVER, WIDGET_TOOL_ID, describeWidget } from './widget-tool';
 import { browserOp, describeBrowser } from './browser-tool';
@@ -132,6 +133,8 @@ export function describeTool(name: string, input: Obj = {}): ToolView {
       return { kind: 'skill', title: `Use the ${input.skill ?? ''} skill`.replace('  ', ' '), detail: { skill: input.skill, description: input.args } };
     case 'ToolSearch':
       return { kind: 'other', title: 'Look up tools', detail: { query: input.query } };
+    case 'SendUserFile':
+      return describeShare(input);
     case WIDGET_TOOL_ID:
       return describeWidget(input);
     case PROFILE_TOOL_ID:
@@ -571,4 +574,22 @@ export function mergeWorkflow(run: WorkflowRun, rows: unknown): WorkflowRun {
   // A phase the rows skipped keeps its place under a plain name.
   for (let i = 0; i < phases.length; i++) phases[i] ??= { title: `Phase ${i + 1}` };
   return { ...run, phases, phase, agents: [...agents.values()].sort((a, b) => a.index - b.index) };
+}
+
+/** Files the agent hands the person (SendUserFile): their names and sizes, read once here. */
+function describeShare(input: Record<string, unknown>): { kind: ToolKind; title: string; detail: ToolDetail } {
+  const paths = (Array.isArray(input.files) ? input.files : []).filter((f): f is string => typeof f === 'string' && !!f.trim());
+  const files: SharedFile[] = paths.map((p) => {
+    let size: number | undefined;
+    try {
+      const st = statSync(p);
+      if (st.isFile()) size = st.size;
+    } catch {
+      /* gone or not readable: shown without a size */
+    }
+    return { path: p, name: baseName(p), ...(size !== undefined ? { size } : {}) };
+  });
+  const caption = typeof input.caption === 'string' && input.caption.trim() ? input.caption.trim() : undefined;
+  const title = files.length === 1 ? files[0].name : `${files.length} files`;
+  return { kind: 'share', title, detail: { files, ...(caption ? { caption } : {}) } };
 }

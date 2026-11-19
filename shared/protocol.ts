@@ -646,6 +646,8 @@ export type ToolKind =
   | 'browser'
   /** An Android device or the emulator: the device_* tools (a screenshot comes back as the result's picture). */
   | 'device'
+  /** Files the agent hands the person (Claude Code's SendUserFile): shown as file cards in the conversation (`detail.files`). */
+  | 'share'
   | 'other';
 
 export type ToolStatus = 'pending' | 'running' | 'awaiting' | 'done' | 'error' | 'denied' | 'cancelled';
@@ -711,6 +713,15 @@ export interface ToolDetail {
   server?: string;
   tool?: string;
   skill?: string;
+  /** `share`: the files handed over (absolute paths; size when it could be read) and the agent's caption. */
+  files?: SharedFile[];
+  caption?: string;
+}
+
+export interface SharedFile {
+  path: string;
+  name: string;
+  size?: number;
 }
 
 export interface ToolResult {
@@ -1541,9 +1552,15 @@ export interface PhoneMethods {
   'phone.tail': { params: { sessionId: string; before?: string; limit?: number }; result: PhoneTail };
   /** One item with more of it (a step's output and change, a long text in full) and the last steps nested under it. */
   'phone.item': { params: { sessionId: string; itemId: string }; result: { item: PhoneItem; children: PhoneItem[] } };
+  /**
+   * A download link for a file the agent handed over in this conversation (a `share` step's
+   * `detail.files[index]`): a path on the phone endpoint (`/f/<token>/<name>`) that serves that one
+   * file for 15 minutes. Nothing else on the computer can be fetched this way.
+   */
+  'phone.fileLink': { params: { sessionId: string; itemId: string; index: number }; result: { path: string; name: string; size?: number } };
 }
 
-export const PHONE_OWN_METHODS = ['phone.tail', 'phone.item'] as const satisfies readonly (keyof PhoneMethods)[];
+export const PHONE_OWN_METHODS = ['phone.tail', 'phone.item', 'phone.fileLink'] as const satisfies readonly (keyof PhoneMethods)[];
 
 /** `timeline.reset` as a phone gets it: the newest page, trimmed, with its cursor. */
 export interface PhoneReset {

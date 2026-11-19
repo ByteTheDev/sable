@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { createServer, type IncomingMessage, type Server } from 'node:http';
+import { createReadStream, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
@@ -527,8 +527,9 @@ export class PhoneService {
     if (this.server) return this.starting ?? Promise.resolve();
     this.error = undefined;
     const server = createServer((req, res) => {
+      // A file the agent handed over, by the link `phone.fileLink` made (the token is the only key).
+      if (req.method === 'GET' && req.url?.startsWith('/f/')) return void this.serveFile(req, res);
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }).end();
-      void req;
     });
     server.headersTimeout = 10_000;
     server.requestTimeout = 10_000;
@@ -659,6 +660,56 @@ export class PhoneService {
   }
 
   // ── sockets ──
+
+  /** Download links for files the agent handed over (`phone.fileLink`): token -> the one file, until it expires. */
+  private files = new Map<string, { path: string; name: string; expires: number }>();
+
+  private async fileLink(sessionId: string, itemId: string, index: number): Promise<{ path: string; name: string; size?: number }> {
+    const snap = await this.app.call('session.snapshot', { sessionId });
+    const item = snap.items.find((i) => i.id === itemId);
+    const file = item?.type === 'tool' && item.kind === 'share' ? item.detail.files?.[index] : undefined;
+    if (!file) throw new Error('That file is not in this chat.');
+    let size: number;
+    try {
+      const st = statSync(file.path);
+      if (!st.isFile()) throw new Error();
+      size = st.size;
+    } catch {
+      throw new Error('That file is no longer on the computer.');
+    }
+    const now = Date.now();
+    for (const [t, f] of this.files) if (f.expires < now) this.files.delete(t);
+    while (this.files.size >= 50) this.files.delete(this.files.keys().next().value as string);
+    const token = randomBytes(24).toString('base64url');
+    this.files.set(token, { path: file.path, name: file.name, expires: now + 15 * 60_000 });
+    return { path: `/f/${token}/${encodeURIComponent(file.name)}`, name: file.name, size };
+  }
+
+  private serveFile(req: IncomingMessage, res: ServerResponse) {
+    const token = (req.url ?? '').split('/')[2] ?? '';
+    const entry = this.files.get(token);
+    const fail = (code: number, text: string) => void res.writeHead(code, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }).end(text);
+    if (!entry) return fail(404, 'Not found');
+    if (entry.expires < Date.now()) {
+      this.files.delete(token);
+      return fail(410, 'This link has expired. Open the file again in Sable.');
+    }
+    let size: number;
+    try {
+      size = statSync(entry.path).size;
+    } catch {
+      return fail(404, 'The file is no longer on the computer.');
+    }
+    const type = /\.apk$/i.test(entry.name) ? 'application/vnd.android.package-archive' : 'application/octet-stream';
+    res.writeHead(200, {
+      'content-type': type,
+      'content-length': String(size),
+      'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(entry.name)}`,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    createReadStream(entry.path).on('error', () => res.destroy()).pipe(res);
+  }
 
   private onUpgrade(wss: WebSocketServer, req: IncomingMessage, socket: Duplex, head: Buffer) {
     const ip = req.socket.remoteAddress ?? '?';
@@ -812,7 +863,9 @@ export class PhoneService {
         const raw = req.params && typeof req.params === 'object' ? (req.params as Record<string, unknown>) : {};
         const own = req.method as string;
         let result: unknown;
-        if (own === 'phone.tail' || own === 'phone.item') {
+        if (own === 'phone.fileLink') {
+          result = await this.fileLink(String(raw.sessionId ?? ''), String(raw.itemId ?? ''), Number(raw.index ?? 0));
+        } else if (own === 'phone.tail' || own === 'phone.item') {
           const sessionId = String(raw.sessionId ?? '');
           // The session's own snapshot (loads it from disk the first time, marks it read), then trimmed.
           const snap = await this.app.call('session.snapshot', { sessionId });

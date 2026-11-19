@@ -65,7 +65,7 @@ export function headOnly(s: string, head = KEEP.head + KEEP.tail): string {
 
 const SETTLED = new Set<ToolStatus>(['done', 'error', 'denied', 'cancelled']);
 /** Shown whole without opening them (a widget is its HTML, tasks and questions are their rows, a plan its card). */
-const WHOLE = new Set<ToolKind>(['widget', 'todo', 'question', 'plan']);
+const WHOLE = new Set<ToolKind>(['widget', 'todo', 'question', 'plan', 'share']);
 
 /**
  * A step that is over and whose result will not change: one that runs, or a sub-agent or workflow
