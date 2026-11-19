@@ -44,7 +44,9 @@ function setup() {
   git(repo, 'commit', '-q', '-m', 'first');
   const app = new App({ home: path.join(home, 'profile'), providers: [(ctx) => new DemoProvider(ctx, { speed: 0 })], quiet: true, userHome: home });
   apps.push(app);
-  const meta = (id: string) => app.runtime(id).meta;
+  // Lanes are off unless turned on (Settings › General).
+  app.store.state.settings.autoLanes = true;
+  const meta =(id: string) => app.runtime(id).meta;
   const idle = (id: string) => until(() => meta(id).status === 'idle' && !app.runtime(id).turnActive, `${id} idle`);
   const notices = (id: string) => app.runtime(id).items.filter((i): i is NoticeItem => i.type === 'notice').map((n) => [n.text, n.detail ?? '']);
   const turns = (id: string) => app.runtime(id).items.filter((i) => i.type === 'turn').length;

@@ -26,7 +26,7 @@ export interface LaneHost {
   /** Sable's home folder (`~/.sable`). */
   home(): string;
   sessions(): Iterable<SessionRuntime>;
-  /** Automatic lanes (`AppSettings.autoLanes`, absent means on). */
+  /** Automatic lanes (`AppSettings.autoLanes`, absent means off). */
   auto(): boolean;
   /** Lets the session's agent go; it starts again in the session's `cwd` with the next message. */
   release(rt: SessionRuntime): Promise<void>;

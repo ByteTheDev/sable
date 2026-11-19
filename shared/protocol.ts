@@ -1172,7 +1172,7 @@ export interface AppSettings {
    * blocks. Absent means on; applies to the tool when an agent process starts.
    */
   generativeUi?: boolean;
-  /** Lanes: a session starting in a git folder where another session works gets a worktree of its own. Absent means on. */
+  /** Lanes: a session starting in a git folder where another session works gets a worktree of its own. Absent means off. */
   autoLanes?: boolean;
   /** At a plan limit, a session carries on with the next signed-in account of its agent that has room. Absent means off. */
   continueAtLimit?: boolean;

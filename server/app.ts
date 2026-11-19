@@ -144,7 +144,8 @@ export class App {
   private lanes = new Lanes({
     home: () => this.store.dir,
     sessions: () => this.sessions.values(),
-    auto: () => this.store.state.settings.autoLanes !== false,
+    // Off unless turned on: a lane starts from the last commit, without the folder's uncommitted work.
+    auto: () => this.store.state.settings.autoLanes === true,
     release: async (rt) => {
       await this.opening.get(rt.id)?.catch(() => {});
       rt.cancelPrompts();
