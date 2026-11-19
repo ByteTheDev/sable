@@ -230,6 +230,32 @@ describe('store event application', () => {
     expect(data().permissions).toHaveLength(1);
     expect(data().caps).toBe(caps);
   });
+
+  it('puts a step fetched whole in place of the cut one, touching nothing else; live deltas still apply', () => {
+    const cut: ToolItem = { ...subBash, id: 'b1', parentId: undefined, status: 'done', output: 'start\n…\nend', more: true };
+    const live: ToolItem = { ...subBash, id: 'b2', parentId: undefined, status: 'running', output: 'building\n' };
+    S.applySnapshot({ session: meta({ status: 'running' }), items: [user, cut, live], permissions: [], questions: [], todos: [], queue: [] });
+    const before = data();
+    const whole: ToolItem = { ...cut, output: 'start\nthe middle\nend' };
+    delete whole.more;
+    S.applyWholeItem(SID, whole);
+    expect(item<ToolItem>('b1')).toBe(whole);
+    expect(data().items.u1).toBe(before.items.u1);
+    expect(data().items.b2).toBe(before.items.b2);
+    expect(data().roots).toBe(before.roots);
+    // Only a step that is still cut is replaced (a second answer, or one for a step a live patch made whole, changes nothing).
+    const writes: unknown[] = [];
+    const unsub = S.useStore.subscribe((s) => writes.push(s));
+    S.applyWholeItem(SID, { ...whole, output: 'stale' });
+    S.applyWholeItem('other-session', whole);
+    unsub();
+    expect(writes).toHaveLength(0);
+    expect(item<ToolItem>('b1').output).toBe('start\nthe middle\nend');
+    // The live step streams on as before.
+    feed({ type: 'item.delta', sessionId: SID, id: 'b2', field: 'output', delta: 'done\n' });
+    frame();
+    expect(item<ToolItem>('b2').output).toBe('building\ndone\n');
+  });
 });
 
 describe('capabilities pushed by the bridge', () => {

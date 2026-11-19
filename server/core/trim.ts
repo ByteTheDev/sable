@@ -1,0 +1,124 @@
+import type { BridgeEvent, SessionSnapshot, TimelineItem, ToolItem, ToolKind, ToolResult, ToolStatus } from '../../shared/protocol';
+
+// ── what a window gets of an existing conversation ──
+//
+// Real conversations reach hundreds of MB, nearly all of it finished steps' output and results
+// (command output, file reads, search results, screenshots), which the window shows only when a
+// step is opened. Whole timelines (snapshots, `timeline.reset`) reach a window with those fields
+// cut and the step marked (`ToolItem.more`); `session.item` returns one whole. Live items (running
+// steps, deltas, `item.added`, patches) are never cut. The bridge applies this at its socket
+// (server/bridge.ts), so everything inside the app (the phone, captures, handovers) keeps whole items.
+// The phone cuts further on its own (services/phone.ts).
+
+/**
+ * A field longer than this (characters) is cut. Below the cap Claude Code puts on a command's output
+ * by default (30,000 characters), so long command output is cut too, not only reads and pictures.
+ */
+export const CUT_AT = 16_000;
+/**
+ * What a cut text keeps of its start and of its end (characters): more than an opened step shows
+ * at first (300 px of output or code), so the step looks the same before its whole text arrives.
+ */
+export const KEEP = { head: 3_000, tail: 3_000 };
+/** A cut file list keeps this many paths. */
+const KEEP_FILES = 200;
+
+export const cap = (s: string, n: number) => (s.length > n ? s.slice(0, n) : s);
+
+/** The first `max` lines of a text, within `chars`, and a line saying how many more there are. */
+export function lines(s: string, max: number, chars: number): string {
+  const all = s.split('\n');
+  const head = all.slice(0, max).join('\n');
+  return cap(head, chars) + (all.length > max ? `\n… ${all.length - max} more lines` : '');
+}
+
+/** Where a text's start ends: at a line break near `n`, else at `n`. */
+function headEnd(s: string, n: number): number {
+  const at = s.lastIndexOf('\n', n);
+  return at > n / 2 ? at : n;
+}
+
+/** The start and the end of a long text, cut at line breaks where one is near, with a line between them. */
+export function headTail(s: string, head = KEEP.head, tail = KEEP.tail): string {
+  if (s.length <= head + tail) return s;
+  const a = headEnd(s, head);
+  const from = s.length - tail;
+  const nl = s.indexOf('\n', from);
+  const b = nl >= 0 && nl < from + tail / 2 ? nl + 1 : from;
+  return `${s.slice(0, a)}\n…\n${s.slice(b)}`;
+}
+
+/** The start of a long text (a file: its lines keep their numbers), with a line saying it goes on. */
+export function headOnly(s: string, head = KEEP.head + KEEP.tail): string {
+  if (s.length <= head) return s;
+  return `${s.slice(0, headEnd(s, head))}\n…`;
+}
+
+const SETTLED = new Set<ToolStatus>(['done', 'error', 'denied', 'cancelled']);
+/** Shown whole without opening them (a widget is its HTML, tasks and questions are their rows, a plan its card). */
+const WHOLE = new Set<ToolKind>(['widget', 'todo', 'question', 'plan']);
+
+/** A step that is over and whose result will not change: one that runs, or a sub-agent or workflow still at work in the background, stays whole. */
+function settled(t: ToolItem): boolean {
+  return SETTLED.has(t.status) && !WHOLE.has(t.kind) && t.result?.agent?.background !== 'running' && t.workflow?.status !== 'running';
+}
+
+const size = (list: string[]) => list.reduce((n, s) => n + s.length + 3, 0);
+
+/**
+ * A result without its bulk: long texts keep their start and end, a file read its first lines,
+ * pictures go, a long file list keeps its first paths. Its diff (edits), answers and the agent's
+ * figures stay as they are. The same object when nothing is long.
+ */
+function cutResult(r: ToolResult): ToolResult {
+  let out: ToolResult | undefined;
+  const put = <K extends keyof ToolResult>(k: K, v: ToolResult[K]) => {
+    out ??= { ...r };
+    if (v === undefined) delete out[k];
+    else out[k] = v;
+  };
+  if (r.text && r.text.length > CUT_AT) put('text', headTail(r.text));
+  if (r.stderr && r.stderr.length > CUT_AT) put('stderr', headTail(r.stderr));
+  if (r.file?.content && r.file.content.length > CUT_AT) put('file', { ...r.file, content: headOnly(r.file.content) });
+  if (r.images?.length && size(r.images) > CUT_AT) put('images', undefined);
+  if (r.files && r.files.length > KEEP_FILES && size(r.files) > CUT_AT) put('files', r.files.slice(0, KEEP_FILES));
+  return out ?? r;
+}
+
+/** An item as a window gets it in a whole timeline: a settled step with long output or result cut and marked `more`; anything else as it is. */
+export function cutItem(it: TimelineItem): TimelineItem {
+  if (it.type !== 'tool' || !settled(it)) return it;
+  let out: ToolItem | undefined;
+  if (it.output && it.output.length > CUT_AT) (out ??= { ...it }).output = headTail(it.output);
+  if (it.result) {
+    const r = cutResult(it.result);
+    if (r !== it.result) (out ??= { ...it }).result = r;
+  }
+  if (!out) return it;
+  out.more = true;
+  return out;
+}
+
+export const cutItems = (items: TimelineItem[]): TimelineItem[] => items.map(cutItem);
+
+/** A conversation as RPC results carry it (session.snapshot, session.create, session.fork, ...). */
+export const isSnapshot = (r: unknown): r is SessionSnapshot => !!r && typeof r === 'object' && Array.isArray((r as SessionSnapshot).items) && !!(r as SessionSnapshot).session;
+
+/** An RPC result as a window gets it: a conversation (opened, created, forked, carried over) with its items cut. */
+export function resultForWindow<T>(result: T): T {
+  return isSnapshot(result) ? ({ ...result, items: cutItems(result.items) } as T) : result;
+}
+
+// Every window gets the same event object: it is cut once.
+const cutEvents = new WeakMap<BridgeEvent, BridgeEvent>();
+
+/** An event as a window gets it: a reset timeline cut; everything live as it is. */
+export function eventForWindow(event: BridgeEvent): BridgeEvent {
+  if (event.type !== 'timeline.reset') return event;
+  let out = cutEvents.get(event);
+  if (!out) {
+    out = { ...event, items: cutItems(event.items) };
+    cutEvents.set(event, out);
+  }
+  return out;
+}

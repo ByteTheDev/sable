@@ -1632,6 +1632,14 @@ export class App {
       if (rt.meta.unread) rt.update({ unread: false });
       return rt.snapshot();
     });
+    // A window gets finished steps cut (core/trim.ts): one whole, when it opens.
+    this.register('session.item', ({ sessionId, itemId }) => {
+      const rt = this.runtime(sessionId);
+      this.hydrate(rt);
+      const item = rt.get(itemId);
+      if (!item) throw new Error('That part of the conversation is no longer there');
+      return { item: { ...item } };
+    });
 
     this.register('session.send', async ({ sessionId, text, attachments, steer }) => {
       const rt = this.runtime(sessionId);

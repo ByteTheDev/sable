@@ -1,5 +1,6 @@
-import { createContext, useContext, useState } from 'react';
-import type { TimelineItem } from '@shared/protocol';
+import { createContext, useContext, useEffect, useState } from 'react';
+import type { TimelineItem, ToolItem } from '@shared/protocol';
+import { loadWholeItem } from '@/state/actions';
 import { useStore } from '@/state/store';
 
 export interface TimelineCtxValue {
@@ -22,6 +23,18 @@ export const useTimeline = () => useContext(TimelineCtx);
 export function useItem<T extends TimelineItem = TimelineItem>(id: string): T | undefined {
   const { sessionId } = useTimeline();
   return useStore((s) => s.data[sessionId]?.items[id]) as T | undefined;
+}
+
+/**
+ * A step the bridge sent cut (`ToolItem.more`: long output, pictures) is asked for whole while the
+ * component that calls this is mounted: an opened step's details, an opened sub-agent.
+ */
+export function useWhole(item: ToolItem) {
+  const { sessionId } = useTimeline();
+  const more = !!item.more;
+  useEffect(() => {
+    if (more && sessionId) void loadWholeItem(sessionId, item.id);
+  }, [more, sessionId, item.id]);
 }
 
 /**

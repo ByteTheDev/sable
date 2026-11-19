@@ -802,6 +802,12 @@ export interface ToolItem extends BaseItem {
   waitedMs?: number;
   /** A Workflow call: its phases and agents while it runs in the background and once it is done. */
   workflow?: WorkflowRun;
+  /**
+   * Set by the bridge only, on a finished step in a whole timeline sent to a window (a snapshot,
+   * `timeline.reset`): its long output or result was cut (the start and end of long texts kept,
+   * pictures left out). `session.item` returns it whole. Never on disk.
+   */
+  more?: boolean;
 }
 
 export interface NoticeItem extends BaseItem {
@@ -1640,6 +1646,8 @@ export interface RpcMethods {
     result: SessionSnapshot;
   };
   'session.snapshot': { params: { sessionId: string }; result: SessionSnapshot };
+  /** One item whole, as the bridge holds it (a step a window got cut, `ToolItem.more`). */
+  'session.item': { params: { sessionId: string; itemId: string }; result: { item: TimelineItem } };
   /**
    * Sends a message. While a turn runs it is held in the queue (sent when the turn ends), or with
    * `steer` handed to the running agent now: it shows in the timeline where it was sent

@@ -1,7 +1,7 @@
 import { DEFAULT_ACCOUNT, type AccountCap, type AccountInfo, type Attachment, type FolderGroup, type Project, type BackdropConfig, type BackdropImage, type BrowserAnswer, type Effort, type ProviderId, type QueuedMessage, type SessionMeta, type SessionOptions } from '@shared/protocol';
 import { DEFAULT_BACKDROP, normalizeBackdrop } from '@shared/backdrop';
 import { bridge } from '@/lib/bridge';
-import { applySnapshot, capsKey, loadSession, useStore, type RailTab, type SettingsSection, type Store } from './store';
+import { applySnapshot, applyWholeItem, capsKey, loadSession, useStore, type RailTab, type SettingsSection, type Store } from './store';
 
 /** Everything the UI can ask the bridge to do. Components call these, never bridge.call directly. */
 
@@ -12,6 +12,26 @@ export function openSession(id: string) {
   s.setUi({ activeSessionId: id });
   if (!s.data[id]?.loaded) void loadSession(id).catch(fail);
   else if (s.sessions[id]?.unread) void bridge.call('session.update', { sessionId: id, patch: { unread: false } }).catch(() => {});
+}
+
+const wholeAsked = new Map<string, Promise<void>>();
+
+/**
+ * A step the bridge sent cut (`ToolItem.more`: a long output or result, pictures), fetched whole
+ * and put in place of the cut one. Asked once at a time per step; a step that failed to come is
+ * asked again the next time it is needed.
+ */
+export function loadWholeItem(sessionId: string, itemId: string): Promise<void> {
+  const key = `${sessionId}\u0000${itemId}`;
+  let p = wholeAsked.get(key);
+  if (!p) {
+    p = bridge
+      .call('session.item', { sessionId, itemId })
+      .then(({ item }) => applyWholeItem(sessionId, item), () => {})
+      .finally(() => wholeAsked.delete(key));
+    wholeAsked.set(key, p);
+  }
+  return p;
 }
 
 // The section Settings last showed, so reopening it lands where you left off (for as long as the app is open).

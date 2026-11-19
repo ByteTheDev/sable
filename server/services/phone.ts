@@ -31,6 +31,7 @@ import {
   type WorkflowRun,
 } from '../../shared/protocol';
 import type { App } from '../app';
+import { cap, isSnapshot, lines } from '../core/trim';
 import { VERSION } from '../version';
 import { qrSvgPath } from './qr';
 
@@ -142,8 +143,6 @@ export const LIMITS = { answer: 8000, step: 320, thinking: 320, notice: 1200, fi
 /** `phone.item`: how much of one item. */
 const FULL = { text: 200_000, thinking: 40_000, field: 4000, outLines: 200, outChars: 12_000, files: 6, hunks: 4, hunkLines: 80, children: 40 };
 
-const cap = (s: string, n: number) => (s.length > n ? s.slice(0, n) : s);
-
 const DETAIL_TEXT = ['command', 'description', 'cwd', 'path', 'url', 'query', 'pattern', 'glob', 'subagent', 'server', 'tool', 'skill'] as const;
 
 function trimDetail(d: ToolDetail | undefined, n: number, full = false): ToolDetail {
@@ -157,12 +156,6 @@ function trimDetail(d: ToolDetail | undefined, n: number, full = false): ToolDet
     if (d.todos) out.todos = d.todos.slice(0, 40);
   }
   return out;
-}
-
-function lines(s: string, max: number, chars: number): string {
-  const all = s.split('\n');
-  const head = all.slice(0, max).join('\n');
-  return cap(head, chars) + (all.length > max ? `\n… ${all.length - max} more lines` : '');
 }
 
 function trimResult(r: ToolResult | undefined, full = false): ToolResult | undefined {
@@ -375,8 +368,6 @@ export function phoneEvent(event: BridgeEvent): BridgeEvent | PhoneReset | null 
       return event;
   }
 }
-
-const isSnapshot = (r: unknown): r is SessionSnapshot => !!r && typeof r === 'object' && Array.isArray((r as SessionSnapshot).items) && !!(r as SessionSnapshot).session;
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 

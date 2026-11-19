@@ -10,7 +10,7 @@ import { Icon } from '@/icons';
 import { parseAnsi } from '@/lib/ansi';
 import { langFromPath, plural, relPath } from '@/lib/format';
 import { onLinkClick } from '@/lib/links';
-import { useTimeline } from './ctx';
+import { useTimeline, useWhole } from './ctx';
 import { hostOf, isActive, looksJson, partialJsonString, prettyJson } from './util';
 
 /** Whether a row has anything to reveal. */
@@ -222,6 +222,8 @@ function Images({ images }: { images?: string[] }) {
 
 export function ToolDetails({ item }: { item: ToolItem }) {
   const { cwd, home } = useTimeline();
+  // Shown open: a step that came cut is fetched whole.
+  useWhole(item);
   const d = item.detail;
   const r = item.result;
   const failed = item.status === 'error';

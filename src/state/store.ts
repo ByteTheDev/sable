@@ -311,6 +311,19 @@ export function withPrompts(data: Record<string, SessionData>, prompts: PendingP
   return next;
 }
 
+/**
+ * A step fetched whole (`session.item`) in place of the cut one the snapshot brought
+ * (`ToolItem.more`). Only that item changes; an item that is no longer cut stays as it is.
+ */
+export function applyWholeItem(sessionId: string, item: TimelineItem) {
+  useStore.setState((s) => {
+    const d = s.data[sessionId];
+    const cur = d?.loaded ? d.items[item.id] : undefined;
+    if (cur?.type !== 'tool' || !cur.more) return s;
+    return { data: { ...s.data, [sessionId]: { ...d, items: { ...d.items, [item.id]: item } } } };
+  });
+}
+
 export function applySnapshot(snap: SessionSnapshot) {
   useStore.setState((s) => ({
     sessions: { ...s.sessions, [snap.session.id]: snap.session },

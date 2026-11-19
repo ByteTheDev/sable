@@ -12,7 +12,7 @@ import { accountName } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { Spinner } from '@/ui';
 import { agentLine, agentProvider, agentTask, agentTrail, agentType, isAgentLive, readTrail, workflowGlance, workflowProgressText } from './agent-line';
-import { EMPTY, useItem, useTimeline } from './ctx';
+import { EMPTY, useItem, useTimeline, useWhole } from './ctx';
 import { foldKey, useFold } from './fold';
 import { ItemList } from './items';
 import { Elapsed, ToolView } from './Tool';
@@ -168,6 +168,8 @@ const TrailStep = memo(function TrailStep({ id }: { id: string }) {
 /** Opened: the task it was given, every step, and its report. */
 function AgentBody({ item, live }: { item: ToolItem; live: boolean }) {
   const { sessionId } = useTimeline();
+  // Its report came cut when it is long: opened, it is fetched whole.
+  useWhole(item);
   const [whole, setWhole] = useState(false);
   const children = useStore((s) => s.data[sessionId]?.children[item.id]) ?? EMPTY;
   // The last thing it wrote is its report; the tool's result usually repeats it. Read once it is settled.

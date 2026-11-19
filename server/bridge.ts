@@ -2,6 +2,7 @@ import type { IncomingMessage, Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { BRIDGE_PATH, type RpcRequest, type ServerFrame } from '../shared/protocol';
 import { App, type AppOptions } from './app';
+import { eventForWindow, resultForWindow } from './core/trim';
 import { registerServices } from './services/index';
 import { defaultProviders } from './providers/index';
 
@@ -43,7 +44,8 @@ export function attachBridge(http: Server, opts: Partial<AppOptions> = {}) {
     const send = (frame: ServerFrame) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame));
     };
-    const unsubscribe = app.subscribe((event) => send({ event }));
+    // Whole timelines reach a window with finished steps' bulk cut (`session.item` has the rest).
+    const unsubscribe = app.subscribe((event) => send({ event: eventForWindow(event) }));
     ws.on('message', async (raw) => {
       let req: RpcRequest;
       try {
@@ -53,7 +55,7 @@ export function attachBridge(http: Server, opts: Partial<AppOptions> = {}) {
       }
       try {
         const result = await app.call(req.method, req.params as never);
-        send({ id: req.id, ok: true, result });
+        send({ id: req.id, ok: true, result: resultForWindow(result) });
       } catch (err) {
         send({ id: req.id, ok: false, error: (err as Error).message ?? String(err) });
       }
