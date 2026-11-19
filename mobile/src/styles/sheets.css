@@ -1,0 +1,739 @@
+/*
+ * Sheets: frosted ink with grain rising over a dimmed screen (the screen itself steps back). They
+ * follow the finger, rubber-band upward, and ride up with the keyboard.
+ */
+.sheet-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.sheet-layer[data-closing] {
+  pointer-events: none;
+}
+
+.sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 0.5);
+}
+
+.sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - var(--sat) - 26px - var(--kb));
+  border-radius: 30px 30px 0 0;
+  padding-bottom: calc(var(--sab) + 14px);
+  background: rgb(21 21 24);
+  box-shadow: var(--edge), 0 -26px 60px -24px rgb(0 0 0 / 0.95);
+  isolation: isolate;
+  will-change: transform;
+  translate: 0 calc(-1 * var(--kb));
+  transition: translate var(--kb-ms) var(--ease-ime);
+}
+
+/* the grain, and the same ink below the sheet when it is pulled up past its foot */
+.sheet::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--grain-bg);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.sheet::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% - 1px);
+  height: 140px;
+  background: rgb(21 21 24);
+}
+
+.sheet[data-tall] {
+  min-height: 64%;
+}
+
+.sheet-grip {
+  display: grid;
+  place-items: center;
+  height: 28px;
+  flex-shrink: 0;
+  touch-action: none;
+}
+
+.sheet-grip span {
+  width: 40px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--fill-4);
+}
+
+.sheet-head {
+  padding: 2px 24px 12px;
+  touch-action: none;
+}
+
+.sheet-title {
+  font-size: var(--t-h2);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.sheet-sub {
+  margin: 22px 8px 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.sheet-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 12px 8px;
+}
+
+.sheet-foot {
+  position: sticky;
+  bottom: -8px;
+  margin: 12px -12px -8px;
+  padding: 14px 12px 8px;
+  background: linear-gradient(rgb(21 21 24 / 0), rgb(21 21 24) 18px);
+}
+
+/* ── choices ── */
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 14px;
+  border-radius: 18px;
+  text-align: left;
+  font-size: var(--t-body);
+  color: var(--text);
+  transition: background-color 100ms, transform 120ms var(--ease-out);
+}
+
+.choice:active {
+  background: var(--fill-2);
+  transform: scale(0.985);
+}
+
+.choice[data-selected] {
+  background: rgb(255 255 255 / 0.07);
+}
+
+.choice-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.choice[data-selected] .choice-icon {
+  color: var(--text);
+}
+
+.choice-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.choice-aside {
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+.choice-check {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+/* the check draws itself in when a row is chosen */
+.choice-check path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 260ms var(--ease-out);
+}
+
+.choice[data-selected] .choice-check path {
+  stroke-dashoffset: 0;
+}
+
+.choice-quiet {
+  color: var(--text-2);
+}
+
+.choice-caret {
+  color: var(--text-4);
+}
+
+/* an answer to a question: the mark leads */
+.choice-mark {
+  align-items: flex-start;
+  padding-top: 15px;
+  padding-bottom: 15px;
+}
+
+.choice-mark[data-selected] {
+  background: rgb(255 255 255 / 0.05);
+}
+
+.pick {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--line-3);
+  color: var(--ink);
+  flex-shrink: 0;
+  transition: background-color 160ms var(--ease-out), box-shadow 160ms;
+}
+
+.pick[data-kind='check'] {
+  border-radius: 7px;
+}
+
+.pick svg {
+  opacity: 0;
+  transform: scale(0.5);
+  transition: opacity 140ms var(--ease-out), transform 260ms var(--ease-spring);
+}
+
+.choice[data-selected] .pick {
+  background: var(--text);
+  box-shadow: none;
+}
+
+.choice[data-selected] .pick svg {
+  opacity: 1;
+  transform: none;
+}
+
+.path {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.path-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.path-dir {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.opt {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.opt-desc {
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+/* ── segmented: the chosen pill slides to what you pick ── */
+.seg {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--n), 1fr);
+  padding: 4px;
+  margin: 0 2px;
+  border-radius: 18px;
+  background: rgb(0 0 0 / 0.35);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.seg-thumb {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 8px) / var(--n));
+  border-radius: 14px;
+  background: rgb(255 255 255 / 0.12);
+  box-shadow: var(--edge), 0 6px 14px -8px rgb(0 0 0 / 0.9);
+  transform: translateX(calc(var(--i) * 100%));
+  transition: transform 340ms var(--ease-spring);
+}
+
+.seg-opt {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  font-size: 14.5px;
+  font-weight: 540;
+  color: var(--text-3);
+  transition: color 160ms;
+}
+
+.seg-opt[data-on] {
+  color: var(--text);
+}
+
+.form-error {
+  margin: 12px 8px 0;
+  font-size: var(--t-sm);
+  color: var(--red);
+}
+
+/* ── folders on the desktop ── */
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 8px;
+}
+
+.browser-here {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-lead);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.browser-list {
+  min-height: 220px;
+}
+
+/* ── limits ── */
+.limits {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 2px 0 6px;
+}
+
+.limit-acct {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 18px 20px;
+  border-radius: 24px;
+  background: rgb(255 255 255 / 0.035);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.limit-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.limit-name {
+  font-size: var(--t-body);
+  font-weight: 620;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.limit-plan {
+  color: var(--text-3);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.limit-def {
+  margin-left: auto;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.limit-none {
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+.limit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.limit-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.limit-label {
+  font-size: 14.5px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.limit-val {
+  font-size: 26px;
+  font-weight: 640;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.limit-val small {
+  margin-left: 2px;
+  font-size: 14px;
+  font-weight: 540;
+  letter-spacing: 0;
+  color: var(--text-3);
+}
+
+.limit-reset {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+/* a meter of ink with an ivory fill whose edge breaks into dither */
+.meter {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--fill-2);
+  overflow: hidden;
+}
+
+.meter-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px 0 0 4px;
+  background: var(--text-2);
+  transform: translateX(calc((var(--p) - 1) * 100%));
+  animation: meter-in 1s var(--ease-out) both;
+  animation-delay: calc(var(--d) + 120ms);
+}
+
+.meter-fill::before,
+.meter-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: 8px;
+  background: inherit;
+  -webkit-mask: var(--checker) 0 0 / 4px 4px;
+  mask: var(--checker) 0 0 / 4px 4px;
+}
+
+.meter-fill::after {
+  left: calc(100% + 8px);
+  -webkit-mask-image: var(--sparse);
+  mask-image: var(--sparse);
+}
+
+@keyframes meter-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+.limit-row[data-level='mid'] .meter-fill {
+  background: var(--text);
+}
+
+.limit-row[data-level='high'] .meter-fill {
+  background: var(--amber);
+}
+
+.limit-row[data-level='high'] .limit-val {
+  color: var(--amber);
+}
+
+/* ── what the agent asks ── */
+.prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 6px 8px 0;
+}
+
+.prompt-head {
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+}
+
+.prompt-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 28px;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.prompt-titles {
+  min-width: 0;
+}
+
+.prompt-title {
+  font-size: 20px;
+  font-weight: 640;
+  line-height: 1.32;
+  letter-spacing: -0.018em;
+  word-break: break-word;
+}
+
+.prompt-sub {
+  margin-top: 5px;
+  font-size: 14.5px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.prompt-code {
+  margin: 0;
+  padding: 14px 16px;
+  max-height: 200px;
+  overflow: auto;
+  border-radius: 18px;
+  background: rgb(0 0 0 / 0.5);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+.prompt-code-sign {
+  color: var(--text-4);
+}
+
+.prompt-path {
+  font-size: 14px;
+  color: var(--text-2);
+  word-break: break-all;
+}
+
+.prompt-diff {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 16px;
+  border-radius: 16px;
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 14px;
+  color: var(--text-2);
+  text-align: left;
+  transition: background-color 100ms;
+}
+
+.prompt-diff:active {
+  background: var(--fill-2);
+}
+
+.prompt-diff-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.prompt-diff-caret {
+  margin-left: auto;
+  color: var(--text-4);
+  transition: transform 220ms var(--ease-out);
+}
+
+.prompt-diff[aria-expanded='true'] .prompt-diff-caret {
+  transform: rotate(180deg);
+}
+
+.prompt-patch {
+  max-height: 34vh;
+  white-space: pre;
+  word-break: normal;
+  overflow: auto;
+  color: var(--text-2);
+}
+
+.prompt-plan {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: var(--t-ui);
+}
+
+.prompt-reason {
+  font-size: 14px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.prompt-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  align-items: stretch;
+}
+
+.prompt-split {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 10px;
+}
+
+.prompt-split .btn {
+  background: var(--fill-2);
+}
+
+.prompt-later {
+  color: var(--text-3);
+}
+
+/* a long question keeps its answer key in reach */
+.sheet[data-tall] .prompt-actions {
+  position: sticky;
+  bottom: -8px;
+  margin: 0 -20px;
+  padding: 22px 20px 8px;
+  background: linear-gradient(rgb(21 21 24 / 0), rgb(21 21 24) 24px);
+}
+
+.prompt-row {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.question + .question {
+  margin-top: 16px;
+}
+
+.prompt .choices {
+  margin: 0 -8px;
+}
+
+/* ── remote control ── */
+.remote {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 2px 0 6px;
+}
+
+.remote-state-dot {
+  width: 8px;
+  height: 8px;
+  margin: 0 5px;
+  border-radius: 50%;
+  background: var(--text-2);
+  flex-shrink: 0;
+}
+
+.remote-state .set-label {
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.remote-state[data-tone='waiting'] .remote-state-dot {
+  background: var(--amber);
+}
+
+.remote-state[data-tone='error'] .remote-state-dot {
+  background: var(--red);
+}
+
+.remote-state[data-tone='ok'] .remote-state-dot {
+  background: var(--text);
+}
+
+.remote-link {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgb(0 0 0 / 0.42);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  word-break: break-all;
+  user-select: text;
+}
+
+.remote-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.remote-code {
+  font-size: 28px;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+/* ── a question before something final ── */
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 8px 0;
+}
+
+.confirm-title {
+  font-size: var(--t-h2);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+
+.confirm-sub {
+  margin-bottom: 12px;
+  font-size: var(--t-ui);
+  color: var(--text-2);
+}

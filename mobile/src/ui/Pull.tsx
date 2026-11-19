@@ -3,7 +3,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { haptic } from '@m/lib/native';
 import { LogoMark } from './marks';
 
-const THRESH = 72;
+const THRESH = 78;
 const MAX = 120;
 
 /**
@@ -73,12 +73,17 @@ export function Pull({ onRefresh, children, className }: { onRefresh: () => Prom
       set(v);
       if (!armed && v >= THRESH) {
         armed = true;
+        m.dataset.armed = '';
         haptic('select');
-      } else if (armed && v < THRESH) armed = false;
+      } else if (armed && v < THRESH) {
+        armed = false;
+        delete m.dataset.armed;
+      }
     };
     const up = () => {
       if (!pulling) return;
       pulling = false;
+      delete m.dataset.armed;
       if (y >= THRESH && !busy) {
         busy = true;
         m.dataset.busy = '';
@@ -111,7 +116,7 @@ export function Pull({ onRefresh, children, className }: { onRefresh: () => Prom
   return (
     <div className={className} ref={scroller}>
       <div className="pull" ref={mark} aria-hidden>
-        <LogoMark size={22} cells />
+        <LogoMark size={26} cells />
       </div>
       <div className="pull-body" ref={content}>
         {children}

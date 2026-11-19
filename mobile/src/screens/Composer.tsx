@@ -1,13 +1,16 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
-import type { Attachment, Effort, ModeTone, QueuedMessage } from '@shared/protocol';
+import { STANDARD_SPEED, type Attachment, type Effort, type ModeTone, type QueuedMessage } from '@shared/protocol';
+import { offeredSpeeds, speedFor } from '@shared/speed';
 import { effortName, modelName, modelNameById, visibleModels } from '@desk/lib/models';
 import { conn } from '@m/lib/conn';
 import { launchFlight } from '@m/lib/flight';
+import { onKeyboard } from '@m/lib/keyboard';
 import { haptic } from '@m/lib/native';
 import { ensureFolderCaps, sessionData, setState, useStore } from '@m/lib/store';
 import { fieldBeat } from '@m/ui/Field';
 import { Icon, type IconName } from '@m/ui/icons';
+import { SNAP } from '@m/ui/motion';
 import { Choice, Sheet } from '@m/ui/Sheet';
 
 const MODE_ICON: Record<ModeTone, IconName> = { ask: 'hand', edit: 'edit', plan: 'plan', auto: 'bolt', danger: 'shield' };
@@ -46,9 +49,10 @@ const unsure = new Map<string, { text: string; at: number }>();
 const LOST = /connection to the desktop was lost|did not answer in time/i;
 
 /**
- * The composer: a frosted bar at the bottom, as on the desktop. Send (an ivory disc), stop while a
- * turn runs, messages sent mid-turn wait in the queue above it (steer one in with its arrow).
- * Model, mode and effort open as sheets; photos come from the camera or files.
+ * The composer: the desktop's frosted prompt bar at hand size. Send (an ivory disc), stop while a
+ * turn runs, messages sent mid-turn wait in the queue above it (steer one in with its arrow). The
+ * permission mode is one chip; the model with its effort and speed another. It rides up with the
+ * keyboard on the keyboard's own curve (`--kb`, lib/keyboard.ts).
  */
 export function Composer({ sid }: { sid: string }) {
   const s = useStore((st) => st.sessions[sid]);
@@ -75,10 +79,11 @@ export function Composer({ sid }: { sid: string }) {
     return undefined;
   });
   const [files, setFiles] = useState<Attachment[]>([]);
-  const [sheet, setSheet] = useState<'model' | 'mode' | 'effort' | null>(null);
+  const [sheet, setSheet] = useState<'model' | 'mode' | null>(null);
   const [focused, setFocused] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const sendKey = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const u = unsure.get(sid);
     if (!u || !lastUser || lastUser.type !== 'user') return;
@@ -99,16 +104,7 @@ export function Composer({ sid }: { sid: string }) {
   }, [sessionCaps, folderCaps, s?.provider, s?.cwd, s?.accountId, online]);
 
   // The keyboard put away (back, the keyboard's own key): the field lets go too, so it does not stay lifted.
-  useEffect(() => {
-    let last = window.innerHeight;
-    const onResize = () => {
-      const h = window.innerHeight;
-      if (h > last + 120 && document.activeElement === area.current) area.current?.blur();
-      last = h;
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
+  useEffect(() => onKeyboard((lift, prev) => lift === 0 && prev > 0 && document.activeElement === area.current && area.current?.blur()), []);
 
   // The field takes the height of a draft that came back from storage.
   useEffect(() => {
@@ -127,6 +123,10 @@ export function Composer({ sid }: { sid: string }) {
   const models = caps ? visibleModels(s.provider, caps.models, visibility, s.model) : [];
   const mode = caps?.modes.find((m) => m.id === s.mode);
   const efforts = model?.efforts ?? [];
+  const effort = s.effort ?? model?.defaultEffort;
+  const speeds = offeredSpeeds(model, false);
+  const speed = speedFor(model, s.speed);
+  const modelLabel = modelName(model) ?? modelNameById(s.model, caps?.models) ?? 'Model';
 
   const update = (v: string) => {
     setText(v);
@@ -145,7 +145,7 @@ export function Composer({ sid }: { sid: string }) {
     const el = area.current;
     if (el && t) launchFlight(t, el.getBoundingClientRect());
     haptic('send');
-    fieldBeat('send');
+    fieldBeat('send', sendKey.current);
     const attachments = files.length ? files : undefined;
     update('');
     setFiles([]);
@@ -180,17 +180,17 @@ export function Composer({ sid }: { sid: string }) {
   return (
     <div className="composer-dock">
       <QueueTray sid={sid} queue={queue} />
-      <motion.div className="composer glass" data-focus={focused || undefined} layout="position" transition={{ type: 'spring', stiffness: 460, damping: 40 }}>
+      <div className="composer" data-focus={focused || undefined} onClick={(e) => e.target === e.currentTarget && area.current?.focus()}>
         <AnimatePresence initial={false}>
           {files.length > 0 && (
-            <motion.div className="attach-row" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
+            <motion.div className="attach-row" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={SNAP}>
               {files.map((f) => (
-                <span key={f.id} className="attach">
+                <motion.span key={f.id} className="attach" layout initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={SNAP}>
                   <img src={f.dataUrl} alt={f.name} />
-                  <button type="button" aria-label={`Remove ${f.name}`} onClick={() => setFiles((cur) => cur.filter((x) => x.id !== f.id))}>
+                  <button type="button" aria-label={`Remove ${f.name}`} onClick={() => (haptic('tap'), setFiles((cur) => cur.filter((x) => x.id !== f.id)))}>
                     <Icon name="x" size={12} weight="bold" />
                   </button>
-                </span>
+                </motion.span>
               ))}
             </motion.div>
           )}
@@ -217,45 +217,55 @@ export function Composer({ sid }: { sid: string }) {
         <div className="composer-bar">
           {caps?.features.images !== false && (
             <>
-              <button type="button" className="chip-btn round" aria-label="Add a photo" onClick={() => fileInput.current?.click()}>
+              <button type="button" className="chip-btn round" aria-label="Add a photo" onPointerDown={(e) => e.preventDefault()} onClick={() => (haptic('tap'), fileInput.current?.click())}>
                 <Icon name="plus" size={18} />
               </button>
               <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(e) => void pick(e.target.files).then(() => (e.target.value = ''))} />
             </>
           )}
           <div className="chips-wrap">
-            <div className="chips">
-            {mode && (
-              <button type="button" className="chip-btn" data-tone={mode.tone} onClick={() => (haptic('tap'), setSheet('mode'))}>
-                <Icon name={MODE_ICON[mode.tone] ?? 'hand'} size={15} />
-                <span>{mode.name}</span>
-              </button>
-            )}
-            {(model || s.model) && (
-              <button type="button" className="chip-btn" onClick={() => (haptic('tap'), setSheet('model'))}>
-                <span>{modelName(model) ?? modelNameById(s.model, caps?.models) ?? 'Model'}</span>
-              </button>
-            )}
-            {efforts.length > 0 && (
-              <button type="button" className="chip-btn" onClick={() => (haptic('tap'), setSheet('effort'))}>
-                <span>{effortName(s.effort ?? model?.defaultEffort) ?? 'Effort'}</span>
-              </button>
-            )}
-          </div>
+            <div className="chips no-drag">
+              {mode && (
+                <button type="button" className="chip-btn" data-tone={mode.tone} onClick={() => (haptic('tap'), setSheet('mode'))}>
+                  <Icon name={MODE_ICON[mode.tone] ?? 'hand'} size={15} />
+                  <span>{mode.name}</span>
+                </button>
+              )}
+              {(model || s.model) && (
+                <button type="button" className="chip-btn" onClick={() => (haptic('tap'), setSheet('model'))}>
+                  <span>{modelLabel}</span>
+                  {effort && efforts.length > 0 && <span className="chip-dim">{effortName(effort)}</span>}
+                </button>
+              )}
+            </div>
           </div>
           <AnimatePresence mode="popLayout" initial={false}>
             {running && empty ? (
-              <motion.button key="stop" type="button" className="send" aria-label="Stop" onClick={stop} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={{ type: 'spring', stiffness: 520, damping: 34 }}>
+              <motion.button key="stop" type="button" className="send" aria-label="Stop" onClick={stop} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.5, opacity: 0 }} whileTap={{ scale: 0.9 }} transition={SNAP}>
                 <span className="stop-square" />
               </motion.button>
             ) : (
-              <motion.button key="send" type="button" className="send" aria-label={running ? 'Queue' : 'Send'} disabled={empty || !online} onClick={() => void send()} whileTap={{ scale: 0.92 }} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={{ type: 'spring', stiffness: 520, damping: 34 }}>
+              <motion.button
+                key="send"
+                ref={sendKey}
+                type="button"
+                className="send"
+                aria-label={running ? 'Queue' : 'Send'}
+                disabled={empty || !online}
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => void send()}
+                whileTap={{ scale: 0.9 }}
+                initial={{ scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.5, opacity: 0 }}
+                transition={SNAP}
+              >
                 <Icon name="up" size={18} weight="bold" />
               </motion.button>
             )}
           </AnimatePresence>
         </div>
-      </motion.div>
+      </div>
 
       <Sheet open={sheet === 'model'} onClose={() => setSheet(null)} title="Model">
         <div className="choices">
@@ -265,7 +275,6 @@ export function Composer({ sid }: { sid: string }) {
               selected={m.id === s.model}
               onPick={() => {
                 haptic('select');
-                setSheet(null);
                 void conn.call('session.setModel', { sessionId: sid, model: m.id }).catch(() => {});
               }}
             >
@@ -273,6 +282,28 @@ export function Composer({ sid }: { sid: string }) {
             </Choice>
           ))}
         </div>
+        {efforts.length > 1 && (
+          <>
+            <h3 className="sheet-sub">Effort</h3>
+            <Segmented
+              label="Effort"
+              options={efforts.map((e: Effort) => ({ id: e, name: effortName(e) }))}
+              value={effort}
+              onPick={(e) => void conn.call('session.setEffort', { sessionId: sid, effort: e as Effort }).catch(() => {})}
+            />
+          </>
+        )}
+        {speeds.length > 0 && (
+          <>
+            <h3 className="sheet-sub">Speed</h3>
+            <Segmented
+              label="Speed"
+              options={[{ id: STANDARD_SPEED, name: 'Standard' }, ...speeds.map((x) => ({ id: x.id, name: x.name }))]}
+              value={speed}
+              onPick={(v) => void conn.call('session.setSpeed', { sessionId: sid, speed: v }).catch(() => {})}
+            />
+          </>
+        )}
       </Sheet>
       <Sheet open={sheet === 'mode'} onClose={() => setSheet(null)} title="Permissions">
         <div className="choices">
@@ -280,7 +311,7 @@ export function Composer({ sid }: { sid: string }) {
             <Choice
               key={m.id}
               selected={m.id === s.mode}
-              icon={<Icon name={MODE_ICON[m.tone] ?? 'hand'} size={17} />}
+              icon={<Icon name={MODE_ICON[m.tone] ?? 'hand'} size={18} />}
               onPick={() => {
                 haptic('select');
                 setSheet(null);
@@ -292,23 +323,33 @@ export function Composer({ sid }: { sid: string }) {
           ))}
         </div>
       </Sheet>
-      <Sheet open={sheet === 'effort'} onClose={() => setSheet(null)} title="Effort">
-        <div className="choices">
-          {efforts.map((e: Effort) => (
-            <Choice
-              key={e}
-              selected={e === (s.effort ?? model?.defaultEffort)}
-              onPick={() => {
-                haptic('select');
-                setSheet(null);
-                void conn.call('session.setEffort', { sessionId: sid, effort: e }).catch(() => {});
-              }}
-            >
-              {effortName(e)}
-            </Choice>
-          ))}
-        </div>
-      </Sheet>
+    </div>
+  );
+}
+
+/** A row of options with one chosen: the choice is a solid pill that slides to the one you pick. */
+export function Segmented({ label, options, value, onPick }: { label: string; options: { id: string; name: string }[]; value?: string; onPick: (id: string) => void }) {
+  const i = Math.max(0, options.findIndex((o) => o.id === value));
+  return (
+    <div className="seg no-drag" role="radiogroup" aria-label={label} style={{ '--n': options.length, '--i': i } as React.CSSProperties}>
+      {value !== undefined && <span className="seg-thumb" aria-hidden />}
+      {options.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          role="radio"
+          aria-checked={o.id === value}
+          className="seg-opt"
+          data-on={o.id === value || undefined}
+          onClick={() => {
+            if (o.id === value) return;
+            haptic('select');
+            onPick(o.id);
+          }}
+        >
+          {o.name}
+        </button>
+      ))}
     </div>
   );
 }
@@ -321,12 +362,12 @@ function QueueTray({ sid, queue }: { sid: string; queue: QueuedMessage[] }) {
         {queue.map((q) => (
           <motion.div
             key={q.id}
-            className="queued glass"
+            className="queued"
             layout
-            initial={{ opacity: 0, y: 12, scale: 0.98 }}
+            initial={{ opacity: 0, y: 16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, x: 40, transition: { duration: 0.18 } }}
-            transition={{ type: 'spring', stiffness: 460, damping: 38 }}
+            exit={{ opacity: 0, y: -18, scale: 0.97, transition: { duration: 0.18 } }}
+            transition={SNAP}
           >
             <span className="queued-text">{q.text || 'Photo'}</span>
             <button

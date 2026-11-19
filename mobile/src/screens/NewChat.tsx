@@ -1,164 +1,229 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Capabilities, DirEntry, ProviderId } from '@shared/protocol';
 import { baseName, dirName } from '@desk/lib/format';
 import { modelName, visibleModels } from '@desk/lib/models';
 import { pushBack } from '@m/lib/back';
 import { conn } from '@m/lib/conn';
 import { haptic } from '@m/lib/native';
-import { nav } from '@m/lib/nav';
-import { applySnapshot, getState, setState, useStore } from '@m/lib/store';
+import { getState, setState, useStore } from '@m/lib/store';
 import { Icon } from '@m/ui/icons';
-import { ProviderMark, SHORT_NAME } from '@m/ui/marks';
+import { PROVIDER_NAME, ProviderMark } from '@m/ui/marks';
+import { SPRING } from '@m/ui/motion';
 import { Choice, Sheet } from '@m/ui/Sheet';
 
-/** New chat: the agent, the folder (recent ones, or browse the desktop's folders), the model. */
-export function NewChatSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+/**
+ * What a new chat starts with: the agent, the folder (or none: the desktop makes one for it), the
+ * model. The last choice is kept; the field on home shows it as three chips.
+ */
+const KEY = 'sable.newchat';
+type Saved = { agent?: ProviderId; folder?: string; none?: boolean; model?: string };
+const load = (): Saved => {
+  try {
+    return (JSON.parse(localStorage.getItem(KEY) ?? '{}') as Saved) ?? {};
+  } catch {
+    return {};
+  }
+};
+const save = (s: Saved) => {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(s));
+  } catch {
+    /* private mode */
+  }
+};
+
+export interface NewChoice {
+  agents: ProviderId[];
+  agent: ProviderId | null;
+  setAgent: (a: ProviderId) => void;
+  recent: { path: string; at: number }[];
+  /** null: no folder (a chat of its own). */
+  folder: string | null;
+  setFolder: (p: string | null) => void;
+  models: { id: string; name: string }[];
+  model?: string;
+  setModel: (id: string) => void;
+}
+
+export function useNewChat(active: boolean): NewChoice {
   const providers = useStore((s) => s.providers);
   const settings = useStore((s) => s.settings);
   const projects = useStore((s) => s.projects);
   const sessions = useStore((s) => s.sessions);
+  const [saved, setSaved] = useState<Saved>(load);
+  const update = (patch: Saved) =>
+    setSaved((cur) => {
+      const next = { ...cur, ...patch };
+      save(next);
+      return next;
+    });
+
   const agents = useMemo(
     () => (['claude', 'codex', 'demo'] as ProviderId[]).filter((id) => providers[id]?.installed && (id === 'demo' || providers[id]?.auth.loggedIn)),
     [providers],
   );
-  const [provider, setProvider] = useState<ProviderId | null>(null);
-  const [cwd, setCwd] = useState<string | null>(null);
-  const [model, setModel] = useState<string | null>(null);
-  const [browse, setBrowse] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-
-  const agent = provider && agents.includes(provider) ? provider : agents.includes(settings?.defaultProvider as ProviderId) ? (settings!.defaultProvider as ProviderId) : (agents[0] ?? null);
+  const pick = (id?: ProviderId) => (id && agents.includes(id) ? id : undefined);
+  const agent = pick(saved.agent) ?? pick(settings?.defaultProvider as ProviderId) ?? agents[0] ?? null;
 
   const recent = useMemo(() => {
     const seen = new Map<string, { path: string; at: number }>();
     for (const p of projects) if (!p.hidden) seen.set(p.path.toLowerCase(), { path: p.path, at: p.lastOpened });
     for (const s of Object.values(sessions)) {
+      if (s.chat) continue;
       const k = s.cwd.toLowerCase();
       const cur = seen.get(k);
       if (!cur || cur.at < s.updatedAt) seen.set(k, { path: s.cwd, at: Math.max(cur?.at ?? 0, s.updatedAt) });
     }
     return [...seen.values()].sort((a, b) => b.at - a.at).slice(0, 6);
   }, [projects, sessions]);
-  const folder = cwd ?? recent[0]?.path ?? null;
-
-  const capsKey = agent && folder ? `${agent}:${folder}` : '';
+  const folder = saved.none ? null : (saved.folder ?? recent[0]?.path ?? null);
+  // Models come from the agent's caps for a folder (no folder: the most recent one stands in).
+  const capsFolder = folder ?? recent[0]?.path ?? null;
+  const capsKey = agent && capsFolder ? `${agent}:${capsFolder}` : '';
   const caps = useStore((s) => (capsKey ? s.caps[capsKey] : undefined));
   useEffect(() => {
-    if (!open || !agent || !folder || getState().caps[`${agent}:${folder}`]) return;
+    if (!active || !agent || !capsFolder || getState().caps[`${agent}:${capsFolder}`] || getState().conn !== 'open') return;
     let live = true;
     conn
-      .call('provider.caps', { provider: agent, cwd: folder })
-      .then((c: Capabilities) => live && setState((s) => ({ caps: { ...s.caps, [`${agent}:${folder}`]: c } })))
+      .call('provider.caps', { provider: agent, cwd: capsFolder })
+      .then((c: Capabilities) => live && setState((s) => ({ caps: { ...s.caps, [`${agent}:${capsFolder}`]: c } })))
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [open, agent, folder]);
+  }, [active, agent, capsFolder]);
 
-  const models = useMemo(() => (agent && caps ? visibleModels(agent, caps.models, settings?.modelVisibility) : []), [agent, caps, settings?.modelVisibility]);
-  const chosenModel = model && models.some((m) => m.id === model) ? model : (settings?.defaultModels[agent ?? 'claude'] ?? models.find((m) => m.isDefault)?.id ?? models[0]?.id);
+  const models = useMemo(() => (agent && caps ? visibleModels(agent, caps.models, settings?.modelVisibility).map((m) => ({ id: m.id, name: modelName(m) ?? m.name })) : []), [agent, caps, settings?.modelVisibility]);
+  const model =
+    saved.agent === agent && saved.model && models.some((m) => m.id === saved.model)
+      ? saved.model
+      : (settings?.defaultModels[agent ?? 'claude'] ?? caps?.models.find((m) => m.isDefault)?.id ?? models[0]?.id);
 
-  const openedAt = useRef(0);
-  useEffect(() => {
-    if (open) openedAt.current = performance.now();
-    if (!open) {
-      setBrowse(false);
-      setError(undefined);
-      setBusy(false);
-    }
-  }, [open]);
-
-  const start = async () => {
-    // A second tap on "New chat" lands where "Start chat" rises: taps in the first moments do not start anything.
-    if (!agent || !folder || performance.now() - openedAt.current < 600) return;
-    setBusy(true);
-    setError(undefined);
-    haptic('send');
-    try {
-      const snap = await conn.call('session.create', { provider: agent, cwd: folder, ...(chosenModel ? { model: chosenModel } : {}) }, 90_000);
-      applySnapshot(snap);
-      onClose();
-      nav.chat(snap.session.id);
-    } catch (err) {
-      haptic('deny');
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
+  return {
+    agents,
+    agent,
+    setAgent: (a) => update({ agent: a, model: undefined }),
+    recent,
+    folder,
+    setFolder: (p) => update(p === null ? { none: true } : { none: false, folder: p }),
+    models,
+    model,
+    setModel: (id) => update({ agent: agent ?? undefined, model: id }),
   };
+}
 
+/** Starts the chat on the desktop: the snapshot comes back (the phone opens it). */
+export async function createChat(c: NewChoice, text: string) {
+  if (!c.agent) throw new Error('No agent is signed in on the computer');
+  const cwd = c.folder ?? c.recent[0]?.path ?? '';
+  return conn.call(
+    'session.create',
+    { provider: c.agent, cwd, ...(c.model ? { model: c.model } : {}), ...(c.folder === null ? { chat: { text } } : {}) },
+    90_000,
+  );
+}
+
+export function AgentSheet({ open, onClose, c }: { open: boolean; onClose: () => void; c: NewChoice }) {
   return (
-    <Sheet open={open} onClose={onClose} title={browse ? 'Choose a folder' : 'New chat'} tall={browse}>
-      <AnimatePresence mode="wait" initial={false}>
-        {browse ? (
-          <motion.div key="browse" initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 24 }} transition={{ type: 'spring', stiffness: 460, damping: 40 }}>
-            <FolderBrowser
-              start={folder}
-              onPick={(p) => {
-                setCwd(p);
-                setBrowse(false);
+    <Sheet open={open} onClose={onClose} title="Agent">
+      <div className="choices">
+        {c.agents.map((id) => (
+          <Choice
+            key={id}
+            selected={c.agent === id}
+            icon={<ProviderMark provider={id} size={18} />}
+            onPick={() => {
+              haptic('select');
+              c.setAgent(id);
+              onClose();
+            }}
+          >
+            {PROVIDER_NAME[id]}
+          </Choice>
+        ))}
+      </div>
+    </Sheet>
+  );
+}
+
+export function ModelSheet({ open, onClose, c }: { open: boolean; onClose: () => void; c: NewChoice }) {
+  return (
+    <Sheet open={open} onClose={onClose} title="Model">
+      {c.models.length ? (
+        <div className="choices">
+          {c.models.map((m) => (
+            <Choice
+              key={m.id}
+              selected={c.model === m.id}
+              onPick={() => {
+                haptic('select');
+                c.setModel(m.id);
+                onClose();
               }}
-              onCancel={() => setBrowse(false)}
-            />
+            >
+              {m.name}
+            </Choice>
+          ))}
+        </div>
+      ) : (
+        <div className="list-skel" aria-hidden>
+          <span className="skel" style={{ width: '62%' }} />
+          <span className="skel" style={{ width: '48%' }} />
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+/** The folder: recent ones, none (a chat of its own), or the desktop's folders one level at a time. */
+export function FolderSheet({ open, onClose, c }: { open: boolean; onClose: () => void; c: NewChoice }) {
+  const [browse, setBrowse] = useState(false);
+  useEffect(() => {
+    if (!open) setBrowse(false);
+  }, [open]);
+  const pick = (p: string | null) => {
+    haptic('select');
+    c.setFolder(p);
+    onClose();
+  };
+  return (
+    <Sheet open={open} onClose={onClose} title={browse ? 'Choose a folder' : 'Folder'} tall={browse}>
+      <AnimatePresence mode="popLayout" initial={false}>
+        {browse ? (
+          <motion.div key="browse" initial={{ opacity: 0, x: 40 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 40 }} transition={SPRING}>
+            <FolderBrowser start={c.folder} onPick={pick} onCancel={() => setBrowse(false)} />
           </motion.div>
         ) : (
-          <motion.div key="main" className="newchat" initial={{ opacity: 0, x: -24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }} transition={{ type: 'spring', stiffness: 460, damping: 40 }}>
-            {agents.length > 1 && (
-              <div className="seg" role="radiogroup" aria-label="Agent">
-                {agents.map((id) => (
-                  <button key={id} type="button" role="radio" aria-checked={agent === id} className="seg-opt" data-on={agent === id || undefined} onClick={() => (haptic('select'), setProvider(id), setModel(null))}>
-                    <ProviderMark provider={id} size={15} />
-                    {SHORT_NAME[id]}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <h3 className="sheet-sub">Folder</h3>
+          <motion.div key="main" initial={{ opacity: 0, x: -40 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -40 }} transition={SPRING}>
             <div className="choices">
-              {recent.map((r) => (
-                <Choice key={r.path} selected={folder === r.path} onPick={() => (haptic('select'), setCwd(r.path))} icon={<Icon name="folder" size={17} />}>
+              {c.recent.map((r) => (
+                <Choice key={r.path} selected={c.folder === r.path} onPick={() => pick(r.path)} icon={<Icon name="folder" size={18} />}>
                   <span className="path">
                     <span className="path-name">{baseName(r.path)}</span>
                     <span className="path-dir">{dirName(r.path)}</span>
                   </span>
                 </Choice>
               ))}
-              {folder && !recent.some((r) => r.path === folder) && (
-                <Choice selected onPick={() => {}} icon={<Icon name="folder" size={17} />}>
+              {c.folder && !c.recent.some((r) => r.path === c.folder) && (
+                <Choice selected onPick={() => pick(c.folder)} icon={<Icon name="folder" size={18} />}>
                   <span className="path">
-                    <span className="path-name">{baseName(folder)}</span>
-                    <span className="path-dir">{dirName(folder)}</span>
+                    <span className="path-name">{baseName(c.folder)}</span>
+                    <span className="path-dir">{dirName(c.folder)}</span>
                   </span>
                 </Choice>
               )}
-              <button type="button" className="choice choice-quiet" onClick={() => setBrowse(true)}>
+              <Choice selected={c.folder === null} onPick={() => pick(null)} icon={<Icon name="chat" size={18} />}>
+                No folder
+              </Choice>
+              <button type="button" className="choice choice-quiet" onClick={() => (haptic('tap'), setBrowse(true))}>
                 <span className="choice-icon">
-                  <Icon name="plus" size={17} />
+                  <Icon name="plus" size={18} />
                 </span>
                 <span className="choice-label">Other folder</span>
+                <Icon name="next" size={15} className="choice-caret" />
               </button>
             </div>
-
-            {models.length > 0 && (
-              <>
-                <h3 className="sheet-sub">Model</h3>
-                <div className="choices">
-                  {models.map((m) => (
-                    <Choice key={m.id} selected={chosenModel === m.id} onPick={() => (haptic('select'), setModel(m.id))}>
-                      {modelName(m) ?? m.name}
-                    </Choice>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {error && <p className="form-error">{error}</p>}
-            <button type="button" className="btn btn-primary btn-lg btn-block" disabled={!agent || !folder || busy} data-busy={busy || undefined} onClick={() => void start()}>
-              {busy ? <span className="dots" aria-label="Starting" /> : 'Start chat'}
-            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -170,15 +235,18 @@ export function NewChatSheet({ open, onClose }: { open: boolean; onClose: () => 
 function FolderBrowser({ start, onPick, onCancel }: { start: string | null; onPick: (path: string) => void; onCancel: () => void }) {
   const [here, setHere] = useState<{ path: string | null; parent: string | null; entries: DirEntry[] } | null>(null);
   const [error, setError] = useState<string>();
+  const [dir, setDir] = useState(1);
 
-  const load = async (p: string | null) => {
+  const load = async (p: string | null, d = 1) => {
     setError(undefined);
     try {
       if (p === null) {
         const r = await conn.call('fs.roots', {});
+        setDir(d);
         setHere({ path: null, parent: null, entries: r.roots });
       } else {
         const r = await conn.call('fs.list', { path: p });
+        setDir(d);
         setHere({ path: r.path, parent: r.parent, entries: r.entries.filter((e) => e.dir && !e.name.startsWith('.')) });
       }
     } catch (err) {
@@ -190,7 +258,7 @@ function FolderBrowser({ start, onPick, onCancel }: { start: string | null; onPi
   useEffect(
     () =>
       pushBack(() => {
-        if (here?.path) void load(here.parent ?? null);
+        if (here?.path) void load(here.parent ?? null, -1);
         else onCancel();
         return true;
       }),
@@ -206,8 +274,8 @@ function FolderBrowser({ start, onPick, onCancel }: { start: string | null; onPi
   return (
     <div className="browser">
       <div className="browser-bar">
-        <button type="button" className="icon-btn" aria-label="Up one folder" disabled={!here?.path} onClick={() => void load(here?.parent ?? null)}>
-          <Icon name="back" size={19} />
+        <button type="button" className="icon-btn" aria-label="Up one folder" disabled={!here?.path} onClick={() => void load(here?.parent ?? null, -1)}>
+          <Icon name="back" size={20} />
         </button>
         <span className="browser-here">{here?.path ? baseName(here.path) || here.path : 'This computer'}</span>
         <button type="button" className="btn btn-sm" onClick={onCancel}>
@@ -215,22 +283,34 @@ function FolderBrowser({ start, onPick, onCancel }: { start: string | null; onPi
         </button>
       </div>
       {error && <p className="form-error">{error}</p>}
-      <div className="choices browser-list">
-        {here?.entries.map((e) => (
-          <button key={e.path} type="button" className="choice" onClick={() => void load(e.path)}>
-            <span className="choice-icon">
-              <Icon name="folder" size={17} />
-            </span>
-            <span className="choice-label">{e.name}</span>
-            <Icon name="next" size={15} className="choice-caret" />
-          </button>
-        ))}
-        {here && !here.entries.length && <p className="empty">No folders here.</p>}
-      </div>
+      <AnimatePresence mode="popLayout" initial={false} custom={dir}>
+        <motion.div
+          key={here?.path ?? 'roots'}
+          className="choices browser-list"
+          custom={dir}
+          initial={{ opacity: 0, x: dir * 36 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: dir * -36 }}
+          transition={SPRING}
+        >
+          {here?.entries.map((e) => (
+            <button key={e.path} type="button" className="choice" onClick={() => (haptic('tap'), void load(e.path, 1))}>
+              <span className="choice-icon">
+                <Icon name="folder" size={18} />
+              </span>
+              <span className="choice-label">{e.name}</span>
+              <Icon name="next" size={15} className="choice-caret" />
+            </button>
+          ))}
+          {here && !here.entries.length && <p className="empty">No folders here.</p>}
+        </motion.div>
+      </AnimatePresence>
       {here?.path && (
-        <button type="button" className="btn btn-primary btn-lg btn-block" onClick={() => (haptic('select'), onPick(here.path!))}>
-          Use {baseName(here.path) || here.path}
-        </button>
+        <div className="sheet-foot">
+          <button type="button" className="btn btn-primary btn-lg btn-block" onClick={() => onPick(here.path!)}>
+            Use {baseName(here.path) || here.path}
+          </button>
+        </div>
       )}
     </div>
   );

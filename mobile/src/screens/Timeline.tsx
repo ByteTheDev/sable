@@ -7,11 +7,12 @@ import { useNow } from '@m/lib/useNow';
 import { conn } from '@m/lib/conn';
 import { diffLines, renderMarkdown } from '@m/lib/md';
 import { haptic } from '@m/lib/native';
-import { applyChildren, applyFull, fetchItem, sessionData, setState, useStore } from '@m/lib/store';
+import { applyChildren, applyFull, fetchItem, getState, sessionData, setState, useStore } from '@m/lib/store';
 import { takeFlight } from '@m/lib/flight';
 import type { Turn } from '@m/lib/turns';
-import { Icon, TOOL_ICON } from '@m/ui/icons';
+import { Icon, TOOL_ICON, type IconName } from '@m/ui/icons';
 import { Ring, StatusMark, Tiles } from '@m/ui/marks';
+import { REVEAL } from '@m/ui/motion';
 
 const useItem = <T extends TimelineItem>(sid: string, id: string | undefined) => useStore((s) => (id ? (sessionData(s, sid).items[id] as T | undefined) : undefined));
 
@@ -46,7 +47,8 @@ const UserBubble = memo(function UserBubble({ sid, id, steered }: { sid: string;
   const [long, setLong] = useState(false);
   const [open, setOpen] = useState(false);
 
-  // The message flies from the composer to where it lands (lib/flight.ts records where it left).
+  // The message flies from where it was written to where it lands (lib/flight.ts records where it left):
+  // one spring per axis, the bubble growing out of the field's shape.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !it) return;
@@ -57,9 +59,13 @@ const UserBubble = memo(function UserBubble({ sid, id, steered }: { sid: string;
     const sc = el.closest('.thread');
     if (sc) sc.scrollTop = sc.scrollHeight;
     const r = el.getBoundingClientRect();
-    const dx = f.rect.right - r.right;
+    // From the words in the field: its left edge at theirs, its foot at the field's foot.
+    const dx = Math.min(0, f.rect.left + 4 - r.left);
     const dy = f.rect.bottom - r.bottom;
-    animate(el, { x: [dx, 0], y: [dy, 0], scale: [0.96, 1], opacity: [0.5, 1] }, { type: 'spring', stiffness: 420, damping: 36, mass: 0.9 });
+    animate(el, { x: [dx, 0] }, { type: 'spring', stiffness: 360, damping: 34, mass: 0.9 });
+    animate(el, { y: [dy, 0] }, { type: 'spring', stiffness: 400, damping: 36, mass: 0.9 });
+    animate(el, { scale: [0.94, 1] }, { type: 'spring', stiffness: 420, damping: 30 });
+    animate(el, { opacity: [0.35, 1] }, { duration: 0.16 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!it]);
 
@@ -70,7 +76,7 @@ const UserBubble = memo(function UserBubble({ sid, id, steered }: { sid: string;
   const files = it.attachments?.filter((a) => !(a.dataUrl && a.kind === 'image')) ?? [];
   return (
     <div className="user-row" data-steered={steered || undefined}>
-      <div ref={ref} className="user-bubble glass" data-long={long && !open ? true : undefined} onClick={() => long && setOpen((v) => !v)}>
+      <div ref={ref} className="user-bubble" data-long={long && !open ? true : undefined} onClick={() => long && (haptic('select'), setOpen((v) => !v))}>
         {images.length > 0 && (
           <div className="user-images">
             {images.map((a) => (
@@ -90,12 +96,41 @@ const UserBubble = memo(function UserBubble({ sid, id, steered }: { sid: string;
         {it.text && <div className="user-text">{it.text}</div>}
         {long && !open && <div className="user-more">Show more</div>}
       </div>
-      {steered && <span className="user-note">Steered</span>}
+      {steered && (
+        <span className="user-note">
+          <Icon name="steer" size={12} /> Steered
+        </span>
+      )}
     </div>
   );
 });
 
-/** The steps of a turn on one line: live while it runs (what it does now, the last few steps), a summary once done. */
+/** What a turn's steps did, for its folded line: the kinds of work (most frequent first) and the change. */
+function summarize(sid: string, steps: string[]) {
+  const items = sessionData(getState(), sid).items;
+  const kinds = new Map<IconName, number>();
+  let add = 0;
+  let del = 0;
+  for (const id of steps) {
+    const it = items[id];
+    if (!it) continue;
+    const icon: IconName = it.type === 'tool' ? (TOOL_ICON[it.kind] ?? 'tool') : it.type === 'thinking' ? 'brain' : 'chat';
+    if (it.type !== 'text') kinds.set(icon, (kinds.get(icon) ?? 0) + 1);
+    if (it.type === 'tool')
+      for (const f of it.result?.diff ?? []) {
+        add += f.additions;
+        del += f.deletions;
+      }
+  }
+  const glyphs = [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
+  return { glyphs, add, del };
+}
+
+/**
+ * The steps of a turn. Running: a live line (the step in progress) over a short trail of the ones
+ * before it, newest first, each dropping in as the next begins. Done: one quiet line (the kinds of
+ * work, how long, the change) that opens into the whole list.
+ */
 function Steps({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) {
   const [open, setOpen] = useState(false);
   const activity = useStore((s) => s.sessions[sid]?.activity);
@@ -104,22 +139,43 @@ function Steps({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) 
   const end = useItem<TurnItem>(sid, turn.end);
   const lastStep = useItem<TimelineItem>(sid, turn.steps[turn.steps.length - 1]);
   const n = turn.steps.length;
+  const sum = useMemo(() => summarize(sid, turn.steps), [sid, turn]);
 
-  // While it runs, the step in progress is the line itself; the trail under it shows the ones before.
-  const current = live && ((lastStep?.type === 'thinking' && lastStep.streaming) || (lastStep?.type === 'tool' && (lastStep.status === 'running' || lastStep.status === 'pending')));
-  const trail = open ? turn.steps : current ? turn.steps.slice(-4, -1) : turn.steps.slice(-3);
-  const label = live
-    ? activity || (lastStep?.type === 'tool' ? lastStep.title : lastStep?.type === 'thinking' ? 'Thinking' : 'Working')
-    : end
-      ? `Worked ${formatDuration(end.durationMs)}${n ? ` · ${plural(n, 'step')}` : ''}`
-      : plural(n, 'step');
+  if (live) {
+    // While it runs, the step in progress is the line itself; the trail under it shows the ones before.
+    const current = (lastStep?.type === 'thinking' && lastStep.streaming) || (lastStep?.type === 'tool' && (lastStep.status === 'running' || lastStep.status === 'pending'));
+    const before = current ? turn.steps.slice(0, -1) : turn.steps;
+    const trail = open ? turn.steps : before.slice(-3).reverse();
+    const label = waiting ? 'Waiting for you' : activity || (lastStep?.type === 'tool' ? lastStep.title : lastStep?.type === 'thinking' ? 'Thinking' : 'Working');
+    return (
+      <div className="tail" data-waiting={waiting || undefined} data-open={open || undefined}>
+        <button type="button" className="tail-line" onClick={() => n && (haptic('select'), setOpen((v) => !v))} aria-expanded={open}>
+          {waiting ? <StatusMark tone="awaiting" size={14} /> : <Tiles size={14} />}
+          {/* Each new step's words rise into the line (CSS, on mount: no exits to pile up when steps are quick). */}
+          <span key={label} className={waiting ? 'tail-label' : 'tail-label shimmer'}>
+            {label}
+          </span>
+          {n > 0 && <span className="tail-count num">{n}</span>}
+        </button>
+        {trail.length > 0 && (
+          <div className="tail-trail">
+            {trail.map((id) => (
+              <div key={id} className="trail-item">
+                <Step sid={sid} id={id} quiet={!open} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
+  const label = end ? `Worked ${formatDuration(end.durationMs)}` : plural(n, 'step');
   return (
     <div className="steps" data-open={open || undefined}>
       <button
         type="button"
-        className="steps-line"
-        data-waiting={waiting || undefined}
+        className="steps-sum"
         onClick={() => {
           if (!n) return;
           haptic('select');
@@ -127,22 +183,33 @@ function Steps({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) 
         }}
         aria-expanded={open}
       >
-        {waiting ? <StatusMark tone="awaiting" size={13} /> : live ? <Tiles size={13} /> : <Icon name="todo" size={15} />}
-        <span className={live && !waiting ? 'steps-label shimmer' : 'steps-label'}>{label}</span>
+        {sum.glyphs.length > 0 && (
+          <span className="glyphs" aria-hidden>
+            {sum.glyphs.map((g) => (
+              <i key={g}>
+                <Icon name={g} size={12} />
+              </i>
+            ))}
+          </span>
+        )}
+        <span className="steps-label">{label}</span>
+        {end && n > 0 && <span className="steps-meta num">{plural(n, 'step')}</span>}
+        {(sum.add > 0 || sum.del > 0) && (
+          <span className="diffstat num">
+            {sum.add > 0 && <span className="add">+{sum.add}</span>}
+            {sum.del > 0 && <span className="del">−{sum.del}</span>}
+          </span>
+        )}
         {n > 0 && <Icon name="caretDown" size={13} weight="bold" className="steps-caret" />}
       </button>
       <AnimatePresence initial={false}>
-        {(open || live) && trail.length > 0 && (
-          <motion.div
-            className="steps-list"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 40 }}
-          >
-            {trail.map((id) => (
-              <Step key={id} sid={sid} id={id} quiet={!open} />
-            ))}
+        {open && (
+          <motion.div className="steps-list" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={REVEAL}>
+            <div className="steps-card">
+              {turn.steps.map((id) => (
+                <Step key={id} sid={sid} id={id} />
+              ))}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -164,11 +231,12 @@ const Step = memo(function Step({ sid, id, quiet }: { sid: string; id: string; q
   const status = it.status;
   const toggle = () => {
     if (quiet || !(detail || more)) return;
+    haptic('select');
     if (more && !full && !open) void fetchItem(sid, id).then((r) => setFull(r.item as ToolItem), () => {});
     setOpen((v) => !v);
   };
   return (
-    <div className="step" data-status={status}>
+    <div className="step" data-status={status} data-open={open || undefined}>
       <button type="button" className="step-line" onClick={toggle} disabled={quiet || !(detail || more)}>
         <span className="step-icon">{status === 'running' || status === 'pending' ? <Ring size={13} /> : <Icon name={TOOL_ICON[it.kind] ?? 'tool'} size={15} />}</span>
         <span className="step-title">{it.title}</span>
@@ -177,10 +245,12 @@ const Step = memo(function Step({ sid, id, quiet }: { sid: string; id: string; q
       </button>
       <AnimatePresence initial={false}>
         {open && (detail || more) && (
-          <motion.pre className="step-detail" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: 'spring', stiffness: 420, damping: 40 }}>
-            {detail && <Detail d={detail} />}
-            {more && !full && <span className="step-detail-wait skel" aria-label="Loading" />}
-          </motion.pre>
+          <motion.div className="step-detail-wrap" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={REVEAL}>
+            <pre className="step-detail no-drag">
+              {detail && <Detail d={detail} />}
+              {more && !full && <span className="step-detail-wait skel" aria-label="Loading" />}
+            </pre>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
@@ -198,16 +268,23 @@ function ThinkingStep({ sid, it, quiet }: { sid: string; it: ThinkingItem; quiet
   const secs = it.endedAt ? Math.max(1, Math.round((it.endedAt - it.ts) / 1000)) : 0;
   const toggle = () => {
     if (quiet || !it.text) return;
+    haptic('select');
     if ((it as PhoneItem).cut && !open && !it.streaming) void fetchItem(sid, it.id).then((r) => applyFull(sid, r.item), () => {});
     setOpen((v) => !v);
   };
   return (
-    <div className="step">
+    <div className="step" data-open={open || undefined}>
       <button type="button" className="step-line" onClick={toggle} disabled={quiet || !it.text}>
         <span className="step-icon">{it.streaming ? <Ring size={13} /> : <Icon name="brain" size={15} />}</span>
         <span className="step-title">{it.streaming ? 'Thinking' : secs ? `Thought for ${secs}s` : 'Thought'}</span>
       </button>
-      {open && <div className="step-think">{inlineCode(it.text)}</div>}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div className="step-detail-wrap" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={REVEAL}>
+            <div className="step-think">{inlineCode(it.text)}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -268,9 +345,11 @@ const Block = memo(function Block({ sid, id }: { sid: string; id: string }) {
     const title = (it.input as { title?: string } | undefined)?.title ?? it.title;
     return (
       <div className="block block-quiet">
-        <Icon name="cube" size={16} />
+        <span className="block-icon">
+          <Icon name="cube" size={16} />
+        </span>
         <span className="block-title">{title}</span>
-        <span className="block-aside">Open on the desktop</span>
+        <span className="block-aside">On the desktop</span>
       </div>
     );
   }
@@ -318,10 +397,10 @@ function AgentBlock({ sid, id, it, name, running, background, kids }: { sid: str
     setOpen((v) => !v);
   };
   return (
-    <div className="block" data-open={open || undefined}>
+    <div className="block" data-open={open || undefined} data-running={running || undefined}>
       <button type="button" className="block-toggle" aria-expanded={open} disabled={!kids} onClick={toggle}>
         <span className="block-head">
-          <span className="block-icon">{running ? <Ring size={14} /> : <Icon name="agent" size={16} />}</span>
+          <span className="block-icon">{running ? <Tiles size={13} /> : <Icon name="agent" size={16} />}</span>
           <span className="block-title">{name}</span>
           <span className="block-aside">{it.status === 'error' ? 'Failed' : running ? (background ? 'In the background' : 'Working') : 'Done'}</span>
         </span>
@@ -333,13 +412,7 @@ function AgentBlock({ sid, id, it, name, running, background, kids }: { sid: str
       </button>
       <AnimatePresence initial={false}>
         {open && steps.length > 0 && (
-          <motion.div
-            className="block-steps"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 40 }}
-          >
+          <motion.div className="block-steps" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={REVEAL}>
             {steps.map((cid) => (
               <Step key={cid} sid={sid} id={cid} />
             ))}
@@ -364,8 +437,8 @@ const Notice = memo(function Notice({ sid, id }: { sid: string; id: string }) {
   if (it.until) return <UntilEnd it={it} />;
   return (
     <div className="notice" data-variant={it.variant}>
-      {it.variant === 'error' && <Icon name="warning" size={15} />}
-      <span>
+      {it.variant === 'error' ? <span className="notice-dot" aria-hidden /> : <span className="notice-rule" aria-hidden />}
+      <span className="notice-body">
         {it.text}
         {it.detail && <span className="notice-detail"> · {it.detail}</span>}
         {next && (
@@ -407,10 +480,12 @@ function CheckRow({ check }: { check: UntilCheck }) {
       </button>
       <AnimatePresence initial={false}>
         {open && out && (
-          <motion.pre className="step-detail" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: 'spring', stiffness: 420, damping: 40 }}>
-            <span className="step-detail-head">$ {check.command}</span>
-            {`\n${shown}`}
-          </motion.pre>
+          <motion.div className="step-detail-wrap" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={REVEAL}>
+            <pre className="step-detail no-drag">
+              <span className="step-detail-head">$ {check.command}</span>
+              {`\n${shown}`}
+            </pre>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
@@ -439,7 +514,7 @@ function LimitCard({ sid, it, next, went }: { sid: string; it: NoticeItem; next?
   return (
     <div className="limit-card">
       <div className="limit-card-head">
-        <span className="limit-card-dot" aria-hidden />
+        <StatusMark tone="awaiting" size={12} />
         <span className="limit-card-title">{l.window ? `${l.window} reached` : it.text}</span>
         {l.resetsAt && <span className="limit-card-reset num">{resetIn(l.resetsAt, now)}</span>}
       </div>
@@ -447,7 +522,7 @@ function LimitCard({ sid, it, next, went }: { sid: string; it: NoticeItem; next?
       {next && (
         <button
           type="button"
-          className="btn btn-primary limit-card-go"
+          className="btn btn-primary btn-block limit-card-go"
           disabled={busy}
           onClick={() => {
             setBusy(true);
@@ -495,7 +570,7 @@ const Answer = memo(function Answer({ sid, id }: { sid: string; id: string }) {
 /** The copy key on a code block: its text to the clipboard, a short confirmation on the key itself. */
 function copyCode(e: React.MouseEvent) {
   const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.md-copy');
-  const code = btn?.parentElement?.querySelector('code');
+  const code = btn?.closest('.md-code')?.querySelector('code');
   if (!btn || !code) return;
   void navigator.clipboard
     ?.writeText(code.textContent ?? '')

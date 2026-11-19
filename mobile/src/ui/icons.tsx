@@ -54,6 +54,12 @@ export const ICON_NAMES = {
   eye: 'Eye',
   pin: 'PushPin',
   archive: 'Archive',
+  chat: 'ChatCircle',
+  more: 'DotsThree',
+  copy: 'Copy',
+  unpin: 'PushPinSlash',
+  sliders: 'SlidersHorizontal',
+  files: 'Files',
 } as const;
 
 

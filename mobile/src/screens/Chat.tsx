@@ -2,20 +2,22 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { baseName } from '@desk/lib/format';
 import { conn } from '@m/lib/conn';
+import { onKeyboard } from '@m/lib/keyboard';
 import { haptic, openExternal } from '@m/lib/native';
 import { nav } from '@m/lib/nav';
 import { applyOlder, fetchOlder, getState, openSession, sessionData, showCached, useStore } from '@m/lib/store';
 import { buildTurns, reuseTurns, shapeKey, type Turn } from '@m/lib/turns';
 import { Field, paletteFor } from '@m/ui/Field';
 import { Icon } from '@m/ui/icons';
-import { ProviderMark, Ring, StatusMark } from '@m/ui/marks';
+import { ProviderMark, Ring } from '@m/ui/marks';
+import { IME_EASE, SNAP } from '@m/ui/motion';
 import { Sheet } from '@m/ui/Sheet';
 import { Composer } from './Composer';
-import { toneOf } from './Home';
 import { Prompts } from './Prompts';
 import { TurnView } from './Timeline';
 
 const PAGE = 24;
+const FIRST = 5;
 
 /** A conversation: header, turns (the newest ones mounted, older ones as you scroll up), composer. */
 export function Chat({ id }: { id: string }) {
@@ -44,17 +46,17 @@ export function Chat({ id }: { id: string }) {
     );
   }
   const live = s.status === 'running' || s.status === 'starting';
+  const waiting = s.status === 'awaiting';
   const remoteOn = !!s.options?.remoteControl || !!s.remote;
 
   return (
-    <div className="screen chat">
-      <Field palette={paletteFor(s.provider)} amount={0.95} focusY={1.1} spread={0.52} active={live} />
+    <div className="screen chat" data-live={live || undefined} data-waiting={waiting || undefined}>
+      <Field palette={paletteFor(s.provider)} amount={0.95} focusY={1.1} spread={0.56} active={live} waiting={waiting} />
       <ChatHead
         title={s.title}
-        sub={connState === 'open' ? baseName(s.cwd) : undefined}
+        sub={connState === 'open' ? (s.chat ? undefined : baseName(s.cwd)) : undefined}
         status={connState === 'open' ? undefined : connState === 'denied' ? 'Not paired' : listed ? 'Reconnecting' : 'Connecting'}
-        mark={<ProviderMark provider={s.provider} size={17} />}
-        tone={toneOf(s)}
+        mark={<ProviderMark provider={s.provider} size={16} />}
         onBack={() => nav.pop()}
         right={
           s.provider === 'claude' || s.provider === 'demo' || remoteOn ? (
@@ -81,41 +83,24 @@ export function Chat({ id }: { id: string }) {
   );
 }
 
-function ChatHead({
-  title,
-  sub,
-  status,
-  mark,
-  tone,
-  onBack,
-  right,
-}: {
-  title: string;
-  sub?: string;
-  status?: string;
-  mark?: React.ReactNode;
-  tone?: ReturnType<typeof toneOf>;
-  onBack: () => void;
-  right?: React.ReactNode;
-}) {
+function ChatHead({ title, sub, status, mark, onBack, right }: { title: string; sub?: string; status?: string; mark?: React.ReactNode; onBack: () => void; right?: React.ReactNode }) {
   return (
-    <header className="chat-head glass-bar">
-      <button type="button" className="icon-btn" aria-label="Back" onClick={() => (haptic('tap'), onBack())}>
+    <header className="chat-head">
+      <button type="button" className="icon-btn back-btn" aria-label="Back" onClick={() => (haptic('tap'), onBack())}>
         <Icon name="back" size={22} />
       </button>
       <div className="chat-titles">
         <div className="chat-title">
           {mark}
           <span>{title}</span>
-          {tone && tone !== 'idle' && tone !== 'unread' && <StatusMark tone={tone} />}
         </div>
         <AnimatePresence mode="popLayout" initial={false}>
           {status ? (
-            <motion.div key="status" className="chat-sub chat-status" initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }} transition={{ duration: 0.16 }}>
+            <motion.div key="status" className="chat-sub chat-status" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SNAP}>
               <Ring size={11} /> {status}
             </motion.div>
           ) : sub ? (
-            <motion.div key="sub" className="chat-sub" initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }} transition={{ duration: 0.16 }}>
+            <motion.div key="sub" className="chat-sub" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SNAP}>
               {sub}
             </motion.div>
           ) : null}
@@ -143,7 +128,12 @@ function Thread({ id }: { id: string }) {
   }, [key]);
   const [older, setOlder] = useState(false);
   const olderBusy = useRef(false);
-  const [count, setCount] = useState(PAGE);
+  // The newest few turns first (the chat opens at once), the rest of the page right after it has opened.
+  const [count, setCount] = useState(FIRST);
+  useEffect(() => {
+    const t = window.setTimeout(() => setCount((c) => Math.max(c, PAGE)), 520);
+    return () => clearTimeout(t);
+  }, []);
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -180,11 +170,40 @@ function Thread({ id }: { id: string }) {
     return () => ro.disconnect();
   }, [toBottom]);
 
+  // The keyboard: the room it takes is added under the newest line, and (when reading the newest)
+  // the conversation glides up with it on its curve instead of jumping.
+  useEffect(
+    () =>
+      onKeyboard((lift, prev, ms) => {
+        const sc = scroller.current;
+        const c = content.current;
+        if (!sc || !c) return;
+        c.style.paddingBottom = lift ? `${lift + 28}px` : '';
+        if (!atBottom.current) return;
+        const before = sc.scrollTop;
+        sc.scrollTop = sc.scrollHeight;
+        const d = sc.scrollTop - before;
+        if (d && ms > 0) c.animate([{ transform: `translate3d(0, ${d}px, 0)` }, { transform: 'none' }], { duration: ms, easing: `cubic-bezier(${IME_EASE.join(',')})` });
+        void prev;
+      }),
+    [],
+  );
+
   // Only your own scrolling lets go of the newest line (a smooth jump or a growing answer never does).
   const touch = useRef({ down: false, at: 0 });
   const frame = useRef(0);
+  // While the conversation moves, the prompt bar drops its blur (drawn again every frame otherwise); at rest it is glass again.
+  const moving = useRef(0);
   const onScroll = () => {
     if (!frame.current) frame.current = requestAnimationFrame(measure);
+    const chat = scroller.current?.parentElement;
+    if (!chat) return;
+    if (!moving.current) chat.setAttribute('data-moving', '');
+    clearTimeout(moving.current);
+    moving.current = window.setTimeout(() => {
+      moving.current = 0;
+      chat.removeAttribute('data-moving');
+    }, 200);
   };
   // Read once per frame, not once per scroll event.
   const measure = () => {
@@ -263,12 +282,15 @@ function Thread({ id }: { id: string }) {
         {showJump && (
           <motion.button
             type="button"
-            className="jump glass"
+            className="jump"
             aria-label="Jump to the newest"
-            initial={{ opacity: 0, y: 8, scale: 0.9 }}
+            initial={{ opacity: 0, y: 10, scale: 0.85 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.9 }}
+            exit={{ opacity: 0, y: 10, scale: 0.85 }}
+            transition={SNAP}
+            whileTap={{ scale: 0.9 }}
             onClick={() => {
+              haptic('tap');
               atBottom.current = true;
               toBottom(true);
             }}
@@ -283,11 +305,13 @@ function Thread({ id }: { id: string }) {
 
 function ThreadSkeleton() {
   return (
-    <div className="list-skel" aria-hidden>
+    <div className="thread-skel-body" aria-hidden>
       <span className="skel skel-bubble" />
+      <span className="skel skel-line" style={{ width: '42%' }} />
+      <span className="skel" style={{ width: '88%' }} />
+      <span className="skel" style={{ width: '76%' }} />
       <span className="skel" style={{ width: '82%' }} />
-      <span className="skel" style={{ width: '64%' }} />
-      <span className="skel" style={{ width: '74%' }} />
+      <span className="skel" style={{ width: '54%' }} />
     </div>
   );
 }
@@ -311,27 +335,30 @@ function RemoteSheet({ id, open, onClose }: { id: string; open: boolean; onClose
   return (
     <Sheet open={open} onClose={onClose} label="Remote control">
       <div className="remote">
-        <button type="button" className="switch-row" onClick={() => void toggle()} disabled={busy} role="switch" aria-checked={on}>
-          <span>Remote control</span>
-          <span className="switch" data-on={on || undefined}>
-            <i />
-          </span>
-        </button>
-        {r && (
-          <div className="remote-state" data-tone={r.tone ?? 'waiting'}>
-            <span className="remote-state-dot" />
-            <span>{r.status}</span>
-          </div>
-        )}
+        <div className="group-card">
+          <button type="button" className="set-row switch-row" onClick={() => void toggle()} disabled={busy} role="switch" aria-checked={on}>
+            <Icon name="link" size={19} />
+            <span className="set-label">Remote control</span>
+            <span className="switch" data-on={on || undefined}>
+              <i />
+            </span>
+          </button>
+          {r && (
+            <div className="set-row remote-state" data-tone={r.tone ?? 'waiting'}>
+              <span className="remote-state-dot" />
+              <span className="set-label">{r.status}</span>
+            </div>
+          )}
+        </div>
         {r?.url && (
           <>
             <div className="remote-link">{r.url}</div>
             <div className="remote-actions">
               <button type="button" className="btn btn-lg" onClick={() => void navigator.clipboard?.writeText(r.url!).then(() => haptic('success'))}>
-                Copy link
+                <Icon name="copy" size={18} /> Copy link
               </button>
               <button type="button" className="btn btn-primary btn-lg" onClick={() => openExternal(r.url!)}>
-                <Icon name="external" size={17} /> Open
+                <Icon name="external" size={18} /> Open
               </button>
             </div>
           </>

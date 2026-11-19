@@ -1,0 +1,722 @@
+/*
+ * Home: the field lies under everything, its light gathered under the new-chat bar. A large title
+ * (the computer's name) that hands over to the bar as you scroll, what runs or waits as cards with
+ * their agent's light at their foot, then the folders as cards of ink.
+ */
+.home {
+  timeline-scope: --home;
+  transform-origin: 50% 36%;
+  will-change: transform, opacity;
+}
+
+.home > .field {
+  opacity: 0.85;
+}
+
+/* ── the bar: the mark, the title once the large one has gone, the tools ── */
+.home-bar {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--sat) + var(--bar-h));
+  padding: var(--sat) 6px 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.home-bar > * {
+  pointer-events: auto;
+}
+
+/* its ink comes in under it once the list moves (solid, no blur: the list scrolls under it) */
+.home-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 -18px;
+  z-index: -1;
+  background: linear-gradient(var(--bg) 0, var(--bg) calc(100% - 30px), rgb(7 7 8 / 0));
+  opacity: 0;
+  animation: fade-in linear both;
+  animation-timeline: --home;
+  animation-range: 0 36px;
+  pointer-events: none;
+}
+
+.home-bar-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 16.5px;
+  font-weight: 620;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  animation: bar-title linear both;
+  animation-timeline: --home;
+  animation-range: 46px 84px;
+}
+
+.home-tools {
+  display: flex;
+  margin-left: auto;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes bar-title {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hero-out {
+  to {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.97);
+  }
+}
+
+/* ── the list ── */
+.home-scroll {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: none;
+  scroll-timeline: --home block;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pull-body {
+  position: relative;
+  padding-top: calc(var(--sat) + var(--bar-h));
+}
+
+.home-hero {
+  padding: 4px 22px 22px;
+  transform-origin: 0 100%;
+  animation: hero-out linear both;
+  animation-timeline: --home;
+  animation-range: 10px 76px;
+}
+
+.home-title {
+  font-size: var(--t-display);
+  font-weight: 650;
+  letter-spacing: -0.032em;
+  line-height: 1.12;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.home-status > .ring {
+  margin-right: -8px;
+}
+
+.home-status-part {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.home-status-warn {
+  color: var(--amber);
+}
+
+.home-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 18px 16px;
+  animation: none;
+}
+
+.search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 4px 0 15px;
+  border-radius: var(--r-md);
+  background: rgb(255 255 255 / 0.065);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-3);
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  background: none;
+  border: 0;
+  outline: none;
+  font-size: var(--t-body);
+}
+
+.search input::placeholder {
+  color: var(--text-3);
+}
+
+.search-clear {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-pill);
+  color: var(--text-3);
+}
+
+/* pull to refresh: the mark builds from its cells as you pull (--p 0..1), clicks past the line, glints while it loads */
+.pull {
+  position: absolute;
+  z-index: 3;
+  top: calc(var(--sat) + var(--bar-h) - 4px);
+  left: 50%;
+  margin-left: -13px;
+  color: var(--text);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 160ms var(--ease-spring);
+  --p: 0;
+}
+
+.pull[data-armed] {
+  transform: scale(1.14);
+}
+
+.pull rect {
+  opacity: clamp(0.1, calc(var(--p) * 16 - var(--d)), 1);
+}
+
+.pull[data-busy] rect {
+  animation: glint 1.2s steps(1, end) infinite;
+  animation-delay: calc(var(--d) * 75ms);
+}
+
+/* ── now: what runs or waits ── */
+.now {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 14px 8px;
+}
+
+.live {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+  padding: 16px 16px 24px 18px;
+  border-radius: 22px;
+  text-align: left;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--grain-bg), rgb(19 19 22 / 0.92);
+  box-shadow: var(--edge), var(--lift);
+  transition: background-color 120ms;
+}
+
+.live:active {
+  background: var(--grain-bg), rgb(25 25 29 / 0.95);
+}
+
+.live-glow {
+  position: absolute;
+  z-index: -1;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+.live-glow i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(100% + 384px);
+  background-repeat: repeat-x;
+  background-size: 384px 30px;
+  image-rendering: pixelated;
+  animation: glow-drift 14s linear infinite;
+  will-change: transform;
+}
+
+.live[data-tone='awaiting'] .live-glow i {
+  animation: none;
+}
+
+@keyframes glow-drift {
+  to {
+    transform: translateX(-384px);
+  }
+}
+
+.live-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.live-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.008em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-end {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  flex-shrink: 0;
+}
+
+.live-sub {
+  padding-left: 30px;
+  font-size: 14px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live[data-tone='awaiting'] .live-sub {
+  color: var(--amber);
+}
+
+/* ── folders ── */
+.group {
+  padding: 16px 14px 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 340px;
+}
+
+.group-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 8px 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: -0.003em;
+}
+
+.group-name > span:first-child {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-count {
+  font-size: var(--t-xs);
+  font-weight: 500;
+  color: var(--text-4);
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 5px;
+  border-radius: 22px;
+  background: var(--grain-bg), var(--card);
+  box-shadow: var(--edge), var(--lift);
+}
+
+.rows > li {
+  position: relative;
+  overflow: hidden;
+  border-radius: 17px;
+}
+
+.rows > li + li::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 45px;
+  right: 14px;
+  height: 1px;
+  background: rgb(255 255 255 / 0.05);
+  pointer-events: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  min-height: 54px;
+  padding: 0 14px 0 14px;
+  border-radius: 17px;
+  text-align: left;
+  transition: background-color 100ms, transform 140ms var(--ease-out);
+}
+
+.row:active {
+  background: rgb(255 255 255 / 0.055);
+  transform: scale(0.985);
+}
+
+.row-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15.5px;
+  color: #e4e3df;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+.row[data-tone='unread'] .row-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.row-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.row-time {
+  min-width: 26px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.row-pin {
+  color: var(--text-4);
+}
+
+.more-row {
+  display: block;
+  height: 44px;
+  margin: 0 auto;
+  padding: 0 22px;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.more-row:active {
+  color: var(--text);
+}
+
+.home-pad {
+  height: calc(var(--sab) + 120px);
+}
+
+.home:has(.attn) .home-pad {
+  height: calc(var(--sab) + 200px);
+}
+
+.home-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  padding: 8px 14px;
+}
+
+.home-skel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  padding: 22px 18px;
+  border-radius: 22px;
+  background: var(--card);
+  box-shadow: var(--edge);
+}
+
+.unreachable {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin: 14vh 28px 0;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.unreachable p {
+  color: var(--text);
+  font-size: var(--t-lead);
+  font-weight: 560;
+}
+
+.unreachable .unreachable-hint {
+  margin: -6px 0 6px;
+  max-width: 260px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* ── a chat waiting on you, scrolled out of sight ── */
+.attn {
+  position: absolute;
+  z-index: 5;
+  left: 12px;
+  width: calc(100% - 24px);
+  bottom: calc(var(--sab) + 12px + 58px + 10px);
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  height: 62px;
+  padding: 0 9px 0 18px;
+  border-radius: 22px;
+  background: rgb(26 26 30);
+  box-shadow: var(--edge-2), var(--lift-2);
+  text-align: left;
+}
+
+/* ── new chat: the prompt bar at the foot of home ── */
+.home-dock {
+  position: absolute;
+  z-index: 6;
+  left: 12px;
+  right: 12px;
+  bottom: calc(var(--sab) + 12px);
+  padding: 6px 6px 6px 18px;
+  border-radius: 28px;
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--edge-2), var(--lift-2);
+  isolation: isolate;
+  translate: 0 calc(-1 * var(--kb));
+  transition: translate var(--kb-ms) var(--ease-ime), background-color 260ms var(--ease-out);
+  cursor: text;
+}
+
+.home-dock::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--grain-bg);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.home-dock[data-open] {
+  padding-left: 16px;
+  background-color: var(--glass-up);
+}
+
+.home-dock[data-covered] {
+  visibility: hidden;
+}
+
+.dock-scrim {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  background: rgb(0 0 0 / 0.55);
+}
+
+.dock-line {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  min-height: 46px;
+}
+
+.dock-mark {
+  align-self: center;
+  margin-right: -2px;
+}
+
+.dock-input {
+  flex: 1;
+  display: block;
+  min-width: 0;
+  min-height: 46px;
+  max-height: 150px;
+  padding: 12px 0 11px;
+  background: none;
+  border: 0;
+  outline: none;
+  resize: none;
+  font-size: var(--t-body);
+  line-height: 1.45;
+}
+
+.dock-input::placeholder {
+  color: var(--text-2);
+  transition: color 240ms var(--ease-out);
+}
+
+.home-dock[data-focus] .dock-input::placeholder {
+  color: var(--text-4);
+}
+
+.dock-chips {
+  overflow: hidden;
+  margin: 0 -2px 0 -10px;
+}
+
+.dock-chips .chips {
+  padding: 2px 0 4px;
+}
+
+.home-dock .send {
+  margin-bottom: 2px;
+}
+
+/* ── a long press: the chat lifted out, its actions beside it ── */
+.peek-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+}
+
+.peek-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 0.62);
+}
+
+.peek-row {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 0 18px;
+  border-radius: 18px;
+  background: rgb(32 32 36);
+  box-shadow: var(--edge-2), 0 30px 60px -18px rgb(0 0 0 / 0.95);
+  pointer-events: none;
+}
+
+.peek-menu {
+  position: fixed;
+  padding: 6px;
+  border-radius: 24px;
+  background: rgb(27 27 31);
+  box-shadow: var(--edge-2), var(--lift-2);
+  transform-origin: 50% 0;
+}
+
+.peek-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 52px;
+  padding: 0 16px 0 18px;
+  border-radius: 18px;
+  font-size: var(--t-body);
+  color: var(--text);
+  transition: background-color 100ms;
+}
+
+.peek-item svg {
+  color: var(--text-2);
+}
+
+.peek-item + .peek-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 18px;
+  right: 16px;
+  height: 1px;
+  background: var(--line);
+}
+
+.peek-item:active {
+  background: var(--fill-2);
+}
+
+.rename {
+  display: flex;
+  gap: 8px;
+  padding: 4px;
+}
+
+.rename .btn {
+  height: 50px;
+}
+
+.send-glyph {
+  display: grid;
+  place-items: center;
+}
+
+/* at rest the key is a quiet plus (a tap opens the field); open, the ivory send */
+.home-dock .send[data-rest] {
+  background: var(--fill-3);
+  color: var(--text);
+}
+
+/* covered by a chat or settings: nothing on home keeps moving (the loops pause where they are) */
+.home[data-under] .live-glow i,
+.home[data-under] .tiles i,
+.home[data-under] .ring,
+.home[data-under] .shimmer {
+  animation-play-state: paused;
+}
+
+/* an older WebView does not stretch a flex button's children: the lines take the card's width */
+.live-line,
+.live-sub {
+  width: 100%;
+}
+
+.home[data-moving] .home-dock {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background-color: rgb(22 22 25 / 0.95);
+}
+
+/* the new-chat bar open (its chips over the words): the waiting line stays above it */
+.home:has(.home-dock[data-open]) .attn {
+  bottom: calc(var(--sab) + 12px + 106px + 10px);
+}

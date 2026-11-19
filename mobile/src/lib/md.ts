@@ -30,7 +30,9 @@ const md = new Marked({
       const l = (lang ?? '').trim().split(/\s+/)[0].toLowerCase();
       if (l === 'widget' || l === 'mermaid') return `<div class="md-widget">${l === 'mermaid' ? 'Diagram' : 'Widget'} <span>Open on the desktop to see it</span></div>`;
       const body = l === 'diff' || l === 'patch' ? diffLines(text) : esc(text);
-      return `<div class="md-code"><pre class="md-pre"><code>${body}</code></pre><button type="button" class="md-copy" aria-label="Copy">${COPY}</button></div>`;
+      // A named language heads the block (its copy key beside it); a nameless block keeps the key in its corner.
+      const head = l && /^[\w+#.-]{1,20}$/.test(l) ? `<div class="md-code-head"><span>${esc(l)}</span></div>` : '';
+      return `<div class="md-code${head ? ' md-code-named' : ''}">${head}<pre class="md-pre no-drag"><code>${body}</code></pre><button type="button" class="md-copy" aria-label="Copy">${COPY}</button></div>`;
     },
   },
 });

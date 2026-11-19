@@ -1,0 +1,439 @@
+/* ── settings ── */
+.settings {
+  timeline-scope: --set;
+}
+
+.sub-head-title {
+  flex: 1;
+  text-align: center;
+  font-size: 16.5px;
+  font-weight: 620;
+  letter-spacing: -0.012em;
+  opacity: 0;
+  animation: bar-title linear both;
+  animation-timeline: --set;
+  animation-range: 30px 70px;
+}
+
+.sub-head::before {
+  opacity: 0;
+  animation: fade-in linear both;
+  animation-timeline: --set;
+  animation-range: 0 30px;
+}
+
+.settings-scroll {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  overflow-y: auto;
+  scroll-timeline: --set block;
+  padding: calc(var(--sat) + var(--bar-h)) 16px calc(var(--sab) + 36px);
+}
+
+.page-title {
+  margin: 4px 6px 22px;
+  font-size: var(--t-display);
+  font-weight: 650;
+  letter-spacing: -0.032em;
+  line-height: 1.12;
+  transform-origin: 0 100%;
+  animation: hero-out linear both;
+  animation-timeline: --set;
+  animation-range: 0 64px;
+}
+
+/* the paired computer: a window onto its field */
+.computer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 176px;
+  padding: 18px 20px 20px;
+  border-radius: 26px;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--ink-1);
+  box-shadow: var(--edge-2), var(--lift-2);
+}
+
+.computer-field {
+  z-index: -2;
+}
+
+.computer::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(100deg, rgb(10 10 12 / 0.9) 0%, rgb(10 10 12 / 0.55) 55%, rgb(10 10 12 / 0) 100%);
+  pointer-events: none;
+}
+
+.computer-top {
+  position: absolute;
+  top: 18px;
+  left: 20px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.computer-glyph {
+  display: grid;
+  place-items: center;
+  color: var(--text);
+}
+
+.computer-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 15px;
+  background: rgb(8 8 10 / 0.72);
+  box-shadow: var(--edge);
+  font-size: 13px;
+  font-weight: 540;
+  color: var(--text);
+}
+
+.conn-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.computer[data-state='open'] .conn-dot {
+  background: var(--text);
+}
+
+.computer[data-state='offline'] .conn-dot,
+.computer[data-state='denied'] .conn-dot {
+  background: var(--amber);
+}
+
+.computer-name {
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.computer-addr {
+  margin-top: 4px;
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.set-title {
+  margin: 30px 8px 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.group-card {
+  position: relative;
+  border-radius: 22px;
+  background: var(--grain-bg), var(--card);
+  box-shadow: var(--edge), var(--lift);
+  overflow: hidden;
+}
+
+.set-danger {
+  margin-top: 30px;
+}
+
+.set-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 58px;
+  padding: 0 18px;
+  text-align: left;
+  color: var(--text-2);
+  transition: background-color 100ms;
+}
+
+button.set-row:active {
+  background: var(--fill-2);
+}
+
+.set-row + .set-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 51px;
+  right: 18px;
+  height: 1px;
+  background: var(--line);
+}
+
+.set-row > svg {
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.set-row > .set-logo {
+  margin: 0 1px;
+}
+
+.set-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 15.5px;
+  color: var(--text);
+}
+
+.set-val {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-3);
+}
+
+.switch-row {
+  cursor: pointer;
+}
+
+.switch {
+  position: relative;
+  width: 50px;
+  height: 30px;
+  border-radius: 15px;
+  background: var(--fill-4);
+  flex-shrink: 0;
+  transition: background-color 180ms var(--ease-out);
+}
+
+.switch i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--text-2);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.4);
+  transition: transform 300ms var(--ease-spring), background-color 180ms;
+}
+
+.switch[data-on] {
+  background: var(--text);
+}
+
+.switch[data-on] i {
+  transform: translateX(20px);
+  background: var(--ink);
+}
+
+/* ── pairing ── */
+.pair {
+  padding: calc(var(--sat) + 24px) 22px calc(var(--sab) + 22px);
+}
+
+.pair > .field {
+  opacity: 0.95;
+}
+
+.pair-veil {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 64% at 50% 34%, rgb(7 7 8 / 0.94) 32%, rgb(7 7 8 / 0) 76%);
+  pointer-events: none;
+}
+
+.pair-main {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 14px;
+  padding-bottom: 48px;
+}
+
+.pair-mark {
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.pair-mark rect {
+  animation: cell-in 80ms steps(1, end) both;
+  animation-delay: calc(120ms + var(--d) * 22ms);
+}
+
+/* while the desktop is reached or asked, the mark glints cell by cell (the working loop) */
+.pair-mark[data-busy] rect {
+  animation: glint 1.6s steps(1, end) infinite;
+  animation-delay: calc(var(--d) * 100ms);
+}
+
+.pair-title {
+  font-size: 42px;
+  font-weight: 660;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.pair-line {
+  max-width: 300px;
+  min-height: 48px;
+  font-size: var(--t-body);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.pair-line[data-tone='error'] {
+  color: var(--red);
+}
+
+.pair-line[data-tone='waiting'] {
+  color: var(--amber);
+}
+
+.pair-actions {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 10px;
+  /* the two keys' height, kept while they give way to Cancel: the mark does not jump */
+  min-height: 122px;
+  translate: 0 calc(-1 * var(--kb));
+  transition: translate var(--kb-ms) var(--ease-ime);
+}
+
+.pair-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* the second way in: frosted ink like the prompt bar, quiet beside the ivory key */
+.pair-alt {
+  background: rgb(22 22 25 / 0.8);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--edge-2);
+}
+
+.pair-cancel {
+  align-self: center;
+  min-width: 156px;
+  margin-bottom: 33px;
+  color: var(--text-2);
+}
+
+.pair-paste {
+  display: flex;
+  gap: 8px;
+  overflow: hidden;
+  padding: 2px 0 8px;
+}
+
+.pair-paste .field-input {
+  flex: 1;
+  height: 56px;
+  border-radius: 18px;
+  background: rgb(10 10 12 / 0.8);
+}
+
+.pair-paste .btn {
+  height: 56px;
+  border-radius: 18px;
+}
+
+/* ── scanner ── */
+.scanner {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #000;
+  display: grid;
+  place-items: center;
+}
+
+.scanner-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.scanner-frame {
+  position: relative;
+  width: min(68vw, 280px);
+  aspect-ratio: 1;
+}
+
+.scanner-frame i {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--text);
+}
+
+.scanner-frame i:nth-child(1) {
+  top: 0;
+  left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-top-left-radius: 16px;
+}
+
+.scanner-frame i:nth-child(2) {
+  top: 0;
+  right: 0;
+  border-left: 0;
+  border-bottom: 0;
+  border-top-right-radius: 16px;
+}
+
+.scanner-frame i:nth-child(3) {
+  bottom: 0;
+  left: 0;
+  border-right: 0;
+  border-top: 0;
+  border-bottom-left-radius: 16px;
+}
+
+.scanner-frame i:nth-child(4) {
+  bottom: 0;
+  right: 0;
+  border-left: 0;
+  border-top: 0;
+  border-bottom-right-radius: 16px;
+}
+
+.scanner-error {
+  position: absolute;
+  bottom: calc(var(--sab) + 120px);
+  left: 24px;
+  right: 24px;
+  text-align: center;
+  color: var(--text);
+  font-size: var(--t-body);
+}
+
+.scanner-close {
+  position: absolute;
+  top: calc(var(--sat) + 12px);
+  right: 16px;
+  color: var(--text);
+  background: rgb(0 0 0 / 0.45);
+}

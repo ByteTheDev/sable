@@ -4,6 +4,8 @@ import { pushBack } from '@m/lib/back';
 import { conn, parsePairLink, type PairOffer } from '@m/lib/conn';
 import { askNotifications, deviceName, haptic } from '@m/lib/native';
 import { Field } from '@m/ui/Field';
+import { launchFrom } from '@m/ui/Launch';
+import { SNAP } from '@m/ui/motion';
 import { Icon } from '@m/ui/icons';
 import { LogoMark } from '@m/ui/marks';
 import { Scanner } from './Scanner';
@@ -19,6 +21,7 @@ export function Pair({ link, onLinkUsed, denied }: { link?: string | null; onLin
   const busy = step.kind === 'connecting' || step.kind === 'waiting';
   const inFlight = useRef(false);
   const cancelled = useRef(false);
+  const mark = useRef<HTMLDivElement>(null);
 
   // Back closes the link field first.
   useEffect(() => (paste ? pushBack(() => (setPaste(false), true)) : undefined), [paste]);
@@ -47,6 +50,9 @@ export function Pair({ link, onLinkUsed, denied }: { link?: string | null; onLin
     try {
       await conn.pair(offer, await deviceName(), () => setStep({ kind: 'waiting', offer }));
       haptic('success');
+      // Home opens out of this mark (the launch glides it into the bar).
+      const r = mark.current?.querySelector('svg')?.getBoundingClientRect();
+      if (r) launchFrom(r);
       onLinkUsed();
       // The one moment to ask: right after pairing, so a turn that ends while the phone is away can say so.
       void askNotifications();
@@ -72,13 +78,13 @@ export function Pair({ link, onLinkUsed, denied }: { link?: string | null; onLin
 
   return (
     <div className="screen pair">
-      <Field palette="ember" amount={1} focusY={1.08} spread={0.7} />
+      <Field palette="ember" amount={1} focusX={0.62} focusY={1.04} spread={1.2} active={busy} />
       <div className="pair-veil" />
       <div className="pair-main">
-        <motion.div className="pair-mark" data-busy={busy || undefined} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: [0.2, 0.8, 0.2, 1] }}>
-          <LogoMark size={44} cells />
+        <motion.div ref={mark} className="pair-mark" data-busy={busy || undefined} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={SNAP}>
+          <LogoMark size={64} cells />
         </motion.div>
-        <motion.h1 className="pair-title" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.06, ease: [0.2, 0.8, 0.2, 1] }}>
+        <motion.h1 className="pair-title" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SNAP, delay: 0.08 }}>
           Sable
         </motion.h1>
         <AnimatePresence mode="wait" initial={false}>
@@ -107,7 +113,7 @@ export function Pair({ link, onLinkUsed, denied }: { link?: string | null; onLin
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
-              transition={{ type: 'spring', stiffness: 460, damping: 40 }}
+              transition={SNAP}
               onSubmit={(e) => {
                 e.preventDefault();
                 void start(text);
@@ -140,7 +146,7 @@ export function Pair({ link, onLinkUsed, denied }: { link?: string | null; onLin
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 8 }}
-              transition={{ type: 'spring', stiffness: 460, damping: 38 }}
+              transition={SNAP}
             >
               Cancel
             </motion.button>
@@ -151,7 +157,7 @@ export function Pair({ link, onLinkUsed, denied }: { link?: string | null; onLin
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 12 }}
-              transition={{ type: 'spring', stiffness: 460, damping: 38 }}
+              transition={SNAP}
             >
               <button type="button" className="btn btn-primary btn-lg" onClick={() => (haptic('tap'), setScan(true))}>
                 <Icon name="qr" size={20} /> Scan code

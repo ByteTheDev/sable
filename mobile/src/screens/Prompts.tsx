@@ -6,6 +6,8 @@ import { diffLines, renderMarkdown } from '@m/lib/md';
 import { haptic } from '@m/lib/native';
 import { sessionData, useStore } from '@m/lib/store';
 import { Icon, TOOL_ICON } from '@m/ui/icons';
+import { StatusMark } from '@m/ui/marks';
+import { REVEAL, SNAP } from '@m/ui/motion';
 import { Choice, Sheet } from '@m/ui/Sheet';
 
 /**
@@ -28,13 +30,25 @@ export function Prompts({ sid }: { sid: string }) {
 
   return (
     <>
-      {current && later === current && (
-        <button type="button" className="waiting glass" onClick={() => setLater(null)}>
-          <span className="waiting-dot" />
-          <span>{perm ? perm.title : 'A question for you'}</span>
-          <span className="waiting-go">Review</span>
-        </button>
-      )}
+      <AnimatePresence>
+        {current && later === current && (
+          <motion.button
+            key="later"
+            type="button"
+            className="waiting-line"
+            initial={{ opacity: 0, y: 14, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.97 }}
+            transition={SNAP}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => (haptic('tap'), setLater(null))}
+          >
+            <StatusMark tone="awaiting" size={12} />
+            <span className="waiting-text">{perm ? perm.title : 'A question for you'}</span>
+            <span className="waiting-go">Review</span>
+          </motion.button>
+        )}
+      </AnimatePresence>
       <Sheet open={open && !!perm} onClose={() => setLater(current)} dismissable label="Permission">
         {perm && <PermissionBody sid={sid} req={perm} onLater={() => setLater(perm.id)} />}
       </Sheet>
@@ -68,14 +82,19 @@ function PermissionBody({ sid, req, onLater }: { sid: string; req: PermissionReq
     <div className="prompt">
       <div className="prompt-head">
         <span className="prompt-icon">
-          <Icon name={TOOL_ICON[req.kind] ?? 'tool'} size={20} />
+          <Icon name={TOOL_ICON[req.kind] ?? 'tool'} size={22} />
         </span>
         <div className="prompt-titles">
           <h2 className="prompt-title">{req.title}</h2>
           {req.description && req.description !== req.title && <p className="prompt-sub">{req.description}</p>}
         </div>
       </div>
-      {d.command && d.command.trim() !== req.title.trim() && <pre className="prompt-code">{d.command}</pre>}
+      {d.command && d.command.trim() !== req.title.trim() && (
+        <pre className="prompt-code no-drag">
+          <span className="prompt-code-sign">$ </span>
+          {d.command}
+        </pre>
+      )}
       {!d.command && d.path && !req.title.includes(d.path.split(/[\\/]/).pop() ?? '') && <div className="prompt-path">{d.path}</div>}
       {d.url && <div className="prompt-path">{d.url}</div>}
       {req.diff && req.diff.length > 0 && (
@@ -89,11 +108,11 @@ function PermissionBody({ sid, req, onLater }: { sid: string; req: PermissionReq
           <AnimatePresence initial={false}>
             {showDiff && (
               <motion.pre
-                className="prompt-code prompt-patch"
+                className="prompt-code prompt-patch no-drag"
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
-                transition={{ type: 'spring', stiffness: 420, damping: 40 }}
+                transition={REVEAL}
                 dangerouslySetInnerHTML={{ __html: patchHtml(req.diff) }}
               />
             )}
