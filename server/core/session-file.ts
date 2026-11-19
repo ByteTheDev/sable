@@ -273,7 +273,20 @@ export class SessionFiles {
 async function atomicWrite(file: string, text: string) {
   const tmp = `${file}.${process.pid}.tmp`;
   await writeFile(tmp, text, 'utf8');
-  await rename(tmp, file);
+  await renameRetry(tmp, file);
+}
+
+/** Windows refuses a rename while another program (a virus scanner, a reader) has the file open for a moment: try again briefly. */
+async function renameRetry(from: string, to: string) {
+  for (let i = 0; ; i++) {
+    try {
+      return await rename(from, to);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (i >= 4 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw err;
+      await new Promise((r) => setTimeout(r, 40 * (i + 1)));
+    }
+  }
 }
 
 /**
@@ -301,6 +314,6 @@ async function writeBase(file: string, gen: number, save: SessionData): Promise<
   } finally {
     await fh.close();
   }
-  await rename(tmp, file);
+  await renameRetry(tmp, file);
   return size;
 }
