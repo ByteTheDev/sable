@@ -79,9 +79,11 @@ pnpm typecheck
 pnpm desktop:dist         # Windows installer in release/
 ```
 
-`pnpm desktop:pack` builds `release/win-unpacked/Sable.exe` without an installer. `pnpm desktop:dist:sable` packages into `release-sable/` instead, for when a copy running from `release/` keeps its files locked.
+`pnpm dev` runs on your real profile (`~/.sable`). For experiments, `node scripts/dev-test.mjs` starts the same server on a throwaway folder. `pnpm desktop:pack` builds `release/win-unpacked/Sable.exe` without an installer.
 
-In a dev build the scripted Demo agent is available, so you can work on the interface without spending quota. In the browser console, `sable.demo('refactor the session module')` opens a Demo session and sends a prompt; keywords in the prompt pick what the Demo does. To see generative UI, try `chart`, `form`, `dashboard`, `diagram`, `table`, `widget` or `gallery`, for example `sable.demo('show me a chart of latency')`.
+In a dev build the scripted Demo agent is available, so you can work on the interface without spending quota. In the browser console, `sable.demo('refactor the session module')` opens a Demo session and sends a prompt; keywords in the prompt pick what the Demo does, for example `chart`, `form`, `dashboard`, `agent`, `progress`, `fleet` or `marathon`.
+
+The phone app lives in `mobile/` (Capacitor and React). `npm install` and `npm run apk` there build a debug APK (needs the Android SDK and a JDK 21); `npm run dev` serves it in a browser for quick work.
 
 Architecture, conventions and design rules are in [CLAUDE.md](CLAUDE.md).
 
