@@ -4,6 +4,7 @@ import path from 'node:path';
 import { BRIDGE_PATH } from '../shared/protocol';
 import { attachBridge } from './bridge';
 import { watchAwake, watchPhoneAwake } from './core/awake';
+import { registerUpdates, type UpdateHost } from './services/update';
 
 /**
  * The production server: serves the built UI and hosts the bridge on one port, on 127.0.0.1 only
@@ -17,6 +18,8 @@ export interface ServerOptions {
   port?: number;
   /** When `port` is taken, fall back to a free port instead of failing. */
   fallbackToFreePort?: boolean;
+  /** The desktop shell: lets Sable install its own updates (`services/update.ts`). */
+  updates?: UpdateHost;
 }
 
 export interface RunningServer {
@@ -134,6 +137,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     port = await listen(server, 0);
   }
   const bridge = attachBridge(server);
+  registerUpdates(bridge.app, opts.updates);
 
   let closing: Promise<void> | undefined;
   const close = () =>

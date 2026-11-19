@@ -1394,6 +1394,27 @@ export interface AppState {
   chatsDefault?: string;
   /** Every session's open permission requests and questions, so a window sees what waits on the user without loading each timeline. */
   prompts?: PendingPrompts;
+  /** Updates of the desktop app (absent in older bridges and where Sable cannot update itself). */
+  update?: UpdateState;
+}
+
+/**
+ * Updates of the desktop app: a new release on GitHub is downloaded in the background and installed
+ * on "Restart to update" (the installer starts Sable again). `unsupported`: a dev or standalone
+ * bridge. `pending`: asked to restart while agents work; it restarts once they are done.
+ */
+export interface UpdateState {
+  status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'ready' | 'error';
+  /** The running version. */
+  current: string;
+  /** The newest release, when it is newer than the running one. */
+  latest?: string;
+  /** Downloaded share, 0 to 1. */
+  progress?: number;
+  pending?: boolean;
+  error?: string;
+  /** When the releases were last asked (ms). */
+  checkedAt?: number;
 }
 
 /** The prompts open across all sessions (the triage deck); later changes arrive as `permission.*` / `question.*` events. */
@@ -1430,6 +1451,7 @@ export type BridgeEvent =
   /** An account's limits with their history and pace (after every read, and for cached ones at start-up). */
   | { type: 'limits.report'; report: LimitsReport }
   /** A full window of an account reset (with `notifyLimitReset` on). */
+  | { type: 'update.state'; state: UpdateState }
   | { type: 'limit.reset'; provider: ProviderId; accountId?: string; window: string; at: number }
   /** Local usage changed (a scan finished). */
   | { type: 'usage.updated'; report: UsageReport }
@@ -1939,6 +1961,10 @@ export interface RpcMethods {
   'profile.write': { params: { text: string }; result: UserProfile };
   /** Removes one of the agents' additions. */
   'profile.forget': { params: { id: string }; result: UserProfile };
+  /** Asks GitHub for a newer release now (a found one downloads in the background). */
+  'update.check': { params: Record<string, never>; result: UpdateState };
+  /** Installs the downloaded release and restarts Sable; while agents work, once they are done (`cancel`: not after all). */
+  'update.install': { params: { cancel?: boolean }; result: UpdateState };
   'memory.write': { params: { path: string; content: string }; result: { ok: boolean } };
 
   /** Stores an image for the backdrop (base64; PNG, JPEG, WebP or GIF, at most 8 MB). The bridge picks the id. */

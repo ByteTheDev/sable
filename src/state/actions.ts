@@ -609,6 +609,15 @@ export const cancelLogin = (provider: ProviderId, accountId?: string) => bridge.
 export const submitLoginCode = (provider: ProviderId, accountId: string | undefined, code: string) =>
   bridge.call('auth.code', { provider, accountId, code }).catch((err: Error) => ({ ok: false, error: err.message }));
 export const logout = (provider: ProviderId, accountId?: string) => bridge.call('auth.logout', { provider, accountId }).catch(fail);
+
+// ── updates of the desktop app ──
+const setUpdate = (state: import('@shared/protocol').UpdateState | undefined) => state && useStore.setState({ update: state });
+/** Asks GitHub for a newer release now; one found downloads in the background. */
+export const checkForUpdate = () => bridge.call('update.check', {}).then(setUpdate).catch(fail);
+/** Installs the downloaded release and restarts Sable (while agents work: once they are done). */
+export const installUpdate = () => bridge.call('update.install', {}).then(setUpdate).catch(fail);
+/** A restart waiting for the agents to finish: not after all. */
+export const cancelUpdate = () => bridge.call('update.install', { cancel: true }).then(setUpdate).catch(fail);
 export const refreshProvider = (provider: ProviderId, accountId?: string) => bridge.call('auth.refresh', { provider, accountId }).catch(fail);
 export const refreshLimits = (provider: ProviderId, accountId?: string) => bridge.call('provider.limits', { provider, accountId }).catch(() => []);
 /** Plan limits read now, even when no agent process runs (it may start a short one; no tokens). For a refresh the user asked for. */

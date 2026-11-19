@@ -1367,3 +1367,18 @@ button.xrow-head:disabled:hover {
 .set-chats-field {
   width: 320px;
 }
+
+/* Updates of the desktop app (About). */
+.about-upd {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.about-upd-meter {
+  width: 96px;
+}
+
+.about-upd-error {
+  color: var(--red);
+}

@@ -869,7 +869,13 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     installMenu();
     try {
-      server = await startServer({ root: path.join(app.getAppPath(), 'dist'), port: PREFERRED_PORT, fallbackToFreePort: true });
+      server = await startServer({
+        root: path.join(app.getAppPath(), 'dist'),
+        port: PREFERRED_PORT,
+        fallbackToFreePort: true,
+        // An installed build updates itself; a build run from a folder (or a test run) does not.
+        updates: app.isPackaged && !screenshotFile ? { quit: () => app.quit() } : undefined,
+      });
     } catch (err) {
       dialog.showErrorBox('Sable could not start', String((err as Error)?.message ?? err));
       app.quit();

@@ -49,7 +49,7 @@ The screenshots use Sable's built-in Demo agent with its made-up project and acc
 
 Download `Sable-Setup-<version>.exe` from the [Releases page](https://github.com/Leonxlnx/sable/releases) and run it. It installs for your user only, with no admin prompt, and opens Sable when it finishes.
 
-Sable is Windows only for now. The installer is not code-signed, so Windows SmartScreen warns on first run: choose "More info", then "Run anyway". There are no in-app updates yet; new versions are published on the Releases page.
+Sable is Windows only for now. The installer is not code-signed, so Windows SmartScreen warns on first run: choose "More info", then "Run anyway". From 0.2.5 on, Sable updates itself: it checks the Releases page now and then, downloads a new version in the background, and shows "Restart to update" in the sidebar (also in Settings › About). Installing 0.2.5 itself is a manual download.
 
 Sable keeps its data in `~/.sable`. The uninstaller leaves that folder alone.
 

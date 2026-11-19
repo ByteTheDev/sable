@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  UpdateState,
   FolderGroup,
   AppSettings,
   Attachment,
@@ -130,6 +131,8 @@ export interface Store {
   chatsOrder?: number;
   /** Where chats without a folder go when Settings names no place. */
   chatsDefault: string;
+  /** Updates of the desktop app; absent where Sable cannot update itself. */
+  update?: UpdateState;
   settings: AppSettings;
   /** The backdrop config while a change is on its way to the bridge (Settings sliders); null otherwise. */
   backdropLive: BackdropConfig | null;
@@ -590,6 +593,9 @@ export function applyEvent(e: BridgeEvent) {
     case 'limit.reset':
       announceReset(e);
       return;
+    case 'update.state':
+      useStore.setState({ update: e.state });
+      return;
     default:
       return;
   }
@@ -630,6 +636,7 @@ async function hello() {
       groups: app.groups ?? [],
       chatsOrder: app.chatsOrder,
       chatsDefault: app.chatsDefault ?? '',
+      update: app.update,
       settings: app.settings,
       sessions,
       // Older bridges send no list: what this window already holds stays.

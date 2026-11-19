@@ -146,3 +146,82 @@
   transform: translateX(2px);
   color: var(--text);
 }
+
+/* A downloaded update: a quiet row above the account; the click restarts into it. */
+.update-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 32px;
+  margin-bottom: 2px;
+  padding: 0 10px 0 11px;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  text-align: left;
+  background-color: var(--fill-1);
+  animation: update-in var(--d-3) var(--ease-out) both;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+button.update-row:hover {
+  background-color: var(--fill-2);
+}
+
+button.update-row:active {
+  background-color: var(--fill-3);
+  scale: 0.99;
+}
+
+button.update-row:focus-visible,
+.update-cancel:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
+}
+
+.update-icon {
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+
+.update-row[data-pending] .update-label {
+  color: var(--text-2);
+  font-weight: var(--w-regular);
+}
+
+.update-ver {
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-weight: var(--w-regular);
+}
+
+.update-cancel {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text-2);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.update-cancel:hover {
+  color: var(--text);
+  background-color: var(--fill-2);
+}
+
+@keyframes update-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-row {
+    animation: none;
+  }
+}

@@ -4,7 +4,7 @@ import { ProviderMark } from '@/art/Logo';
 import { AccountSwitcher, AddAccountDialog } from '@/features/accounts';
 import { connectableAgents, isSignedIn } from '@/features/connect/plan';
 import { Icon } from '@/icons';
-import { openSettings, refreshLimits } from '@/state/actions';
+import { cancelUpdate, installUpdate, openSettings, refreshLimits } from '@/state/actions';
 import { useFocusAccount } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { IconButton } from '@/ui';
@@ -19,6 +19,7 @@ export const SidebarFooter = memo(function SidebarFooter() {
   useLimitRefresh();
   return (
     <div className="side-foot">
+      <UpdateRow />
       <Account />
       <AddAccountDialog />
     </div>
@@ -40,6 +41,33 @@ function useLimitRefresh() {
     if (on) void refreshLimits(provider, accountId);
   }, [provider, accountId, on]);
   useLimitsTicker(on, () => void refreshLimits(provider, accountId));
+}
+
+/**
+ * A downloaded update: one quiet row above the account that restarts into it. Asked while agents
+ * work, it says it waits for them, with a way back.
+ */
+function UpdateRow() {
+  const u = useStore((s) => s.update);
+  if (!u || u.status !== 'ready' || !u.latest) return null;
+  if (u.pending) {
+    return (
+      <div className="update-row" data-pending="">
+        <Icon name="reload" size={15} className="update-icon" />
+        <span className="update-label grow truncate">Restarts when the agents finish</span>
+        <button type="button" className="update-cancel" onClick={() => void cancelUpdate()}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
+  return (
+    <button type="button" className="update-row" onClick={() => void installUpdate()}>
+      <Icon name="reload" size={15} className="update-icon" />
+      <span className="update-label grow truncate">Restart to update</span>
+      <span className="update-ver num">{u.latest}</span>
+    </button>
+  );
 }
 
 function Account() {

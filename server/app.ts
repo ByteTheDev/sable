@@ -7,6 +7,7 @@ import {
   matchModel,
   type AccountCap,
   type AgentHandover,
+  type UpdateState,
   type AccountInfo,
   type AppState,
   type BridgeEvent,
@@ -95,6 +96,8 @@ export class App {
   /** Counts `limits.updated` events from each account's provider (so `provider.limits` does not repeat one). */
   private limitsSeq = new Map<string, number>();
   readonly sessions = new Map<string, SessionRuntime>();
+  /** Updates of the desktop app (`services/update.ts`), when the shell can install them. */
+  updates?: { state: UpdateState; dispose(): void };
   private listeners = new Set<(e: BridgeEvent) => void>();
   private handlers = new Map<string, Handler<RpcName>>();
   private quiet: boolean;
@@ -1505,6 +1508,7 @@ export class App {
       chatsDefault: defaultChatsRoot(this.userHome),
       // Read last, after the awaits: every later change reaches the window as an event.
       prompts: pendingPrompts(this.sessions.values()),
+      ...(this.updates ? { update: this.updates.state } : {}),
     };
   }
 
@@ -2264,6 +2268,7 @@ export class App {
   async dispose() {
     this.disposed = true;
     clearTimeout(this.resetTimer);
+    this.updates?.dispose();
     this.until.dispose();
     this.spare.dispose();
     await this.checks.dispose();
