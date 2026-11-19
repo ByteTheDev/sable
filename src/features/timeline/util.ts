@@ -52,6 +52,18 @@ export function useTick(active = true): number {
   return useSyncExternalStore(active ? subscribeTick : still, readTick);
 }
 
+/**
+ * A reasoning summary's own heading ("**Checking the store**", as Codex writes them): what the
+ * thinking is about, in plain words, for the live line. The newest heading wins; none, empty.
+ */
+export function thinkingHeadline(text: string): string {
+  const tail = text.length > 3000 ? text.slice(-3000) : text;
+  const re = /(?:^|\n)\s*\*\*([^*\n]{3,80})\*\*\s*(?:\n|$)/g;
+  let last = '';
+  for (let m = re.exec(tail); m; m = re.exec(tail)) last = m[1].trim();
+  return last;
+}
+
 /** "8s", "1m 12s": whole seconds, for labels like "Thought for 8s". */
 export function shortDuration(ms: number): string {
   const s = Math.max(1, Math.round(ms / 1000));

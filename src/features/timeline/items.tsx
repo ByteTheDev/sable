@@ -178,8 +178,12 @@ export const LiveText = memo(function LiveText({ text, streaming, id }: { text: 
   );
 });
 
-/** One item, subscribed to itself only. `answer`: the reply a turn segment ends with. */
-export const ItemRow = memo(function ItemRow({ id, nested = false, answer = false }: { id: string; nested?: boolean; answer?: boolean }) {
+/**
+ * One item, subscribed to itself only. `answer`: the reply a turn segment ends with. `mid`: a text
+ * the agent wrote along the way (a report between steps): one tone back, eased there when it stops
+ * being the newest in front of the reader.
+ */
+export const ItemRow = memo(function ItemRow({ id, nested = false, answer = false, mid = false }: { id: string; nested?: boolean; answer?: boolean; mid?: boolean }) {
   const item = useItem(id);
   const fresh = useFresh(item?.ts) && (!nested || stepEntrance(id));
   const { sessionId } = useTimeline();
@@ -219,6 +223,8 @@ export const ItemRow = memo(function ItemRow({ id, nested = false, answer = fals
       data-t={item.type}
       data-k={item.type === 'tool' ? item.kind : item.type === 'user' && item.until ? 'check' : undefined}
       data-answer={answer || undefined}
+      data-mid={mid || undefined}
+      data-settle={(mid && fresh) || undefined}
       data-fresh={fresh || undefined}
     >
       {body}

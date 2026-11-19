@@ -1,9 +1,9 @@
 import type { TimelineItem } from '@shared/protocol';
 
 /**
- * Turn structure for the conversation: which root items belong to which turn, which text is
- * a segment's answer, and what folds away as the work behind it. Pure and string-driven, so
- * the view recomputes it only when the shape of the timeline changes, never on a streamed word.
+ * Turn structure for the conversation: which root items belong to which turn, how each segment
+ * reads, and what folds away as the work behind it. Pure and string-driven, so the view
+ * recomputes it only when the shape of the timeline changes, never on a streamed word.
  *
  * Each root item is reduced to one character (`shapeOf`):
  *   U  a sent message that starts a turn       Q  a queued message, not taken yet (floats to the end)
@@ -14,39 +14,47 @@ import type { TimelineItem } from '@shared/protocol';
  *   k  a task list update: kept in the work, not counted as a step (the dock shows the list)
  *   i  "Interrupted"                            e  an error notice
  *   T  turn end                                 F  turn end with an error
- *   g  a widget (generative UI): never folded, shown with the answer
+ *   g  a widget (generative UI): never folded, shown in its place
  *   Z  an until loop's end line: closes a turn left open (an interrupted one), stands on its own
  *   x  a check of a turn by the other agent: never part of a turn, shown under the turn it checks
  *   .  nothing to show (an empty, finished text)
  */
 
-export type StoryChunk = { kind: 'text'; id: string } | { kind: 'steps'; key: string; ids: string[]; count: number };
+/**
+ * One piece of a segment as it reads, in order:
+ * - `text`: something the agent said (a report along the way, the reply to a steered message, the answer): always in view;
+ * - `show`: command output, a widget or a plan: always in view;
+ * - `steps`: a run of work between them (tool calls, thinking, task updates, notices): folded
+ *   behind the work line, opened all at once by it;
+ * - `line`: where the work line stands (the live line while the agent works, the summary after).
+ */
+export type FlowChunk = { kind: 'text'; id: string } | { kind: 'show'; id: string } | { kind: 'steps'; key: string; ids: string[]; count: number } | { kind: 'line' };
+
+/** The work line's place in a flow (one shared object, so a flow can be searched by identity). */
+export const LINE: FlowChunk = { kind: 'line' };
 
 export interface Segment {
   key: string;
   /** The message that opened this segment (the turn's own message, or one steered into it). */
   lead: string | null;
   steered: boolean;
-  /** Everything folded behind the work line, in order. */
+  /** Everything folded behind the work line, in order (the ids of the `steps` chunks). */
   work: string[];
-  /** The work as a story: intermediate texts, and the runs of steps between them. */
-  story: StoryChunk[];
-  /** Tool calls and thinking in `work`. */
+  /**
+   * The segment as it reads. The line stands before the first run of steps, and at the end while
+   * there is none yet, so it never moves once placed: what the agent says before its first step
+   * sits above it, everything after below it. A steered segment keeps its reply above the line:
+   * there the line waits for the first text.
+   */
+  flow: FlowChunk[];
+  /** Tool calls in `work` (thinking, task updates and notices are not steps). */
   steps: number;
-  /** The last thing said in this segment: shown in full under the work line. */
+  /** The last thing said in this segment: it reads at full strength. */
   answer: string | null;
-  /**
-   * A steered segment's first words, when more followed: the direct reply to the message that
-   * was steered in, kept in view right under it (before the work line).
-   */
+  /** A steered segment's first words, when more followed: the direct reply, at full strength too. */
   reply: string | null;
-  /** Error notices, and notices that are all a segment holds: never folded. */
+  /** Error notices, and notices that are all a segment holds: never folded, after the flow. */
   errors: string[];
-  /**
-   * What shows under the work line, in order: the answer, every widget, and the text that leads
-   * into a widget ("Here is the chart:"). Just `[answer]` when there are no widgets.
-   */
-  shown: string[];
 }
 
 export type TurnState = 'running' | 'done' | 'failed' | 'interrupted';
@@ -105,8 +113,8 @@ export function shapeOf(item: TimelineItem | undefined): string {
 }
 
 const ANSWER = new Set(['t', 'c', 'p']);
-/** What counts as a step in the turn's line: tool calls and plans. A notice is never a step. */
-const STEP = new Set(['w', 'p']);
+/** Always in view, in their place: command output, widgets, plans. */
+const SHOW = new Set(['c', 'g', 'p']);
 
 interface Open {
   ids: string[];
@@ -124,76 +132,71 @@ function buildSegment(seg: Open['segs'][number], index: number, turnKey: string,
       answerAt = i;
       break;
     }
-    // While the segment runs, a text the agent has gone on from is part of the story, in order:
-    // it is the answer only while nothing has come after it.
+    // While the segment runs, a text the agent has gone on from is a report along the way: it is
+    // the answer only while nothing has come after it.
     if (live && seg.chars[i] !== '.' && seg.chars[i] !== 'i' && seg.chars[i] !== 'e') break;
   }
-  // A failed segment answers with its error card; its last text becomes part of the story.
+  // A failed segment answers with its error card; its last text is one more report.
   if (failed) answerAt = -1;
   // Nothing but notices (a /compact, a model change on its own): they are the turn, so they show.
   const lone = !seg.chars.some((c) => c !== 'n' && c !== '.' && c !== 'i' && c !== 'e');
   let replyAt = -1;
   if (seg.steered) {
-    const first = seg.chars.findIndex((c) => c === 't');
+    const first = seg.chars.indexOf('t');
     if (first >= 0 && first !== answerAt) replyAt = first;
   }
-  // Widgets are never folded away, and neither is the text that leads into one.
-  const shownAt = new Set<number>();
-  if (answerAt >= 0) shownAt.add(answerAt);
-  for (let i = 0; i < seg.chars.length; i++) {
-    if (seg.chars[i] !== 'g') continue;
-    shownAt.add(i);
-    let j = i - 1;
-    while (j >= 0 && seg.chars[j] === '.') j--;
-    if (j >= 0 && seg.chars[j] === 't' && j !== replyAt) shownAt.add(j);
-  }
-  const shown: string[] = [];
+  const flow: FlowChunk[] = [];
   const work: string[] = [];
-  const story: StoryChunk[] = [];
   let steps = 0;
+  let lined = false;
+  // A steered segment's line waits for the reply: the question, its answer, then the work.
+  let ready = !seg.steered;
   let run: string[] = [];
   let runCount = 0;
   const flush = () => {
-    if (run.length) story.push({ kind: 'steps', key: run[0], ids: run, count: runCount });
+    if (!run.length) return;
+    if (!lined && ready) {
+      flow.push(LINE);
+      lined = true;
+    }
+    flow.push({ kind: 'steps', key: run[0], ids: run, count: runCount });
     run = [];
     runCount = 0;
   };
   for (let i = 0; i < seg.chars.length; i++) {
     const ch = seg.chars[i];
     const id = seg.ids[i];
-    if (i === replyAt || ch === '.' || ch === 'i') continue;
-    if (shownAt.has(i)) {
-      shown.push(id);
-      continue;
-    }
+    if (ch === '.' || ch === 'i') continue;
     if (ch === 'e' || (lone && ch === 'n')) {
       errors.push(id);
       continue;
     }
-    work.push(id);
-    if (ch === 't' || ch === 'c') {
+    if (ch === 't' || SHOW.has(ch)) {
       flush();
-      story.push({ kind: 'text', id });
+      flow.push({ kind: ch === 't' ? 'text' : 'show', id });
+      if (ch === 't') ready = true;
       continue;
     }
+    work.push(id);
     run.push(id);
-    if (STEP.has(ch)) {
+    if (ch === 'w') {
       steps++;
       runCount++;
     }
   }
   flush();
+  // No run after the place the line waits for (yet): it stands at the end.
+  if (!lined && (live || work.length)) flow.push(LINE);
   return {
     key: seg.lead ?? `${turnKey}:${index}`,
     lead: seg.lead,
     steered: seg.steered,
     work,
-    story,
+    flow,
     steps,
     answer: answerAt >= 0 ? seg.ids[answerAt] : null,
     reply: replyAt >= 0 ? seg.ids[replyAt] : null,
     errors,
-    shown,
   };
 }
 

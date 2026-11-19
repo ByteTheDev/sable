@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TimelineItem } from '@shared/protocol';
-import { groupTurns, shapeOf, type TurnGroup } from '@/features/timeline/turns';
+import { groupTurns, shapeOf, type FlowChunk, type TurnGroup } from '@/features/timeline/turns';
 
 /** Builds ids and a shape string from a compact spec: "U1 w2 t3 T4" (shape char + id). */
 function spec(s: string) {
@@ -12,6 +12,9 @@ const turns = (s: string, busy = false) => {
   const { ids, shape } = spec(s);
   return groupTurns(ids, shape, busy);
 };
+
+/** A flow in short: text and shown pieces by id, runs of steps as `[ids]`, the line as `|`. */
+const flowOf = (flow: FlowChunk[]) => flow.map((c) => (c.kind === 'line' ? '|' : c.kind === 'steps' ? `[${c.ids.join(' ')}]` : c.kind === 'show' ? `*${c.id}` : c.id)).join(' ');
 
 const onlyTurn = (s: string, busy = false) => {
   const { groups } = turns(s, busy);
@@ -46,7 +49,7 @@ describe('shapeOf', () => {
 });
 
 describe('groupTurns', () => {
-  it('shows the last text as the answer and folds the rest into a story', () => {
+  it('keeps every text in view, in order, and folds the steps between them behind one line', () => {
     const t = onlyTurn('U1 w2 t3 w4 w5 w6 t7 w8 t9 T10');
     expect(t.state).toBe('done');
     expect(t.end).toBe('10');
@@ -54,16 +57,33 @@ describe('groupTurns', () => {
     const s = t.segments[0];
     expect(s.lead).toBe('1');
     expect(s.answer).toBe('9');
-    expect(s.work).toEqual(['2', '3', '4', '5', '6', '7', '8']);
+    expect(s.work).toEqual(['2', '4', '5', '6', '8']);
     expect(s.steps).toBe(5);
-    expect(s.story).toEqual([
+    expect(s.flow).toEqual([
+      { kind: 'line' },
       { kind: 'steps', key: '2', ids: ['2'], count: 1 },
       { kind: 'text', id: '3' },
       { kind: 'steps', key: '4', ids: ['4', '5', '6'], count: 3 },
       { kind: 'text', id: '7' },
       { kind: 'steps', key: '8', ids: ['8'], count: 1 },
+      { kind: 'text', id: '9' },
     ]);
     expect(t.ids).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']);
+  });
+
+  it('puts the line before the first run of steps, so it never moves as the turn goes on', () => {
+    const steps = ['U1', 'U1 t2', 'U1 t2 h3', 'U1 t2 h3 w4', 'U1 t2 h3 w4 t5', 'U1 t2 h3 w4 t5 w6', 'U1 t2 h3 w4 t5 w6 t7'];
+    expect(steps.map((s) => flowOf(onlyTurn(s, true).segments[0].flow))).toEqual(['|', '2 |', '2 | [3]', '2 | [3 4]', '2 | [3 4] 5', '2 | [3 4] 5 [6]', '2 | [3 4] 5 [6] 7']);
+    // Settled the same way; with no work at all there is no line.
+    expect(flowOf(onlyTurn('U1 t2 h3 w4 t5 w6 t7 T8').segments[0].flow)).toBe('2 | [3 4] 5 [6] 7');
+    expect(flowOf(onlyTurn('U1 t2 T3').segments[0].flow)).toBe('2');
+  });
+
+  it('keeps widgets and plans in view in their place, not as steps', () => {
+    const s = onlyTurn('U1 w2 p3 w4 g5 t6 T7').segments[0];
+    expect(flowOf(s.flow)).toBe('| [2] *3 [4] *5 6');
+    expect(s.steps).toBe(2);
+    expect(s.work).toEqual(['2', '4']);
   });
 
   it('starts a segment for every steered message, each with its own answer', () => {
@@ -72,13 +92,23 @@ describe('groupTurns', () => {
       ['1', false, null, '3', ['2']],
       ['4', true, '5', '8', ['6', '7']],
     ]);
+    // The question, the reply, then the line for the work that went on.
+    expect(flowOf(t.segments[1].flow)).toBe('5 | [6 7] 8');
   });
 
-  it('keeps the direct reply to a steered question in view', () => {
+  it('keeps the direct reply to a steered question above the line', () => {
     const t = onlyTurn('U1 w2 S3 w4 t5 w6 t7 t8 T9');
-    expect(t.segments[1]).toMatchObject({ reply: '5', answer: '8', work: ['4', '6', '7'] });
+    expect(t.segments[1]).toMatchObject({ reply: '5', answer: '8', work: ['4', '6'] });
+    // Steps taken before the reply fold above it; the line waits for the reply.
+    expect(flowOf(t.segments[1].flow)).toBe('[4] 5 | [6] 7 8');
     // A reply that is also the last word is the answer, shown once.
     expect(onlyTurn('U1 w2 S3 t4 T5').segments[1]).toMatchObject({ reply: null, answer: '4', work: [] });
+    expect(flowOf(onlyTurn('U1 w2 S3 t4 T5').segments[1].flow)).toBe('4');
+  });
+
+  it('holds the line of a live steered segment at the end until the reply has come', () => {
+    const flows = ['U1 w2 S3', 'U1 w2 S3 w4', 'U1 w2 S3 w4 t5', 'U1 w2 S3 w4 t5 w6', 'U1 w2 S3 w4 t5 w6 t7'].map((s) => flowOf(onlyTurn(s, true).segments[1].flow));
+    expect(flows).toEqual(['|', '[4] |', '[4] 5 |', '[4] 5 | [6]', '[4] 5 | [6] 7']);
   });
 
   it('keeps a steered message that is not answered yet as its own live segment', () => {
@@ -87,6 +117,7 @@ describe('groupTurns', () => {
     expect(t.segments).toHaveLength(2);
     expect(t.segments[0].answer).toBeNull();
     expect(t.segments[1]).toMatchObject({ lead: '4', steered: true, answer: null, work: [], steps: 0 });
+    expect(flowOf(t.segments[1].flow)).toBe('|');
   });
 
   it('treats a steered message outside a turn as an ordinary one', () => {
@@ -98,8 +129,8 @@ describe('groupTurns', () => {
     const t = onlyTurn('U1 w2 t3 w4', true);
     expect(t.state).toBe('running');
     expect(t.segments[0].answer).toBeNull();
-    expect(t.segments[0].work).toEqual(['2', '3', '4']);
-    expect(t.segments[0].story.map((c) => c.kind)).toEqual(['steps', 'text', 'steps']);
+    expect(t.segments[0].work).toEqual(['2', '4']);
+    expect(flowOf(t.segments[0].flow)).toBe('| [2] 3 [4]');
     const writing = onlyTurn('U1 w2 t3 w4 t5', true);
     expect(writing.segments[0].answer).toBe('5');
     // Settled, the last text is the answer again, wherever it stands.
@@ -114,10 +145,11 @@ describe('groupTurns', () => {
     expect(onlyTurn('U1 w2 n3 t4 T5').segments[0].work).toEqual(['2', '3']);
   });
 
-  it('does not count thinking as a step', () => {
+  it('does not count thinking as a step, and never shows it outside the steps', () => {
     const t = onlyTurn('U1 h2 g3 t4 T5');
     expect(t.segments[0].steps).toBe(0);
     expect(t.segments[0].work).toEqual(['2']);
+    expect(flowOf(t.segments[0].flow)).toBe('| [2] *3 4');
   });
 
   it('does not count task list updates as steps', () => {
@@ -162,7 +194,8 @@ describe('groupTurns', () => {
     const t = onlyTurn('U1 w2 t3 F4');
     expect(t.state).toBe('failed');
     expect(t.segments[0].answer).toBeNull();
-    expect(t.segments[0].work).toEqual(['2', '3']);
+    expect(t.segments[0].work).toEqual(['2']);
+    expect(flowOf(t.segments[0].flow)).toBe('| [2] 3');
   });
 
   it('keeps error notices out of the fold', () => {
@@ -185,7 +218,8 @@ describe('groupTurns', () => {
     const ts = groups.slice(1) as TurnGroup[];
     expect(ts.map((t) => t.state)).toEqual(['done', 'done', 'done']);
     expect(ts.map((t) => t.segments[0].answer)).toEqual(['3', '7', '9']);
-    expect(ts[1].segments[0].work).toEqual(['5', '6']);
+    expect(ts[1].segments[0].work).toEqual(['6']);
+    expect(flowOf(ts[1].segments[0].flow)).toBe('5 | [6] 7');
   });
 
   it('marks only the open turn at the end as running', () => {
@@ -216,6 +250,7 @@ describe('groupTurns', () => {
     const s = onlyTurn('U1 t2 w3 .4 T5').segments[0];
     expect(s.answer).toBe('2');
     expect(s.work).toEqual(['3']);
+    expect(flowOf(s.flow)).toBe('2 | [3]');
   });
 
   it('handles a turn with no answer at all', () => {

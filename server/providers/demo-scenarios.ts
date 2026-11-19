@@ -1707,6 +1707,48 @@ const turnCheck: Scenario = async ({ s, prompt }) => {
   s.finish({});
 };
 
+// ─────────────── progress: short reports between steps, a steer answered on the way ───────────────
+
+const ADMIN_TS_AFTER = C.ADMIN_TS.replace("import type { SessionStore } from './session';", "import type { SessionStore } from './session';\nimport { HttpError } from './errors';").replace(
+  "      return res.status(403).json({ message: 'Forbidden' });",
+  "      throw new HttpError(403, 'forbidden');",
+);
+
+/**
+ * A working turn that says what it is doing now and then: a short report between runs of steps
+ * (thinking, reads, an edit, the tests, a type check), then the answer. Long enough to steer into:
+ * a message sent while it works is answered at the next step, and the work goes on.
+ */
+const progress: Scenario = async ({ s }) => {
+  await s.think(
+    'Every error should leave through `errorHandler` as `{ error: code }`. First I will find each place that writes an error body by hand, then read the handler and those routes.',
+  );
+  await s.grep('res\\.status\\(\\d+\\)\\.json', C.grep(/res\.status\(\d+\)\.json/));
+  await s.readMany([
+    { rel: 'src/server/errors.ts', content: C.ERRORS_TS },
+    { rel: 'src/server/admin.ts', content: C.ADMIN_TS },
+  ]);
+  await s.pause(1800, 2400);
+  await s.say("Found it: the admin guard answers `{ message: 'Forbidden' }`, a body no client can branch on. I'll send it through `HttpError` like every other route.");
+  await s.read('src/auth/middleware.ts', C.MIDDLEWARE_TS);
+  await s.read('src/server/routes.ts', C.ROUTES_TS);
+  await s.pause(1500, 2000);
+  await s.think('The middleware already throws `HttpError` for missing and expired sessions, so the admin guard is the odd one out. A throw from an async handler reaches `errorHandler` through Express 5, which this project runs.');
+  await s.edit('src/server/admin.ts', C.ADMIN_TS, ADMIN_TS_AFTER, { description: 'Throw HttpError(403) instead of writing the body by hand' });
+  await s.pause(1500, 2000);
+  await s.bash('npm test', { description: 'Run the test suite', lines: vitestPass(s.cwd, BASE_TEST_FILES), activity: 'Running the test suite' });
+  await s.say('The admin guard now answers like the rest, and the suite passes. Checking the webhook path next, since it builds its own errors too.');
+  await s.read('src/server/webhooks.ts', C.WEBHOOKS_TS);
+  await s.grep('HttpError', C.grep(/HttpError/));
+  await s.pause(1500, 2000);
+  await s.bash('npx tsc --noEmit', { description: 'Type-check the project', lines: [['', 3000]], activity: 'Type-checking' });
+  await s.pause(800, 1200);
+  await s.say(
+    "Done. The admin guard was the only route writing its own error body: it now throws `HttpError(403, 'forbidden')`, so clients get `{ error: 'forbidden' }` like everywhere else. Webhooks already go through `errorHandler`. Tests and the type check pass.",
+  );
+  s.finish({});
+};
+
 // ─────────────────────────────────── selection ──────────────────────────────────
 
 export const SCENARIOS = {
@@ -1725,6 +1767,7 @@ export const SCENARIOS = {
   long,
   marathon,
   tome,
+  progress,
   greeting,
   command,
   chart: W.chart,
@@ -1770,6 +1813,8 @@ const KEYWORDS: [RegExp, ScenarioId][] = [
   [/\btables?\b/i, 'table'],
   [/\b(widgets?|explainer|simulation)\b/i, 'fence'],
   [/\bmarathon\b/i, 'marathon'],
+  // Short reports between steps, and a turn long enough to steer into.
+  [/\b(progress|reports?)\b/i, 'progress'],
   [/\btome\b/i, 'tome'],
   [/\b(long|stress)\b/i, 'long'],
   [/\b(markdown|showcase)\b/i, 'markdown'],

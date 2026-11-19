@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TimelineItem, ToolItem } from '@shared/protocol';
 import { steadyTail } from '@/features/timeline/smooth';
 import { changesOf } from '@/features/timeline/changes';
+import { thinkingHeadline } from '@/features/timeline/util';
 
 describe('steadyTail', () => {
   it('holds a last line that is only a marker', () => {
@@ -38,5 +39,14 @@ describe('changesOf', () => {
     };
     expect(changesOf(items, { e: ['f'] }, ['a', 'b', 'c', 'd', 'e', 'g'])).toEqual({ files: 3, add: 16, del: 5 });
     expect(changesOf(items, {}, ['g'])).toEqual({ files: 0, add: 0, del: 0 });
+  });
+});
+
+describe('thinkingHeadline', () => {
+  it('names what a reasoning summary is about by its newest heading', () => {
+    expect(thinkingHeadline('**Inspecting the session store**\n\nI am reading the store.')).toBe('Inspecting the session store');
+    expect(thinkingHeadline('**Reading the store**\n\nFirst part.\n\n**Planning the fix**\n\nSecond part.')).toBe('Planning the fix');
+    expect(thinkingHeadline('**Writing a heading')).toBe('');
+    expect(thinkingHeadline('Plain thinking with **bold** inside a sentence.')).toBe('');
   });
 });
