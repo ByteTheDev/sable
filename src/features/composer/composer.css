@@ -1679,6 +1679,13 @@
   text-align: center;
 }
 
+/* A message kept from a Spare wait: goes out only by hand. */
+.cq-n[data-hand] {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
 .cq-text {
   flex: 1;
   min-width: 0;

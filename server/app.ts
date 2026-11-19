@@ -43,7 +43,7 @@ import { profileOf } from './services/profile';
 import { parseUntil, runCheck, UntilLoops } from './core/until';
 import { Lanes } from './core/lanes';
 import { isAllModelsWeekly } from './core/limit-policy';
-import { planWeight, SpareWaits, type SpareAccount } from './core/spare';
+import { effectiveModel, planWeight, SpareWaits, type SpareAccount, type SpareRun } from './core/spare';
 import { VERSION } from './version';
 
 type Handler<M extends RpcName> = (params: RpcMethods[M]['params']) => Promise<RpcMethods[M]['result']> | RpcMethods[M]['result'];
@@ -148,12 +148,18 @@ export class App {
     sessions: () => this.sessions.values(),
     hydrate: (rt) => this.hydrate(rt),
     busy: (rt) => rt.turnActive || this.opening.has(rt.id) || this.delivering.has(rt.id),
+    model: (rt) => effectiveModel(rt.meta.model, (rt.caps ?? this.cache.get<Capabilities>(capsCacheKey(rt.meta.provider, rt.meta.accountId ?? DEFAULT_ACCOUNT, rt.meta.cwd)))?.models, this.store.state.settings.defaultModels[rt.meta.provider]),
     accounts: (provider) => this.spareAccounts(provider),
     refresh: async (provider, accountId) => {
+      const key = accountKey(provider, accountId);
+      const seq = this.limitsSeq.get(key) ?? 0;
       await this.call('provider.limits', { provider, accountId, force: true });
+      // Only the agent's own reading counts: a failed read hands back the last known rows.
+      return (this.limitsSeq.get(key) ?? 0) > seq;
     },
+    refused: (rt) => this.refusedMessage(rt)?.id,
     start: (rt, accountId, wait) => this.startSpare(rt, accountId, wait),
-    send: (rt, q) => this.deliver(rt, q.text, q.attachments),
+    send: (rt, id) => this.sendHeld(rt, id),
     stop: async (rt, line) => {
       rt.stopRequested = true;
       await rt.handle?.interrupt();
@@ -841,9 +847,10 @@ export class App {
   /**
    * A turn was refused at a plan limit: the notice learns which account, when the window resets and
    * which account could carry on. With "Continue with the next account at a limit" on, the session
-   * moves there and the refused message goes out again (once per message and account).
+   * moves there and the refused message goes out again (once per message and account). A turn
+   * Spare started (`spare`) never moves: it waits again instead (`SpareWaits.limitHit`).
    */
-  private async onLimitHit(rt: SessionRuntime, notice: NoticeItem) {
+  private async onLimitHit(rt: SessionRuntime, notice: NoticeItem, spare = false) {
     const provider = rt.meta.provider;
     const accountId = rt.meta.accountId ?? DEFAULT_ACCOUNT;
     const known = await this.knownLimits(provider);
@@ -853,6 +860,7 @@ export class App {
     const next = await this.nextAccount(provider, accountId, rt.meta.model).catch(() => undefined);
     const limit = { ...notice.limit, provider, accountId, resetsAt: notice.limit?.resetsAt ?? full?.resetsAt, window: notice.limit?.window ?? full?.label, ...(next ? { next } : {}) };
     rt.patch<NoticeItem>(notice.id, { limit });
+    if (spare) return;
     // A refused turn was not carried by credits, so only the next account or the notice remain.
     const settings = this.store.state.settings;
     if (decideAtLimit({ creditsAllowed: false, creditsAvailable: false, continueAtLimit: !!settings.continueAtLimit, next }) !== 'next' || !next || rt.turnActive) return;
@@ -949,34 +957,45 @@ export class App {
 
   /**
    * Starts a chat that waited. Spare: on the account the planner chose (the session moves there
-   * first, with one line), its first held message goes out. Reset: the refused turn carries on.
+   * first, with one line), the first thing it holds goes out (a refused spare turn carries on, else
+   * its first held message). Reset: the refused turn carries on, on the account that reset. Nothing
+   * to start: nothing moves.
    */
   private async startSpare(rt: SessionRuntime, accountId: string, wait: SpareWait) {
     const from = rt.meta.accountId ?? DEFAULT_ACCOUNT;
     if (wait.reason === 'reset') {
-      // Moved meanwhile: back to the account that reset, with the refused message.
-      if (from !== accountId) {
-        await this.switchAccount(rt, accountId, { retry: true });
-        return;
-      }
-      await this.resumeAtReset(rt);
+      // Moved to another account meanwhile (by hand): the reset is not this chat's any more.
+      if (from !== accountId) return;
+      await this.resumeRefused(rt, 'reset');
       return;
     }
-    if (from !== accountId) await this.switchAccount(rt, accountId, { line: `Started with ${this.accountLabel(rt.meta.provider, accountId)}` });
-    const id = wait.held?.find((h) => rt.queue.some((q) => q.id === h));
-    const q = id ? rt.takeQueued(id) : undefined;
+    const id = this.spare.pending(rt)[0];
+    if (!id) return;
+    const moved = from !== accountId ? await this.switchAccount(rt, accountId, { line: `Started with ${this.accountLabel(rt.meta.provider, accountId)}` }) : undefined;
+    await this.sendHeld(rt, id, moved?.carried);
+  }
+
+  /** A held entry goes out: the refused turn carries on (its id), or a queued message as an ordinary send. */
+  private async sendHeld(rt: SessionRuntime, id: string, carried?: 'conversation' | 'summary' | 'none') {
+    if (id === this.refusedMessage(rt)?.id) return void (await this.resumeRefused(rt, carried ?? 'reset'));
+    const q = rt.takeQueued(id);
     if (q) await this.deliver(rt, q.text, q.attachments);
   }
 
-  /** The window that refused a turn has reset: the same account carries on (the refused message again, or "carry on"). */
-  private async resumeAtReset(rt: SessionRuntime) {
+  /**
+   * The turn the open limit notice refused carries on with the session's account (the refused message
+   * again, or "carry on" when it got partway). `reset`: on the same account, its window having reset.
+   * Nothing is sent when no limit notice is open any more (carried on by hand meanwhile).
+   */
+  private async resumeRefused(rt: SessionRuntime, carried: 'conversation' | 'summary' | 'none' | 'reset') {
     this.hydrate(rt);
     const accountId = rt.meta.accountId ?? DEFAULT_ACCOUNT;
+    const open = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith && !i.parentId);
+    if (!open) return;
     const refused = this.refusedMessage(rt);
-    const open = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
-    if (open) rt.patch<NoticeItem>(open.id, { limit: { ...open.limit, continuedWith: accountId, atReset: true } });
+    rt.patch<NoticeItem>(open.id, { limit: { ...open.limit, continuedWith: accountId, ...(carried === 'reset' ? { atReset: true } : {}) } });
     const item: UserItem = refused
-      ? this.resumeMessage(rt, refused, 'reset')
+      ? this.resumeMessage(rt, refused, carried)
       : { id: randomUUID(), ts: Date.now(), type: 'user', text: 'The usage limit has reset. Carry on with the task from where it stopped.', state: 'sent' };
     const handle = await this.ensureHandle(rt);
     try {
@@ -987,9 +1006,21 @@ export class App {
     }
   }
 
+  /**
+   * A turn Spare started met a plan limit: it waits again on the same account's reset (a reset turn)
+   * or for spare (a spare turn), never going on with another account by itself.
+   */
+  private spareLimitHit(rt: SessionRuntime, ran: SpareRun, notice: NoticeItem) {
+    const accountId = rt.meta.accountId ?? DEFAULT_ACCOUNT;
+    const now = Date.now();
+    const full = (this.limitsCache.get(accountKey(rt.meta.provider, accountId)) ?? []).filter((l) => l.percent >= 100 && l.resetsAt && l.resetsAt > now);
+    const at = notice.limit?.resetsAt ?? (full.length ? Math.max(...full.map((l) => l.resetsAt!)) : undefined);
+    this.spare.limitHit(rt, ran, { accountId, at });
+  }
+
   /** The message the last limit notice refused: the user message just before it. */
   private refusedMessage(rt: SessionRuntime): UserItem | undefined {
-    const at = rt.items.findLastIndex((i) => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
+    const at = rt.items.findLastIndex((i) => i.type === 'notice' && !!i.limit && !i.limit.continuedWith && !i.parentId);
     if (at < 0) return undefined;
     for (let i = at - 1; i >= 0; i--) {
       const it = rt.items[i];
@@ -1041,7 +1072,7 @@ export class App {
     this.persistSessions();
 
     // A move by a cap says why in its own line; a move at a limit closes the limit's notice.
-    const open = opts.line ? undefined : rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
+    const open = opts.line ? undefined : rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith && !i.parentId);
     if (open) rt.patch<NoticeItem>(open.id, { limit: { ...open.limit, continuedWith: accountId } });
     if (opts.line) rt.notice('info', opts.line, carried === 'summary' ? 'With a summary of the conversation so far' : undefined);
     else if (!open || carried === 'summary') {
@@ -1065,13 +1096,17 @@ export class App {
    */
   private afterTurn(rt: SessionRuntime, error?: string) {
     // A spare turn's end frees its place; waiting chats are looked at again.
-    this.spare.turnEnded(rt);
-    const hit = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.provider);
-    if (hit) void this.onLimitHit(rt, hit).catch((err) => this.log('limit follow-up failed', (err as Error).message));
-    else {
+    const ran = this.spare.turnEnded(rt);
+    const hit = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.provider && !i.parentId);
+    if (hit) {
+      // A turn Spare started waits again at a limit instead of going on with another account.
+      if (ran) this.spareLimitHit(rt, ran, hit);
+      void this.onLimitHit(rt, hit, !!ran).catch((err) => this.log('limit follow-up failed', (err as Error).message));
+    } else {
       // Past its cap now: the session moves before anything else goes out (a queued message waits for it).
       void this.checkCap(rt);
-      if (!error) void this.onCredits(rt).catch((err) => this.log('credits follow-up failed', (err as Error).message));
+      // Spare's own turns never go on with credits or another account (a spare turn on credits is stopped).
+      if (!error && !ran) void this.onCredits(rt).catch((err) => this.log('credits follow-up failed', (err as Error).message));
     }
     // An until loop stopped during the turn says so after it.
     this.until.turnOver(rt);
@@ -1929,7 +1964,14 @@ export class App {
       }
       return this.call('session.snapshot', { sessionId: rt.id });
     });
-    this.register('session.switchAccount', ({ sessionId, accountId, retry }) => this.switchAccount(this.runtime(sessionId), accountId, { retry }));
+    this.register('session.switchAccount', async ({ sessionId, accountId, retry }) => {
+      const rt = this.runtime(sessionId);
+      const from = rt.meta.accountId ?? DEFAULT_ACCOUNT;
+      const result = await this.switchAccount(rt, accountId, { retry });
+      // Moved by hand: a wait for the old account's reset is over.
+      if ((rt.meta.accountId ?? DEFAULT_ACCOUNT) !== from) this.spare.movedByHand(rt);
+      return result;
+    });
     this.register('session.context', async ({ sessionId }) => (await this.runtime(sessionId).handle?.context?.()) ?? null);
     this.register('session.setOptions', async ({ sessionId, options }) => {
       const rt = this.runtime(sessionId);

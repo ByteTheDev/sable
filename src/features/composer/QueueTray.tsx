@@ -2,6 +2,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent,
 import { AnimatePresence, motion, Reorder, useDragControls, useReducedMotion } from 'motion/react';
 import type { QueuedMessage } from '@shared/protocol';
 import { Icon } from '@/icons';
+import { Tip } from '@/ui';
 import { shatter } from './shatter';
 import { landInTray, launchFromTray } from './flight';
 import { removeQueued, reorderQueue, sendQueuedNow } from '@/state/actions';
@@ -246,9 +247,18 @@ function Row({ q, i, count, running, steerable, reduced, onDragStart, onDragEnd,
       onKeyDown={onKey}
       onDoubleClick={(e) => !(e.target as HTMLElement).closest('button') && onEdit()}
     >
-      <span className="cq-n num" aria-hidden>
-        {i + 1}
-      </span>
+      {/* Kept from a Spare wait: it goes out only when sent by hand, not when the turn ends. */}
+      {q.byHand ? (
+        <Tip label="Goes out when you send it" side="top">
+          <span className="cq-n" data-hand>
+            <Icon name="hand" size={12} />
+          </span>
+        </Tip>
+      ) : (
+        <span className="cq-n num" aria-hidden>
+          {i + 1}
+        </span>
+      )}
       <span className="cq-text truncate">{text || ' '}</span>
       {atts > 0 && (
         <span className="cq-att" aria-hidden>

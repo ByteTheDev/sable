@@ -440,7 +440,7 @@ export interface SpareWait {
   at?: number;
   /** reset: the account it continues on. spare: the account it is expected to start on at `at`. */
   accountId?: string;
-  /** Queued messages (`QueuedMessage` ids) held back until it starts, in the order sent; the first goes out when it starts. */
+  /** Queued messages (`QueuedMessage` ids) held back, in the order sent: each goes out only when the planner starts it (or by hand); after a spare turn met a limit, its refused message is first. */
   held?: string[];
 }
 
@@ -1576,6 +1576,8 @@ export interface QueuedMessage {
   text: string;
   attachments?: Attachment[];
   createdAt: number;
+  /** Kept from a Spare wait that was cancelled or could not start: it goes out only when sent by hand, never at a turn's end. */
+  byHand?: boolean;
 }
 
 export interface RpcMethods {

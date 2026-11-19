@@ -11,9 +11,14 @@
  * `planSpare` decides (pure, tested); `SpareWaits` keeps one timer to the next moment worth looking
  * again while something waits, re-plans when limits, caps or turns change, reads an account's limits
  * once more before a turn starts on it, and does nothing at all while nothing waits.
+ *
+ * Nothing goes out without the planner's go or a click: each held message starts only when the
+ * planner starts it (or by Start now, which starts the first and leaves the rest held), a spare turn
+ * that meets a limit waits again instead of going on with another account, and what a cancelled or
+ * failed wait held stays in the queue to go out only by hand (`byHand` on the queued message).
  */
-import { DEFAULT_ACCOUNT, type AccountCap, type Attachment, type AuthState, type LimitPace, type NoticeItem, type ProviderId, type QueuedMessage, type RateLimit, type SpareWait } from '../../shared/protocol';
-import { capPercent, capReached, isAllModelsWeekly, isSessionWindow, windowForModel } from './limit-policy';
+import { DEFAULT_ACCOUNT, type AccountCap, type Attachment, type AuthState, type LimitPace, type ModelInfo, type NoticeItem, type ProviderId, type QueuedMessage, type RateLimit, type SpareWait } from '../../shared/protocol';
+import { capPercent, capReached, isAllModelsWeekly, isSessionWindow, windowForModel, windowModel } from './limit-policy';
 import type { SessionRuntime } from './runtime';
 
 /** Spare turns that may run at once (the laptop). */
@@ -28,7 +33,41 @@ export const SPARE_RECHECK_MS = 30 * 60_000;
 const MIN_WAKE_MS = 60_000;
 /** An account's limits are read again before a start at most this often. */
 const REFRESH_GAP_MS = 60_000;
+/** A start needs a reading of the account this recent; older rows (or a failed read) wait for another round. */
+export const SPARE_FRESH_MS = 15 * 60_000;
+/** After a start held back for want of a fresh reading, the planner looks again this soon. */
+export const SPARE_STALE_RETRY_MS = 5 * 60_000;
 const HOUR = 3_600_000;
+
+/**
+ * A queued message a wait let go of (Cancel, a start that failed): it stays in the queue and goes
+ * out only by hand, never at a turn's end. Kept on the message, so it survives a restart with the queue.
+ */
+export type KeptMessage = QueuedMessage;
+
+// ───────────────────────────────── the model ─────────────────────────────────
+
+/**
+ * The model a chat's turns run on, as per-model windows ("Weekly · Fable") name it: the session's
+ * own; for none or the agent's `default` alias, the model the alias stands for ("Default" described
+ * as "Opus 5.5 · …"), else the agent's default from settings, else its listed default. Undefined
+ * when that cannot be told: then every per-model window counts for it.
+ */
+export function effectiveModel(model: string | undefined, models: ModelInfo[] | undefined, fallback?: string): string | undefined {
+  const named = (id: string | undefined) => (id?.trim() && id.trim() !== 'default' ? id.trim() : undefined);
+  const own = named(model);
+  if (own) return own;
+  const alias = models?.find((m) => m.id === 'default');
+  const head = alias?.description?.split(/\s+·\s+/)[0]?.trim();
+  if (head && head.length <= 40 && /\d/.test(head) && /^[A-Za-z][\w-]*(?:[ -][\w.-]*\w){0,2}$/.test(head)) return head;
+  return named(fallback) ?? named(models?.find((m) => m.isDefault)?.id);
+}
+
+/** A window counts for a turn of `model`: windows every model shares always, a per-model one for its model (any, when the model is not known). */
+const forModel = (l: RateLimit, model: string | undefined) => !windowModel(l) || model === undefined || windowForModel(l, model);
+
+/** A per-model window over a week ("Weekly · Fable"), not a 5-hour one. */
+const modelWeekly = (l: RateLimit) => !!windowModel(l) && !isSessionWindow(l) && !l.id.startsWith('five_hour') && (l.windowMins === undefined || l.windowMins >= 10_080);
 
 // ───────────────────────────────── plan weights ─────────────────────────────────
 
@@ -99,8 +138,10 @@ function projected(l: RateLimit, p: LimitPace | undefined, now: number): number 
 }
 
 /**
- * What an account can give a spare turn of `model`; undefined when it cannot this week (signed out,
- * no plan limits, no weekly figure or pace, too little projected to go unused, at its weekly cap, on credits).
+ * What an account can give a spare turn of `model` (`effectiveModel`; undefined: every per-model
+ * window counts); undefined when it cannot this week (signed out, no plan limits, no weekly figure or
+ * pace, too little projected to go unused in the week or in the model's own week, at its weekly cap,
+ * on credits).
  */
 export function spareRoom(a: SpareAccount, now: number, model?: string, floor = SPARE_FLOOR): SpareRoom | undefined {
   if (!a.signedIn || a.planLimits === false || a.onCredits) return undefined;
@@ -111,14 +152,22 @@ export function spareRoom(a: SpareAccount, now: number, model?: string, floor = 
   if (end === undefined) return undefined;
   const ceiling = capPercent(a.cap?.weekly);
   if (week.percent >= ceiling) return undefined;
-  const unused = Math.round((ceiling - Math.max(end, week.percent)) * 10) / 10;
+  let unused = Math.round((ceiling - Math.max(end, week.percent)) * 10) / 10;
   if (unused < floor) return undefined;
   if (capReached(a.limits, a.cap, model, now)?.kind === 'weekly') return undefined;
+  // The model's own week ("Weekly · Fable") must have as much to spare (a full one holds it below,
+  // until its reset); without a pace, what is left of it now.
+  for (const l of windows) {
+    if (!modelWeekly(l) || l.percent >= 100 || !forModel(l, model)) continue;
+    const left = Math.round((100 - Math.max(projected(l, a.pace?.[l.id], now) ?? l.percent, l.percent)) * 10) / 10;
+    if (left < floor) return undefined;
+    unused = Math.min(unused, left);
+  }
   const score = (unused * (a.weight ?? 1)) / Math.max(1, (week.resetsAt - now) / HOUR);
 
   // Windows that hold it for now, each until its reset.
   const holds: (number | undefined)[] = [];
-  for (const l of windows) if (l.percent >= 100 && windowForModel(l, model)) holds.push(l.resetsAt);
+  for (const l of windows) if (l.percent >= 100 && forModel(l, model)) holds.push(l.resetsAt);
   const five = windows.find(isSessionWindow);
   if (five && five.percent >= Math.min(SPARE_SESSION_CEILING, capPercent(a.cap?.session))) holds.push(five.resetsAt);
   if (!holds.length) return { ok: true, unused, score };
@@ -126,15 +175,16 @@ export function spareRoom(a: SpareAccount, now: number, model?: string, floor = 
   return { ok: false, unused, score, ...(known ? { until: Math.max(...(holds as number[])) } : {}) };
 }
 
-/** The latest reset among the account's windows that are still full for `model`; undefined when none is. */
+/** The latest reset among the account's windows that are still full for `model` (unknown: any model); undefined when none is. */
 export function stillFull(limits: RateLimit[], now: number, model?: string): number | undefined {
-  const full = live(limits, now).filter((l) => l.percent >= 100 && windowForModel(l, model) && l.resetsAt);
+  const full = live(limits, now).filter((l) => l.percent >= 100 && forModel(l, model) && l.resetsAt);
   return full.length ? Math.max(...full.map((l) => l.resetsAt!)) : undefined;
 }
 
 export interface SpareItem {
   sessionId: string;
   provider: ProviderId;
+  /** The model its turns run on (`effectiveModel`); undefined when not known (every per-model window counts). */
   model?: string;
   wait: SpareWait;
   /** Its session is working or starting: nothing starts there now. */
@@ -232,6 +282,14 @@ export function planSpare(input: SpareInput): SparePlan {
 
 // ───────────────────────────────── the waits ─────────────────────────────────
 
+/** A turn Spare started: why, and since when its chat waited (its place in line when it waits again). */
+export interface SpareRun {
+  reason: SpareWait['reason'];
+  since: number;
+  /** Being stopped (its account went onto credits). */
+  stopping?: boolean;
+}
+
 export interface SpareHost {
   now?: () => number;
   sessions: () => Iterable<SessionRuntime>;
@@ -239,31 +297,57 @@ export interface SpareHost {
   hydrate: (rt: SessionRuntime) => void;
   /** The session is working, starting or sending. */
   busy: (rt: SessionRuntime) => boolean;
+  /** The model its turns run on (`effectiveModel`); undefined when that cannot be told. */
+  model: (rt: SessionRuntime) => string | undefined;
   accounts: (provider: ProviderId) => Promise<SpareAccount[]>;
-  /** Reads the account's limits again (no tokens). */
-  refresh: (provider: ProviderId, accountId: string) => Promise<void>;
-  /** Starts what waits: moves the session to `accountId` when needed, then sends its first held message (spare) or carries on with the refused turn (reset). */
+  /** Reads the account's limits again (no tokens). True when the agent gave a new reading (a failed read hands back the last known rows). */
+  refresh: (provider: ProviderId, accountId: string) => Promise<boolean>;
+  /** The user message the chat's open limit notice refused or cut off, when one is open. */
+  refused: (rt: SessionRuntime) => string | undefined;
+  /**
+   * Starts what waits. Spare: moves the session to `accountId` when needed, then sends the first
+   * thing it holds (a refused spare turn carries on, else its first held message). Reset: carries
+   * on with the refused turn on its account; never moves the session.
+   */
   start: (rt: SessionRuntime, accountId: string, wait: SpareWait) => Promise<void>;
-  /** Sends a held message now, as an ordinary send. */
-  send: (rt: SessionRuntime, q: QueuedMessage) => Promise<void>;
+  /** Start now (the person's click): the held entry `id` goes out on the session's account as their own send. */
+  send: (rt: SessionRuntime, id: string) => Promise<void>;
   /** Stops a spare turn whose account went onto credits. */
   stop: (rt: SessionRuntime, line: string) => Promise<void>;
   accountLabel: (provider: ProviderId, accountId: string) => string;
   log: (...args: unknown[]) => void;
 }
 
+/** Marks queued messages to go out only by hand. */
+function keepByHand(rt: SessionRuntime, ids: string[]) {
+  let first: QueuedMessage | undefined;
+  for (const q of rt.queue as KeptMessage[]) {
+    if (!ids.includes(q.id)) continue;
+    q.byHand = true;
+    first ??= q;
+  }
+  // Saved and shown with the queue (an edit that changes nothing else).
+  if (first) rt.updateQueued(first.id, first.text);
+}
+
 /** The chats waiting to start by themselves, and the one timer that wakes them. */
 export class SpareWaits {
   /** Sessions whose current turn Spare started: they count toward the parallel limit until it ends. */
-  readonly running = new Set<string>();
-  /** Sessions Spare is starting right now (their turn start is Spare's own, not the person's). */
+  readonly running = new Map<string, SpareRun>();
+  /** Sessions Spare is about to start (reading limits, checking again, starting). */
   private starting = new Set<string>();
+  /** Sessions whose start is under way right now: a turn that begins meanwhile is Spare's own. */
+  private launching = new Map<string, SpareRun>();
+  /** Sessions where Spare's start began a turn. */
+  private began = new Set<string>();
   private timer?: NodeJS.Timeout;
   private poker?: NodeJS.Timeout;
   private pokeAt = 0;
   private planning = false;
   private again = false;
   private refreshedAt = new Map<string, number>();
+  /** When each account's limits were last read from its agent (not a cached answer). */
+  private readAt = new Map<string, number>();
   private disposed = false;
 
   constructor(private host: SpareHost) {}
@@ -276,12 +360,29 @@ export class SpareWaits {
     return [...this.host.sessions()].filter((rt) => !!rt.meta.spare);
   }
 
+  private alive(rt: SessionRuntime) {
+    for (const r of this.host.sessions()) if (r === rt) return true;
+    return false;
+  }
+
   hasWaits() {
     for (const rt of this.host.sessions()) if (rt.meta.spare) return true;
     return false;
   }
 
-  /** `/spare`: the message joins the queue, held back until the chat starts by itself. */
+  /**
+   * What the wait still holds, in the order it starts them: a refused spare turn to carry on first,
+   * then its queued messages as the queue orders them.
+   */
+  pending(rt: SessionRuntime): string[] {
+    const held = rt.meta.spare?.held;
+    if (!held?.length) return [];
+    const refused = this.host.refused(rt);
+    const first = refused && held.includes(refused) ? [refused] : [];
+    return [...first, ...rt.queue.filter((q) => held.includes(q.id)).map((q) => q.id)];
+  }
+
+  /** `/spare`: the message joins the queue, held back until the planner starts it. */
   hold(rt: SessionRuntime, text: string, attachments?: Attachment[]): SpareWait {
     this.host.hydrate(rt);
     const q = rt.enqueue(text, attachments);
@@ -295,7 +396,7 @@ export class SpareWaits {
   /** "Continue at reset": the chat's last open limit notice continues on its account at its reset. */
   atReset(rt: SessionRuntime): { ok: boolean; spare?: SpareWait; error?: string } {
     this.host.hydrate(rt);
-    const notice = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
+    const notice = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith && !i.parentId);
     if (!notice) return { ok: false, error: 'There is no limit to wait for' };
     const at = notice.limit!.resetsAt;
     if (!at) return { ok: false, error: 'The reset time is not known yet' };
@@ -306,37 +407,54 @@ export class SpareWaits {
     return { ok: true, spare: wait };
   }
 
-  /** Stops waiting. Held messages stay in the queue, to send, edit or remove by hand. */
+  /** Cancel: the chat stops waiting. What it held stays in the queue to go out only by hand, and one line says so. */
   cancel(rt: SessionRuntime): boolean {
     if (!rt.meta.spare) return false;
-    rt.update({ spare: null });
-    this.poke();
+    this.host.hydrate(rt);
+    this.release(rt);
     return true;
   }
 
-  /** "Start now": the first held message goes out as an ordinary send, and the wait ends. */
+  /**
+   * The chat stops waiting. Its held queued messages stay in the queue but never go out by
+   * themselves; a refused turn it was to carry on stays as its notice shows it. One line says so.
+   */
+  private release(rt: SessionRuntime) {
+    if (!rt.meta.spare) return;
+    const kept = this.pending(rt).filter((id) => rt.queue.some((q) => q.id === id));
+    rt.update({ spare: null });
+    keepByHand(rt, kept);
+    const n = kept.length;
+    rt.notice('info', 'Stopped waiting', n ? (n === 1 ? 'The message stays in the queue until you send it' : `The ${n} messages stay in the queue until you send them`) : undefined);
+    this.poke();
+  }
+
+  /** Start now (the person's click): the first thing it holds goes out on the chat's account; the rest stay held. */
   async startNow(rt: SessionRuntime): Promise<boolean> {
     const wait = rt.meta.spare;
     if (!wait) return false;
     this.host.hydrate(rt);
-    const id = wait.held?.find((h) => rt.queue.some((q) => q.id === h));
-    rt.update({ spare: null });
+    const [first, ...rest] = this.pending(rt);
+    if (!first) return false;
+    if (wait.reason === 'spare' && !rest.length) rt.update({ spare: null });
+    else rt.update({ spare: { ...wait, held: rest } });
     this.poke();
-    const q = id ? rt.takeQueued(id) : undefined;
-    if (q) await this.host.send(rt, q);
-    return !!q;
+    await this.host.send(rt, first);
+    return true;
   }
 
-  /** Queued messages a turn's end must leave where they are. */
+  /** Queued messages a turn's end must leave where they are: held by a wait, or kept to go out by hand. */
   held(rt: SessionRuntime): Set<string> {
-    return new Set(rt.meta.spare?.held ?? []);
+    const out = new Set(rt.meta.spare?.held ?? []);
+    for (const q of rt.queue as KeptMessage[]) if (q.byHand) out.add(q.id);
+    return out;
   }
 
   /** The queue changed by hand (a held message sent, edited or removed): the wait lets go of what left. */
   queueChanged(rt: SessionRuntime) {
     const wait = rt.meta.spare;
     if (!wait?.held?.length) return;
-    const held = wait.held.filter((h) => rt.queue.some((q) => q.id === h));
+    const held = this.pending(rt);
     if (held.length === wait.held.length) return;
     if (wait.reason === 'spare' && !held.length) {
       rt.update({ spare: null });
@@ -345,24 +463,69 @@ export class SpareWaits {
   }
 
   turnStarted(rt: SessionRuntime) {
-    if (this.starting.has(rt.id)) return;
-    // Continued by hand: waiting for the reset is over (held messages go on with the queue).
-    if (rt.meta.spare?.reason === 'reset') {
-      rt.update({ spare: null });
-      this.poke();
+    const ours = this.launching.get(rt.id);
+    if (ours) {
+      this.running.set(rt.id, { ...ours });
+      this.began.add(rt.id);
+      return;
     }
+    // Carried on by hand: a refused turn it was to carry on is the person's now, and waiting for a
+    // reset is over. Its queued messages stay held.
+    const wait = rt.meta.spare;
+    if (!wait) return;
+    const held = (wait.held ?? []).filter((h) => rt.queue.some((q) => q.id === h));
+    if (wait.reason === 'spare' && held.length === (wait.held?.length ?? 0)) return;
+    rt.update({ spare: held.length ? { reason: 'spare', since: wait.since, held } : null });
+    this.poke();
   }
 
-  turnEnded(rt: SessionRuntime) {
-    if (this.running.delete(rt.id) || this.hasWaits()) this.poke(400);
+  /** A turn ended: a spare turn's place frees up, waiting chats are looked at again. Returns the run when Spare had started that turn. */
+  turnEnded(rt: SessionRuntime): SpareRun | undefined {
+    const ran = this.running.get(rt.id);
+    this.running.delete(rt.id);
+    if (ran || this.hasWaits()) this.poke(400);
+    return ran;
   }
 
-  /** An account's limits changed: a spare turn on it that went onto credits stops; waits are planned again. */
+  /**
+   * A turn Spare started met a plan limit. It never goes on with another account by itself: a turn
+   * that continued at a reset waits for the next reset on the same account, a spare turn waits for
+   * spare again (its refused message first), with one line. `at`: when the account can work again.
+   */
+  limitHit(rt: SessionRuntime, ran: SpareRun, hit: { accountId: string; at?: number }) {
+    const held = this.pending(rt).filter((id) => rt.queue.some((q) => q.id === id));
+    const refused = this.host.refused(rt);
+    const since = Math.min(ran.since, rt.meta.spare?.since ?? ran.since);
+    let wait: SpareWait | null;
+    if (ran.reason === 'reset' && hit.at && hit.at > this.now()) {
+      wait = { reason: 'reset', since: this.now(), at: hit.at, accountId: hit.accountId, ...(held.length ? { held } : {}) };
+    } else {
+      const all = refused ? [refused, ...held] : held;
+      wait = all.length ? { reason: 'spare', since, held: all } : null;
+    }
+    rt.update({ spare: wait });
+    if (wait) rt.notice('info', wait.reason === 'reset' ? 'Back to waiting for the reset' : 'Back to waiting for spare');
+    this.poke(400);
+  }
+
+  /** The person moved the chat to another account: a wait for a reset on the old one is over (held messages stay held). */
+  movedByHand(rt: SessionRuntime) {
+    const wait = rt.meta.spare;
+    if (wait?.reason !== 'reset') return;
+    const held = this.pending(rt).filter((id) => rt.queue.some((q) => q.id === id));
+    rt.update({ spare: held.length ? { reason: 'spare', since: wait.since, held } : null });
+    this.poke();
+  }
+
+  /** An account's limits were read from its agent: a spare turn on it that went onto credits stops; waits are planned again. */
   limitsChanged(provider: ProviderId, accountId: string, onCredits: boolean) {
+    this.readAt.set(`${provider}:${accountId}`, this.now());
     if (onCredits) {
       for (const rt of this.host.sessions()) {
-        if (!this.running.has(rt.id) || !rt.turnActive || rt.meta.provider !== provider || (rt.meta.accountId ?? DEFAULT_ACCOUNT) !== accountId) continue;
-        this.running.delete(rt.id);
+        const run = this.running.get(rt.id);
+        if (!run || run.stopping || !rt.turnActive || rt.meta.provider !== provider || (rt.meta.accountId ?? DEFAULT_ACCOUNT) !== accountId) continue;
+        // Still Spare's turn until it ends (it keeps its place, and its end is not followed by a move).
+        run.stopping = true;
         void this.host.stop(rt, `Stopped at the limit of ${this.host.accountLabel(provider, accountId)}`).catch((err) => this.host.log('spare stop failed', (err as Error).message));
       }
     }
@@ -400,11 +563,14 @@ export class SpareWaits {
       if (!waits.length) return this.arm(undefined);
       const plan = await this.plan(waits);
       this.show(waits, plan);
+      let wakeAt = plan.wakeAt;
       for (const s of plan.start) {
         const rt = waits.find((r) => r.id === s.sessionId);
-        if (rt) await this.begin(rt, s);
+        if (!rt) continue;
+        // No fresh reading to start from: look again soon.
+        if ((await this.begin(rt, s)) === 'stale') wakeAt = Math.min(wakeAt ?? Infinity, this.now() + SPARE_STALE_RETRY_MS);
       }
-      this.arm(this.hasWaits() ? (plan.wakeAt ?? this.now() + SPARE_RECHECK_MS) : undefined);
+      this.arm(this.hasWaits() ? (wakeAt ?? this.now() + SPARE_RECHECK_MS) : undefined);
     } catch (err) {
       this.host.log('spare planning failed', (err as Error).message);
       this.arm(this.now() + SPARE_RECHECK_MS);
@@ -417,21 +583,16 @@ export class SpareWaits {
     }
   }
 
-  private items(waits: SessionRuntime[]): SpareItem[] {
-    return waits.map((rt) => ({
-      sessionId: rt.id,
-      provider: rt.meta.provider,
-      model: rt.meta.model || undefined,
-      wait: rt.meta.spare!,
-      busy: this.host.busy(rt) || this.starting.has(rt.id),
-    }));
+  private item(rt: SessionRuntime, busy: boolean): SpareItem {
+    return { sessionId: rt.id, provider: rt.meta.provider, model: this.host.model(rt), wait: rt.meta.spare!, busy };
   }
 
   private async plan(waits: SessionRuntime[]): Promise<SparePlan> {
     const providers = [...new Set(waits.map((rt) => rt.meta.provider))];
     const accounts: Partial<Record<ProviderId, SpareAccount[]>> = {};
     for (const p of providers) accounts[p] = await this.host.accounts(p).catch(() => []);
-    return planSpare({ now: this.now(), accounts, items: this.items(waits), running: this.running.size + this.starting.size });
+    const items = waits.map((rt) => this.item(rt, this.host.busy(rt) || this.starting.has(rt.id)));
+    return planSpare({ now: this.now(), accounts, items, running: this.running.size + this.starting.size });
   }
 
   /** What each chat waits for, as its line says it (only when that changed). */
@@ -451,39 +612,68 @@ export class SpareWaits {
     }
   }
 
-  /** Reads the account's limits once more, checks the start still holds, and starts it. */
-  private async begin(rt: SessionRuntime, s: SpareStart) {
+  /**
+   * Reads the account's limits once more, checks the start still holds on that reading, and starts
+   * it. 'stale': no fresh reading (the read failed, or the rows are older than `SPARE_FRESH_MS`).
+   */
+  private async begin(rt: SessionRuntime, s: SpareStart): Promise<'started' | 'stale' | 'held'> {
     const provider = rt.meta.provider;
+    const key = `${provider}:${s.accountId}`;
     this.starting.add(rt.id);
     try {
-      const key = `${provider}:${s.accountId}`;
+      let failed = false;
       if (this.now() - (this.refreshedAt.get(key) ?? 0) >= REFRESH_GAP_MS) {
         this.refreshedAt.set(key, this.now());
-        await this.host.refresh(provider, s.accountId).catch((err) => this.host.log('spare: limits read failed', (err as Error).message));
+        try {
+          if (await this.host.refresh(provider, s.accountId)) this.readAt.set(key, this.now());
+        } catch (err) {
+          failed = true;
+          this.host.log('spare: limits read failed', (err as Error).message);
+        }
       }
       const wait = rt.meta.spare;
-      if (!wait || this.disposed) return;
+      if (!wait || this.disposed || !this.alive(rt)) return 'held';
+      if (failed || this.now() - (this.readAt.get(key) ?? 0) > SPARE_FRESH_MS) {
+        this.host.log('spare: no fresh limits for', key, 'so nothing starts this round');
+        return 'stale';
+      }
+      // Nothing left to start (sent or removed by hand meanwhile): the wait ends, nothing moves.
+      if (wait.reason === 'spare' && !this.pending(rt).length) {
+        rt.update({ spare: null });
+        return 'held';
+      }
       // The account as just read must still take it (another may lead now: this one is still fine).
       const fresh = (await this.host.accounts(provider).catch(() => [] as SpareAccount[])).filter((a) => a.id === s.accountId);
-      const item: SpareItem = { sessionId: rt.id, provider, model: rt.meta.model || undefined, wait, busy: this.host.busy(rt) };
-      const again = planSpare({ now: this.now(), accounts: { [provider]: fresh }, items: [item], running: this.running.size + this.starting.size - 1 });
+      const again = planSpare({ now: this.now(), accounts: { [provider]: fresh }, items: [this.item(rt, this.host.busy(rt))], running: this.running.size + this.starting.size - 1 });
       if (!again.start.some((x) => x.sessionId === rt.id && x.accountId === s.accountId)) {
         this.show([rt], again);
-        return;
+        return 'held';
       }
-      this.running.add(rt.id);
+      this.launching.set(rt.id, { reason: wait.reason, since: wait.since });
+      let began = false;
       try {
         await this.host.start(rt, s.accountId, wait);
-      } catch (err) {
-        this.running.delete(rt.id);
-        throw err;
+      } finally {
+        this.launching.delete(rt.id);
+        began = this.began.delete(rt.id);
       }
-      // On its way: the chat no longer waits (any other held messages go on with the queue).
-      if (rt.meta.spare) rt.update({ spare: null });
+      // Changed meanwhile (cancelled, sent by hand, or its turn already met a limit and waits again): that stands.
+      if (rt.meta.spare !== wait) return 'started';
+      // It never became a turn (the agent could not start, nothing was left to carry on): the chat
+      // stops waiting, and what it held stays for a click.
+      if (!began) {
+        this.release(rt);
+        return 'held';
+      }
+      // On its way. What it still holds waits for the planner (each one its own start).
+      const held = this.pending(rt).filter((id) => rt.queue.some((q) => q.id === id));
+      rt.update({ spare: held.length ? { reason: 'spare', since: wait.since, held } : null });
+      return 'started';
     } catch (err) {
       this.host.log('spare start failed', (err as Error).message);
       rt.notice('error', 'Could not start the waiting message', (err as Error).message);
-      if (rt.meta.spare) rt.update({ spare: null });
+      this.release(rt);
+      return 'held';
     } finally {
       this.starting.delete(rt.id);
     }
