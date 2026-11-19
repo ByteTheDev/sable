@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { PHONE_PATH, type PhoneFrame, type PhoneStatus, type PhoneTail, type TextItem, type TimelineItem, type ToolItem, type UserItem } from '@shared/protocol';
+import { PHONE_PATH, type Capabilities, type ModelInfo, type NoticeItem, type PhoneFrame, type PhoneStatus, type PhoneTail, type TextItem, type TimelineItem, type ToolItem, type UserItem } from '@shared/protocol';
 import { App, withDefaultOptions } from '../server/app';
 import { DemoProvider } from '../server/providers/demo';
+import { capabilities } from '../server/providers/demo-catalog';
+import type { Provider, ProviderContext } from '../server/providers/types';
 import { registerFs } from '../server/services/fs';
 import { LIMITS, phoneDetail, phoneEvent, phonePage, registerPhone, type PhoneService } from '../server/services/phone';
 import { qrMatrix } from '../server/services/qr';
@@ -19,10 +21,30 @@ afterEach(async () => {
   for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true });
 });
 
-async function setup() {
+/** The Demo under the id "codex" with models of its own: a second agent to switch to, nothing real started. */
+const FAKE_MODELS: ModelInfo[] = [
+  { id: 'gpt-6', name: 'GPT-6', isDefault: true, efforts: ['low', 'medium', 'high'], defaultEffort: 'medium' },
+  { id: 'gpt-6-mini', name: 'GPT-6 Mini', efforts: ['low', 'medium'], defaultEffort: 'low' },
+];
+const fakeCaps = (): Capabilities => ({ ...capabilities(), models: FAKE_MODELS.map((m) => ({ ...m })) });
+function fakeCodex(ctx: ProviderContext): Provider {
+  const p = new DemoProvider(ctx, { speed: 0 });
+  Object.assign(p, { id: 'codex', name: 'Codex' });
+  p.caps = async () => fakeCaps();
+  const open = p.open.bind(p);
+  p.open = async (rt, opts) => {
+    if (!rt.meta.model) rt.update({ model: 'gpt-6' });
+    const s = await open(rt, opts);
+    rt.setCaps(fakeCaps());
+    return s;
+  };
+  return p as unknown as Provider;
+}
+
+async function setup(opts: { codex?: boolean } = {}) {
   const home = mkdtempSync(path.join(tmpdir(), 'sable-phone-'));
   homes.push(home);
-  const app = new App({ home, quiet: true, providers: [(ctx) => new DemoProvider(ctx, { speed: 0 })] });
+  const app = new App({ home, quiet: true, providers: [(ctx) => new DemoProvider(ctx, { speed: 0 }), ...(opts.codex ? [fakeCodex] : [])] });
   apps.push(app);
   registerFs(app);
   const phone = registerPhone(app, { port: 0, host: '127.0.0.1' });
@@ -399,6 +421,47 @@ describe('a new folder from the phone', () => {
     expect(existsSync(path.join(home, '..', 'escape'))).toBe(false);
     // Only for phones.
     await expect(app.call('phone.mkdir' as never, { parent: home, name: 'y' } as never)).rejects.toThrow();
+    c.ws.close();
+  });
+});
+
+describe('switching agents from the phone', () => {
+  it("learns the other agent's models, switches the chat in place and back, and answers /model without sending it", async () => {
+    const { app, port, home } = await setup({ codex: true });
+    const { c } = await pairPhone(app, port);
+    const snap = (await c.call('session.create', { provider: 'demo', cwd: home })) as { result: { session: { id: string } } };
+    const id = snap.result.session.id;
+    await c.call('phone.tail', { sessionId: id });
+    // The other agent's models, for the setup sheet (an existing phone method).
+    const caps = (await c.call('provider.caps', { provider: 'codex', cwd: home })) as { ok: boolean; result: Capabilities };
+    expect(caps.ok).toBe(true);
+    expect(caps.result.models.map((m) => m.id)).toEqual(['gpt-6', 'gpt-6-mini']);
+
+    const r = (await c.call('session.switchAgent', { sessionId: id, provider: 'codex', model: 'gpt-6-mini' })) as { ok: boolean; result: { ok: boolean } };
+    expect(r.ok).toBe(true);
+    const rt = app.sessions.get(id)!;
+    expect(rt.meta.provider).toBe('codex');
+    expect(rt.meta.model).toBe('gpt-6-mini');
+    // The switch line reaches the phone with its mark.
+    const added = (await c.next((f) => 'event' in f && (f.event as { type: string; item?: NoticeItem }).type === 'item.added' && !!(f.event as { item?: NoticeItem }).item?.agentSwitch)) as { event: { item: NoticeItem } };
+    expect(added.event.item.agentSwitch).toEqual({ from: 'demo', to: 'codex' });
+    expect(added.event.item.text).toBe('Switched to Codex');
+
+    // `/model` from the phone: the model changes, nothing is sent or shown.
+    const before = rt.items.length;
+    const m = (await c.call('session.send', { sessionId: id, text: '/model gpt-6' })) as { ok: boolean; result: { ok: boolean; model?: string } };
+    expect(m.result).toEqual({ ok: true, model: 'gpt-6' });
+    expect(rt.meta.model).toBe('gpt-6');
+    const none = (await c.call('session.send', { sessionId: id, text: '/model nothing-like-it' })) as { result: { ok: boolean; error?: string } };
+    expect(none.result.ok).toBe(false);
+    expect(none.result.error).toMatch(/No model called/);
+    expect(rt.items.length).toBe(before);
+
+    // Switch back with nothing sent since: an undo, the line goes.
+    const back = (await c.call('session.switchAgent', { sessionId: id, provider: 'demo' })) as { result: { ok: boolean; undone?: boolean } };
+    expect(back.result).toMatchObject({ ok: true, undone: true });
+    expect(rt.meta.provider).toBe('demo');
+    expect(rt.items.some((i) => i.type === 'notice' && i.agentSwitch)).toBe(false);
     c.ws.close();
   });
 });

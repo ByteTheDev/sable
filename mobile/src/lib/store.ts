@@ -55,6 +55,8 @@ export interface State {
   settings?: AppSettings;
   data: Record<string, SessionData>;
   limits: Record<string, LimitsReport>;
+  /** When the desktop last answered with every account's limits in this run (absent: not yet). */
+  limitsAt?: number;
   /** Capabilities for new chats, by `provider:cwd`. */
   caps: Record<string, Capabilities>;
   /** A message from the desktop to show once. */
@@ -321,15 +323,21 @@ export async function refresh(openIds: string[]) {
   for (const p of hello.providers) providers[p.id] = p;
   setState({ sessions, providers, projects: hello.projects, settings: hello.settings, version: hello.version, desktop: conn.pairing?.desktop, loaded: true, fresh: true, listAt: Date.now() });
   saveHome();
-  void conn
-    .call('usage.limits', {})
-    .then((reports) => {
-      const limits: State['limits'] = {};
-      for (const r of reports) limits[`${r.provider}:${r.accountId}`] = r;
-      setState({ limits });
-    })
-    .catch(() => {});
+  void refreshLimits();
   await Promise.all(openIds.filter((id) => sessions[id]).map((id) => openSession(id).catch(() => {})));
+}
+
+/** Every account's limits as the desktop last read them (it reads them itself; this only asks what it knows). */
+export async function refreshLimits() {
+  try {
+    const reports = await conn.call('usage.limits', {});
+    const limits: State['limits'] = {};
+    for (const r of reports) limits[`${r.provider}:${r.accountId}`] = r;
+    setState({ limits, limitsAt: Date.now() });
+  } catch {
+    // A desktop without the usage service: the accounts' own limits stand in.
+    setState({ limitsAt: state.limitsAt ?? Date.now() });
+  }
 }
 
 /** A desktop from before pages answers only `session.snapshot` (all of it). */

@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
+import { matchModel, type ModelInfo } from '@shared/protocol';
 import { baseName } from '@desk/lib/format';
 import { pushBack } from '@m/lib/back';
 import { conn } from '@m/lib/conn';
@@ -67,6 +68,24 @@ export function HomeDock({ covered }: { covered: boolean }) {
   const send = async () => {
     const t = text.trim();
     if (!t || !online || busy || !c.agent) return;
+    // `/model <name>` picks the new chat's model (bare `/model` opens the choices): nothing starts.
+    const cmd = /^\/model(?:\s+([\s\S]*))?$/i.exec(t);
+    if (cmd) {
+      const name = (cmd[1] ?? '').trim();
+      update('');
+      if (!name) return void (haptic('tap'), area.current?.blur(), setSheet('setup'));
+      const m = matchModel(name, c.models as ModelInfo[]);
+      if (m) {
+        haptic('select');
+        c.setModel(m.id);
+        setState({ toast: { text: `Model set to ${m.name}`, level: 'success', at: Date.now() } });
+      } else {
+        haptic('deny');
+        update(t);
+        setState({ toast: { text: `No model called “${name}”`, level: 'error', at: Date.now() } });
+      }
+      return;
+    }
     setBusy(true);
     // The words drain into the bar's corner and leave as a drop (lib/flight.ts); it waits above the
     // bar while the chat is made, then rises into the conversation that opens out of the bar.

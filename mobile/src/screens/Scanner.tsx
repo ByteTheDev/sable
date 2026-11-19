@@ -1,12 +1,20 @@
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 import { pushBack } from '@m/lib/back';
+import { haptic } from '@m/lib/native';
 import { Icon } from '@m/ui/icons';
+import { SNAP } from '@m/ui/motion';
 
-/** The camera, looking for a Sable pairing code (decoded on the phone with jsQR, a few times a second). */
-export function Scanner({ onCode, onClose }: { onCode: (text: string) => void; onClose: () => void }) {
+/**
+ * The camera, looking for a Sable pairing code (decoded on the phone with jsQR, a few times a
+ * second): the picture dims around a clear window with four corners; a code found closes the
+ * window on it. Without a camera, one calm card offers the link instead.
+ */
+export function Scanner({ onCode, onClose, onPaste }: { onCode: (text: string) => void; onClose: () => void; onPaste: () => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string>();
+  const [live, setLive] = useState(false);
+  const [found, setFound] = useState(false);
 
   useEffect(() => pushBack(() => (onClose(), true)), [onClose]);
 
@@ -28,7 +36,10 @@ export function Scanner({ onCode, onClose }: { onCode: (text: string) => void; o
         const code = jsQR?.(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'attemptBoth' });
         if (code?.data && /^sable:\/\/pair\?/i.test(code.data)) {
           stopped = true;
-          onCode(code.data);
+          haptic('success');
+          setFound(true);
+          // The window closes on the code, then pairing takes over.
+          window.setTimeout(() => onCode(code.data), 220);
           return;
         }
       }
@@ -38,15 +49,17 @@ export function Scanner({ onCode, onClose }: { onCode: (text: string) => void; o
     (async () => {
       try {
         jsQR = (await import('jsqr')).default;
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error('no camera');
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false });
         if (stopped) return stream.getTracks().forEach((t) => t.stop());
         if (video.current) {
           video.current.srcObject = stream;
           await video.current.play().catch(() => {});
+          setLive(true);
         }
         tick();
       } catch {
-        setError('Sable cannot use the camera. Paste the link instead.');
+        setError('Sable cannot use the camera');
       }
     })();
     return () => {
@@ -57,16 +70,40 @@ export function Scanner({ onCode, onClose }: { onCode: (text: string) => void; o
   }, [onCode]);
 
   return (
-    <motion.div className="scanner" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+    <motion.div className="scanner" data-live={live || undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
       <video ref={video} className="scanner-video" playsInline muted />
-      <div className="scanner-frame" aria-hidden>
-        <i />
-        <i />
-        <i />
-        <i />
-      </div>
-      {error && <p className="scanner-error">{error}</p>}
-      <button type="button" className="scanner-close icon-btn glass" onClick={onClose} aria-label="Close the camera">
+      <AnimatePresence mode="wait" initial={false}>
+        {error ? (
+          <motion.div key="err" className="scanner-card" initial={{ opacity: 0, y: 12, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={SNAP} role="alert">
+            <span className="scanner-card-glyph">
+              <Icon name="camera" size={22} />
+            </span>
+            <p className="scanner-card-title">{error}</p>
+            <button type="button" className="btn btn-primary btn-lg btn-block" onClick={() => (haptic('tap'), onPaste())}>
+              <Icon name="clipboard" size={19} /> Paste link
+            </button>
+            <button type="button" className="btn btn-lg btn-block btn-ghost" onClick={onClose}>
+              Close
+            </button>
+          </motion.div>
+        ) : (
+          <motion.div key="frame" className="scanner-frame" data-found={found || undefined} initial={{ opacity: 0, scale: 1.06 }} animate={{ opacity: 1, scale: found ? 0.94 : 1 }} transition={SNAP} aria-hidden>
+            <i />
+            <i />
+            <i />
+            <i />
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {!error && (
+        <div className="scanner-foot">
+          <p className="scanner-hint">The code is in Settings › Phone on your computer</p>
+          <button type="button" className="btn btn-lg scanner-paste" onClick={() => (haptic('tap'), onPaste())}>
+            <Icon name="clipboard" size={19} /> Paste link
+          </button>
+        </div>
+      )}
+      <button type="button" className="scanner-close icon-btn" onClick={onClose} aria-label="Close the camera">
         <Icon name="x" size={20} />
       </button>
     </motion.div>

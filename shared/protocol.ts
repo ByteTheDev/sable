@@ -1606,6 +1606,7 @@ export const PHONE_METHODS = [
   'session.rename',
   'session.update',
   'session.switchAccount',
+  'session.switchAgent',
   'queue.update',
   'queue.remove',
   'queue.take',

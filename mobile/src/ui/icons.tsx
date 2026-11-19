@@ -72,6 +72,11 @@ export const ICON_NAMES = {
   arrowRight: 'ArrowRight',
   updown: 'CaretUpDown',
   speed: 'Gauge',
+  vibrate: 'Vibrate',
+  unlink: 'LinkBreak',
+  retry: 'ArrowClockwise',
+  scan: 'Scan',
+  pencilLine: 'PencilSimpleLine',
 } as const;
 
 

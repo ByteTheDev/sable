@@ -271,6 +271,14 @@ p {
   background: #dddcd8;
 }
 
+/* not yet: a quiet key of ink, not a faded ivory one */
+.btn-primary:disabled {
+  opacity: 1;
+  background: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-4);
+}
+
 .btn-ghost {
   background: transparent;
   box-shadow: none;
@@ -594,7 +602,8 @@ p {
 .toast {
   position: fixed;
   z-index: 400;
-  top: calc(var(--sat) + 10px);
+  /* under the screen's bar, so its title and back key stay readable */
+  top: calc(var(--sat) + 60px);
   left: 0;
   right: 0;
   margin: 0 auto;

@@ -435,6 +435,56 @@
   transform: scale(1);
 }
 
+/* the other agents' models: picking one switches the chat to that agent */
+.setup-away {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 8px;
+}
+
+.setup-away-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 6px;
+  font-size: var(--t-sm);
+  font-weight: 560;
+  color: var(--text-3);
+}
+
+.setup-away-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.setup-row-away .setup-away-go {
+  color: var(--text-4);
+  flex-shrink: 0;
+  transition: transform 160ms var(--ease-out), color 120ms;
+}
+
+.setup-row-away:active .setup-away-go {
+  color: var(--text);
+  transform: translateX(3px);
+}
+
+.setup-row-away[aria-disabled='true'] {
+  color: var(--text-4);
+}
+
+.setup-row-away[aria-disabled='true']:active {
+  background: transparent;
+}
+
+.setup-away-skel .setup-row {
+  pointer-events: none;
+}
+
+.setup-away-skel .skel {
+  height: 11px;
+}
+
 /* effort: a track with a stop per level, filled to the chosen one; the knob follows the finger */
 .dial {
   position: relative;
@@ -595,128 +645,148 @@
   width: 100%;
 }
 
-/* ── limits ── */
-.limits {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 2px 0 6px;
+/* ── limits: a card per account, a window per row ── */
+.lim-wrap {
+  margin: 0 -2px;
 }
 
-.limit-acct {
+.lim {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 18px 18px 20px;
-  border-radius: 24px;
-  background: rgb(255 255 255 / 0.035);
+  gap: 10px;
+  padding: 2px 2px 8px;
+}
+
+.lim-card {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px 18px 20px;
+  border-radius: 22px;
+  background: rgb(255 255 255 / 0.03);
   box-shadow: inset 0 0 0 1px var(--line);
 }
 
-.limit-head {
+.lim-head {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: 24px;
 }
 
-.limit-name {
+.lim-name {
   font-size: var(--t-body);
-  font-weight: 620;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.limit-plan {
+.lim-plan {
+  font-size: var(--t-sm);
   color: var(--text-3);
-  font-size: 14px;
   white-space: nowrap;
 }
 
-.limit-def {
+.lim-aside {
   margin-left: auto;
   font-size: var(--t-xs);
   color: var(--text-3);
+  white-space: nowrap;
 }
 
-.limit-none {
+.lim-none {
+  margin-top: -6px;
   font-size: var(--t-sm);
   color: var(--text-3);
 }
 
-.limit-row {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
+.lim-empty {
+  padding: 26px 22px 34px;
+  text-align: center;
+  font-size: var(--t-ui);
+  line-height: 1.5;
+  color: var(--text-3);
 }
 
-.limit-line {
+.lim-win {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lim-line {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  min-height: 20px;
 }
 
-.limit-label {
+.lim-label {
   font-size: 14.5px;
   font-weight: 500;
   color: var(--text-2);
 }
 
-.limit-val {
-  font-size: 26px;
-  font-weight: 640;
-  letter-spacing: -0.03em;
-  line-height: 1;
+.lim-pct {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text);
 }
 
-.limit-val small {
-  margin-left: 2px;
-  font-size: 14px;
-  font-weight: 540;
+.lim-pct small,
+.lim-money small {
+  margin-left: 1px;
+  font-size: var(--t-xs);
+  font-weight: 500;
   letter-spacing: 0;
   color: var(--text-3);
 }
 
-.limit-reset {
-  font-size: var(--t-xs);
-  color: var(--text-3);
+.lim-money {
+  font-size: 15px;
+  font-weight: 580;
 }
 
-/* a meter of ink with an ivory fill whose edge breaks into dither */
-.meter {
+/* a meter of ink with an ivory fill whose edge breaks into dither, and a hairline where an even pace would be */
+.lim-meter {
   position: relative;
-  height: 8px;
-  border-radius: 4px;
+  height: 6px;
+  border-radius: 3px;
   background: var(--fill-2);
   overflow: hidden;
 }
 
-.meter-fill {
+.lim-fill {
   position: absolute;
   inset: 0;
-  border-radius: 4px 0 0 4px;
+  border-radius: 3px 0 0 3px;
   background: var(--text-2);
   transform: translateX(calc((var(--p) - 1) * 100%));
-  animation: meter-in 1s var(--ease-out) both;
-  animation-delay: calc(var(--d) + 120ms);
+  /* in from empty once; a newer reading then glides to its value */
+  animation: meter-in 900ms var(--ease-out) backwards;
+  animation-delay: calc(var(--d) + 140ms);
+  transition: transform 600ms var(--ease-out);
 }
 
-.meter-fill::before,
-.meter-fill::after {
+.lim-fill::before,
+.lim-fill::after {
   content: '';
   position: absolute;
   top: 0;
   bottom: 0;
   left: 100%;
-  width: 8px;
+  width: 6px;
   background: inherit;
   -webkit-mask: var(--checker) 0 0 / 4px 4px;
   mask: var(--checker) 0 0 / 4px 4px;
 }
 
-.meter-fill::after {
-  left: calc(100% + 8px);
+.lim-fill::after {
+  left: calc(100% + 6px);
   -webkit-mask-image: var(--sparse);
   mask-image: var(--sparse);
 }
@@ -727,67 +797,129 @@
   }
 }
 
-.limit-row[data-level='mid'] .meter-fill {
-  background: var(--text);
+.lim-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--bg);
+  opacity: 0.9;
 }
 
-.limit-row[data-level='high'] .meter-fill {
+.lim-win[data-level='amber'] .lim-fill {
   background: var(--amber);
 }
 
-.limit-row[data-level='high'] .limit-val {
+.lim-win[data-level='red'] .lim-fill {
+  background: var(--red);
+}
+
+.lim-win[data-level='amber'] .lim-pct {
   color: var(--amber);
 }
 
-/* ── what the agent asks ── */
-.prompt {
+.lim-win[data-level='red'] .lim-pct {
+  color: var(--red);
+}
+
+.lim-note {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 16px;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.lim-note [data-warn] {
+  color: var(--amber);
+}
+
+.lim-credits {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14.5px;
+}
+
+.lim-skel .skel {
+  height: 10px;
+}
+
+.lim-skel .lim-skel-mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+}
+
+/* ── what the agent asks: a permission or questions ── */
+.ask {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 6px 8px 0;
+  padding: 12px 8px 0;
 }
 
-.prompt-head {
+.ask-head {
   display: flex;
-  gap: 13px;
   align-items: flex-start;
+  gap: 14px;
 }
 
-.prompt-icon {
+/* the tool's glyph in a quiet ink well, level with the title's first line */
+.ask-glyph {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 28px;
-  color: var(--text-2);
+  width: 40px;
+  height: 40px;
+  margin-top: -6px;
+  border-radius: 14px;
+  background: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
   flex-shrink: 0;
 }
 
-.prompt-titles {
+.ask-titles {
+  flex: 1;
   min-width: 0;
 }
 
-.prompt-title {
-  font-size: 20px;
-  font-weight: 640;
-  line-height: 1.32;
-  letter-spacing: -0.018em;
+.ask-title {
+  font-size: 19px;
+  font-weight: 620;
+  line-height: 1.34;
+  letter-spacing: -0.016em;
   word-break: break-word;
 }
 
-.prompt-sub {
-  margin-top: 5px;
+.ask-sub {
+  margin-top: 4px;
   font-size: 14.5px;
-  color: var(--text-2);
   line-height: 1.5;
+  color: var(--text-2);
 }
 
-.prompt-code {
+.ask-count {
+  flex-shrink: 0;
+  height: 26px;
+  margin-top: 1px;
+  padding: 0 9px;
+  border-radius: 13px;
+  background: var(--fill-2);
+  font-size: var(--t-xs);
+  font-weight: 560;
+  line-height: 26px;
+  color: var(--text-2);
+}
+
+.ask-code {
   margin: 0;
   padding: 14px 16px;
   max-height: 200px;
   overflow: auto;
   border-radius: 18px;
-  background: rgb(0 0 0 / 0.5);
+  background: rgb(0 0 0 / 0.45);
   box-shadow: inset 0 0 0 1px var(--line);
   font-family: var(--mono);
   font-size: 13px;
@@ -798,36 +930,77 @@
   user-select: text;
 }
 
-.prompt-code-sign {
+.ask-code-sign {
   color: var(--text-4);
 }
 
-.prompt-path {
+.ask-well {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 50px;
+  padding: 12px 16px;
+  border-radius: 18px;
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
   font-size: 14px;
   color: var(--text-2);
+}
+
+.ask-well > svg {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.ask-path {
+  min-width: 0;
   word-break: break-all;
 }
 
-.prompt-diff {
+.ask-path-dir {
+  color: var(--text-3);
+}
+
+.ask-path-name {
+  color: var(--text);
+}
+
+.ask-url {
+  min-width: 0;
+  word-break: break-all;
+  color: var(--text);
+}
+
+.ask-diff-card {
+  border-radius: 18px;
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+
+.ask-diff {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 48px;
+  width: 100%;
+  min-height: 50px;
   padding: 0 16px;
-  border-radius: 16px;
-  background: var(--fill-1);
-  box-shadow: inset 0 0 0 1px var(--line);
   font-size: 14px;
   color: var(--text-2);
   text-align: left;
   transition: background-color 100ms;
 }
 
-.prompt-diff:active {
+.ask-diff:active {
   background: var(--fill-2);
 }
 
-.prompt-diff-name {
+.ask-diff > svg:first-child {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.ask-diff-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -835,25 +1008,35 @@
   color: var(--text);
 }
 
-.prompt-diff-caret {
+.ask-diff-caret {
   margin-left: auto;
   color: var(--text-4);
   transition: transform 220ms var(--ease-out);
 }
 
-.prompt-diff[aria-expanded='true'] .prompt-diff-caret {
+.ask-diff[aria-expanded='true'] .ask-diff-caret {
   transform: rotate(180deg);
 }
 
-.prompt-patch {
-  max-height: 34vh;
-  white-space: pre;
-  word-break: normal;
-  overflow: auto;
-  color: var(--text-2);
+.ask-patch-wrap {
+  overflow: hidden;
 }
 
-.prompt-plan {
+.ask-patch {
+  margin: 0;
+  max-height: 34vh;
+  padding: 12px 16px 14px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+  white-space: pre;
+  user-select: text;
+}
+
+.ask-plan {
   max-height: 280px;
   overflow-y: auto;
   padding: 14px 16px;
@@ -863,62 +1046,185 @@
   font-size: var(--t-ui);
 }
 
-.prompt-reason {
+.ask-reason {
   font-size: 14px;
   color: var(--text-3);
   line-height: 1.5;
 }
 
-.prompt-actions {
+.ask-actions {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 8px;
-  align-items: stretch;
+  gap: 8px;
+  margin-top: 10px;
 }
 
-.prompt-split {
+.ask-btn {
+  height: 52px;
+  border-radius: 17px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ask-split {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
-  gap: 10px;
+  gap: 8px;
 }
 
-.prompt-split .btn {
+.ask-deny {
   background: var(--fill-2);
+  color: var(--text);
 }
 
-.prompt-later {
+.ask-later {
   color: var(--text-3);
 }
 
-/* a long question keeps its answer key in reach */
-.sheet[data-tall] .prompt-actions {
-  position: sticky;
-  bottom: -8px;
-  margin: 0 -20px;
-  padding: 22px 20px 8px;
-  background: linear-gradient(rgb(21 21 24 / 0), rgb(21 21 24) 24px);
+/* a key that is answering stays at full strength while the others step back */
+.ask-btn[data-busy] {
+  opacity: 1;
 }
 
-.prompt-row {
+/* the waiting line above the composer counts what else waits */
+.waiting-more {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+/* ── questions: a step per question, one at a time ── */
+.q-steps {
   display: flex;
-  justify-content: center;
-  gap: 16px;
+  gap: 6px;
+  margin: 0 -20px 2px;
+  padding: 0 20px 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.q-steps::-webkit-scrollbar {
+  display: none;
+}
+
+.q-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  height: 34px;
+  padding: 0 13px 0 10px;
+  border-radius: 17px;
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: var(--t-sm);
+  font-weight: 540;
+  color: var(--text-3);
+  transition: background-color 140ms, color 140ms, transform 100ms;
+}
+
+.q-step:active {
+  transform: scale(0.96);
+}
+
+.q-step[data-on] {
+  background: rgb(255 255 255 / 0.1);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+  color: var(--text);
+}
+
+.q-step[data-done] {
+  color: var(--text-2);
+}
+
+.q-step-n {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+  font-size: 11.5px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.q-step[data-done] > svg {
+  width: 18px;
+}
+
+.q-pane {
+  margin: 0 -8px;
+  padding: 0 8px;
 }
 
 .question {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
+  padding-top: 4px;
 }
 
-.question + .question {
-  margin-top: 16px;
+.q-title {
+  padding: 0 2px;
 }
 
-.prompt .choices {
-  margin: 0 -8px;
+.q-choices {
+  margin: 0 -6px;
+}
+
+.q-other {
+  align-items: center;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  cursor: text;
+}
+
+.q-other-glyph {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.q-other[data-selected] .q-other-glyph {
+  color: var(--text);
+}
+
+.q-other-input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  font-size: var(--t-body);
+}
+
+.q-other-input::placeholder {
+  color: var(--text-4);
+}
+
+.q-actions {
+  margin-top: 6px;
+}
+
+.q-links {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+}
+
+/* a long question keeps its answer key in reach */
+.sheet[data-tall] .q-actions {
+  position: sticky;
+  bottom: -8px;
+  margin: 0 -20px;
+  padding: 22px 20px 4px;
+  background: linear-gradient(rgb(21 21 24 / 0), rgb(21 21 24) 24px);
 }
 
 /* ── remote control ── */

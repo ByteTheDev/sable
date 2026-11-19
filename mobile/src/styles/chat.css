@@ -1714,3 +1714,67 @@
 .work[data-live] .work-title + .work-meta::before {
   content: none;
 }
+
+/* ── where the chat switched agents: the agent's mark, the words, one quiet action, between two rules ── */
+.switch-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  margin: 4px 0;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+
+.switch-rule {
+  flex: 1;
+  min-width: 16px;
+  height: 1px;
+  background: var(--line-2);
+}
+
+.switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-weight: 520;
+}
+
+.switch-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.switch-back {
+  flex-shrink: 0;
+  height: 32px;
+  margin: 0 -4px 0 -2px;
+  padding: 0 11px;
+  border-radius: 16px;
+  font-size: var(--t-sm);
+  font-weight: 520;
+  color: var(--text-3);
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background-color 100ms, color 100ms, opacity 140ms, transform 100ms;
+}
+
+.switch-back:active {
+  background: var(--fill-3);
+  color: var(--text);
+  transform: scale(0.96);
+}
+
+.switch-back[aria-disabled='true'] {
+  color: var(--text-4);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+  transform: none;
+}
+
+.switch-back[data-going] {
+  opacity: 0.5;
+}

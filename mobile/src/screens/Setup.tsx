@@ -1,8 +1,11 @@
+import { AnimatePresence, motion } from 'motion/react';
 import { useLayoutEffect, useRef, useState } from 'react';
-import { STANDARD_SPEED, type Effort, type ModeInfo, type ModeTone } from '@shared/protocol';
+import { STANDARD_SPEED, type Effort, type ModeInfo, type ModeTone, type ProviderId } from '@shared/protocol';
 import { effortName } from '@desk/lib/models';
 import { haptic } from '@m/lib/native';
 import { Icon, type IconName } from '@m/ui/icons';
+import { PROVIDER_NAME, ProviderMark } from '@m/ui/marks';
+import { AutoHeight } from '@m/ui/AutoHeight';
 import { Sheet } from '@m/ui/Sheet';
 
 export const MODE_ICON: Record<ModeTone, IconName> = { ask: 'hand', edit: 'edit', plan: 'plan', auto: 'bolt', danger: 'shield' };
@@ -20,6 +23,13 @@ export interface SetupState {
   modes: ModeInfo[];
   mode?: string;
   onMode: (id: string) => void;
+  /**
+   * In a chat: the other agents' models (null while they are asked for). Picking one switches the
+   * chat to that agent in place; `othersOff` while the chat works (it switches between turns).
+   */
+  others?: { provider: ProviderId; models: { id: string; name: string }[] | null }[];
+  onOther?: (provider: ProviderId, id: string) => void;
+  othersOff?: boolean;
 }
 
 /**
@@ -63,6 +73,48 @@ export function SetupSheet({ open, onClose, s }: { open: boolean; onClose: () =>
               <span className="skel" style={{ width: '52%' }} />
             </div>
           )}
+          {s.others?.map((o) => (
+            <div key={o.provider} className="setup-away">
+              <h4 className="setup-away-head">
+                <ProviderMark provider={o.provider} size={13} />
+                {PROVIDER_NAME[o.provider]}
+              </h4>
+              <AutoHeight className="setup-list">
+                <AnimatePresence initial={false} mode="popLayout">
+                  {o.models ? (
+                    <motion.div key="rows" className="setup-away-rows" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }}>
+                      {o.models.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          className="setup-row setup-row-away"
+                          aria-label={`Switch to ${PROVIDER_NAME[o.provider]} with ${m.name}`}
+                          aria-disabled={s.othersOff || undefined}
+                          onClick={() => {
+                            if (s.othersOff) return void haptic('deny');
+                            haptic('select');
+                            s.onOther?.(o.provider, m.id);
+                          }}
+                        >
+                          <span className="setup-row-name">{m.name}</span>
+                          <Icon name="arrowRight" size={16} className="setup-away-go" />
+                        </button>
+                      ))}
+                    </motion.div>
+                  ) : (
+                    <motion.div key="skel" className="setup-away-rows setup-away-skel" aria-hidden exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+                      <span className="setup-row">
+                        <span className="skel" style={{ width: '34%' }} />
+                      </span>
+                      <span className="setup-row">
+                        <span className="skel" style={{ width: '46%' }} />
+                      </span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </AutoHeight>
+            </div>
+          ))}
         </section>
 
         {s.efforts.length > 1 && (

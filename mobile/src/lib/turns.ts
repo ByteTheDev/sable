@@ -14,7 +14,8 @@ import { isLeadIn } from '@desk/features/timeline/lead-in';
  *   t the agent's words (an answer candidate)   l a lead-in (folds with the steps it announces)
  *   c command output   p a plan   g a widget (all in view, in their place)
  *   w a step (a tool call)   h thinking   k a task list update   n another notice (folded with the work)
- *   i "Interrupted"   e an error notice   T turn end   F turn end with an error   Z a /until loop's end
+ *   i "Interrupted"   e an error notice   T turn end   F turn end with an error
+ *   Z a line of its own that closes a turn left open: a /until loop's end, or a switch of agent
  *   x a check of a turn by the other agent (never part of a turn: shown under the turn it checks)
  *   . nothing to show
  */
@@ -88,7 +89,8 @@ function shapeRaw(item: TimelineItem): string {
       // A file handed over shows in view, as a widget does (the phone draws it as a card with Download).
       return item.kind === 'plan' ? 'p' : item.kind === 'widget' || item.kind === 'share' ? 'g' : item.kind === 'todo' ? 'k' : 'w';
     case 'notice':
-      if (item.until) return 'Z';
+      // An until loop's end, or a switch of agent: a line of its own that closes a turn left open.
+      if (item.until || item.agentSwitch) return 'Z';
       if (item.variant === 'interrupted') return 'i';
       if (item.variant === 'error') return 'e';
       if (item.variant === 'command') return 'c';
@@ -120,6 +122,8 @@ export const shapeString = (roots: string[], items: Record<string, TimelineItem>
 const ANSWER = new Set(['t', 'c', 'p']);
 const SHOW = new Set(['c', 'g', 'p']);
 const WORK_AFTER = new Set(['w', 'h', 'k', 'n', 'l']);
+/** What the bridge or the agent may write after its last words without doing more work: notices, task list updates, thinking. */
+const QUIET_AFTER = new Set(['.', 'n', 'k', 'h']);
 
 interface RawSeg {
   lead: string | null;
@@ -128,8 +132,15 @@ interface RawSeg {
   chars: string[];
 }
 
-/** A lead-in stays folded when a step follows it (or while it is the newest thing of a running segment); else it is said in view. */
-function settleLeads(chars: string[], live: boolean, steered: boolean): string[] {
+/**
+ * A lead-in stays folded when a step follows it (or while it is the newest thing of a running
+ * segment); else it is said in view: before more text, as the answer of a settled segment (also
+ * when only a notice, a task list update or thinking came after it), and always as the reply to a
+ * steered message. `final`: a settled segment that answers (not failed, not cut by a steer); with
+ * nothing else said in it, its last lead-in is its answer after all ("Let me fix the typo." then
+ * the edit), so the turn keeps an answer.
+ */
+function settleLeads(chars: string[], live: boolean, steered: boolean, final = false): string[] {
   if (!chars.includes('l')) return chars;
   const out = chars.slice();
   let replied = !steered;
@@ -144,13 +155,24 @@ function settleLeads(chars: string[], live: boolean, steered: boolean): string[]
     }
     let j = i + 1;
     while (j < out.length && out[j] === '.') j++;
-    if (j < out.length ? !WORK_AFTER.has(out[j]) : !live) out[i] = 't';
+    let k = j;
+    while (k < out.length && QUIET_AFTER.has(out[k])) k++;
+    // Nothing but quiet entries after it: the last words of the segment.
+    if (k >= out.length) {
+      if (!live) out[i] = 't';
+      continue;
+    }
+    if (!WORK_AFTER.has(out[j])) out[i] = 't';
+  }
+  if (final && !out.some((c) => ANSWER.has(c))) {
+    const last = out.lastIndexOf('l');
+    if (last >= 0) out[last] = 't';
   }
   return out;
 }
 
 function buildSegment(raw: RawSeg, index: number, turnKey: string, failed: boolean, live: boolean, cut: boolean): Segment {
-  const chars = settleLeads(raw.chars, live, raw.steered);
+  const chars = settleLeads(raw.chars, live, raw.steered, !live && !failed && !cut);
   const errors: string[] = [];
   let answerAt = -1;
   for (let i = chars.length - 1; i >= 0; i--) {
@@ -254,6 +276,16 @@ export function groupTurns(ids: readonly string[], shape: string, busy: boolean,
     const key = o.ids[0];
     const last = o.segs.length - 1;
     const segments = o.segs.map((s, i) => buildSegment(s, i, key, failed && i === last, state === 'running' && i === last, i < last));
+    // A settled turn whose last segment said nothing (only steps after a steered message): the
+    // newest segment that did say something answers it, so the turn keeps its answer and its foot.
+    if ((state === 'done' || state === 'interrupted') && !segments.some((sg) => sg.answer)) {
+      for (let i = last - 1; i >= 0; i--) {
+        const seg = buildSegment(o.segs[i], i, key, false, false, false);
+        if (!seg.answer) continue;
+        segments[i] = seg;
+        break;
+      }
+    }
     groups.push({ kind: 'turn', key, segments, end, state, ids: o.ids });
   };
 

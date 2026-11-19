@@ -127,10 +127,53 @@
   text-overflow: ellipsis;
 }
 
-.computer-addr {
+/* the line under the name: how it is reached, or what to do when it is not (crossfades in place) */
+.computer-line {
+  position: relative;
+  height: 32px;
   margin-top: 4px;
+}
+
+.computer-line-in {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.computer-addr {
+  min-width: 0;
   font-size: 14px;
   color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.computer-via {
+  color: var(--text-3);
+}
+
+.computer-act {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 16px;
+  background: rgb(242 241 238 / 0.94);
+  color: var(--ink);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  transition: transform 100ms, background-color 100ms;
+}
+
+.computer-act:active {
+  transform: scale(0.96);
+  background: #dddcd8;
+}
+
+.computer[data-state='denied'] .conn-dot {
+  background: var(--red);
 }
 
 .set-title {
@@ -201,6 +244,95 @@ button.set-row:active {
   gap: 8px;
   font-size: 14px;
   color: var(--text-3);
+}
+
+.set-row > .set-chev {
+  margin-right: -4px;
+  color: var(--text-4);
+}
+
+.set-skel {
+  width: 38px;
+  height: 10px;
+}
+
+/* ── archived chats ── */
+.arch {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+  border-radius: 20px;
+  background: rgb(255 255 255 / 0.03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+
+.arch-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 64px;
+  padding: 0 10px 0 18px;
+  overflow: hidden;
+}
+
+.arch-row + .arch-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 47px;
+  right: 0;
+  height: 1px;
+  background: var(--line);
+}
+
+.arch-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.arch-title {
+  font-size: var(--t-body);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arch-dir {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arch-go {
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 18px;
+  background: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: var(--t-sm);
+  font-weight: 560;
+  color: var(--text);
+  transition: background-color 100ms, transform 100ms, opacity 120ms;
+}
+
+.arch-go:active {
+  background: var(--fill-4);
+  transform: scale(0.96);
+}
+
+.arch-go:disabled {
+  opacity: 0.4;
 }
 
 .switch-row {
@@ -289,20 +421,88 @@ button.set-row:active {
   line-height: 1.05;
 }
 
+/* where pairing stands: one block that keeps its height in every state, crossfading in place */
+.pair-status {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  height: 84px;
+  margin-top: 2px;
+}
+
+.pair-status-in {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
 .pair-line {
-  max-width: 300px;
-  min-height: 48px;
   font-size: var(--t-body);
   line-height: 1.5;
   color: var(--text-2);
 }
 
-.pair-line[data-tone='error'] {
-  color: var(--red);
+.pair-strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--text);
+  font-weight: 540;
 }
 
-.pair-line[data-tone='waiting'] {
-  color: var(--amber);
+.pair-sub {
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+.pair-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-2);
+  flex-shrink: 0;
+}
+
+.pair-status[data-tone='waiting'] .pair-dot {
+  background: var(--amber);
+}
+
+.pair-status[data-tone='error'] .pair-dot {
+  background: var(--red);
+}
+
+.pair-where {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.pair-where-dir {
+  color: var(--text-3);
+}
+
+.pair-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 15px;
+  border-radius: 18px;
+  background: rgb(22 22 25 / 0.8);
+  box-shadow: var(--edge-2);
+  font-size: var(--t-sm);
+  font-weight: 560;
+  color: var(--text);
+  transition: transform 100ms, background-color 100ms;
+}
+
+.pair-retry:active {
+  transform: scale(0.96);
+  background: rgb(34 34 38 / 0.9);
 }
 
 .pair-actions {
@@ -332,32 +532,78 @@ button.set-row:active {
 }
 
 .pair-cancel {
-  align-self: center;
-  min-width: 156px;
-  margin-bottom: 33px;
   color: var(--text-2);
 }
 
+/* holds the place of the first key while Cancel stands where the second was: nothing moves */
+.pair-spacer {
+  height: 56px;
+}
+
+/* the link field opens above the keys without moving anything (it rides up with the keyboard with them) */
 .pair-paste {
-  display: flex;
-  gap: 8px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
   overflow: hidden;
-  padding: 2px 0 8px;
+  padding: 2px 0 10px;
 }
 
-.pair-paste .field-input {
+.pair-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 7px 0 18px;
+  border-radius: 18px;
+  background: rgb(10 10 12 / 0.86);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--text-3);
+  transition: box-shadow 120ms;
+}
+
+.pair-field:focus-within {
+  box-shadow: inset 0 0 0 1px rgb(242 241 238 / 0.3);
+}
+
+.pair-input {
   flex: 1;
-  height: 56px;
-  border-radius: 18px;
-  background: rgb(10 10 12 / 0.8);
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  font-size: var(--t-body);
 }
 
-.pair-paste .btn {
-  height: 56px;
-  border-radius: 18px;
+.pair-input::placeholder {
+  color: var(--text-4);
 }
 
-/* ── scanner ── */
+.pair-go {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--ink);
+  flex-shrink: 0;
+  transition: transform 100ms, opacity 120ms, background-color 120ms;
+}
+
+.pair-go:active {
+  transform: scale(0.92);
+}
+
+.pair-go:disabled {
+  background: var(--fill-3);
+  color: var(--text-4);
+}
+
+/* ── scanner: the picture dims around a clear window ── */
 .scanner {
   position: fixed;
   inset: 0;
@@ -373,18 +619,28 @@ button.set-row:active {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  opacity: 0;
+  transition: opacity 300ms var(--ease-out);
+}
+
+.scanner[data-live] .scanner-video {
+  opacity: 1;
 }
 
 .scanner-frame {
   position: relative;
-  width: min(68vw, 280px);
+  width: min(68vw, 270px);
   aspect-ratio: 1;
+  margin-top: -6vh;
+  border-radius: 28px;
+  /* the dimmed picture around the window */
+  box-shadow: 0 0 0 200vmax rgb(0 0 0 / 0.55);
 }
 
 .scanner-frame i {
   position: absolute;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   border: 3px solid var(--text);
 }
 
@@ -393,7 +649,7 @@ button.set-row:active {
   left: 0;
   border-right: 0;
   border-bottom: 0;
-  border-top-left-radius: 16px;
+  border-top-left-radius: 28px;
 }
 
 .scanner-frame i:nth-child(2) {
@@ -401,7 +657,7 @@ button.set-row:active {
   right: 0;
   border-left: 0;
   border-bottom: 0;
-  border-top-right-radius: 16px;
+  border-top-right-radius: 28px;
 }
 
 .scanner-frame i:nth-child(3) {
@@ -409,7 +665,7 @@ button.set-row:active {
   left: 0;
   border-right: 0;
   border-top: 0;
-  border-bottom-left-radius: 16px;
+  border-bottom-left-radius: 28px;
 }
 
 .scanner-frame i:nth-child(4) {
@@ -417,17 +673,68 @@ button.set-row:active {
   right: 0;
   border-left: 0;
   border-top: 0;
-  border-bottom-right-radius: 16px;
+  border-bottom-right-radius: 28px;
 }
 
-.scanner-error {
+.scanner-foot {
   position: absolute;
-  bottom: calc(var(--sab) + 120px);
-  left: 24px;
-  right: 24px;
+  left: 22px;
+  right: 22px;
+  bottom: calc(var(--sab) + 22px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.scanner-hint {
+  max-width: 280px;
   text-align: center;
+  font-size: var(--t-ui);
+  line-height: 1.45;
   color: var(--text);
-  font-size: var(--t-body);
+  text-shadow: 0 1px 12px rgb(0 0 0 / 0.6);
+}
+
+.scanner-paste {
+  width: 100%;
+  background: rgb(22 22 25 / 0.72);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--edge-2);
+}
+
+/* no camera: one calm card */
+.scanner-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% - 40px);
+  max-width: 360px;
+  padding: 26px 18px 14px;
+  border-radius: 28px;
+  background: rgb(21 21 24);
+  box-shadow: var(--edge), var(--lift-2);
+}
+
+.scanner-card-glyph {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  background: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-2);
+}
+
+.scanner-card-title {
+  margin: 4px 0 12px;
+  font-size: var(--t-lead);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .scanner-close {

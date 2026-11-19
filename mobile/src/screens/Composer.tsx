@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { STANDARD_SPEED, type Attachment, type QueuedMessage } from '@shared/protocol';
+import { STANDARD_SPEED, type Attachment, type ProviderId, type ProviderInfo, type QueuedMessage } from '@shared/protocol';
 import { offeredSpeeds, speedFor } from '@shared/speed';
 import { effortName, modelName, modelNameById, visibleModels } from '@desk/lib/models';
 import { conn } from '@m/lib/conn';
@@ -8,8 +8,9 @@ import { claimFlight, dropFlight, inFlight, launchFlight } from '@m/lib/flight';
 import { onKeyboard } from '@m/lib/keyboard';
 import { onPutDraft } from '@m/lib/put-draft';
 import { haptic } from '@m/lib/native';
-import { ensureFolderCaps, sessionData, setState, useStore } from '@m/lib/store';
+import { ensureFolderCaps, getState, sessionData, setState, useStore } from '@m/lib/store';
 import { Icon } from '@m/ui/icons';
+import { PROVIDER_NAME } from '@m/ui/marks';
 import { SNAP } from '@m/ui/motion';
 import { MODE_ICON, SetupSheet, type SetupState } from './Setup';
 
@@ -46,6 +47,13 @@ const saveDrafts = () => {
 const unsure = new Map<string, { text: string; at: number }>();
 const LOST = /connection to the desktop was lost|did not answer in time/i;
 
+/** The agents a chat can switch to, in the desktop's order. */
+const AGENTS: ProviderId[] = ['claude', 'codex'];
+const signedIn = (p: ProviderInfo | undefined) => !!p?.installed && (p.accounts?.length ? p.accounts.some((a) => a.auth.loggedIn) : !!p.auth?.loggedIn);
+/** `/model <name>` typed as a message: picks the model (or switches the agent), never sent. */
+const MODEL_CMD = /^\/model(?:\s+([\s\S]*))?$/i;
+const toast = (text: string, level: 'info' | 'success' | 'error' = 'info') => setState({ toast: { text, level, at: Date.now() } });
+
 /**
  * The composer: the desktop's frosted prompt bar at hand size. Send (an ivory disc), stop while a
  * turn runs, messages sent mid-turn wait in the queue above it (steer one in with its arrow). The
@@ -63,6 +71,8 @@ export function Composer({ sid }: { sid: string }) {
   const caps = sessionCaps ?? folderCaps;
   const queue = useStore((st) => sessionData(st, sid).queue);
   const visibility = useStore((st) => st.settings?.modelVisibility);
+  const providers = useStore((st) => st.providers);
+  const allCaps = useStore((st) => st.caps);
   const sendWithEnter = useStore((st) => st.settings?.sendWithEnter !== false);
   const [text, setText] = useState(() => drafts.get(sid) ?? '');
   const online = useStore((st) => st.conn === 'open');
@@ -100,6 +110,13 @@ export function Composer({ sid }: { sid: string }) {
   useEffect(() => {
     if (!sessionCaps && !folderCaps && s && online) ensureFolderCaps(s.provider, s.cwd, s.accountId);
   }, [sessionCaps, folderCaps, s?.provider, s?.cwd, s?.accountId, online]);
+
+  // The setup sheet lists the other agents' models: asked for once per agent and folder as it opens.
+  useEffect(() => {
+    if (!sheet || !s || !online) return;
+    const ps = getState().providers;
+    for (const p of AGENTS) if (p !== s.provider && signedIn(ps[p])) ensureFolderCaps(p, s.cwd);
+  }, [sheet, s?.provider, s?.cwd, online]);
 
   // The keyboard put away (back, the keyboard's own key): the field lets go too, so it does not stay lifted.
   useEffect(() => onKeyboard((lift, prev) => lift === 0 && prev > 0 && document.activeElement === area.current && area.current?.blur()), []);
@@ -142,6 +159,7 @@ export function Composer({ sid }: { sid: string }) {
   const speeds = offeredSpeeds(model, false);
   const speed = speedFor(model, s.speed);
   const modelLabel = modelName(model) ?? modelNameById(s.model, caps?.models) ?? 'Model';
+  const away = AGENTS.filter((p) => p !== s.provider && signedIn(providers[p]));
   const setup: SetupState = {
     models: models.map((m) => ({ id: m.id, name: modelName(m) ?? m.name })),
     model: s.model,
@@ -155,6 +173,19 @@ export function Composer({ sid }: { sid: string }) {
     modes: caps?.modes ?? [],
     mode: s.mode,
     onMode: (id) => void conn.call('session.setMode', { sessionId: sid, mode: id }).catch(() => {}),
+    // The other agents' models: picking one switches this chat to that agent, in place.
+    others: away.map((p) => {
+      const c = allCaps[`${p}:${s.cwd}`];
+      return { provider: p, models: c ? visibleModels(p, c.models, visibility).map((m) => ({ id: m.id, name: modelName(m) ?? m.name })) : null };
+    }),
+    othersOff: running || !online,
+    onOther: (provider, id) => {
+      setSheet(false);
+      void conn.call('session.switchAgent', { sessionId: sid, provider, model: id }).catch((err) => {
+        haptic('deny');
+        toast((err as Error).message, 'error');
+      });
+    },
   };
 
   const update = (v: string, hold = false) => {
@@ -184,9 +215,40 @@ export function Composer({ sid }: { sid: string }) {
     el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
   };
 
+  /** `/model <name>`: the bridge picks the model, or switches the chat to the agent that has it; nothing is sent. Bare `/model` opens the sheet. */
+  const modelCommand = async (t: string, name: string) => {
+    update('');
+    if (!name) {
+      haptic('tap');
+      area.current?.blur();
+      setSheet(true);
+      return;
+    }
+    haptic('select');
+    try {
+      const r = await conn.call('session.send', { sessionId: sid, text: t });
+      if (!r.ok) {
+        haptic('deny');
+        update(t);
+        return toast(r.error ?? 'No such model', 'error');
+      }
+      const st = getState();
+      const p = r.switched ?? st.sessions[sid]?.provider ?? s.provider;
+      const list = sessionData(st, sid).caps?.models ?? st.caps[`${p}:${s.cwd}`]?.models;
+      const name2 = (r.model && modelNameById(r.model, list)) ?? r.model ?? '';
+      toast(r.switched ? `Switched to ${PROVIDER_NAME[r.switched]}${name2 ? `, ${name2}` : ''}` : `Model set to ${name2}`, 'success');
+    } catch (err) {
+      haptic('deny');
+      update(t);
+      toast((err as Error).message, 'error');
+    }
+  };
+
   const send = async () => {
     const t = text.trim();
     if ((!t && !files.length) || !online) return;
+    const cmd = files.length ? null : MODEL_CMD.exec(t);
+    if (cmd) return modelCommand(t, (cmd[1] ?? '').trim());
     const el = area.current;
     const bar = el?.closest<HTMLElement>('.composer');
     // The words drain into the bar's corner and leave as a drop (lib/flight.ts: the tick comes at the break).

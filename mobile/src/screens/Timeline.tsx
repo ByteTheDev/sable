@@ -674,6 +674,7 @@ const Notice = memo(function Notice({ sid, id }: { sid: string; id: string }) {
   const next = it.limit?.next && !it.limit.continuedWith ? accounts?.find((a) => a.id === it.limit!.next && a.auth.loggedIn) : undefined;
   if (it.limit) return <LimitCard sid={sid} it={it} next={next} went={it.limit.continuedWith ? (accounts?.find((a) => a.id === it.limit!.continuedWith)?.label ?? 'another account') : undefined} />;
   if (it.until) return <UntilEnd it={it} />;
+  if (it.agentSwitch) return <AgentSwitchLine sid={sid} it={it} />;
   return (
     <div className="notice" data-variant={it.variant}>
       {it.variant === 'error' ? <span className="notice-dot" aria-hidden /> : <span className="notice-rule" aria-hidden />}
@@ -698,6 +699,46 @@ const Notice = memo(function Notice({ sid, id }: { sid: string; id: string }) {
     </div>
   );
 });
+
+/**
+ * Where the chat switched agents: one quiet line with the new agent's mark, centred between two
+ * rules. The latest switch offers to switch back, between turns (right after the switch that
+ * undoes it; later the agent before resumes its own conversation and hears what happened since).
+ */
+function AgentSwitchLine({ sid, it }: { sid: string; it: NoticeItem }) {
+  const mark = it.agentSwitch!;
+  const busy = useStore((s) => {
+    const st = s.sessions[sid]?.status;
+    return st === 'running' || st === 'starting' || st === 'awaiting';
+  });
+  const online = useStore((s) => s.conn === 'open');
+  const [going, setGoing] = useState(false);
+  const off = busy || going || !online;
+  const back = () => {
+    if (off) return;
+    haptic('select');
+    setGoing(true);
+    void conn
+      .call('session.switchAgent', { sessionId: sid, provider: mark.from })
+      .catch((err) => setState({ toast: { text: (err as Error).message, level: 'error', at: Date.now() } }))
+      .finally(() => setGoing(false));
+  };
+  return (
+    <div className="switch-line" role="note">
+      <span className="switch-rule" aria-hidden />
+      <span className="switch-label">
+        <ProviderMark provider={mark.to} size={14} />
+        <span className="switch-text">{it.text}</span>
+      </span>
+      {!mark.past && (
+        <button type="button" className="switch-back" aria-disabled={off || undefined} data-going={going || undefined} onClick={back}>
+          Switch back
+        </button>
+      )}
+      <span className="switch-rule" aria-hidden />
+    </div>
+  );
+}
 
 /** A `/until` check: one quiet row (passed or failed, its round); a tap shows the first lines of its output. */
 function CheckRow({ check }: { check: UntilCheck }) {

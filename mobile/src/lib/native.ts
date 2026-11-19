@@ -45,8 +45,27 @@ export function savePref(key: string, value: unknown) {
 
 export type HapticKind = 'tap' | 'send' | 'select' | 'success' | 'warning' | 'deny';
 
+/** Settings › Haptics: on unless turned off on this phone. */
+let hapticsOn = true;
+void loadPref('haptics', true).then((v) => (hapticsOn = v !== false));
+export const hapticsEnabled = () => hapticsOn;
+export function setHaptics(on: boolean) {
+  hapticsOn = on;
+  savePref('haptics', on);
+}
+
+/** This app's own version ("1.3"), on the phone. */
+export async function appVersion(): Promise<string | undefined> {
+  if (!isNative) return undefined;
+  try {
+    return (await App.getInfo()).version;
+  } catch {
+    return undefined;
+  }
+}
+
 export function haptic(kind: HapticKind) {
-  if (!isNative) return;
+  if (!isNative || !hapticsOn) return;
   const run = () => {
     switch (kind) {
       case 'tap':

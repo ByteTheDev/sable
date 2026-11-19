@@ -209,7 +209,9 @@ class Conn {
     this.attemptAt = performance.now();
     const current = () => attempt === this.attemptId;
     clearTimeout(this.retryTimer);
-    if (this.state !== 'open') this.setState('connecting');
+    // Retries on their own keep "offline" on screen (it would flicker with every attempt); the first
+    // attempt, and one asked for (`wake`: Try again, back to the front, a network change), say "connecting".
+    if (this.state !== 'open' && !(this.state === 'offline' && this.retry > 0)) this.setState('connecting');
     let sock: WebSocket | undefined;
     let abort!: (e: Error) => void;
     const aborted = new Promise<never>((_, reject) => (abort = reject));
