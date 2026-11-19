@@ -146,69 +146,137 @@ class Conn {
     return () => void this.listeners.delete(l);
   }
 
+  /** The app went to the background: noted, so coming back after a while starts a fresh connection. */
+  sleep() {
+    if (!this.hiddenAt) this.hiddenAt = Date.now();
+  }
+
   /**
-   * Reconnects now (the app came back to the front, the network changed). A socket that still
-   * looks open after the phone slept is checked with a small call and replaced when it is dead.
+   * Reconnects now (the app came back to the front, the network changed). Android cuts the network
+   * of an app in the background, so after a while away the socket may look open and be dead, and
+   * an attempt begun in the background may hang: either way a fresh connection starts at once (the
+   * old socket keeps the screen until the new one is in). After a short absence a small call checks
+   * the socket instead.
    */
   wake() {
     if (!this.pairing || this.state === 'denied') return;
-    if (this.state === 'open') {
+    const away = this.hiddenAt ? Date.now() - this.hiddenAt : 0;
+    this.hiddenAt = 0;
+    if (this.state === 'open' && away < 15_000) {
       const ws = this.ws;
-      void this.call('usage.limits', {}, 4000).catch(() => {
+      void this.call('usage.limits', {}, 3000).catch(() => {
         if (this.ws === ws) ws?.close();
       });
       return;
     }
+    // An attempt begun a moment ago (the same wake heard twice) is left to finish.
+    if (this.connecting && performance.now() - this.attemptAt < 2000) return;
+    this.cancelAttempt();
     clearTimeout(this.retryTimer);
     this.retry = 0;
     void this.connect();
+  }
+
+  private attemptAt = 0;
+
+  private hiddenAt = 0;
+  /** Each attempt has a number; a newer one supersedes it (its socket is closed when it answers late). */
+  private attemptId = 0;
+  private abortAttempt?: () => void;
+
+  /** Gives up the attempt in progress (it hung while the network was cut). */
+  private cancelAttempt() {
+    if (!this.connecting) return;
+    this.attemptId++;
+    this.abortAttempt?.();
+    this.abortAttempt = undefined;
+    this.connecting = false;
   }
 
   async connect() {
     const p = this.pairing;
     if (!p || this.connecting) return;
     this.connecting = true;
+    const attempt = ++this.attemptId;
+    this.attemptAt = performance.now();
+    const current = () => attempt === this.attemptId;
     clearTimeout(this.retryTimer);
     if (this.state !== 'open') this.setState('connecting');
+    let sock: WebSocket | undefined;
+    let abort!: (e: Error) => void;
+    const aborted = new Promise<never>((_, reject) => (abort = reject));
+    aborted.catch(() => {});
+    this.abortAttempt = () => {
+      abort(new Error('Cancelled'));
+      sock?.close();
+    };
     try {
-      const { ws, host } = await race(p.hosts, p.port, p.lastHost);
-      await new Promise<void>((resolve, reject) => {
-        ws.onmessage = (ev) => {
-          let f: PhoneFrame;
-          try {
-            f = JSON.parse(ev.data as string);
-          } catch {
-            return;
-          }
-          if ('welcome' in f) {
-            // The desktop's addresses now join the saved ones (Tailscale installed after pairing: reachable there next time).
-            const hosts = mergeHosts(p.hosts, f.welcome.hosts, host);
-            if (p.lastHost !== host || p.desktop !== f.welcome.desktop || !sameHosts(hosts, p.hosts)) {
-              p.lastHost = host;
-              p.desktop = f.welcome.desktop;
-              p.hosts = hosts;
-              void savePairing(p);
+      const raced = race(p.hosts, p.port, p.lastHost);
+      // A socket that opens after this attempt was given up is closed at once.
+      raced.then((r) => !current() && r.ws.close(), () => {});
+      const { ws, host } = await Promise.race([raced, aborted]);
+      sock = ws;
+      await Promise.race([
+        aborted,
+        new Promise<void>((resolve, reject) => {
+          // Open but silent (the network went away after the handshake): given up, not waited on forever.
+          const silent = window.setTimeout(() => reject(new Error('The desktop did not answer')), 8000);
+          ws.onmessage = (ev) => {
+            let f: PhoneFrame;
+            try {
+              f = JSON.parse(ev.data as string);
+            } catch {
+              return;
             }
-            this.adopt(ws);
-            resolve();
-          } else if ('denied' in f) {
-            reject(Object.assign(new Error(f.denied), { denied: true }));
-          }
-        };
-        ws.onclose = (ev) =>
-          reject(ev.code === 4001 ? Object.assign(new Error('This phone was removed on the desktop'), { denied: true }) : new Error('The desktop closed the connection'));
-        ws.send(JSON.stringify({ hello: { token: p.token } }));
-      });
+            if ('welcome' in f) {
+              clearTimeout(silent);
+              if (!current()) return reject(new Error('Cancelled'));
+              // The desktop's addresses now join the saved ones (Tailscale installed after pairing: reachable there next time).
+              const hosts = mergeHosts(p.hosts, f.welcome.hosts, host);
+              if (p.lastHost !== host || p.desktop !== f.welcome.desktop || !sameHosts(hosts, p.hosts)) {
+                p.lastHost = host;
+                p.desktop = f.welcome.desktop;
+                p.hosts = hosts;
+                void savePairing(p);
+              }
+              this.adopt(ws);
+              resolve();
+            } else if ('denied' in f) {
+              clearTimeout(silent);
+              reject(Object.assign(new Error(f.denied), { denied: true }));
+            }
+          };
+          ws.onclose = (ev) => {
+            clearTimeout(silent);
+            reject(ev.code === 4001 ? Object.assign(new Error('This phone was removed on the desktop'), { denied: true }) : new Error('The desktop closed the connection'));
+          };
+          ws.send(JSON.stringify({ hello: { token: p.token } }));
+        }),
+      ]);
     } catch (err) {
+      if (sock && sock !== this.ws) {
+        sock.onclose = null;
+        sock.close();
+      }
+      // A newer attempt took over: it reports for itself.
+      if (!current()) return;
       const e = err as Error & { denied?: boolean };
       if (e.denied) {
         this.setState('denied', e.message);
       } else {
+        // The old socket (kept on screen while this one was tried) is no good either.
+        if (this.ws && this.state === 'open') {
+          this.ws.close();
+          return;
+        }
         this.setState('offline', e.message);
         this.scheduleRetry();
       }
     } finally {
-      this.connecting = false;
+      if (current()) {
+        this.connecting = false;
+        this.abortAttempt = undefined;
+      }
     }
   }
 
@@ -232,6 +300,12 @@ class Conn {
       old.onmessage = null;
       old.onclose = null;
       old.close();
+      // Calls sent on the old socket get no answer: they fail now, not after their timeout.
+      for (const [id, p] of this.pending) {
+        clearTimeout(p.timer);
+        p.reject(new Error('The connection to the desktop was lost'));
+        this.pending.delete(id);
+      }
     }
     this.ws = ws;
     this.retry = 0;

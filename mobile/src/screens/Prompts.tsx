@@ -167,7 +167,6 @@ function QuestionBody({ sid, req, onLater }: { sid: string; req: QuestionRequest
     <div className="prompt">
       {req.questions.map((q, i) => (
         <div key={i} className="question">
-          {q.header && <div className="question-head">{q.header}</div>}
           <h2 className="prompt-title">{q.question}</h2>
           <div className="choices">
             {q.options.map((o) => {

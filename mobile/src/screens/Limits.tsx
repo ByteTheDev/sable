@@ -3,7 +3,7 @@ import type { AccountInfo, ProviderId, RateLimit } from '@shared/protocol';
 import { resetIn } from '@desk/lib/format';
 import { useStore } from '@m/lib/store';
 import { useNow } from '@m/lib/useNow';
-import { ProviderMark, SHORT_NAME } from '@m/ui/marks';
+import { ProviderMark } from '@m/ui/marks';
 import { Sheet } from '@m/ui/Sheet';
 
 /** Each account's plan windows, as last read on the desktop: how full, and when they reset. */
@@ -12,12 +12,12 @@ export function LimitsSheet({ open, onClose }: { open: boolean; onClose: () => v
   const limits = useStore((s) => s.limits);
   const now = useNow();
 
-  const rows: { provider: ProviderId; account: AccountInfo; windows: RateLimit[] }[] = [];
+  const rows: { provider: ProviderId; account: AccountInfo; windows: RateLimit[]; several: boolean }[] = [];
   for (const id of ['claude', 'codex', 'demo'] as ProviderId[]) {
-    for (const a of providers[id]?.accounts ?? []) {
-      if (!a.auth.loggedIn) continue;
+    const accounts = (providers[id]?.accounts ?? []).filter((a) => a.auth.loggedIn);
+    for (const a of accounts) {
       const windows = (limits[`${id}:${a.id}`]?.limits ?? a.limits ?? []).filter((w) => w.percent >= 0);
-      rows.push({ provider: id, account: a, windows });
+      rows.push({ provider: id, account: a, windows, several: accounts.length > 1 });
     }
   }
 
@@ -27,13 +27,14 @@ export function LimitsSheet({ open, onClose }: { open: boolean; onClose: () => v
         <p className="empty">No limits known yet.</p>
       ) : (
         <div className="limits">
-          {rows.map(({ provider, account, windows }) => (
+          {rows.map(({ provider, account, windows, several }) => (
             <section key={`${provider}:${account.id}`} className="limit-acct">
               <header className="limit-head">
                 <ProviderMark provider={provider} size={15} />
                 <span className="limit-name">{account.label}</span>
-                <span className="limit-plan">{account.auth.plan ?? SHORT_NAME[provider]}</span>
-                {account.isDefault && <span className="limit-def">Default</span>}
+                {account.auth.plan && <span className="limit-plan">{account.auth.plan}</span>}
+                {/* Which account new chats use: only worth saying when there is a choice. */}
+                {several && account.isDefault && <span className="limit-def">Default</span>}
               </header>
               {windows.length === 0 ? (
                 <p className="limit-none">Not read yet</p>

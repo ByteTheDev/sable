@@ -1,5 +1,5 @@
 import { App } from '@capacitor/app';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Device } from '@capacitor/device';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -81,8 +81,14 @@ export async function deviceName(): Promise<string> {
 
 // ── notifications: a turn ended or waits on you, while the app is in the background ──
 
-let notifyId = 1;
 let channelMade = false;
+
+/** One notification per chat: its newest state replaces the last ("Waiting for you", then "Done"). */
+const idFor = (sessionId: string) => {
+  let h = 7;
+  for (let i = 0; i < sessionId.length; i++) h = (h * 31 + sessionId.charCodeAt(i)) | 0;
+  return (Math.abs(h) % 2_000_000_000) + 1;
+};
 
 export async function notificationsAllowed(): Promise<boolean> {
   if (!isNative) return false;
@@ -114,7 +120,7 @@ export async function notify(title: string, body: string, sessionId: string) {
     }
     await LocalNotifications.schedule({
       // Shown now, not at a time: no exact alarm (asking for one would open a settings screen, impossible from the background).
-      notifications: [{ id: notifyId++, title, body: body.slice(0, 180), channelId: 'turns', extra: { sessionId }, smallIcon: 'ic_stat_sable', iconColor: '#f2f1ee', isExactNotification: false }],
+      notifications: [{ id: idFor(sessionId), title, body: body.slice(0, 180), channelId: 'turns', extra: { sessionId }, smallIcon: 'ic_stat_sable', iconColor: '#f2f1ee', isExactNotification: false }],
     });
   } catch {
     /* not allowed */
@@ -130,9 +136,24 @@ export function onNotificationTap(fn: (sessionId: string) => void) {
   return () => void h.then((x) => x.remove());
 }
 
+// ── the connection kept in the background (android/…/KeepAliveService.java) ──
+
+const KeepAlive = registerPlugin<{ arm(o: { text?: string }): Promise<void> }>('KeepAlive');
+let armed: string | null = null;
+
+/**
+ * While a chat runs or waits, `text` names it: leaving the app then keeps the connection (Android
+ * would cut it), so the phone can say when it is done or waits. Null lets it go.
+ */
+export function keepAlive(text: string | null) {
+  if (!isNative || text === armed) return;
+  armed = text;
+  void KeepAlive.arm(text ? { text } : {}).catch(() => {});
+}
+
 // ── app lifecycle ──
 
-let foreground = true;
+let foreground = typeof document === 'undefined' || document.visibilityState !== 'hidden';
 export const inForeground = () => foreground;
 
 export function onAppState(fn: (active: boolean) => void) {

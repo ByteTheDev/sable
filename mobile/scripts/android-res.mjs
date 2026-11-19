@@ -115,9 +115,25 @@ if (!m.includes('android:scheme="sable"')) {
 m = m.replace('android:allowBackup="true"', 'android:allowBackup="false"');
 if (!m.includes('usesCleartextTraffic')) m = m.replace('android:supportsRtl="true"', 'android:supportsRtl="true"\n        android:usesCleartextTraffic="true"');
 if (!m.includes('windowSoftInputMode')) m = m.replace('android:launchMode="singleTask"', 'android:launchMode="singleTask"\n            android:windowSoftInputMode="adjustResize"');
-for (const perm of ['android.permission.CAMERA', 'android.permission.POST_NOTIFICATIONS', 'android.permission.VIBRATE']) {
-  if (!m.includes(perm)) m = m.replace('<uses-permission android:name="android.permission.INTERNET" />', `<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="${perm}" />`);
+for (const perm of ['android.permission.CAMERA', 'android.permission.POST_NOTIFICATIONS', 'android.permission.VIBRATE', 'android.permission.FOREGROUND_SERVICE', 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE']) {
+  if (!m.includes(`${perm}"`)) m = m.replace('<uses-permission android:name="android.permission.INTERNET" />', `<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="${perm}" />`);
 }
+// The connection kept while a chat runs and the app is in the background (KeepAliveService.java).
+if (!m.includes('KeepAliveService'))
+  m = m.replace(
+    '\n    </application>',
+    `
+        <!-- Keeps the connection while a chat runs and the app is in the background (KeepAliveService). -->
+        <service
+            android:name=".KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the connection to the paired computer while an agent works, to tell the user when it is done or waits for an answer." />
+        </service>
+    </application>`,
+  );
 if (!m.includes('android.hardware.camera')) m = m.replace('<!-- Permissions -->', '<!-- Permissions -->\n    <uses-feature android:name="android.hardware.camera" android:required="false" />');
 writeFileSync(mf, m);
 

@@ -5,7 +5,7 @@ import { effortName, modelName, modelNameById, visibleModels } from '@desk/lib/m
 import { conn } from '@m/lib/conn';
 import { launchFlight } from '@m/lib/flight';
 import { haptic } from '@m/lib/native';
-import { sessionData, setState, useStore } from '@m/lib/store';
+import { ensureFolderCaps, sessionData, setState, useStore } from '@m/lib/store';
 import { fieldBeat } from '@m/ui/Field';
 import { Icon, type IconName } from '@m/ui/icons';
 import { Choice, Sheet } from '@m/ui/Sheet';
@@ -52,7 +52,13 @@ const LOST = /connection to the desktop was lost|did not answer in time/i;
  */
 export function Composer({ sid }: { sid: string }) {
   const s = useStore((st) => st.sessions[sid]);
-  const caps = useStore((st) => sessionData(st, sid).caps);
+  // A chat whose agent is not running has no caps of its own: the agent's for that folder fill the controls.
+  const sessionCaps = useStore((st) => sessionData(st, sid).caps);
+  const folderCaps = useStore((st) => {
+    const ss = st.sessions[sid];
+    return ss ? st.caps[`${ss.provider}:${ss.cwd}`] : undefined;
+  });
+  const caps = sessionCaps ?? folderCaps;
   const queue = useStore((st) => sessionData(st, sid).queue);
   const visibility = useStore((st) => st.settings?.modelVisibility);
   const sendWithEnter = useStore((st) => st.settings?.sendWithEnter !== false);
@@ -87,6 +93,22 @@ export function Composer({ sid }: { sid: string }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastUser, sid]);
+
+  useEffect(() => {
+    if (!sessionCaps && !folderCaps && s && online) ensureFolderCaps(s.provider, s.cwd, s.accountId);
+  }, [sessionCaps, folderCaps, s?.provider, s?.cwd, s?.accountId, online]);
+
+  // The keyboard put away (back, the keyboard's own key): the field lets go too, so it does not stay lifted.
+  useEffect(() => {
+    let last = window.innerHeight;
+    const onResize = () => {
+      const h = window.innerHeight;
+      if (h > last + 120 && document.activeElement === area.current) area.current?.blur();
+      last = h;
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // The field takes the height of a draft that came back from storage.
   useEffect(() => {

@@ -11,7 +11,7 @@ import { applyChildren, applyFull, fetchItem, sessionData, setState, useStore } 
 import { takeFlight } from '@m/lib/flight';
 import type { Turn } from '@m/lib/turns';
 import { Icon, TOOL_ICON } from '@m/ui/icons';
-import { Ring, Tiles } from '@m/ui/marks';
+import { Ring, StatusMark, Tiles } from '@m/ui/marks';
 
 const useItem = <T extends TimelineItem>(sid: string, id: string | undefined) => useStore((s) => (id ? (sessionData(s, sid).items[id] as T | undefined) : undefined));
 
@@ -99,11 +99,11 @@ const UserBubble = memo(function UserBubble({ sid, id, steered }: { sid: string;
 function Steps({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) {
   const [open, setOpen] = useState(false);
   const activity = useStore((s) => s.sessions[sid]?.activity);
+  // Waiting on you: the line stills (amber), as the desktop's field does.
+  const waiting = useStore((s) => live && s.sessions[sid]?.status === 'awaiting');
   const end = useItem<TurnItem>(sid, turn.end);
-  const first = useItem<UserItem>(sid, turn.user);
   const lastStep = useItem<TimelineItem>(sid, turn.steps[turn.steps.length - 1]);
   const n = turn.steps.length;
-  const tokens = (end?.inputTokens ?? 0) + (end?.outputTokens ?? 0);
 
   // While it runs, the step in progress is the line itself; the trail under it shows the ones before.
   const current = live && ((lastStep?.type === 'thinking' && lastStep.streaming) || (lastStep?.type === 'tool' && (lastStep.status === 'running' || lastStep.status === 'pending')));
@@ -119,6 +119,7 @@ function Steps({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) 
       <button
         type="button"
         className="steps-line"
+        data-waiting={waiting || undefined}
         onClick={() => {
           if (!n) return;
           haptic('select');
@@ -126,9 +127,8 @@ function Steps({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) 
         }}
         aria-expanded={open}
       >
-        {live ? <Tiles size={13} /> : <Icon name="todo" size={15} />}
-        <span className={live ? 'steps-label shimmer' : 'steps-label'}>{label}</span>
-        {!live && first && end && tokens > 0 && <span className="steps-meta num">{formatTokens(tokens)}</span>}
+        {waiting ? <StatusMark tone="awaiting" size={13} /> : live ? <Tiles size={13} /> : <Icon name="todo" size={15} />}
+        <span className={live && !waiting ? 'steps-label shimmer' : 'steps-label'}>{label}</span>
         {n > 0 && <Icon name="caretDown" size={13} weight="bold" className="steps-caret" />}
       </button>
       <AnimatePresence initial={false}>
@@ -157,7 +157,7 @@ const Step = memo(function Step({ sid, id, quiet }: { sid: string; id: string; q
   const [full, setFull] = useState<ToolItem>();
   if (!it) return null;
   if (it.type === 'thinking') return <ThinkingStep sid={sid} it={it} quiet={quiet} />;
-  if (it.type === 'text') return <div className="step-text">{it.text.length > 280 ? `${it.text.slice(0, 280)}…` : it.text}</div>;
+  if (it.type === 'text') return <div className="step-text">{inlineCode(it.text.length > 280 ? `${it.text.slice(0, 280)}…` : it.text)}</div>;
   if (it.type !== 'tool') return null;
   const more = !!(it as PhoneItem).more;
   const detail = toolDetail(full ?? it);
@@ -187,6 +187,12 @@ const Step = memo(function Step({ sid, id, quiet }: { sid: string; id: string; q
   );
 });
 
+/** Text between steps: plain, with `code` set as code (not shown with its backticks). */
+function inlineCode(text: string): ReactNode {
+  if (!text.includes('`')) return text;
+  return text.split(/(`[^`\n]+`)/g).map((part, i) => (part.length > 2 && part.startsWith('`') && part.endsWith('`') ? <code key={i}>{part.slice(1, -1)}</code> : part));
+}
+
 function ThinkingStep({ sid, it, quiet }: { sid: string; it: ThinkingItem; quiet?: boolean }) {
   const [open, setOpen] = useState(false);
   const secs = it.endedAt ? Math.max(1, Math.round((it.endedAt - it.ts) / 1000)) : 0;
@@ -201,7 +207,7 @@ function ThinkingStep({ sid, it, quiet }: { sid: string; it: ThinkingItem; quiet
         <span className="step-icon">{it.streaming ? <Ring size={13} /> : <Icon name="brain" size={15} />}</span>
         <span className="step-title">{it.streaming ? 'Thinking' : secs ? `Thought for ${secs}s` : 'Thought'}</span>
       </button>
-      {open && <div className="step-think">{it.text}</div>}
+      {open && <div className="step-think">{inlineCode(it.text)}</div>}
     </div>
   );
 }

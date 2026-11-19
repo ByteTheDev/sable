@@ -3,9 +3,10 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import type { SessionMeta } from '@shared/protocol';
 import { goBack, pushBack } from '@m/lib/back';
 import { conn } from '@m/lib/conn';
-import { inForeground, notify, onAppState, onBackButton, onNotificationTap, onPairLink } from '@m/lib/native';
+import { haptic, inForeground, keepAlive, notify, onAppState, onBackButton, onNotificationTap, onPairLink } from '@m/lib/native';
 import { nav, useNav } from '@m/lib/nav';
-import { closeSessionData, getState, loadCachedHome, refresh, setState, subscribeStore, useStore } from '@m/lib/store';
+import { closeSessionData, getState, hasCachedHome, loadCachedHome, refresh, setState, subscribeStore, useStore } from '@m/lib/store';
+import { StatusMark } from '@m/ui/marks';
 import { SPRING } from '@m/ui/Sheet';
 import { fieldBeat } from '@m/ui/Field';
 import { Home } from './screens/Home';
@@ -21,10 +22,17 @@ function watchTurns() {
   let last: Record<string, SessionMeta['status']> = {};
   let seeded = false;
   let prev = getState().sessions;
+  let listAt = getState().listAt;
   return () => {
     const { sessions } = getState();
     if (sessions === prev) return;
     prev = sessions;
+    // A whole new list on screen (a reconnect after time away): what changed meanwhile is not news (no
+    // wave, no haptic); it seeds again. In the background it still is: the phone was following.
+    if (getState().listAt !== listAt) {
+      listAt = getState().listAt;
+      if (inForeground()) seeded = false;
+    }
     const next: typeof last = {};
     for (const s of Object.values(sessions)) {
       next[s.id] = s.status;
@@ -34,13 +42,23 @@ function watchTurns() {
       const waits = s.status === 'awaiting' && was !== 'awaiting';
       if (ended && s.status === 'idle') fieldBeat('done');
       if (!waits && !ended) continue;
-      console.log(`turn ${s.id.slice(0, 8)} ${was} -> ${s.status} (foreground ${inForeground()})`);
+      if (waits && inForeground()) {
+        // Waiting on you somewhere else than on screen: felt once, and said at the top when home is covered.
+        const top = nav.stack[nav.stack.length - 1];
+        if (!(top?.name === 'chat' && top.id === s.id)) {
+          haptic('warning');
+          if (top) setState({ attention: { id: s.id, at: Date.now() } });
+        }
+      }
       if (inForeground() || !prefs.notify) continue;
       if (waits) void notify(s.title, 'Waiting for you', s.id);
       else if (ended) void notify(s.title, s.status === 'error' ? (s.lastError ?? 'Stopped with an error') : 'Done', s.id);
     }
     last = next;
     seeded = true;
+    // Something at work: the connection stays when the app leaves the screen (to say when it ends or waits).
+    const busy = Object.values(sessions).filter((s) => !s.archived && (s.status === 'running' || s.status === 'starting' || s.status === 'awaiting'));
+    keepAlive(prefs.notify && busy.length && getState().conn !== 'unpaired' ? (busy.length === 1 ? busy[0].title : `${busy.length} chats`) : null);
   };
 }
 
@@ -49,8 +67,14 @@ export function App() {
   const error = useStore((s) => s.connError);
   const stack = useNav();
   const [link, setLink] = useState<string | null>(null);
-  // Until the saved pairing is read (a few ms), nothing is drawn: no pairing screen flashes at a cold start.
-  const [ready, setReady] = useState(false);
+  // The list from the last run draws in the first frame (read synchronously); without one, nothing is drawn
+  // until the saved pairing is read (a few ms), so no pairing screen flashes at a cold start.
+  const [ready, setReady] = useState(() => {
+    if (!hasCachedHome()) return false;
+    loadCachedHome();
+    nav.restore();
+    return true;
+  });
 
   useEffect(() => {
     const offs = [
@@ -60,7 +84,7 @@ export function App() {
           .then(() => nav.prune((id) => !!getState().sessions[id]))
           .catch(() => {});
       }),
-      onAppState((active) => active && conn.wake()),
+      onAppState((active) => (active ? conn.wake() : conn.sleep())),
       onBackButton(goBack),
       pushBack(() => nav.pop()),
       onPairLink((url) => setLink(url)),
@@ -128,6 +152,7 @@ export function App() {
           </motion.div>
         ))}
       </AnimatePresence>
+      <Attention top={top} />
       {state === 'denied' && (
         <div className="banner glass" role="alert">
           <span>{error ?? 'This phone is no longer allowed'}</span>
@@ -138,6 +163,45 @@ export function App() {
       )}
       <Toast />
     </div>
+  );
+}
+
+/** Another chat waits on you while a chat or settings covers home: one line at the top, a tap goes there. */
+function Attention({ top }: { top?: { name: string; id?: string } }) {
+  const attention = useStore((s) => s.attention);
+  const s = useStore((st) => (attention ? st.sessions[attention.id] : undefined));
+  const show = !!attention && !!s && s.status === 'awaiting' && !!top && !(top.name === 'chat' && top.id === attention.id);
+  useEffect(() => {
+    if (!attention) return;
+    const t = setTimeout(() => setState({ attention: undefined }), 7000);
+    return () => clearTimeout(t);
+  }, [attention]);
+  return (
+    <AnimatePresence>
+      {show && (
+        <motion.button
+          key={attention!.at}
+          type="button"
+          className="attn-top waiting glass"
+          initial={{ opacity: 0, y: -14 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -14 }}
+          transition={SPRING}
+          onClick={() => {
+            haptic('tap');
+            setState({ attention: undefined });
+            nav.chat(s!.id);
+          }}
+        >
+          <StatusMark tone="awaiting" />
+          <span className="attn-text">
+            <span className="attn-title">{s!.title}</span>
+            <span className="attn-sub">Waiting for you</span>
+          </span>
+          <span className="waiting-go">Open</span>
+        </motion.button>
+      )}
+    </AnimatePresence>
   );
 }
 

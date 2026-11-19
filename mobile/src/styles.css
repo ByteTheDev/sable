@@ -3115,3 +3115,155 @@ textarea {
 .sheet .choice[data-selected] {
   background: rgb(255 255 255 / 0.07);
 }
+
+/* ── fourth pass ── */
+
+/* home: the field lies under the whole list whatever its length (the list's body is clear; the
+   pull mark shows only once the list has moved past it) */
+.pull-body {
+  background: transparent;
+}
+
+/* waiting on you: one line above the New chat key (home), or at the top while a chat covers home.
+   Solid ink, no blur: the list scrolls under it. */
+.attn,
+.attn-top {
+  height: 62px;
+  padding: 0 9px 0 18px;
+  gap: 14px;
+  border-radius: 20px;
+  background-color: rgb(24 24 28);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.09), 0 18px 40px -16px rgb(0 0 0 / 0.9);
+}
+
+/* A button does not stretch between left and right: its width is set (it would take its text's width and run off the screen). */
+.attn {
+  position: absolute;
+  z-index: 5;
+  left: 14px;
+  width: calc(100% - 28px);
+  bottom: calc(var(--sab) + 86px);
+}
+
+.attn-top {
+  position: fixed;
+  z-index: 190;
+  top: calc(var(--sat) + 62px);
+  left: 12px;
+  width: calc(100% - 24px);
+}
+
+.attn-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
+.attn-title {
+  font-size: var(--t-ui);
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attn-sub {
+  font-size: var(--t-xs);
+  color: var(--amber);
+}
+
+.home:has(.attn) .home-pad {
+  height: calc(var(--sab) + 196px);
+}
+
+/* the agent's question: its kind as a plain glyph beside the title (no tile, no tint) */
+.prompt-head {
+  gap: 12px;
+}
+
+.prompt-icon {
+  width: 22px;
+  height: 27px;
+  border-radius: 0;
+  background: none;
+  color: var(--text-2);
+}
+
+/* a turn waiting on you: the line stills, its words in full ink */
+.steps-line[data-waiting] .steps-label {
+  color: var(--text);
+}
+
+/* code named in the text between steps */
+.step-text code,
+.step-think code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--fill-2);
+  color: var(--text-2);
+}
+
+/* the newest lines leave under a short fade, not cut at the composer's edge */
+.chat-foot::before {
+  top: -32px;
+  height: 32px;
+  background: linear-gradient(rgb(7 7 8 / 0), rgb(7 7 8 / 0.94));
+}
+
+/* touch targets: every key at least 40 px, the ones on their own 44 */
+.icon-btn.sm {
+  width: 44px;
+  height: 44px;
+}
+
+.search-clear {
+  width: 40px;
+  height: 40px;
+}
+
+.chip-btn {
+  height: 40px;
+}
+
+.more-row,
+.steps-line,
+.prompt-diff,
+.seg-opt,
+.md-rest {
+  min-height: 44px;
+}
+
+.more-row {
+  height: 44px;
+}
+
+.step-line {
+  min-height: 40px;
+}
+
+.md-copy {
+  width: 40px;
+  height: 40px;
+}
+
+/* a long question's answer key: its edge spans the sheet and fades into the sheet's own ink */
+.sheet[data-tall] .prompt-actions {
+  margin: 0 -22px;
+  padding: 22px 22px 8px;
+  background: linear-gradient(rgb(16 16 19 / 0), rgb(16 16 19) 24px);
+}
+
+/* the jump to the newest rides over the scrolling thread: solid ink, no blur (a blur here redraws every scroll frame) */
+.jump.glass {
+  background-color: rgb(24 24 28 / 0.97);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.09), 0 12px 28px -12px rgb(0 0 0 / 0.9);
+}

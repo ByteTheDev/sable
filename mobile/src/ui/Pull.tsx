@@ -37,7 +37,8 @@ export function Pull({ onRefresh, children, className }: { onRefresh: () => Prom
       y = v;
       body.style.transform = v ? `translate3d(0, ${v}px, 0)` : '';
       m.style.setProperty('--p', String(Math.min(1, v / THRESH)));
-      m.style.opacity = String(Math.min(1, v / 28));
+      // The list's body is clear: the mark shows only once the list has moved past it.
+      m.style.opacity = String(Math.max(0, Math.min(1, (v - 30) / 26)));
     };
     const settle = (to: number) => {
       spring?.stop();

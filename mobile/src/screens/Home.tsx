@@ -66,6 +66,8 @@ export function Home({ under }: { under: boolean }) {
   const desktop = useStore((s) => s.desktop);
   const connState = useStore((s) => s.conn);
   const loaded = useStore((s) => s.loaded);
+  // Reached the desktop in this run: a lost connection is then "Reconnecting".
+  const fresh = useStore((s) => !!s.fresh);
   const [query, setQuery] = useState('');
   const q = useDeferredValue(query);
   const [limits, setLimits] = useState(false);
@@ -74,6 +76,18 @@ export function Home({ under }: { under: boolean }) {
   const [menu, setMenu] = useState<string | null>(null);
   const groups = useMemo(() => groupSessions(Object.values(sessions), projects, folderOrder, q), [sessions, projects, folderOrder, q]);
   const running = useMemo(() => Object.values(sessions).some((s) => s.status === 'running'), [sessions]);
+  // For start-up timing (DevTools: performance.getEntriesByName('sable:list')).
+  useEffect(() => {
+    if (groups.length && !performance.getEntriesByName('sable:list').length) performance.mark('sable:list');
+  }, [groups.length]);
+  // Chats that wait on you (a permission, a question): the newest first.
+  const waiting = useMemo(
+    () =>
+      Object.values(sessions)
+        .filter((s) => s.status === 'awaiting' && !s.archived)
+        .sort((a, b) => b.updatedAt - a.updatedAt),
+    [sessions],
+  );
 
   return (
     <div className="screen home" data-under={under || undefined}>
@@ -96,7 +110,7 @@ export function Home({ under }: { under: boolean }) {
                   'Not paired'
                 ) : (
                   <>
-                    <Ring size={11} /> {connState === 'connecting' && !loaded ? 'Connecting' : 'Reconnecting'}
+                    <Ring size={11} /> {fresh ? 'Reconnecting' : 'Connecting'}
                   </>
                 )}
               </motion.span>
@@ -174,6 +188,33 @@ export function Home({ under }: { under: boolean }) {
         )}
         <div className="home-pad" />
       </Pull>
+
+      {/* Waiting on you: one calm line above the key, whatever the list's scroll; a tap opens the chat and its question. */}
+      <AnimatePresence>
+        {waiting.length > 0 && fresh && (
+          <motion.button
+            key="attn"
+            type="button"
+            className="attn waiting glass"
+            initial={{ opacity: 0, y: 16, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 16, scale: 0.98 }}
+            transition={{ type: 'spring', stiffness: 460, damping: 36 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => {
+              haptic('tap');
+              nav.chat(waiting[0].id);
+            }}
+          >
+            <span className="waiting-dot" />
+            <span className="attn-text">
+              <span className="attn-title">{waiting[0].title}</span>
+              <span className="attn-sub">{waiting.length > 1 ? `Waiting for you · ${waiting.length - 1} more` : 'Waiting for you'}</span>
+            </span>
+            <span className="waiting-go">Review</span>
+          </motion.button>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence initial={false}>
         {connState === 'open' && (

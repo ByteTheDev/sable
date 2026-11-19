@@ -23,6 +23,7 @@ export function Chat({ id }: { id: string }) {
   const loaded = useStore((st) => !!st.data[id]);
   const listed = useStore((st) => !!st.fresh);
   const connState = useStore((st) => st.conn);
+  const desktop = useStore((st) => st.desktop);
   const [error, setError] = useState<string>();
   const [remote, setRemote] = useState(false);
 
@@ -30,7 +31,8 @@ export function Chat({ id }: { id: string }) {
   useLayoutEffect(() => {
     setError(undefined);
     showCached(id);
-    if (getState().conn === 'open') void openSession(id).catch((err) => setError((err as Error).message));
+    // A connection replaced meanwhile loads it again by itself (the skeleton stays).
+    if (getState().conn === 'open') void openSession(id).catch((err) => !/connection to the desktop was lost/i.test((err as Error).message) && setError((err as Error).message));
   }, [id]);
 
   if (!s) {
@@ -50,7 +52,7 @@ export function Chat({ id }: { id: string }) {
       <ChatHead
         title={s.title}
         sub={connState === 'open' ? baseName(s.cwd) : undefined}
-        status={connState === 'open' ? undefined : connState === 'denied' ? 'Not paired' : 'Reconnecting'}
+        status={connState === 'open' ? undefined : connState === 'denied' ? 'Not paired' : listed ? 'Reconnecting' : 'Connecting'}
         mark={<ProviderMark provider={s.provider} size={17} />}
         tone={toneOf(s)}
         onBack={() => nav.pop()}
@@ -63,7 +65,13 @@ export function Chat({ id }: { id: string }) {
           ) : undefined
         }
       />
-      {loaded ? <Thread id={id} /> : <div className="thread-skel">{error ? <p className="empty">{error}</p> : <ThreadSkeleton />}</div>}
+      {loaded ? (
+        <Thread id={id} />
+      ) : (
+        <div className="thread-skel">
+          {error ? <p className="empty">{error}</p> : connState === 'offline' ? <p className="empty">This chat opens when {desktop ?? 'the computer'} is back.</p> : <ThreadSkeleton />}
+        </div>
+      )}
       <div className="chat-foot">
         <Prompts sid={id} />
         <Composer sid={id} />

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { DEFAULT_ACCOUNT } from '@shared/protocol';
 import type {
   AppSettings,
   BridgeEvent,
@@ -58,13 +59,26 @@ export interface State {
   caps: Record<string, Capabilities>;
   /** A message from the desktop to show once. */
   toast?: { text: string; level: 'info' | 'success' | 'error'; at: number };
+  /** Another chat started waiting on you while a screen covers home (a line at the top says so). */
+  attention?: { id: string; at: number };
   /** The list of chats is there (maybe from the cache, see `fresh`). */
   loaded: boolean;
   /** The list came from the desktop in this run (not only from the cache). */
   fresh?: boolean;
+  /** When the whole list last came from the desktop (statuses that changed meanwhile are not news). */
+  listAt?: number;
 }
 
-let state: State = { conn: 'unpaired', providers: {}, projects: [], sessions: {}, data: {}, limits: {}, caps: {}, loaded: false };
+// A phone with a list from the last run was paired then: it starts as connecting (not on the pairing screen).
+const hadHome = (() => {
+  try {
+    return !!localStorage.getItem('sable.home');
+  } catch {
+    return false;
+  }
+})();
+
+let state: State = { conn: hadHome ? 'connecting' : 'unpaired', providers: {}, projects: [], sessions: {}, data: {}, limits: {}, caps: {}, loaded: false };
 const listeners = new Set<() => void>();
 
 export const getState = () => state;
@@ -72,7 +86,37 @@ export const getState = () => state;
 export function setState(patch: Partial<State> | ((s: State) => Partial<State>)) {
   const p = typeof patch === 'function' ? patch(state) : patch;
   state = { ...state, ...p };
+  if (deferring) return scheduleNotify();
+  notifyNow();
+}
+
+// Events from the desktop come one per socket message; a burst (many chats at work, a reconnect)
+// would render once per message. The state changes at once, the screen once per frame.
+let deferring = false;
+let notifyFrame = 0;
+let notifyTimer = 0;
+function notifyNow() {
+  if (notifyFrame) cancelAnimationFrame(notifyFrame);
+  clearTimeout(notifyTimer);
+  notifyFrame = 0;
+  notifyTimer = 0;
   for (const l of listeners) l();
+}
+function scheduleNotify() {
+  if (notifyFrame || notifyTimer) return;
+  notifyFrame = requestAnimationFrame(notifyNow);
+  // No frames while the app is in the background: the notifications watcher still hears it.
+  notifyTimer = window.setTimeout(notifyNow, 120);
+}
+
+/** Applies a bridge event; listeners hear of it with the next frame. */
+export function applyEventSoon(e: BridgeEvent) {
+  deferring = true;
+  try {
+    applyEvent(e);
+  } finally {
+    deferring = false;
+  }
 }
 
 const subscribe = (l: () => void) => {
@@ -275,7 +319,7 @@ export async function refresh(openIds: string[]) {
   for (const s of hello.sessions) sessions[s.id] = s;
   const providers: State['providers'] = {};
   for (const p of hello.providers) providers[p.id] = p;
-  setState({ sessions, providers, projects: hello.projects, settings: hello.settings, version: hello.version, desktop: conn.pairing?.desktop, loaded: true, fresh: true });
+  setState({ sessions, providers, projects: hello.projects, settings: hello.settings, version: hello.version, desktop: conn.pairing?.desktop, loaded: true, fresh: true, listAt: Date.now() });
   saveHome();
   void conn
     .call('usage.limits', {})
@@ -342,6 +386,22 @@ export function applyOlder(id: string, older: { before: string; page: PhoneTail 
   setState({ data: { ...state.data, [id]: { ...d, items, roots: [...add, ...d.roots], cursor: older.page.cursor } } });
 }
 
+const capsAsked = new Set<string>();
+
+/**
+ * What an agent offers in a folder (models, modes, efforts), for a chat whose agent is not running
+ * (it has no caps of its own until it starts): asked once per agent and folder, as the desktop does.
+ */
+export function ensureFolderCaps(provider: ProviderId, cwd: string, accountId?: string) {
+  const key = `${provider}:${cwd}`;
+  if (state.caps[key] || capsAsked.has(key) || state.conn !== 'open') return;
+  capsAsked.add(key);
+  void conn
+    .call('provider.caps', { provider, cwd, ...(accountId && accountId !== DEFAULT_ACCOUNT ? { accountId } : {}) })
+    .then((c) => setState((st) => ({ caps: { ...st.caps, [key]: c } })))
+    .catch(() => capsAsked.delete(key));
+}
+
 /** One item with more of it (a step's output, a long text in full) and the last steps nested under it. */
 export function fetchItem(sid: string, itemId: string) {
   return conn.call('phone.item', { sessionId: sid, itemId });
@@ -376,7 +436,7 @@ export function closeSessionData(id: string) {
 
 export const sessionData = (s: State, id: string): SessionData => s.data[id] ?? EMPTY;
 
-conn.on(applyEvent);
+conn.on(applyEventSoon);
 conn.onState(() => {
   if (conn.state === 'unpaired') clearCache();
   setState({ conn: conn.state, connError: conn.error, desktop: conn.pairing?.desktop ?? state.desktop });
@@ -399,6 +459,9 @@ function saveHome() {
     /* full or unavailable: the next start asks the desktop */
   }
 }
+
+/** True when the list from the last run is there to show at once (read synchronously, before the pairing). */
+export const hasCachedHome = () => hadHome;
 
 /** The list of chats from the last run, before the desktop answers. */
 export function loadCachedHome() {
