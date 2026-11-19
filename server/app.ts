@@ -604,6 +604,13 @@ export class App {
     }
   }
 
+  /** The session with its timeline read from disk (for actions that add to it). */
+  private loaded(id: string): SessionRuntime {
+    const rt = this.runtime(id);
+    this.hydrate(rt);
+    return rt;
+  }
+
   runtime(id: string): SessionRuntime {
     const rt = this.sessions.get(id);
     if (!rt) throw new Error('Session not found');
@@ -632,6 +639,8 @@ export class App {
     const file = this.store.loadSession(rt.id);
     rt.load(file.items, file.todos, file.queue ?? []);
     rt.markSaved();
+    // A file that is there but cannot be read is left exactly as it is (nothing is written to it).
+    if (file.unreadable) rt.notice('error', 'This chat could not be read from disk', 'Nothing is written to it. Restart Sable to try again.');
     rt.settle('cancelled');
     // Messages still waiting for the agent when Sable closed (a steer not taken yet) would wait forever: back to the queue.
     rt.returnUntaken({ all: true, reason: 'closed' });
@@ -1830,9 +1839,9 @@ export class App {
 
     // Lanes (server/core/lanes.ts).
     this.register('lane.forecast', ({ sessionId }) => this.lanes.forecast(this.runtime(sessionId)));
-    this.register('lane.land', ({ sessionId, message }) => this.lanes.land(this.runtime(sessionId), typeof message === 'string' ? message : undefined));
-    this.register('lane.discard', ({ sessionId }) => this.lanes.discard(this.runtime(sessionId)));
-    this.register('lane.create', ({ sessionId }) => this.lanes.create(this.runtime(sessionId)));
+    this.register('lane.land', ({ sessionId, message }) => this.lanes.land(this.loaded(sessionId), typeof message === 'string' ? message : undefined));
+    this.register('lane.discard', ({ sessionId }) => this.lanes.discard(this.loaded(sessionId)));
+    this.register('lane.create', ({ sessionId }) => this.lanes.create(this.loaded(sessionId)));
     this.register('lane.open', ({ sessionId }) => this.lanes.open(this.runtime(sessionId)));
 
     this.register('session.rename', ({ sessionId, title }) => {

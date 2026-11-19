@@ -72,6 +72,8 @@ describe('lanes with two Demo sessions in one folder', { timeout: 180_000 }, () 
 
     const b = await app.call('session.create', { provider: 'demo', cwd: repo, mode: 'bypassPermissions' });
     await turn(b, 'until green');
+    // The lane made at the start gets its name from the first message without holding it up.
+    await until(() => !!meta(b.session.id).lane && !meta(b.session.id).lane!.provisional, 'the lane named');
     const lane = meta(b.session.id).lane!;
     expect(lane).toMatchObject({ folder: path.resolve(repo), branch: 'sable/until-green', from: 'main' });
     expect(lane.provisional).toBeUndefined();

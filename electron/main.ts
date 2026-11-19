@@ -876,6 +876,7 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
     appOrigin = new URL(server.url).origin;
+    keepAwake(server);
     harden();
     win = createWindow(server.url);
 

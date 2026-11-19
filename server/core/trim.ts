@@ -58,9 +58,13 @@ const SETTLED = new Set<ToolStatus>(['done', 'error', 'denied', 'cancelled']);
 /** Shown whole without opening them (a widget is its HTML, tasks and questions are their rows, a plan its card). */
 const WHOLE = new Set<ToolKind>(['widget', 'todo', 'question', 'plan']);
 
-/** A step that is over and whose result will not change: one that runs, or a sub-agent or workflow still at work in the background, stays whole. */
+/**
+ * A step that is over and whose result will not change: one that runs, or a sub-agent or workflow
+ * still at work in the background, stays whole. A turn check stays whole: its findings show without
+ * opening it and go to the composer as they are.
+ */
 function settled(t: ToolItem): boolean {
-  return SETTLED.has(t.status) && !WHOLE.has(t.kind) && t.result?.agent?.background !== 'running' && t.workflow?.status !== 'running';
+  return SETTLED.has(t.status) && !WHOLE.has(t.kind) && !t.check && t.result?.agent?.background !== 'running' && t.workflow?.status !== 'running';
 }
 
 const size = (list: string[]) => list.reduce((n, s) => n + s.length + 3, 0);

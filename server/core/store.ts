@@ -3,7 +3,7 @@ import { writeFile, rename } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { isBackdropImageId, migrateBackdrop, migrateQuietDefault, normalizeBackdrop } from '../../shared/backdrop';
-import { SessionFiles, type SessionSave } from './session-file';
+import { SessionFiles, type SessionData, type SessionSave } from './session-file';
 import { DEFAULT_SETTINGS, type AppSettings, type FolderGroup, type Project, type ProviderId, type QueuedMessage, type SessionMeta, type TimelineItem, type Todo } from '../../shared/protocol';
 
 /** An account in the registry. The built-in `default` account of each provider is stored too (for its label). */
@@ -145,7 +145,7 @@ export class Store {
     this.schedule(this.statePath, () => this.state, 400);
   }
 
-  loadSession(id: string): SessionFile {
+  loadSession(id: string): SessionData {
     return this.sessionFiles.load(id);
   }
 

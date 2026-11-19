@@ -366,6 +366,40 @@ describe('steering with Claude Code', () => {
     expect(h.rt.turnActive).toBe(false);
   });
 
+  it('a message from the Claude app replayed twice shows once', async () => {
+    const h = await claude();
+    const msg = { type: 'user', isReplay: true, uuid: 'from-phone-2', parent_tool_use_id: null, message: { role: 'user', content: 'run the tests' } };
+    h.message(msg);
+    h.message(result(['from-phone-2']));
+    expect(h.rt.turnActive).toBe(false);
+    h.message(msg);
+    expect(users(h.rt).filter((u) => u.providerId === 'from-phone-2')).toHaveLength(1);
+    expect(h.rt.turnActive).toBe(false);
+  });
+
+  it('a message from the Claude app during a turn keeps the turn open until its own result', async () => {
+    const h = await claude();
+    const first = h.add('first');
+    await h.session.send(first);
+    h.message({ type: 'user', isReplay: true, uuid: 'mid-turn', parent_tool_use_id: null, message: { role: 'user', content: 'also check the docs' } });
+    h.message(result([h.pushed[0].uuid]));
+    expect(h.rt.turnActive).toBe(true);
+    h.message(result(['mid-turn']));
+    expect(h.rt.turnActive).toBe(false);
+  });
+
+  it('a message from the Claude app folded into the turn does not keep it open once the agent is idle', async () => {
+    const h = await claude();
+    const first = h.add('first');
+    await h.session.send(first);
+    h.message({ type: 'user', isReplay: true, uuid: h.pushed[0].uuid, parent_tool_use_id: null, message: { role: 'user', content: 'first' } });
+    h.message({ type: 'user', isReplay: true, uuid: 'folded', parent_tool_use_id: null, message: { role: 'user', content: 'and the readme' } });
+    h.message(result([h.pushed[0].uuid]));
+    expect(h.rt.turnActive).toBe(true);
+    h.message({ type: 'system', subtype: 'session_state_changed', state: 'idle' });
+    expect(h.rt.turnActive).toBe(false);
+  });
+
   it('a turn that ends with every result in but no replay for the steer still marks it taken', async () => {
     const h = await claude();
     const first = h.add('first');

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { TextItem, TimelineItem } from '../shared/protocol';
-import { SessionFiles, SMALL_BASE, TAIL_MAX, type SessionSave } from '../server/core/session-file';
+import { readBaseByLine, SessionFiles, SMALL_BASE, TAIL_KEEP, TAIL_MAX, settledEnd, type SessionSave } from '../server/core/session-file';
 import { SessionRuntime } from '../server/core/runtime';
 
 const dirs: string[] = [];
@@ -20,18 +20,20 @@ function setup() {
 
 let n = 0;
 const text = (t: string, id = `i${n++}`): TextItem => ({ id, type: 'text', ts: 1, text: t }) as TextItem;
-/** A timeline bigger than SMALL_BASE, so the base/tail rule applies. */
-const big = () => [text('x'.repeat(SMALL_BASE + 1024), 'big'), text('a', 'a'), text('b', 'b')];
+const turn = (id: string) => ({ id, type: 'turn', ts: 1, durationMs: 1 }) as TimelineItem;
+/** A finished turn bigger than SMALL_BASE, so the base/tail rule applies; everything up to its turn line is settled. */
+const big = () => [text('x'.repeat(SMALL_BASE + 1024), 'big'), text('a', 'a'), text('b', 'b'), turn('t0')];
+const ids = (items: TimelineItem[]) => items.map((i) => i.id);
 const save = (items: TimelineItem[], dirty: SessionSave['dirty']): (() => SessionSave) => () => ({ items, todos: [], queue: [], dirty });
+const raw = (file: string) => JSON.parse(readFileSync(file, 'utf8'));
 
 describe('session files: a base and a small tail', () => {
-  it('writes a small timeline whole, in the same shape as before', async () => {
+  it('writes a small timeline whole, as JSON a reader of the old shape understands', async () => {
     const { files, pathOf, tail } = setup();
-    const items = [text('hello', 'h')];
+    const items = [text('hello', 'h'), text('line one\nline two', 'h2')];
     await files.save('s', save(items, 'all'));
-    const raw = JSON.parse(readFileSync(pathOf('s'), 'utf8'));
-    expect(raw.items).toEqual(items);
-    expect(raw.todos).toEqual([]);
+    expect(raw(pathOf('s')).items).toEqual(items);
+    expect(raw(pathOf('s')).todos).toEqual([]);
     expect(existsSync(tail('s'))).toBe(false);
     expect(new SessionFiles(pathOf).load('s').items).toEqual(items);
   });
@@ -40,7 +42,7 @@ describe('session files: a base and a small tail', () => {
     const { pathOf } = setup();
     writeFileSync(pathOf('old'), JSON.stringify({ items: [text('old', 'o')], todos: [{ content: 't', status: 'pending' }] }));
     const f = new SessionFiles(pathOf).load('old');
-    expect(f.items.map((i) => i.id)).toEqual(['o']);
+    expect(ids(f.items)).toEqual(['o']);
     expect(f.todos).toHaveLength(1);
   });
 
@@ -51,7 +53,7 @@ describe('session files: a base and a small tail', () => {
     const baseBefore = readFileSync(pathOf('s'), 'utf8');
     const mtime = statSync(pathOf('s')).mtimeMs;
 
-    // A new answer streams in after the base.
+    // A new answer streams in after the finished turn.
     const answer = text('Hel', 'ans');
     items.push(answer);
     await files.save('s', save(items, new Set(['ans'])));
@@ -60,18 +62,18 @@ describe('session files: a base and a small tail', () => {
 
     expect(readFileSync(pathOf('s'), 'utf8')).toBe(baseBefore);
     expect(statSync(pathOf('s')).mtimeMs).toBe(mtime);
-    const t = JSON.parse(readFileSync(tail('s'), 'utf8'));
-    expect(t.items).toEqual([answer]);
+    expect(raw(tail('s'))).toMatchObject({ from: 4, items: [answer] });
 
     const back = new SessionFiles(pathOf).load('s');
-    expect(back.items.map((i) => i.id)).toEqual(['big', 'a', 'b', 'ans']);
-    expect((back.items[3] as TextItem).text).toBe('Hello there');
+    expect(ids(back.items)).toEqual(['big', 'a', 'b', 't0', 'ans']);
+    expect((back.items[4] as TextItem).text).toBe('Hello there');
   });
 
-  it('writes the base again when one of its items changes, moves or goes, and drops the tail', async () => {
+  it('writes the base again when an item it settles changes, moves or goes, and drops the tail', async () => {
     const { files, pathOf, tail } = setup();
     const items = big();
     await files.save('s', save(items, 'all'));
+    const gen1 = raw(pathOf('s')).gen;
     items.push(text('new', 'n'));
     await files.save('s', save(items, new Set(['n'])));
     expect(existsSync(tail('s'))).toBe(true);
@@ -80,27 +82,42 @@ describe('session files: a base and a small tail', () => {
     (items[1] as TextItem).text = 'a, patched';
     await files.save('s', save(items, new Set(['a'])));
     expect(existsSync(tail('s'))).toBe(false);
-    let raw = JSON.parse(readFileSync(pathOf('s'), 'utf8'));
-    expect(raw.gen).toBe(2);
-    expect(raw.items.map((i: TimelineItem) => i.id)).toEqual(['big', 'a', 'b', 'n']);
-    expect(raw.items[1].text).toBe('a, patched');
+    expect(raw(pathOf('s')).gen).toBeGreaterThan(gen1);
+    expect(ids(raw(pathOf('s')).items)).toEqual(['big', 'a', 'b', 't0', 'n']);
+    expect(raw(pathOf('s')).items[1].text).toBe('a, patched');
 
     // A rewind removes items.
     items.splice(2);
     await files.save('s', save(items, new Set()));
-    raw = JSON.parse(readFileSync(pathOf('s'), 'utf8'));
-    expect(raw.items.map((i: TimelineItem) => i.id)).toEqual(['big', 'a']);
+    expect(ids(raw(pathOf('s')).items)).toEqual(['big', 'a']);
 
-    // A queued message moves from inside the base to the end.
+    // A queued message moves from the middle to the end.
     items.push(text('c', 'c'));
     await files.save('s', save(items, new Set(['c'])));
     const [moved] = items.splice(1, 1);
     items.push(moved);
     await files.save('s', save(items, new Set(['a'])));
-    expect(new SessionFiles(pathOf).load('s').items.map((i) => i.id)).toEqual(['big', 'c', 'a']);
+    expect(ids(new SessionFiles(pathOf).load('s').items)).toEqual(['big', 'c', 'a']);
   });
 
-  it('ignores a tail left from an older base (a crash between the new base and removing the tail)', async () => {
+  it('leaves the turn that streams now out of the base, so its words never rewrite the base', async () => {
+    const { files, pathOf } = setup();
+    const items = big();
+    for (let i = 0; i < 40; i++) items.push(text(`step ${i}`, `s${i}`));
+    items.push(turn('t1'));
+    const live = text('', 'live');
+    items.push(text('next question', 'q'), live);
+    await files.save('s', save(items, 'all'));
+    const mtime = statSync(pathOf('s')).mtimeMs;
+    for (let i = 0; i < 3; i++) {
+      live.text += 'word ';
+      await files.save('s', save(items, new Set(['live'])));
+    }
+    expect(statSync(pathOf('s')).mtimeMs).toBe(mtime);
+    expect((new SessionFiles(pathOf).load('s').items.at(-1) as TextItem).text).toBe('word word word ');
+  });
+
+  it('ignores a tail left from another base (a crash between a new base and removing the tail)', async () => {
     const { files, pathOf, tail } = setup();
     const items = big();
     await files.save('s', save(items, 'all'));
@@ -112,17 +129,24 @@ describe('session files: a base and a small tail', () => {
     (items[0] as TextItem).text += '!';
     await files.save('s', save(items, new Set(['big', 't2'])));
     writeFileSync(tail('s'), staleTail);
-    expect(new SessionFiles(pathOf).load('s').items.map((i) => i.id)).toEqual(['big', 'a', 'b', 't1', 't2']);
+    expect(ids(new SessionFiles(pathOf).load('s').items)).toEqual(['big', 'a', 'b', 't0', 't1', 't2']);
   });
 
-  it('folds a tail that grew past its limit into the base', async () => {
+  it('keeps a big tail rather than rewriting the base for every new item, and folds it once the boundary moves well on', async () => {
     const { files, pathOf, tail } = setup();
     const items = big();
     await files.save('s', save(items, 'all'));
+    const mtime = statSync(pathOf('s')).mtimeMs;
     items.push(text('y'.repeat(TAIL_MAX + 1), 'huge'));
     await files.save('s', save(items, new Set(['huge'])));
+    expect(statSync(pathOf('s')).mtimeMs).toBe(mtime);
+    expect(existsSync(tail('s'))).toBe(true);
+    // A long turn later: the boundary moved far enough, the tail goes into the base.
+    for (let i = 0; i < TAIL_KEEP + 2; i++) items.push(text(`m${i}`, `m${i}`));
+    items.push(turn('t1'));
+    await files.save('s', save(items, new Set(['t1'])));
     expect(existsSync(tail('s'))).toBe(false);
-    expect(JSON.parse(readFileSync(pathOf('s'), 'utf8')).items.map((i: TimelineItem) => i.id)).toEqual(['big', 'a', 'b', 'huge']);
+    expect(ids(raw(pathOf('s')).items)).toEqual(ids(items));
   });
 
   it('runs saves for one session one after another and keeps the last state', async () => {
@@ -134,7 +158,60 @@ describe('session files: a base and a small tail', () => {
       writes.push(files.save('s', save(items.slice(), new Set([`m${i}`]))));
     }
     await Promise.all(writes);
-    expect(new SessionFiles(pathOf).load('s').items.map((i) => i.id)).toEqual(['big', 'a', 'b', 'm0', 'm1', 'm2', 'm3', 'm4']);
+    expect(ids(new SessionFiles(pathOf).load('s').items)).toEqual(['big', 'a', 'b', 't0', 'm0', 'm1', 'm2', 'm3', 'm4']);
+  });
+
+  it('never writes over a file it could not read', async () => {
+    const { files, pathOf } = setup();
+    writeFileSync(pathOf('bad'), '{"items":[{"id":"x"'); // damaged
+    const f = files.load('bad');
+    expect(f).toMatchObject({ items: [], unreadable: true });
+    await files.save('bad', save([text('new', 'n')], 'all'));
+    expect(readFileSync(pathOf('bad'), 'utf8')).toBe('{"items":[{"id":"x"');
+  });
+
+  it('writes the base anew on the first save after reading a file of an older version', async () => {
+    const { files, pathOf, tail } = setup();
+    const items = big();
+    writeFileSync(pathOf('old'), JSON.stringify({ items, todos: [] }));
+    const loaded = files.load('old');
+    loaded.items.push(text('n', 'n'));
+    await files.save('old', save(loaded.items, new Set(['n'])));
+    expect(existsSync(tail('old'))).toBe(false);
+    expect(typeof raw(pathOf('old')).gen).toBe('number');
+    expect(ids(raw(pathOf('old')).items)).toEqual(['big', 'a', 'b', 't0', 'n']);
+  });
+
+  it('a chat deleted while it is being written does not come back', async () => {
+    const { files, pathOf, tail } = setup();
+    const items = big();
+    const w = files.save('s', save(items, 'all'));
+    files.remove('s');
+    await w;
+    await files.save('s', save(items, 'all'));
+    await files.idle();
+    expect(existsSync(pathOf('s'))).toBe(false);
+    expect(existsSync(tail('s'))).toBe(false);
+  });
+
+  it('reads a base line by line (for files too big for one string)', async () => {
+    const { files, pathOf } = setup();
+    const items = [...big(), text('line one\nline two "quoted"', 'q'), text('ümlaut ✓', 'u')];
+    await files.save('s', () => ({ items, todos: [{ content: 'do it', status: 'pending' } as never], queue: [{ id: 'qq', text: 'later' } as never], dirty: 'all' }));
+    const read = readBaseByLine(pathOf('s'));
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.value?.items).toEqual(items);
+    expect(read.value?.todos).toHaveLength(1);
+    expect(read.value?.queue).toHaveLength(1);
+    expect(typeof read.value?.gen).toBe('number');
+  });
+
+  it('settles a base up to the last finished turn, and before a step still running', () => {
+    const items = [text('a', 'a'), turn('t'), text('b', 'b')];
+    expect(settledEnd(items)).toBe(2);
+    const running = [text('a', 'a'), { id: 'r', type: 'tool', status: 'running' } as TimelineItem, turn('t'), text('b', 'b')];
+    expect(settledEnd(running)).toBe(1);
   });
 
   it('gets what changed from the runtime: added, streamed, patched and moved items', () => {

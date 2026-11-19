@@ -6,7 +6,8 @@ import { setSessionOptions } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { Popover, PopoverContent, PopoverTrigger, Switch, Tip } from '@/ui';
 
-type Key = keyof SessionOptions;
+// A turn check's read-only switch is set by Sable, never shown as a capability.
+type Key = Exclude<keyof SessionOptions, 'readOnly'>;
 
 const ROWS: { key: Key; icon: IconName; label: string }[] = [
   { key: 'browserTab', icon: 'globe', label: 'Browser tab' },

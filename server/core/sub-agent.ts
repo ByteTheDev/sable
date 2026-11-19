@@ -123,6 +123,8 @@ export async function runSubAgent(
     updatedAt: now,
     usage: { inputTokens: 0, outputTokens: 0, turns: 0 },
     ...(accountId ? { accountId } : {}),
+    // A check reads only: no tools that change or run anything, none of Sable's browser or device tools, no Remote Control.
+    ...(opts.readOnly ? { options: { readOnly: true, browserTab: false, device: false, browser: false, computerUse: false, remoteControl: false } } : {}),
   };
   const child = new ChildRuntime(meta, parent, itemId, !!opts.readOnly);
   let finished!: (error?: string) => void;

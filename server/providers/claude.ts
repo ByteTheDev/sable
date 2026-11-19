@@ -176,6 +176,9 @@ function withConfigDir<T>(configDir: string | undefined, fn: () => Promise<T>): 
   return run;
 }
 
+/** Tools a read-only agent (a turn check) never gets, whatever the user's allow rules say. */
+const READ_ONLY_BLOCKED = ['Bash', 'BashOutput', 'KillShell', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit'];
+
 export class ClaudeProvider implements Provider {
   readonly id = 'claude' as const;
   readonly name = 'Claude Code';
@@ -366,6 +369,8 @@ export class ClaudeProvider implements Provider {
       model: meta.model && meta.model !== 'default' ? meta.model : undefined,
       effort: sdkEffort(meta.effort) as Options['effort'],
       permissionMode: (meta.mode || 'default') as PermissionMode,
+      // A turn check reads only: the user's own allow rules must not let it run or change anything.
+      ...(meta.options?.readOnly ? { disallowedTools: READ_ONLY_BLOCKED } : {}),
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
       forwardSubagentText: true,
@@ -1693,12 +1698,16 @@ class ClaudeSession implements ProviderSession {
         return;
       }
       if (m.parent_tool_use_id) return;
+      // The same message replayed again (a reconnect, a repeat) is already in the conversation.
+      if (m.uuid && (this.chain.includes(m.uuid) || rt.items.some((i) => i.type === 'user' && i.providerId === m.uuid))) return;
       const text = replayText(m.message?.content);
       if (!text) return;
       // One of ours under another uuid (a steer the CLI folded in): the same words, still waiting.
       for (const [uuid, id] of this.pendingUsers) {
         const mine = rt.get<UserItem>(id);
-        if (mine && mine.text.trim() === text.trim()) {
+        // Sable may have sent more than the words (a summary before them, a line on the Browser tab, pictures).
+        const words = mine?.text.trim() ?? '';
+        if (mine && (words === text.trim() || (words.length >= 12 && text.includes(words)))) {
           this.pendingUsers.delete(uuid);
           if (m.uuid) this.chain.push(m.uuid);
           rt.taken(id, { providerId: m.uuid });
@@ -1709,7 +1718,9 @@ class ClaudeSession implements ProviderSession {
       // in this conversation, and the turn it starts runs here too.
       if (m.uuid) this.chain.push(m.uuid);
       rt.add<UserItem>({ type: 'user', text, state: 'sent', providerId: m.uuid, remote: true });
-      if (!rt.turnActive) {
+      // It gets a result of its own (or is folded into the running turn's): either way the turn waits for it.
+      if (rt.turnActive) this.outstanding++;
+      else {
         this.outstanding++;
         rt.beginTurn('Thinking');
       }
@@ -1932,7 +1943,9 @@ class ClaudeSession implements ProviderSession {
         }
         break;
       case 'session_state_changed':
-        if (m.state === 'idle' && rt.turnActive && this.outstanding <= 0) this.finishTurn(undefined, this.interrupted);
+        // Idle with nothing of Sable's still on its way: a message from the Claude app that was folded into
+        // the turn (no result of its own) must not keep the turn open.
+        if (m.state === 'idle' && rt.turnActive && (this.outstanding <= 0 || this.pendingUsers.size === 0)) this.finishTurn(undefined, this.interrupted);
         break;
       default:
         break;

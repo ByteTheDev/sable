@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readSync, rmSync, statSync } from 'node:fs';
 import { open, rename, writeFile } from 'node:fs/promises';
 import type { QueuedMessage, TimelineItem, Todo } from '../../shared/protocol';
 
@@ -9,18 +9,21 @@ import type { QueuedMessage, TimelineItem, Todo } from '../../shared/protocol';
  * again after every streamed word kept the bridge (the desktop's main process) busy for about a
  * second at a time and wrote tens of gigabytes an hour. Now:
  *
- * - `<id>.json`, the base: `{ gen, items, todos, queue }`, the same shape as before (older files
- *   have no `gen`, read as 0). It holds the items up to some point and is written again only when
- *   one of those changes, is removed or moves (a rewind, a late patch to an old step), or when the
- *   tail has grown past `TAIL_MAX`. That write goes out in pieces of about a megabyte, so it never
- *   blocks for long.
- * - `<id>.tail.json`: `{ baseGen, items, todos, queue }`, the items after the base. Small; written
- *   on every save.
+ * - `<id>.json`, the base: `{ gen, items, todos, queue }`, the same JSON as before (older files
+ *   have no `gen`), each item on a line of its own. It always holds the whole timeline as it was
+ *   when written. It is written again only when an item it settles changes, moves or goes (a
+ *   rewind, a late patch to an old step), or when the tail has grown past `TAIL_MAX`. That write goes
+ *   out in pieces of about a megabyte, so it never blocks for long.
+ * - `<id>.tail.json`: `{ baseGen, from, items, todos, queue }`: the timeline from item `from` on.
+ *   The base settles only the items before the live end of the chat (`from`), so streaming into the
+ *   last items never forces the base to be written again. Small; written on every save.
  *
  * Every write goes to a temporary file first and is renamed into place, so a crash leaves either
- * the old or the new file. The tail names the base it continues (`baseGen`): after a crash between
- * a new base and the removal of the old tail, the tail no longer matches and is ignored (the new
- * base already holds everything). Reading combines the base's items with a matching tail's.
+ * the old or the new file, and the base is complete on its own. The tail names the base it
+ * continues (`baseGen`, never reused): a tail left over from another base is ignored.
+ *
+ * A file that exists but cannot be read (locked, damaged, too big) is never treated as empty: the
+ * session loads with `unreadable` set and nothing is written to it.
  *
  * The runtime says which items changed since the last save (`dirty`), so the store can tell
  * whether the base still holds: everything that changes an item goes through the runtime.
@@ -30,6 +33,8 @@ export interface SessionData {
   items: TimelineItem[];
   todos: Todo[];
   queue?: QueuedMessage[];
+  /** The file exists but could not be read: the session shows empty and its file is left alone. */
+  unreadable?: boolean;
 }
 
 export interface SessionSave extends SessionData {
@@ -41,25 +46,99 @@ export interface SessionSave extends SessionData {
 export const TAIL_MAX = 8 * 1024 * 1024;
 /** A base smaller than this is simply written whole every time (as before). */
 export const SMALL_BASE = 4 * 1024 * 1024;
+/** Items at the end of the chat a new base leaves to the tail (where streaming happens). */
+export const TAIL_KEEP = 24;
+/** Above this size a base is read line by line (one string cannot hold much more than 512 MB). */
+const READ_BY_LINE = 256 * 1024 * 1024;
 /** Pieces of the base written per step (characters). */
 const CHUNK = 1 << 20;
 
 interface Base {
   gen: number;
+  /** The items the base settles (the timeline before `from`). */
   ids: string[];
   idSet: Set<string>;
-  /** The base file's size in characters as written (an estimate for the small-base rule). */
+  /** The base file's size (bytes as read, characters as written): the small-base rule. */
   size: number;
+  /** Read from a file of an older version (no generation): the first save writes the base anew. */
+  old?: boolean;
 }
 
-const readJson = <T>(file: string): T | null => {
+type Read<T> = { ok: true; value: T | null } | { ok: false };
+
+/** null when the file is missing; not ok when it exists but cannot be read. */
+function readJson<T>(file: string): Read<T> {
+  if (!existsSync(file)) return { ok: true, value: null };
   try {
-    if (!existsSync(file)) return null;
-    return JSON.parse(readFileSync(file, 'utf8')) as T;
+    return { ok: true, value: JSON.parse(readFileSync(file, 'utf8')) as T };
   } catch {
-    return null;
+    return { ok: false };
   }
-};
+}
+
+/** A big base, one item per line (as `writeBase` writes it), parsed piece by piece. */
+export function readBaseByLine(file: string): Read<{ gen?: number; items: TimelineItem[]; todos?: Todo[]; queue?: QueuedMessage[] }> {
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, 'r');
+    const size = statSync(file).size;
+    const items: TimelineItem[] = [];
+    let head: string | undefined;
+    let pending = Buffer.alloc(0);
+    const buf = Buffer.alloc(16 << 20);
+    for (let pos = 0; pos < size; ) {
+      const n = readSync(fd, buf, 0, buf.length, pos);
+      if (n <= 0) break;
+      pos += n;
+      let chunk = Buffer.concat([pending, buf.subarray(0, n)]);
+      let at: number;
+      // Every complete line is the head or one item; the last line (no line break) is the foot.
+      while ((at = chunk.indexOf(10)) >= 0) {
+        const line = chunk.subarray(0, at).toString('utf8');
+        chunk = chunk.subarray(at + 1);
+        if (head === undefined) head = line;
+        else items.push(JSON.parse(line.endsWith(',') ? line.slice(0, -1) : line) as TimelineItem);
+      }
+      pending = Buffer.from(chunk);
+    }
+    const foot = pending.toString('utf8');
+    const m = /^\{"gen":(\d+),"items":\[$/.exec(head ?? '');
+    if (!m || !foot.startsWith(']')) return { ok: false };
+    const rest = JSON.parse(`{"items":[${foot}`) as { todos?: Todo[]; queue?: QueuedMessage[] };
+    return { ok: true, value: { gen: Number(m[1]), items, todos: rest.todos, queue: rest.queue } };
+  } catch {
+    return { ok: false };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/**
+ * Where a new base stops settling: after the last finished turn (what comes after it streams now),
+ * or before the last `TAIL_KEEP` items while a long turn runs; and before any step still running.
+ */
+export function settledEnd(items: TimelineItem[]): number {
+  let lastTurn = -1;
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].type === 'turn') {
+      lastTurn = i;
+      break;
+    }
+  }
+  let end = Math.max(lastTurn + 1, items.length - TAIL_KEEP, 0);
+  for (let i = 0; i < end; i++) {
+    const it = items[i] as TimelineItem & { status?: string };
+    if (it.type === 'tool' && (it.status === 'running' || it.status === 'pending')) {
+      end = i;
+      break;
+    }
+  }
+  return end;
+}
+
+let lastGen = 0;
+/** A generation never used before (time based, rising): a tail from any other base never matches. */
+const nextGen = () => (lastGen = Math.max(Date.now(), lastGen + 1));
 
 export class SessionFiles {
   private bases = new Map<string, Base>();
@@ -67,6 +146,10 @@ export class SessionFiles {
   private writing = new Map<string, Promise<void>>();
   /** Sessions whose last write failed: what changed is no longer known, so the next write is whole. */
   private force = new Set<string>();
+  /** Files that exist but could not be read: never written over. */
+  private unreadable = new Set<string>();
+  /** Deleted sessions: a write still in flight must not bring their file back. */
+  private deleted = new Set<string>();
 
   constructor(private readonly pathOf: (id: string) => string) {}
 
@@ -75,43 +158,65 @@ export class SessionFiles {
   }
 
   load(id: string): SessionData {
-    const base = readJson<SessionData & { gen?: number }>(this.pathOf(id));
-    if (!base) return { items: [], todos: [] };
-    const gen = typeof base.gen === 'number' ? base.gen : 0;
-    const items = Array.isArray(base.items) ? base.items : [];
+    const file = this.pathOf(id);
     let size = 0;
     try {
-      size = statSync(this.pathOf(id)).size;
+      size = existsSync(file) ? statSync(file).size : 0;
     } catch {
-      /* gone meanwhile: written whole next time */
+      /* read below says */
     }
-    this.bases.set(id, { gen, ids: items.map((i) => i.id), idSet: new Set(items.map((i) => i.id)), size });
-    const tail = readJson<SessionData & { baseGen?: number }>(this.tailOf(id));
+    const read = size > READ_BY_LINE ? readBaseByLine(file) : readJson<SessionData & { gen?: number }>(file);
+    if (!read.ok) {
+      this.unreadable.add(id);
+      return { items: [], todos: [], unreadable: true };
+    }
+    this.unreadable.delete(id);
+    const base = read.value;
+    if (!base) return { items: [], todos: [] };
+    const old = typeof base.gen !== 'number';
+    const gen = old ? 0 : (base.gen as number);
+    const items = Array.isArray(base.items) ? base.items : [];
+    const tailRead = old ? ({ ok: true, value: null } as const) : readJson<SessionData & { baseGen?: number; from?: number }>(this.tailOf(id));
+    const tail = tailRead.ok ? tailRead.value : null;
+    let from = items.length;
+    let data: SessionData = { items, todos: base.todos ?? [], queue: base.queue };
     if (tail && tail.baseGen === gen && Array.isArray(tail.items)) {
-      return { items: items.concat(tail.items), todos: tail.todos ?? base.todos ?? [], queue: tail.queue ?? base.queue };
+      from = typeof tail.from === 'number' && tail.from >= 0 && tail.from <= items.length ? tail.from : items.length;
+      data = { items: items.slice(0, from).concat(tail.items), todos: tail.todos ?? base.todos ?? [], queue: tail.queue ?? base.queue };
     }
-    return { items, todos: base.todos ?? [], queue: base.queue };
+    const settled = items.slice(0, from).map((i) => i.id);
+    this.bases.set(id, { gen, ids: settled, idSet: new Set(settled), size, old });
+    return data;
   }
 
   /** Writes what changed. Calls for one session run one after another. */
   save(id: string, data: () => SessionSave): Promise<void> {
+    if (this.deleted.has(id) || this.unreadable.has(id)) return Promise.resolve();
     const prev = this.writing.get(id) ?? Promise.resolve();
-    const next = prev.then(() => this.write(id, data())).catch(() => void this.force.add(id));
+    const next = prev.then(() => (this.deleted.has(id) || this.unreadable.has(id) ? undefined : this.write(id, data()))).catch(() => void this.force.add(id));
     this.writing.set(id, next);
     void next.finally(() => this.writing.get(id) === next && this.writing.delete(id));
     return next;
   }
 
   remove(id: string) {
+    this.deleted.add(id);
     this.bases.delete(id);
     this.force.delete(id);
-    for (const f of [this.pathOf(id), this.tailOf(id)]) {
-      try {
-        rmSync(f, { force: true });
-      } catch {
-        /* ignore */
+    this.unreadable.delete(id);
+    const drop = () => {
+      for (const f of [this.pathOf(id), this.tailOf(id)]) {
+        try {
+          rmSync(f, { force: true });
+        } catch {
+          /* ignore */
+        }
       }
-    }
+    };
+    drop();
+    // A write in flight renames its file into place after this: remove again once it is done.
+    const w = this.writing.get(id);
+    if (w) void w.finally(drop);
   }
 
   /** Waits for the writes in progress. */
@@ -121,8 +226,9 @@ export class SessionFiles {
 
   private async write(id: string, save: SessionSave) {
     const base = this.bases.get(id);
-    const { items } = save;
-    let whole = !base || this.force.has(id) || save.dirty === 'all' || base.size < SMALL_BASE || items.length < base.ids.length;
+    // The order as of now: an item moved during a long base write must not appear twice or not at all.
+    const items = save.items.slice();
+    let whole = !base || base.old || this.force.has(id) || save.dirty === 'all' || base.size < SMALL_BASE || items.length < base.ids.length;
     if (!whole && base) {
       for (let i = 0; i < base.ids.length; i++) {
         if (items[i].id !== base.ids[i]) {
@@ -140,21 +246,26 @@ export class SessionFiles {
       }
     }
     if (!whole && base) {
-      const tail = JSON.stringify({ baseGen: base.gen, items: items.slice(base.ids.length), todos: save.todos, queue: save.queue });
-      if (tail.length <= TAIL_MAX) {
+      const from = base.ids.length;
+      const tail = JSON.stringify({ baseGen: base.gen, from, items: items.slice(from), todos: save.todos, queue: save.queue });
+      // A big tail folds into the base only when that moves the boundary well on: otherwise a few
+      // huge items at the end would have the whole base written again on every save.
+      if (tail.length <= TAIL_MAX || settledEnd(items) < from + TAIL_KEEP) {
         await atomicWrite(this.tailOf(id), tail);
         return;
       }
     }
-    const gen = (base?.gen ?? 0) + 1;
-    const size = await writeBase(this.pathOf(id), gen, save);
-    this.bases.set(id, { gen, ids: items.map((i) => i.id), idSet: new Set(items.map((i) => i.id)), size });
+    const gen = nextGen();
+    const size = await writeBase(this.pathOf(id), gen, { ...save, items });
+    const end = settledEnd(items);
+    const settled = items.slice(0, end).map((i) => i.id);
+    this.bases.set(id, { gen, ids: settled, idSet: new Set(settled), size });
     this.force.delete(id);
     // The new base holds everything: the old tail no longer matches it (and is ignored if this fails).
     try {
       rmSync(this.tailOf(id), { force: true });
     } catch {
-      /* ignored on the next read: its baseGen is old */
+      /* ignored on the next read: its baseGen is another */
     }
   }
 }
@@ -165,15 +276,19 @@ async function atomicWrite(file: string, text: string) {
   await rename(tmp, file);
 }
 
-/** The whole timeline as the base, in pieces of about a megabyte so the event loop keeps running. Returns its size in characters. */
+/**
+ * The whole timeline as the base, one item per line (JSON escapes line breaks inside strings, so
+ * every line holds one item), in pieces of about a megabyte so the event loop keeps running.
+ * Returns its size in characters.
+ */
 async function writeBase(file: string, gen: number, save: SessionData): Promise<number> {
   const tmp = `${file}.${process.pid}.tmp`;
   const fh = await open(tmp, 'w');
   let size = 0;
   try {
-    let buf = `{"gen":${gen},"items":[`;
+    let buf = `{"gen":${gen},"items":[\n`;
     for (let i = 0; i < save.items.length; i++) {
-      buf += (i ? ',' : '') + JSON.stringify(save.items[i]);
+      buf += JSON.stringify(save.items[i]) + (i < save.items.length - 1 ? ',\n' : '\n');
       if (buf.length >= CHUNK) {
         size += buf.length;
         await fh.write(buf, null, 'utf8');

@@ -207,6 +207,8 @@ export interface Capabilities {
 
 /** Per-session agent capabilities the user switches on. Applied when the agent process starts. */
 export interface SessionOptions {
+  /** Set by Sable for a turn check's agent: it may read but has no tool that changes or runs anything, and none of Sable's browser or device tools. */
+  readOnly?: boolean;
   browser?: boolean;
   computerUse?: boolean;
   remoteControl?: boolean;
