@@ -1,5 +1,6 @@
 import type { App } from '../app';
 import { registerBackdrop } from './backdrop';
+import { registerCapture } from './capture';
 import { registerConfig } from './config';
 import { registerDevice } from './device';
 import { registerFiles } from './files';
@@ -7,6 +8,7 @@ import { registerFs } from './fs';
 import { registerGit } from './git';
 import { registerMemory } from './memory';
 import { registerPhone } from './phone';
+import { registerProfile } from './profile';
 import { registerTerm } from './term';
 import { registerUsage } from './usage';
 
@@ -27,4 +29,6 @@ export function registerServices(app: App, opts: ServiceOptions = {}) {
   registerUsage(app, { home: opts.userHome });
   registerDevice(app);
   registerPhone(app);
+  registerProfile(app);
+  registerCapture(app);
 }

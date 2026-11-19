@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  FolderGroup,
   AppSettings,
   Attachment,
   BackdropConfig,
@@ -11,6 +12,7 @@ import type {
   ProviderId,
   QueuedMessage,
   ProviderInfo,
+  PendingPrompts,
   QuestionRequest,
   LimitsReport,
   RateLimit,
@@ -47,7 +49,7 @@ export interface SessionData {
 }
 
 export type RailTab = 'changes' | 'files' | 'browser' | 'device' | 'terminal' | 'tasks' | 'context' | 'agents';
-export type SettingsSection = 'general' | 'appearance' | 'accounts' | 'usage' | 'models' | 'permissions' | 'phone' | 'mcp' | 'hooks' | 'skills' | 'agents' | 'memory' | 'shortcuts' | 'about';
+export type SettingsSection = 'general' | 'appearance' | 'accounts' | 'usage' | 'models' | 'permissions' | 'phone' | 'mcp' | 'hooks' | 'skills' | 'agents' | 'memory' | 'profile' | 'shortcuts' | 'about';
 
 export interface AuthFlow {
   state: 'started' | 'url' | 'done' | 'error' | 'cancelled' | 'timeout';
@@ -84,6 +86,8 @@ interface Ui {
   /** New-session composer choices on the home screen. */
   homeProvider: ProviderId;
   homeCwd: string | null;
+  /** The next session from home is a chat without a folder (`homeCwd` then holds the chats folder). */
+  homeChat?: boolean;
   homeModel: Partial<Record<ProviderId, string>>;
   homeMode: Partial<Record<ProviderId, string>>;
   homeEffort: Partial<Record<ProviderId, Effort>>;
@@ -91,6 +95,8 @@ interface Ui {
   homeAccount: Partial<Record<ProviderId, string>>;
   /** Start the next Claude Code session with ultracode on (only where `caps.features.ultracode`). */
   homeUltracode?: boolean;
+  /** The triage deck (every waiting permission and question across sessions) is open. Not persisted. */
+  triageOpen?: boolean;
 }
 
 export interface Store {
@@ -101,6 +107,12 @@ export interface Store {
   home: string;
   providers: Partial<Record<ProviderId, ProviderInfo>>;
   projects: Project[];
+  /** Projects grouping folders in the sidebar. */
+  groups: FolderGroup[];
+  /** The chats group's place in the sidebar's manual order. */
+  chatsOrder?: number;
+  /** Where chats without a folder go when Settings names no place. */
+  chatsDefault: string;
   settings: AppSettings;
   /** The backdrop config while a change is on its way to the bridge (Settings sliders); null otherwise. */
   backdropLive: BackdropConfig | null;
@@ -163,6 +175,8 @@ export const useStore = create<Store>((set, get) => ({
   home: '',
   providers: {},
   projects: [],
+  groups: [],
+  chatsDefault: '',
   settings: DEFAULT_SETTINGS,
   backdropLive: null,
   sessions: {},
@@ -196,9 +210,9 @@ export const useStore = create<Store>((set, get) => ({
   setUi: (patch) => {
     set((s) => ({ ui: { ...s.ui, ...patch } }));
     if (patch.homeProvider) homeChosen = true;
-    const { activeSessionId, sidebarOpen, railOpen, railTab, homeProvider, homeCwd, homeModel, homeMode, homeEffort, homeAccount, homeUltracode } = get().ui;
+    const { activeSessionId, sidebarOpen, railOpen, railTab, homeProvider, homeCwd, homeChat, homeModel, homeMode, homeEffort, homeAccount, homeUltracode } = get().ui;
     try {
-      localStorage.setItem(UI_KEY, JSON.stringify({ activeSessionId, sidebarOpen, railOpen, railTab, homeProvider: homeChosen ? homeProvider : undefined, homeCwd, homeModel, homeMode, homeEffort, homeAccount, homeUltracode }));
+      localStorage.setItem(UI_KEY, JSON.stringify({ activeSessionId, sidebarOpen, railOpen, railTab, homeProvider: homeChosen ? homeProvider : undefined, homeCwd, homeChat, homeModel, homeMode, homeEffort, homeAccount, homeUltracode }));
     } catch {
       /* private mode */
     }
@@ -237,7 +251,7 @@ export function flushDeltas() {
     for (const [key, delta] of batch) {
       const [sessionId, itemId, field] = key.split('\u0000');
       const d = data[sessionId];
-      if (!d) continue;
+      if (!d?.loaded) continue;
       let items = touched.get(sessionId);
       if (!items) {
         items = { ...d.items };
@@ -252,12 +266,49 @@ export function flushDeltas() {
   });
 }
 
+/** Changes a loaded session's view state (an entry that only holds prompts is not a timeline yet: its snapshot fills it on open). */
 function patchData(sessionId: string, fn: (d: SessionData) => Partial<SessionData>) {
   useStore.setState((s) => {
     const d = s.data[sessionId];
-    if (!d) return s;
+    if (!d?.loaded) return s;
     return { data: { ...s.data, [sessionId]: { ...d, ...fn(d) } } };
   });
+}
+
+/**
+ * Prompts reach the window for every session, loaded or not (the triage deck shows them all):
+ * a session with no view state gets an entry holding only its prompts (`loaded: false`).
+ */
+function patchPrompts(sessionId: string, fn: (d: SessionData) => Pick<SessionData, 'permissions'> | Pick<SessionData, 'questions'>) {
+  useStore.setState((s) => {
+    if (!s.sessions[sessionId]) return s;
+    const d = s.data[sessionId] ?? emptyData();
+    return { data: { ...s.data, [sessionId]: { ...d, ...fn(d) } } };
+  });
+}
+
+/**
+ * The bridge's list of every open prompt (sent with `app.hello`) replaces what each session held,
+ * so prompts answered or dropped while the window was away go, and those of sessions this window
+ * never loaded come in. Entries whose prompts did not change keep their identity.
+ */
+export function withPrompts(data: Record<string, SessionData>, prompts: PendingPrompts, sessions: Record<string, SessionMeta>): Record<string, SessionData> {
+  const by = new Map<string, { permissions: PermissionRequest[]; questions: QuestionRequest[] }>();
+  const slot = (id: string) => by.get(id) ?? (by.set(id, { permissions: [], questions: [] }).get(id) as { permissions: PermissionRequest[]; questions: QuestionRequest[] });
+  for (const p of prompts.permissions) if (sessions[p.sessionId]) slot(p.sessionId).permissions.push(p);
+  for (const q of prompts.questions) if (sessions[q.sessionId]) slot(q.sessionId).questions.push(q);
+  const same = <T extends { id: string }>(a: T[], b: T[]) => a.length === b.length && a.every((x, i) => x.id === b[i].id);
+  let next = data;
+  const put = (id: string, d: SessionData) => {
+    if (next === data) next = { ...data };
+    next[id] = d;
+  };
+  for (const [id, d] of Object.entries(data)) {
+    const want = by.get(id) ?? { permissions: [], questions: [] };
+    if (!same(d.permissions, want.permissions) || !same(d.questions, want.questions)) put(id, { ...d, ...want });
+  }
+  for (const [id, want] of by) if (!data[id]) put(id, { ...emptyData(), ...want });
+  return next;
 }
 
 export function applySnapshot(snap: SessionSnapshot) {
@@ -404,16 +455,16 @@ export function applyEvent(e: BridgeEvent) {
       patchData(e.id, () => ({ caps: e.caps }));
       return;
     case 'permission.added':
-      patchData(e.request.sessionId, (d) => ({ permissions: [...d.permissions.filter((p) => p.id !== e.request.id), e.request] }));
+      patchPrompts(e.request.sessionId, (d) => ({ permissions: [...d.permissions.filter((p) => p.id !== e.request.id), e.request] }));
       return;
     case 'permission.removed':
-      patchData(e.sessionId, (d) => ({ permissions: d.permissions.filter((p) => p.id !== e.id) }));
+      if (useStore.getState().data[e.sessionId]?.permissions.some((p) => p.id === e.id)) patchPrompts(e.sessionId, (d) => ({ permissions: d.permissions.filter((p) => p.id !== e.id) }));
       return;
     case 'question.added':
-      patchData(e.request.sessionId, (d) => ({ questions: [...d.questions.filter((q) => q.id !== e.request.id), e.request] }));
+      patchPrompts(e.request.sessionId, (d) => ({ questions: [...d.questions.filter((q) => q.id !== e.request.id), e.request] }));
       return;
     case 'question.removed':
-      patchData(e.sessionId, (d) => ({ questions: d.questions.filter((q) => q.id !== e.id) }));
+      if (useStore.getState().data[e.sessionId]?.questions.some((q) => q.id === e.id)) patchPrompts(e.sessionId, (d) => ({ questions: d.questions.filter((q) => q.id !== e.id) }));
       return;
     case 'todos.updated':
       patchData(e.sessionId, () => ({ todos: e.todos }));
@@ -447,7 +498,7 @@ export function applyEvent(e: BridgeEvent) {
       return;
     }
     case 'projects.updated':
-      useStore.setState({ projects: e.projects });
+      useStore.setState({ projects: e.projects, ...(e.groups ? { groups: e.groups, chatsOrder: e.chatsOrder } : {}) });
       return;
     case 'settings.updated':
       useStore.setState({ settings: e.settings });
@@ -510,8 +561,13 @@ async function hello() {
       providers: Object.fromEntries(app.providers.map((p) => [p.id, p])),
       limits: withAccountLimits(s.limits, app.providers),
       projects: app.projects,
+      groups: app.groups ?? [],
+      chatsOrder: app.chatsOrder,
+      chatsDefault: app.chatsDefault ?? '',
       settings: app.settings,
       sessions,
+      // Older bridges send no list: what this window already holds stays.
+      data: app.prompts ? withPrompts(s.data, app.prompts, sessions) : s.data,
       ui: { ...s.ui, activeSessionId: active, homeProvider, homeAccount, homeCwd: s.ui.homeCwd ?? app.projects[0]?.path ?? null },
     };
   });

@@ -1,4 +1,4 @@
-import { DEFAULT_ACCOUNT, type AccountInfo, type Attachment, type BackdropConfig, type BackdropImage, type BrowserAnswer, type Effort, type ProviderId, type QueuedMessage, type SessionMeta, type SessionOptions } from '@shared/protocol';
+import { DEFAULT_ACCOUNT, type AccountCap, type AccountInfo, type Attachment, type FolderGroup, type Project, type BackdropConfig, type BackdropImage, type BrowserAnswer, type Effort, type ProviderId, type QueuedMessage, type SessionMeta, type SessionOptions } from '@shared/protocol';
 import { DEFAULT_BACKDROP, normalizeBackdrop } from '@shared/backdrop';
 import { bridge } from '@/lib/bridge';
 import { applySnapshot, capsKey, loadSession, useStore, type RailTab, type SettingsSection, type Store } from './store';
@@ -25,6 +25,13 @@ export function openSettings(section?: SettingsSection) {
   useStore.getState().setUi({ settings: section ?? lastSettings });
 }
 
+/** Opens or closes the triage deck: every permission and question waiting across sessions. */
+export function setTriage(open: boolean) {
+  useStore.getState().setUi({ triageOpen: open });
+}
+
+export const toggleTriage = () => setTriage(!useStore.getState().ui.triageOpen);
+
 /** Opens the side panel on a tab (the turn's "2 files changed" opens Changes). */
 export function showRailTab(tab: RailTab) {
   useStore.getState().setUi({ railOpen: true, railTab: tab });
@@ -32,7 +39,20 @@ export function showRailTab(tab: RailTab) {
 
 export function goHome(cwd?: string | null) {
   const s = useStore.getState();
-  s.setUi({ activeSessionId: null, ...(cwd !== undefined ? { homeCwd: cwd } : {}) });
+  // A folder chosen for the next session ends "No folder".
+  s.setUi({ activeSessionId: null, ...(cwd !== undefined ? { homeCwd: cwd, homeChat: false } : {}) });
+}
+
+/** Home with "No folder": the next session is a chat in a fresh folder of its own (made when it is sent). */
+export async function goHomeChat() {
+  const s = useStore.getState();
+  s.setUi({ activeSessionId: null });
+  try {
+    const { path } = await bridge.call('chats.prepare', {});
+    useStore.getState().setUi({ homeChat: true, homeCwd: path });
+  } catch (err) {
+    fail(err);
+  }
 }
 
 export interface NewSessionChoice {
@@ -49,6 +69,8 @@ export interface NewSessionChoice {
   ultracode?: boolean;
   /** Start from a summary of this Sable session's conversation (Continue in the other agent). */
   handoverFrom?: string;
+  /** A chat without a folder: the bridge makes its folder, named after `text` (the first message). */
+  chat?: { text?: string };
 }
 
 /**
@@ -106,7 +128,7 @@ export function homeChoice(): NewSessionChoice | null {
   const mode = ui.homeMode[provider] ?? settings.defaultModes[provider] ?? caps?.modes[0]?.id;
   const effort = ui.homeEffort[provider] ?? settings.defaultEfforts[provider];
   const ultracode = ui.homeUltracode && caps?.features.ultracode ? true : undefined;
-  return { provider, cwd: ui.homeCwd, model, mode, effort, accountId, ...(ultracode ? { ultracode } : {}) };
+  return { provider, cwd: ui.homeCwd, model, mode, effort, accountId, ...(ultracode ? { ultracode } : {}), ...(ui.homeChat ? { chat: {} } : {}) };
 }
 
 /** The home composer's ultracode choice (sent with the next new session where the agent offers it). */
@@ -119,7 +141,7 @@ export async function startFromHome(text: string, attachments: Attachment[] = []
     useStore.getState().setUi({ projectPicker: true });
     return false;
   }
-  const session = await createSession(choice);
+  const session = await createSession(choice.chat ? { ...choice, chat: { text } } : choice);
   if (!session) return false;
   await sendMessage(session.id, text, attachments);
   return true;
@@ -208,7 +230,8 @@ export function prewarmHome() {
   const s = useStore.getState();
   if (s.settings.prewarm === false || s.ui.homeProvider === 'demo') return;
   const c = homeChoice();
-  if (!c) return;
+  // A chat's folder does not exist before it is sent: nothing to start the agent in.
+  if (!c || c.chat) return;
   void bridge.call('provider.prewarm', { provider: c.provider, accountId: c.accountId, cwd: c.cwd, model: c.model, mode: c.mode, effort: c.effort, ultracode: c.ultracode }).catch(() => {});
 }
 
@@ -284,6 +307,104 @@ export async function addFolders(paths: string[]): Promise<number> {
 }
 
 export const pinProject = (path: string, pinned: boolean) => bridge.call('project.pin', { path, pinned }).catch(fail);
+
+// ── projects: folders grouped under one name ──
+
+const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+/**
+ * The sidebar's arrangement after a drag or a menu (`project.arrange`): `top` entries in their new
+ * order (a folder's path, `group:<id>`, `chats`), `inside` a project's folders in order. Applied to
+ * the store at once, the same way the bridge does, so the list moves under the hand.
+ */
+export function arrangeSidebar(top: string[], inside?: Record<string, string[]>) {
+  const s = useStore.getState();
+  const projects = s.projects.map((p) => ({ ...p }));
+  const groups = s.groups.map((g) => ({ ...g }));
+  let chatsOrder = s.chatsOrder;
+  const find = (dir: string) => projects.find((p) => normPath(p.path) === normPath(dir));
+  for (const [id, paths] of Object.entries(inside ?? {})) {
+    if (!groups.some((g) => g.id === id)) continue;
+    paths.forEach((dir, i) => {
+      const p = find(dir);
+      if (p) Object.assign(p, { group: id, order: i });
+    });
+  }
+  const live = (p: Project) => !!p.group && groups.some((g) => g.id === p.group);
+  type Entry = { order: number | undefined; set: (n: number) => void; key: unknown };
+  const named: Entry[] = [];
+  const seen = new Set<unknown>();
+  const chats: Entry = { order: chatsOrder, set: (n) => (chatsOrder = n), key: 'chats' };
+  for (const key of top) {
+    let e: Entry | undefined;
+    if (key === 'chats') e = chats;
+    else if (key.startsWith('group:')) {
+      const g = groups.find((x) => x.id === key.slice(6));
+      if (g) e = { order: g.order, set: (n) => (g.order = n), key: g };
+    } else {
+      const p = find(key);
+      if (p) {
+        delete p.group;
+        e = { order: p.order, set: (n) => (p.order = n), key: p };
+      }
+    }
+    if (e && !seen.has(e.key)) {
+      seen.add(e.key);
+      named.push(e);
+    }
+  }
+  if (named.length) {
+    const rest: Entry[] = [
+      ...projects.filter((p) => !live(p) && !seen.has(p)).map((p) => ({ order: p.order, set: (n: number) => (p.order = n), key: p })),
+      ...groups.filter((g) => !seen.has(g)).map((g) => ({ order: g.order, set: (n: number) => (g.order = n), key: g })),
+      ...(seen.has('chats') || typeof chatsOrder !== 'number' ? [] : [chats]),
+    ].sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
+    [...named, ...rest].forEach((e, i) => e.set(i));
+  }
+  useStore.setState({ projects, groups, chatsOrder });
+  if ((s.settings.folderOrder ?? 'manual') !== 'manual' && top.length) void setSettings({ folderOrder: 'manual' });
+  return bridge.call('project.arrange', { top, ...(inside ? { inside } : {}) }).catch(fail);
+}
+
+/** A new project holding `paths` (where the first of them stood). Resolves the project, or null. */
+export async function createGroup(name: string, paths: string[] = []): Promise<FolderGroup | null> {
+  try {
+    return await bridge.call('group.create', { name, paths });
+  } catch (err) {
+    fail(err);
+    return null;
+  }
+}
+
+/** A project's name; shown at once, `projects.updated` confirms it. */
+export function renameGroup(id: string, name: string) {
+  const wanted = name.replace(/\s+/g, ' ').trim();
+  if (wanted) useStore.setState((s) => ({ groups: s.groups.map((g) => (g.id === id ? { ...g, name: wanted } : g)) }));
+  return bridge.call('group.rename', { id, name }).catch(fail);
+}
+
+/** Removes a project; its folders stay, loose, where it stood. */
+export const removeGroup = (id: string) => bridge.call('group.remove', { id }).catch(fail);
+
+/** Puts a folder into a project, last among its folders. */
+export function addToGroup(path: string, id: string) {
+  const s = useStore.getState();
+  const inside = s.projects
+    .filter((p) => p.group === id && normPath(p.path) !== normPath(path) && !p.hidden)
+    .sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity))
+    .map((p) => p.path);
+  return arrangeSidebar([], { [id]: [...inside, path] });
+}
+
+/** Takes a folder out of its project: it stands, loose, right after the project. */
+export function removeFromGroup(path: string, topKeys: string[]) {
+  const p = useStore.getState().projects.find((x) => normPath(x.path) === normPath(path));
+  if (!p?.group) return;
+  const at = topKeys.indexOf(`group:${p.group}`);
+  const top = [...topKeys];
+  top.splice(at < 0 ? top.length : at + 1, 0, path);
+  return arrangeSidebar(top);
+}
 
 /**
  * The folder's name in the sidebar (the folder on disk is not renamed); empty restores the folder's
@@ -472,6 +593,20 @@ export async function moveAccount(provider: ProviderId, accountId: string, by: n
     fail(err);
   }
 }
+
+/** "Use up to" for an account (Settings › Accounts): percents of its weekly and 5-hour windows; 100 or empty clears one. */
+export function setAccountCap(provider: ProviderId, accountId: string, patch: AccountCap) {
+  const key = `${provider}:${accountId}`;
+  const all = { ...useStore.getState().settings.accountCaps };
+  const next: AccountCap = { ...all[key], ...patch };
+  for (const k of ['weekly', 'session'] as const) if (!(Number(next[k]) >= 1 && Number(next[k]) < 100)) delete next[k];
+  if (next.weekly === undefined && next.session === undefined) delete all[key];
+  else all[key] = next;
+  return setSettings({ accountCaps: all });
+}
+
+/** Where chats without a folder get their folders; empty goes back to the default place. */
+export const setChatsFolder = (path: string) => setSettings({ chatsFolder: path.trim() });
 
 /** Removes an extra account and its folder. Resolves false when the bridge refused (a session is still working). */
 export async function removeAccount(provider: ProviderId, accountId: string): Promise<boolean> {

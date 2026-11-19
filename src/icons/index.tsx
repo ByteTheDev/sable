@@ -42,6 +42,7 @@ import { FileXlsIcon } from '@phosphor-icons/react/dist/csr/FileXls';
 import { FilePptIcon } from '@phosphor-icons/react/dist/csr/FilePpt';
 import { FileIniIcon } from '@phosphor-icons/react/dist/csr/FileIni';
 import { ImageSquareIcon } from '@phosphor-icons/react/dist/csr/ImageSquare';
+import { SquareSplitHorizontalIcon } from '@phosphor-icons/react/dist/csr/SquareSplitHorizontal';
 import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { GitCommitIcon } from '@phosphor-icons/react/dist/csr/GitCommit';
 import { GitDiffIcon } from '@phosphor-icons/react/dist/csr/GitDiff';
@@ -114,6 +115,7 @@ import { ArrowCounterClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowC
 import { SignOutIcon } from '@phosphor-icons/react/dist/csr/SignOut';
 import { SignInIcon } from '@phosphor-icons/react/dist/csr/SignIn';
 import { UserCircleIcon } from '@phosphor-icons/react/dist/csr/UserCircle';
+import { IdentificationCardIcon } from '@phosphor-icons/react/dist/csr/IdentificationCard';
 import { CubeIcon } from '@phosphor-icons/react/dist/csr/Cube';
 import { StackIcon } from '@phosphor-icons/react/dist/csr/Stack';
 import { ListIcon } from '@phosphor-icons/react/dist/csr/List';
@@ -227,6 +229,7 @@ const ICONS = {
   'file-ppt': FilePptIcon,
   'file-ini': FileIniIcon,
   image: ImageSquareIcon,
+  compare: SquareSplitHorizontalIcon,
   branch: GitBranchIcon,
   commit: GitCommitIcon,
   diff: GitDiffIcon,
@@ -302,6 +305,7 @@ const ICONS = {
   'sign-out': SignOutIcon,
   'sign-in': SignInIcon,
   user: UserCircleIcon,
+  profile: IdentificationCardIcon,
   cube: CubeIcon,
   stack: StackIcon,
   list: ListIcon,

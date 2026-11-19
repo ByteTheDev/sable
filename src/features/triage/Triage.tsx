@@ -1,0 +1,312 @@
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { AnimatePresence, motion, useIsPresent, type Variants } from 'motion/react';
+import { Dialog as RD } from 'radix-ui';
+import type { PermissionOption } from '@shared/protocol';
+import { StatusGlyph } from '@/art/Logo';
+import { fieldBeat } from '@/art/events';
+import { Icon } from '@/icons';
+import { openSession, respondPermission, respondQuestion, setTriage } from '@/state/actions';
+import { selectPending, type PendingPrompt } from '@/state/pending';
+import { useStore } from '@/state/store';
+import { Kbd } from '@/ui';
+import { deckAction, deckKeyAllowed, deckReducer, emptyDeck, exitOf, type Exit } from './deck';
+import { CardBody, type CardHandle, type CardProps } from './TriageCard';
+import '@/features/prompts/prompts.css';
+import './triage.css';
+
+/** Cards drawn: the front and two behind it. */
+const SHOWN = 3;
+/** How far each card behind peeks out below the one in front. */
+const PEEK = 11;
+/** How much smaller each card behind is. */
+const SHRINK = 0.045;
+/** A card that has just come forward takes no answer for this long, so a quick second key cannot answer it unseen. */
+const ARM_MS = 220;
+/** How long the end state stays before the deck closes. */
+const END_HOLD = 900;
+/** The stack's height while it shows the end state. */
+const END_H = 52;
+const SPRING = { type: 'spring', stiffness: 440, damping: 36 } as const;
+
+const pose = (depth: number) => ({ y: depth * PEEK, x: 0, scale: 1 - depth * SHRINK, opacity: 1 });
+
+/** Where a leaving card goes: up when answered yes, aside when no, behind the stack when moved back, a fade when answered elsewhere. */
+function exitPose(exit: Exit) {
+  // Quick enough that the leaving card's words are gone before the next card's come in.
+  const fade = { duration: 0.13, ease: [0.3, 0, 0.7, 0.5] as const };
+  // An answered card leaves above the stack; one sent back goes under it.
+  const over = { zIndex: SHOWN + 1 };
+  const now = { zIndex: { duration: 0 } };
+  switch (exit) {
+    case 'allow':
+      return { ...over, y: -48, x: 0, scale: 1.01, opacity: 0, transition: { ...now, y: SPRING, scale: SPRING, opacity: fade } };
+    case 'deny':
+      return { ...over, x: -72, y: 0, scale: 0.98, opacity: 0, transition: { ...now, x: SPRING, scale: SPRING, opacity: fade } };
+    case 'back':
+      return { ...pose(SHOWN), opacity: 0, zIndex: 0, transition: { ...SPRING, ...now, opacity: { duration: 0.14 } } };
+    default:
+      return { ...over, opacity: 0, scale: 0.98, transition: { ...now, duration: 0.16 } };
+  }
+}
+
+/** The triage deck: every permission request and question waiting across sessions, as a stack of cards answered by key. */
+export function Triage() {
+  const open = useStore((s) => !!s.ui.triageOpen);
+  return (
+    <RD.Root open={open} onOpenChange={setTriage}>
+      <RD.Portal>
+        <RD.Overlay className="tri-overlay" />
+        <Deck />
+      </RD.Portal>
+    </RD.Root>
+  );
+}
+
+function Deck() {
+  const root = useRef<HTMLDivElement>(null);
+  const pending = useStore(selectPending);
+  const byKey = useMemo(() => new Map(pending.map((p) => [p.key, p])), [pending]);
+  const keys = useMemo(() => pending.map((p) => p.key), [pending]);
+  const live = useMemo(() => new Set(keys), [keys]);
+  const [state, dispatch] = useReducer(deckReducer, keys, emptyDeck);
+  // Before paint: a request answered elsewhere leaves, a new one joins at the back, in the same frame.
+  useLayoutEffect(() => dispatch({ type: 'sync', keys }), [keys]);
+
+  const cards = state.order.flatMap((k) => byKey.get(k) ?? []);
+  const shown = cards.slice(0, SHOWN);
+  const front = shown[0];
+
+  // A card that comes forward is armed a moment later.
+  const [armedKey, setArmedKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!front) return;
+    const t = window.setTimeout(() => setArmedKey(front.key), ARM_MS);
+    return () => window.clearTimeout(t);
+  }, [front?.key]);
+  const armed = !!front && armedKey === front.key;
+
+  // The cards as dealt when the deck opens come in one after another; later ones just join.
+  const [dealt, setDealt] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDealt(true), 400);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  // Heights: each card's own; the cards behind take the front one's, so their edges line up under it.
+  const [heights, setHeights] = useState<Record<string, number>>({});
+  const measure = useCallback((key: string, h: number) => setHeights((cur) => (cur[key] === h ? cur : { ...cur, [key]: h })), []);
+  const frontH = front ? heights[front.key] : undefined;
+  const stackH = front ? (frontH ?? 0) + PEEK * (shown.length - 1) : END_H;
+
+  // Each card's answer keys, by card: a card still flying off must not unhook the one now in front.
+  const handles = useRef(new Map<string, CardHandle>());
+  const bind = useCallback((key: string, h: CardHandle | null) => {
+    if (h) handles.current.set(key, h);
+    else handles.current.delete(key);
+  }, []);
+  const refocus = useCallback(() => requestAnimationFrame(() => root.current?.focus()), []);
+
+  // How the front last changed: after an answer the next card's words wait for the answered card
+  // to clear; after a move nothing covers the stack, so they come at once (triage.css).
+  const moved = useRef<'answer' | 'shift'>('answer');
+  const leave = useCallback(
+    (key: string, exit: Exit) => {
+      moved.current = 'answer';
+      dispatch({ type: 'answer', key, exit });
+      refocus();
+    },
+    [refocus],
+  );
+  const onPermission = useCallback(
+    (p: PendingPrompt, option: PermissionOption, note?: string) => {
+      leave(p.key, option.tone === 'deny' ? 'deny' : 'allow');
+      void respondPermission(p.sessionId, p.req.id, option.id, note);
+    },
+    [leave],
+  );
+  const onQuestion = useCallback(
+    (p: PendingPrompt, answers: Record<string, string[]> | null) => {
+      leave(p.key, answers ? 'allow' : 'deny');
+      void respondQuestion(p.sessionId, p.req.id, answers);
+    },
+    [leave],
+  );
+  const onOpen = useCallback((p: PendingPrompt) => {
+    setTriage(false);
+    openSession(p.sessionId);
+  }, []);
+
+  const onKeyDown = (e: ReactKeyboardEvent) => {
+    const ev = e.nativeEvent;
+    if (!deckKeyAllowed(ev)) return;
+    const a = deckAction(ev, front?.kind ?? null);
+    if (!a || a.type === 'close') return; // Escape is the dialog's
+    if (a.type === 'next' || a.type === 'prev') {
+      moved.current = 'shift';
+      dispatch({ type: a.type });
+    }
+    else if (a.type === 'open') front && onOpen(front);
+    else if (!front || !handles.current.get(front.key)?.act(a)) return;
+    e.preventDefault();
+  };
+
+  // Empty: one calm line, then the deck closes by itself and the field answers softly.
+  const empty = !front;
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!empty) return;
+    const t = window.setTimeout(
+      () => {
+        fieldBeat('pulse', endRef.current, 0.6);
+        setTriage(false);
+      },
+      state.answered ? END_HOLD : END_HOLD + 400,
+    );
+    return () => window.clearTimeout(t);
+  }, [empty, state.answered]);
+
+  const resolveExit = useCallback((key: string) => exitOf(state, key, live), [state, live]);
+
+  return (
+    <RD.Content
+      ref={root}
+      className="tri"
+      data-move={moved.current}
+      aria-describedby={undefined}
+      // The deck takes the keys itself: nothing inside is focused first (a focused button would answer Enter on its own).
+      onOpenAutoFocus={(e) => {
+        e.preventDefault();
+        root.current?.focus();
+      }}
+      // Escape in a field (the note, "Other") steps out of the field; the deck stays.
+      onEscapeKeyDown={(e) => {
+        const t = e.target as HTMLElement | null;
+        if (t && /^(INPUT|TEXTAREA)$/.test(t.tagName)) e.preventDefault();
+      }}
+      onKeyDown={onKeyDown}
+    >
+      <RD.Title className="sr-only">Waiting on you</RD.Title>
+      <motion.div className="tri-stack" initial={false} animate={{ height: stackH }} transition={SPRING}>
+        <AnimatePresence custom={resolveExit}>
+          {shown.map((p, depth) => (
+            <Card
+              key={p.key}
+              p={p}
+              depth={depth}
+              delay={dealt ? 0 : depth * 0.045}
+              height={depth === 0 ? heights[p.key] : frontH}
+              onMeasure={measure}
+              bind={bind}
+              cardProps={{ p, armed: depth === 0 && armed, onPermission, onQuestion, onOpen, refocus }}
+            />
+          ))}
+        </AnimatePresence>
+        <AnimatePresence>
+          {empty && (
+            <motion.div
+              key="end"
+              ref={endRef}
+              className="tri-end"
+              role="status"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0, transition: { ...SPRING, delay: state.answered ? 0.12 : 0 } }}
+              exit={{ opacity: 0, transition: { duration: 0.1 } }}
+            >
+              <Icon name="check" size={15} />
+              {state.answered ? 'All answered' : 'Nothing is waiting on you'}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+
+      <footer className="tri-hints glass" data-hidden={empty || undefined} aria-hidden={empty || undefined}>
+        <span className="tri-count">
+          <StatusGlyph tone="awaiting" size={10} />
+          <span>
+            <span className="num">{cards.length}</span> waiting
+          </span>
+        </span>
+        <span className="grow" />
+        {cards.length > 1 && (
+          <span className="tri-hint">
+            <span className="kbds">
+              <kbd className="kbd">J</kbd>
+              <kbd className="kbd">K</kbd>
+            </span>
+            Move
+          </span>
+        )}
+        <span className="tri-hint">
+          <span className="kbds">
+            <kbd className="kbd">O</kbd>
+          </span>
+          Open chat
+        </span>
+        <span className="tri-hint">
+          <Kbd combo="esc" />
+          Close
+        </span>
+      </footer>
+    </RD.Content>
+  );
+}
+
+/**
+ * One card of the stack. The front one shows its request; the two behind are the same surface one
+ * step back each (lower, smaller, darker), the first of them already laid out unseen so it comes
+ * forward without building anything.
+ */
+function Card({
+  p,
+  depth,
+  delay,
+  height,
+  onMeasure,
+  bind,
+  cardProps,
+}: {
+  p: PendingPrompt;
+  depth: number;
+  delay: number;
+  height: number | undefined;
+  onMeasure: (key: string, h: number) => void;
+  bind: (key: string, h: CardHandle | null) => void;
+  cardProps: Omit<CardProps, 'handle'>;
+}) {
+  const inner = useRef<HTMLDivElement>(null);
+  const withBody = depth <= 1;
+  // A card on its way out takes no pointer and no key.
+  const present = useIsPresent();
+  const handle = useCallback((h: CardHandle | null) => bind(p.key, h), [bind, p.key]);
+  useLayoutEffect(() => {
+    const el = inner.current;
+    if (!el) return;
+    onMeasure(p.key, el.offsetHeight);
+    const ro = new ResizeObserver(() => onMeasure(p.key, el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [p.key, onMeasure, withBody]);
+
+  const variants: Variants = {
+    enter: { ...pose(depth + 1), opacity: 0 },
+    exit: (resolve: (key: string) => Exit) => exitPose(resolve(p.key)),
+  };
+
+  return (
+    <motion.article
+      className="tri-card"
+      data-depth={depth}
+      aria-hidden={depth > 0 || !present || undefined}
+      inert={depth > 0 || !present}
+      style={{ zIndex: SHOWN - depth }}
+      variants={variants}
+      initial="enter"
+      animate={{ ...pose(depth), ...(height ? { height } : {}), transition: { ...SPRING, delay, opacity: { duration: 0.18, delay } } }}
+      exit="exit"
+    >
+      <div ref={inner} className="tri-card-inner">
+        {withBody && <CardBody {...cardProps} handle={depth === 0 && present ? handle : null} />}
+      </div>
+    </motion.article>
+  );
+}

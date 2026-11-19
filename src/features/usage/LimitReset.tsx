@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { DEFAULT_ACCOUNT, type ProviderId, type RateLimit, type ResetOutcome } from '@shared/protocol';
+import { DEFAULT_ACCOUNT, type LimitsMeta, type ProviderId, type RateLimit, type ResetOffer, type ResetOutcome } from '@shared/protocol';
+import { useNow } from '@/lib/useNow';
 import { readLimitsNow, spendLimitReset } from '@/state/actions';
 import { accountName, useLimitsReport } from '@/state/hooks';
 import { useStore } from '@/state/store';
-import { cx } from '@/ui';
+import { cx, Tip } from '@/ui';
+import { DATE_LOCALE, exactTime } from './format';
 
 /** "2 resets", "1 reset". */
 export const resetsText = (n: number) => `${n} ${n === 1 ? 'reset' : 'resets'}`;
@@ -29,11 +31,52 @@ const OUTCOME: Record<Exclude<ResetOutcome, 'reset'>, string> = {
   alreadyRedeemed: 'That reset was already used',
 };
 
+type Resets = NonNullable<LimitsMeta['resets']>;
+
 /** The account's resets while the agent reports some; undefined otherwise. */
-export function useResets(provider: ProviderId, accountId = DEFAULT_ACCOUNT) {
+export function useResetOffers(provider: ProviderId, accountId = DEFAULT_ACCOUNT): Resets | undefined {
   const report = useLimitsReport(provider, accountId);
   return report?.resets?.available ? report.resets : undefined;
 }
+
+/** The account's resets that Sable can use (Codex's, the Demo's); undefined otherwise. */
+export function useResets(provider: ProviderId, accountId = DEFAULT_ACCOUNT): Resets | undefined {
+  const resets = useResetOffers(provider, accountId);
+  return resets && resets.spendable !== false ? resets : undefined;
+}
+
+/** Where an agent's resets are used when Sable cannot use them itself. */
+const USE_AT: Partial<Record<ProviderId, { url: string; name: string }>> = {
+  claude: { url: 'https://claude.ai/settings/usage', name: 'claude.ai' },
+};
+
+const KIND: Record<NonNullable<ResetOffer['kind']>, string> = { full: 'full reset', weekly: 'weekly reset', session: '5-hour reset' };
+
+/** "1 full reset", "2 weekly resets", "1 reset". */
+const offerName = (o: ResetOffer) => {
+  const word = o.kind ? KIND[o.kind] : 'reset';
+  return `${o.left} ${o.left === 1 ? word : `${word}s`}`;
+};
+
+/** "until 10 Dec" ("until 10 Dec 2027" in another year). */
+export const untilText = (at: number, now = Date.now()) =>
+  `until ${new Date(at).toLocaleDateString(DATE_LOCALE, { day: 'numeric', month: 'short', ...(new Date(at).getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}) })}`;
+
+/**
+ * What an account's resets are, in one line: each kind with its uses left and when it ends ("1 full
+ * reset, until 10 Dec"), at most two kinds named; a plain count when the agent says no more.
+ */
+export function offersText(resets: Resets, now = Date.now()): string {
+  const live = (resets.offers ?? []).filter((o) => o.left > 0 && !o.paused && (!o.expiresAt || o.expiresAt > now)).sort((a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity));
+  if (!live.length) return resetsText(resets.available);
+  const named = live.slice(0, 2).map((o) => (o.expiresAt ? `${offerName(o)}, ${untilText(o.expiresAt, now)}` : offerName(o)));
+  const rest = live.slice(2).reduce((n, o) => n + o.left, 0);
+  return [...named, ...(rest ? [`${rest} more`] : [])].join(' · ');
+}
+
+/** The soonest end among the offers, for the line's tooltip. */
+const firstEnd = (resets: Resets, now: number) =>
+  (resets.offers ?? []).map((o) => o.expiresAt).filter((t): t is number => !!t && t > now).sort((a, b) => a - b)[0];
 
 /** One reset attempt's key: kept while the same confirmation retries, new for the next one. */
 const newKey = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -44,7 +87,8 @@ const newKey = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math
  * confirmation calls the agent. Rendered only where the agent reports resets.
  */
 export function LimitReset({ provider, accountId = DEFAULT_ACCOUNT, limit, compact, className }: { provider: ProviderId; accountId?: string; limit: RateLimit; compact?: boolean; className?: string }) {
-  const resets = useResets(provider, accountId);
+  const offered = useResetOffers(provider, accountId);
+  const now = useNow();
   const account = useStore((s) => s.providers[provider]?.accounts?.find((a) => a.id === accountId));
   const [step, setStep] = useState<'idle' | 'ask' | 'busy'>('idle');
   const [note, setNote] = useState<string>();
@@ -55,7 +99,34 @@ export function LimitReset({ provider, accountId = DEFAULT_ACCOUNT, limit, compa
     if (step === 'ask') confirmRef.current?.focus();
   }, [step]);
 
-  if (!resets && step === 'idle' && !note) return null;
+  if (!offered && step === 'idle' && !note) return null;
+  // Granted, but only the agent's own app can use them: what they are, and where to use one.
+  if (offered && offered.spendable === false) {
+    const where = USE_AT[provider];
+    const end = firstEnd(offered, now);
+    const text = (
+      <span className="ul-resets-count num" tabIndex={end ? 0 : undefined}>
+        {offersText(offered, now)}
+      </span>
+    );
+    return (
+      <div className={cx('ul-resets', className)} data-compact={compact || undefined} role="group" aria-label="Resets">
+        {end ? (
+          <Tip label={`Ends ${exactTime(end)}`} side="bottom">
+            {text}
+          </Tip>
+        ) : (
+          text
+        )}
+        {where && (
+          <a className="btn btn-sm ul-resets-btn" href={where.url} target="_blank" rel="noreferrer">
+            Use on {where.name}
+          </a>
+        )}
+      </div>
+    );
+  }
+  const resets = offered;
   const n = resets?.available ?? 0;
   const name = account?.label || (account ? accountName(account) : 'Main');
   const question = `Use 1 of ${n} ${n === 1 ? 'reset' : 'resets'} on ${windowPhrase(limit)} of ${name}?`;
@@ -79,7 +150,7 @@ export function LimitReset({ provider, accountId = DEFAULT_ACCOUNT, limit, compa
     <div className={cx('ul-resets', className)} data-compact={compact || undefined} data-step={step} role="group" aria-label="Resets">
       {step === 'idle' ? (
         <>
-          <span className="ul-resets-count num">{note ?? resetsText(n)}</span>
+          <span className="ul-resets-count num">{note ?? (resets ? offersText(resets, now) : resetsText(n))}</span>
           {n > 0 && (
             <button
               type="button"

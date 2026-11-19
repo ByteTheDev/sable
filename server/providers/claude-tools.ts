@@ -4,6 +4,7 @@ import { WIDGET_SERVER, WIDGET_TOOL_ID, describeWidget } from './widget-tool';
 import { browserOp, describeBrowser } from './browser-tool';
 import { describeDevice, deviceOp } from './device-tool';
 import { agentOfTool, describeAgentCall } from './agent-tool';
+import { PROFILE_TOOL_ID, describeProfileCall } from './profile-tool';
 
 /** Normalizes Claude Code tool calls and results into Sable's display model. */
 
@@ -133,6 +134,8 @@ export function describeTool(name: string, input: Obj = {}): ToolView {
       return { kind: 'other', title: 'Look up tools', detail: { query: input.query } };
     case WIDGET_TOOL_ID:
       return describeWidget(input);
+    case PROFILE_TOOL_ID:
+      return describeProfileCall(input);
     default: {
       if (name.startsWith(`mcp__${WIDGET_SERVER}__browser_`) && browserOp(name)) return describeBrowser(name, input);
       if (name.startsWith(`mcp__${WIDGET_SERVER}__device_`) && deviceOp(name)) return describeDevice(name, input);

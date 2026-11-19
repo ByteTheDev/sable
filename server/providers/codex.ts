@@ -40,6 +40,7 @@ import { DEVICE_CORE, DEVICE_DESCRIPTIONS, DEVICE_HINT, DEVICE_INPUT_SCHEMAS, DE
 import { CodexRpc, RpcError, resolveCodexCommand, type ExitInfo } from './codex-rpc';
 import { serviceTierFor } from './codex-map';
 import { AGENT_INPUT_SCHEMA, AGENT_TOOLS, agentOfTool, agentToolDescription, readAgentCall } from './agent-tool';
+import { PROFILE_DESCRIPTION, PROFILE_INPUT_SCHEMA, PROFILE_TOOL, isProfileTool, profileDynamicAnswer } from './profile-tool';
 import { claimStep } from '../core/sub-agent';
 import {
   PRESETS,
@@ -525,6 +526,29 @@ export class CodexProvider implements Provider {
 
   // ── developer instructions ──
 
+  /** Whether new threads get the user's profile and remember_about_user (Settings › Profile). */
+  profileOn() {
+    return !!this.ctx.profile?.().enabled();
+  }
+
+  /** The user's profile as it goes into the instructions, with the line about the tool (empty when off). */
+  profileText() {
+    try {
+      return this.ctx.profile?.().prompt(true) ?? '';
+    } catch (err) {
+      this.ctx.log('[codex] the profile could not be read:', errMsg(err));
+      return '';
+    }
+  }
+
+  /** remember_about_user: one fact into the profile. */
+  rememberAboutUser(args: unknown): { ok: boolean; text: string } {
+    const profile = this.ctx.profile?.();
+    if (!profile) return { ok: false, text: 'The profile is not available.' };
+    const fact = args && typeof args === 'object' ? (args as Record<string, unknown>).fact : undefined;
+    return profile.remember(fact);
+  }
+
   /**
    * Developer instructions for a thread: what the user configured for this folder
    * (developer_instructions in config.toml) followed by the short-answers instruction and the
@@ -533,7 +557,7 @@ export class CodexProvider implements Provider {
    */
   async developerInstructions(cwd: string, meta?: Pick<SessionMeta, 'options'>): Promise<string | undefined> {
     const settings = this.ctx.settings?.();
-    const ours = [settings?.conciseReplies === false ? '' : CONCISE_REPLIES_PROMPT, widgetsEnabled(settings) ? WIDGET_FENCE_HINT : '', meta && browserTabEnabled(meta) ? BROWSER_HINT : '', meta && deviceEnabled(meta) ? DEVICE_HINT : ''].filter(Boolean).join('\n\n');
+    const ours = [settings?.conciseReplies === false ? '' : CONCISE_REPLIES_PROMPT, widgetsEnabled(settings) ? WIDGET_FENCE_HINT : '', meta && browserTabEnabled(meta) ? BROWSER_HINT : '', meta && deviceEnabled(meta) ? DEVICE_HINT : '', this.profileText()].filter(Boolean).join('\n\n');
     if (!ours) return undefined;
     let own: string | undefined;
     try {
@@ -555,6 +579,8 @@ export class CodexProvider implements Provider {
   dynamicTools(meta?: Pick<SessionMeta, 'options'>): CodexDynamicTool[] | undefined {
     const tools: CodexDynamicTool[] = [];
     if (widgetsEnabled(this.ctx.settings?.())) tools.push({ type: 'function', name: WIDGET_TOOL, description: WIDGET_DESCRIPTION, inputSchema: WIDGET_INPUT_SCHEMA });
+    // The user's profile: one short fact at a time, merged by Sable (never secrets).
+    if (this.profileOn()) tools.push({ type: 'function', name: PROFILE_TOOL, description: PROFILE_DESCRIPTION, inputSchema: PROFILE_INPUT_SCHEMA });
     // Sub-agents from the other agent (Claude Code), while it is installed and signed in.
     if (meta && this.ctx.runAgent)
       for (const agent of this.ctx.otherAgents?.() ?? []) {
@@ -1430,6 +1456,8 @@ class CodexSession implements ProviderSession {
           // The Android device tools run in the bridge (and ask before touching a real phone).
           const dop = deviceOp(typeof p?.tool === 'string' ? p.tool : undefined);
           if (dop) return await deviceDynamicAnswer(this.rt, dop, p?.arguments, ac.signal);
+          // A fact for the user's profile: Sable merges it (and refuses secrets).
+          if (isProfileTool(typeof p?.tool === 'string' ? p.tool : undefined)) return profileDynamicAnswer(this.provider.rememberAboutUser(p?.arguments));
           // A sub-agent from the other agent (Claude Code): it runs nested under this call's step.
           const agent = agentOfTool(typeof p?.tool === 'string' ? p.tool : undefined);
           if (agent) return await this.runDelegate(agent, p?.arguments, ac.signal);

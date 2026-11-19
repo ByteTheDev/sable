@@ -20,7 +20,8 @@ export function Shortcuts() {
         { label: 'New session', keys: k('mod+shift+o') },
         { label: 'Open a folder', keys: k('mod+o') },
         { label: 'Show or hide the sidebar', keys: k('mod+b') },
-        { label: 'Show or hide the panel', keys: k('mod+j') },        { label: 'Settings', keys: k('mod+,') },
+        { label: 'Show or hide the panel', keys: k('mod+j') },
+        { label: 'Answer what waits in every chat', keys: k('mod+i') },        { label: 'Settings', keys: k('mod+,') },
       ],
     },
     {

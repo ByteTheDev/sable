@@ -12,9 +12,10 @@ import { Sidebar } from '@/features/sidebar/Sidebar';
 import { Icon } from '@/icons';
 import { windowShell } from '@/lib/desktop';
 import { baseName, formatTokens } from '@/lib/format';
-import { goHome, openSettings, renameSession } from '@/state/actions';
+import { goHome, openSettings, renameSession, toggleTriage } from '@/state/actions';
 import { useActiveProvider, useHotkey } from '@/state/hooks';
 import { SessionAccount } from '@/features/accounts';
+import { WaitingCount } from '@/features/triage/WaitingCount';
 import { shallow } from 'zustand/shallow';
 import { useLaggedStore } from '@/lib/lagged';
 import { railTabAt } from '@/features/rail/tabs';
@@ -31,11 +32,13 @@ const loadHistory = () => import('@/features/history/History');
 const loadSettings = () => import('@/features/settings/Settings');
 const loadPicker = () => import('@/features/projects/ProjectPicker');
 const loadRail = () => import('@/features/rail/Rail');
+const loadTriage = () => import('@/features/triage/Triage');
 const Palette = lazy(() => loadPalette().then((m) => ({ default: m.Palette })));
 const History = lazy(() => loadHistory().then((m) => ({ default: m.History })));
 const Settings = lazy(() => loadSettings().then((m) => ({ default: m.Settings })));
 const ProjectPicker = lazy(() => loadPicker().then((m) => ({ default: m.ProjectPicker })));
 const Rail = lazy(() => loadRail().then((m) => ({ default: m.Rail })));
+const Triage = lazy(() => loadTriage().then((m) => ({ default: m.Triage })));
 const LAZY_PART = {
   SessionView: lazy(() => loadSessionView().then((m) => ({ default: m.SessionView }))),
   SessionDock: lazy(() => loadSessionView().then((m) => ({ default: m.SessionDock }))),
@@ -207,13 +210,14 @@ export function App() {
   const historyOpen = useStore((s) => s.ui.historyOpen);
   const settingsOpen = useStore((s) => s.ui.settings !== null);
   const pickerOpen = useStore((s) => s.ui.projectPicker);
+  const triageOpen = useStore((s) => !!s.ui.triageOpen);
 
   // Warm the on-demand chunks once the app is idle, so the first open is instant. The session view
   // first and soon (a send from home needs it), the rest when the window has nothing else to do.
   useEffect(() => {
     if (!ready) return;
     const t = window.setTimeout(() => void loadSessionView().catch(() => {}), 600);
-    const warm = () => void Promise.all([loadPalette(), loadRail(), loadSettings(), loadHistory(), loadPicker()]).catch(() => {});
+    const warm = () => void Promise.all([loadPalette(), loadRail(), loadSettings(), loadHistory(), loadPicker(), loadTriage()]).catch(() => {});
     const ric = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
     if (ric) ric(warm, { timeout: 4000 });
     else window.setTimeout(warm, 1500);
@@ -226,6 +230,8 @@ export function App() {
   useHotkey('mod+,', useCallback((e) => (e.preventDefault(), openSettings()), []));
   useHotkey('mod+shift+o', useCallback((e) => (e.preventDefault(), goHome()), []));
   useHotkey('mod+o', useCallback((e) => (e.preventDefault(), setUi({ projectPicker: true })), [setUi]));
+  // Everything waiting on you across chats, as one stack of cards (features/triage).
+  useHotkey('mod+i', useCallback((e) => (e.preventDefault(), toggleTriage()), []), { enabled: ready && !onboarding });
   // Alt+1 to Alt+8: the side panel's tabs in their order (features/rail/tabs.ts); opens the panel when it is closed.
   useEffect(() => {
     if (!sessionId) return;
@@ -330,6 +336,9 @@ export function App() {
           </Deferred>
           <Deferred when={pickerOpen}>
             <ProjectPicker />
+          </Deferred>
+          <Deferred when={triageOpen}>
+            <Triage />
           </Deferred>
           {/* While its chunk loads, a plain sheet keeps the waiting app from showing through. */}
           <Suspense fallback={onboarding ? <div style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'var(--sheet)' }} /> : null}>
@@ -624,6 +633,7 @@ function Topbar({ panelShown }: { panelShown: boolean }) {
       )}
 
       <div className="topbar-actions">
+        <WaitingCount />
         {session && <ContextMeter sessionId={session.id} />}
         {session && <CapabilitiesButton sessionId={session.id} />}
         {/* The sidebar's top row has the search; the bar shows it only while the sidebar is away. */}

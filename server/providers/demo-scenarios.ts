@@ -11,6 +11,7 @@ import { COMMANDS, SKILLS, contextBreakdown } from './demo-catalog';
 import { BASE_CONTEXT, Denied, type OutLine, type Script, between } from './demo-script';
 import * as W from './demo-widgets';
 import { browserLineUrl, stripBrowserLine } from './browser-tool';
+import { demoSite, LOOKS, siteCss, siteHtml } from './demo-site';
 
 // ───────────────────────────────── content file ─────────────────────────────────
 
@@ -1370,6 +1371,51 @@ const browser: Scenario = async ({ s, item }) => {
   s.finish({});
 };
 
+/**
+ * Before / after: a real page on a free local port (demo-site.ts), edited during the turn (its
+ * heading and its accent colour), named in the answer. The first run starts the page, so Sable
+ * captures the before as soon as the command prints the address; later runs in the same chat
+ * start with the page known, so the before is taken as the turn starts.
+ */
+const beforeafter: Scenario = async ({ s }) => {
+  const { site, fresh } = await demoSite(s.rt.id);
+  const from = LOOKS[site.runs % LOOKS.length];
+  const to = LOOKS[(site.runs + 1) % LOOKS.length];
+  await s.think(`The status page: change the heading to "${to.heading}" and the accent to ${to.name}. Both live in two small files.`);
+  if (fresh) {
+    await s.bash(`npx serve site -l ${new URL(site.url).port}`, {
+      description: 'Serve the status page',
+      readonly: true,
+      lines: [
+        ['', 300],
+        ['   Serving!', 200],
+        ['', 40],
+        [`   - Local:    ${site.url}`, 40],
+        [`   - Network:  ${site.url.replace('localhost', '127.0.0.1')}`, 40],
+        ['', 40],
+      ],
+    });
+  }
+  const html = site.read('index.html');
+  const css = site.read('styles.css');
+  await s.readMany([
+    { rel: 'site/index.html', content: html },
+    { rel: 'site/styles.css', content: css },
+  ]);
+  await s.think(`The heading is the h1 in index.html; the accent is one custom property in styles.css, used by the button and the figures.`);
+  // An agent's pace: some seconds pass between finding the files and changing them.
+  await s.pause(2600, 3200);
+  const html2 = siteHtml(to);
+  await s.edit('site/index.html', html, html2, { description: 'New heading' });
+  site.write('index.html', html2);
+  const css2 = siteCss(to);
+  await s.edit('site/styles.css', css, css2, { description: `Accent ${from.name} to ${to.name}` });
+  site.write('styles.css', css2);
+  site.runs++;
+  await s.say(`The heading now reads **${to.heading}** and the accent is ${to.name} (\`${to.accent}\`), on the button and the figures. The page is at ${site.url}`);
+  s.finish({});
+};
+
 // ─────────────────────────────────── selection ──────────────────────────────────
 
 export const SCENARIOS = {
@@ -1401,6 +1447,7 @@ export const SCENARIOS = {
   arrive,
   previews,
   browser,
+  beforeafter,
 } satisfies Record<string, Scenario>;
 export type ScenarioId = keyof typeof SCENARIOS;
 
@@ -1408,6 +1455,8 @@ export type ScenarioId = keyof typeof SCENARIOS;
 export const ROTATION: ScenarioId[] = ['flagship', 'agents', 'search', 'questions', 'mcp', 'markdown'];
 
 const KEYWORDS: [RegExp, ScenarioId][] = [
+  // Before / after captures of a local page (demo-site.ts).
+  [/\bbefore\s*\/?\s*after\b|\bbeforeafter\b/i, 'beforeafter'],
   // The Browser tab tools.
   [/\bbrowser\b/i, 'browser'],
   // Generative UI (demo-widgets.ts).

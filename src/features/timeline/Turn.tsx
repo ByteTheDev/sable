@@ -1,6 +1,7 @@
 import { memo, useMemo, useState } from 'react';
 import type { TimelineItem, TurnItem, UserItem } from '@shared/protocol';
 import { CopyButton } from '@/components/CopyButton';
+import { BeforeAfter } from '@/features/compare/BeforeAfter';
 import { LazyTip } from '@/components/LazyTip';
 import { Icon } from '@/icons';
 import { formatCost, formatTokens, isMac } from '@/lib/format';
@@ -94,6 +95,8 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
             </button>
           </LazyTip>
         ))}
+        {/* A turn that edited a local page: its before and after, beside Preview. */}
+        <BeforeAfter sessionId={sessionId} turnId={turn.key} />
         {failed && (
           <button type="button" className="btn btn-sm" onClick={retry}>
             <Icon name="refresh" size={13} />

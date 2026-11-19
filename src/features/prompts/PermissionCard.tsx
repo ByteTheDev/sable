@@ -28,7 +28,7 @@ function Field({ label, value, mono, path }: { label: string; value?: string; mo
  * A scroller whose lower edge fades into the well while more is below (as the composer field does),
  * so no line is cut hard at the bottom; the fade goes once the end is in view.
  */
-function FadeScroll({ className, children }: { className: string; children: ReactNode }) {
+export function FadeScroll({ className, children }: { className: string; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const [more, setMore] = useState(false);
   const measure = useCallback(() => {
@@ -109,7 +109,8 @@ export function CardWarmup({ active }: { active: boolean }) {
   );
 }
 
-function Subject({ req, input }: { req: PermissionRequest; input: unknown }) {
+/** What the request is about, in full: the command, the diff, the plan, the address, the tool's input. */
+export function PermissionSubject({ req, input }: { req: PermissionRequest; input: unknown }) {
   const d = req.detail;
   // Paths inside the session's folder read from there ("table.js"), as the step rows do.
   const cwd = useStore((s) => s.sessions[req.sessionId]?.cwd);
@@ -184,7 +185,7 @@ function Subject({ req, input }: { req: PermissionRequest; input: unknown }) {
 }
 
 /** The description only repeats the title ("Write table.js" / "table.js") or the command shown below it. */
-function restates(req: PermissionRequest): boolean {
+export function restates(req: PermissionRequest): boolean {
   const d = (req.description ?? '').trim().toLowerCase();
   return req.title.toLowerCase().includes(d) || d === (req.detail.command ?? '').trim().toLowerCase();
 }
@@ -242,7 +243,7 @@ export function PermissionCard({ sessionId, req, more }: { sessionId: string; re
       </header>
 
       <div className="pc-body">
-        <Subject req={req} input={input} />
+        <PermissionSubject req={req} input={input} />
         {req.reason && (
           <p className="pc-reason">
             <Icon name="shield-warning" size={14} />

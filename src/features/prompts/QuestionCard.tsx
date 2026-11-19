@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode, type RefObject } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import type { QuestionRequest } from '@shared/protocol';
+import type { Question, QuestionRequest } from '@shared/protocol';
 import { Icon } from '@/icons';
 import { respondQuestion } from '@/state/actions';
 import { focusComposer } from '@/state/hooks';
@@ -16,8 +16,37 @@ interface Answer {
 const blank = (): Answer => ({ picked: [], other: null });
 const answered = (a: Answer | undefined) => !!a && (a.picked.length > 0 || !!a.other?.trim());
 
-/** Structured questions from the agent: pick options, or write your own answer. */
-export function QuestionCard({ sessionId, req, more }: { sessionId: string; req: QuestionRequest; more: number }) {
+/** The answers being given to one question request, and what can be done with them (shared by the dock and the triage deck). */
+export interface QuestionAnswers {
+  qs: Question[];
+  step: number;
+  /** The direction of the last step, for the page's slide. */
+  dir: number;
+  q: Question | undefined;
+  a: Answer;
+  multi: boolean;
+  last: boolean;
+  /** Every question has an answer. */
+  complete: boolean;
+  /** The current question has an answer. */
+  ready: boolean;
+  sent: boolean;
+  otherRef: RefObject<HTMLInputElement | null>;
+  toggle: (label: string) => void;
+  chooseOther: () => void;
+  setOther: (text: string) => void;
+  /** Leaves "Other" when nothing was written in it. */
+  dropEmptyOther: () => void;
+  go: (to: number) => void;
+  /** The option at `n` (0-based), or "Other" right after the last option. False when there is none. */
+  pick: (n: number) => boolean;
+  /** Sends the answers (or, with `skip`, none). */
+  send: (skip?: boolean) => void;
+  /** Enter: on to the next question, or send when every question has its answer. */
+  advance: () => void;
+}
+
+export function useQuestionAnswers(req: QuestionRequest, deliver: (answers: Record<string, string[]> | null) => void): QuestionAnswers {
   const qs = req.questions;
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState(1);
@@ -57,8 +86,7 @@ export function QuestionCard({ sessionId, req, more }: { sessionId: string; req:
       const x = answers[i];
       out[qq.question] = [...x.picked, ...(x.other?.trim() ? [x.other.trim()] : [])];
     });
-    void respondQuestion(sessionId, req.id, skip ? null : out);
-    focusComposer();
+    deliver(skip ? null : out);
   };
 
   const advance = () => {
@@ -70,27 +98,159 @@ export function QuestionCard({ sessionId, req, more }: { sessionId: string; req:
     }
   };
 
+  const pick = (n: number) => {
+    if (!q) return false;
+    if (n < q.options.length) toggle(q.options[n].label);
+    else if (n === q.options.length) chooseOther();
+    else return false;
+    return true;
+  };
+
+  return {
+    qs,
+    step,
+    dir,
+    q,
+    a,
+    multi,
+    last,
+    complete,
+    ready: answered(a),
+    sent,
+    otherRef,
+    toggle,
+    chooseOther,
+    setOther: (text) => update((cur) => ({ ...cur, other: text })),
+    dropEmptyOther: () => {
+      if (!a.other?.trim()) update((cur) => ({ ...cur, other: null }));
+    },
+    go,
+    pick,
+    send,
+    advance,
+  };
+}
+
+/** The header chip and the stepper between questions; `children` (a count) sits at its end. */
+export function QuestionHead({ x, children }: { x: QuestionAnswers; children?: ReactNode }) {
+  const { q, qs, step, last } = x;
+  return (
+    <header className="qc-head">
+      {q?.header && <span className="qc-chip">{q.header}</span>}
+      {qs.length > 1 && (
+        <div className="qc-stepper">
+          <button type="button" className="icon-btn qc-step" aria-label="Previous question" disabled={step === 0} onClick={() => x.go(step - 1)}>
+            <Icon name="caret-left" size={12} />
+          </button>
+          <span className="qc-count num">
+            {step + 1} of {qs.length}
+          </span>
+          <button type="button" className="icon-btn qc-step" aria-label="Next question" disabled={last} onClick={() => x.go(step + 1)}>
+            <Icon name="caret-right" size={12} />
+          </button>
+        </div>
+      )}
+      {children}
+    </header>
+  );
+}
+
+/** The current question with its options and "Other"; `onFieldEscape` runs after Escape in the "Other" field. */
+export function QuestionPage({ x, onFieldEscape }: { x: QuestionAnswers; onFieldEscape: () => void }) {
+  const { q, a, multi, step, dir } = x;
+  if (!q) return null;
+  return (
+    <AnimatePresence mode="popLayout" initial={false} custom={dir}>
+      <motion.div
+        key={step}
+        className="qc-page"
+        custom={dir}
+        initial={{ opacity: 0, x: dir * 24 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: dir * -24, transition: { duration: 0.12 } }}
+        transition={{ type: 'spring', stiffness: 460, damping: 38 }}
+      >
+        <h3 className="pc-title qc-question">{q.question}</h3>
+        {multi && <p className="pc-desc">Choose any that apply</p>}
+        <div className="qc-options" role={multi ? 'group' : 'radiogroup'} aria-label={q.question}>
+          {q.options.map((o, i) => {
+            const on = a.picked.includes(o.label);
+            return (
+              <button key={o.label} type="button" role={multi ? 'checkbox' : 'radio'} aria-checked={on} className="qc-opt" data-on={on || undefined} onClick={() => x.toggle(o.label)}>
+                <span className={multi ? 'qc-mark qc-box' : 'qc-mark qc-radio'} aria-hidden>
+                  {on && (multi ? <Icon name="check" size={11} /> : <i />)}
+                </span>
+                <span className="qc-opt-text">
+                  <span className="qc-opt-label">{o.label}</span>
+                  {o.description && <span className="qc-opt-desc">{o.description}</span>}
+                </span>
+                {i < 9 && <KeyHint k={String(i + 1)} />}
+              </button>
+            );
+          })}
+          {a.other === null ? (
+            <button type="button" role={multi ? 'checkbox' : 'radio'} aria-checked={false} className="qc-opt qc-other" onClick={x.chooseOther}>
+              <span className={multi ? 'qc-mark qc-box' : 'qc-mark qc-radio'} aria-hidden />
+              <span className="qc-opt-text">
+                <span className="qc-opt-label">Other</span>
+              </span>
+              {q.options.length < 9 && <KeyHint k={String(q.options.length + 1)} />}
+            </button>
+          ) : (
+            <div className="qc-opt qc-other" data-on={a.other.trim() ? true : undefined}>
+              <span className={multi ? 'qc-mark qc-box' : 'qc-mark qc-radio'} aria-hidden>
+                {a.other.trim() && (multi ? <Icon name="check" size={11} /> : <i />)}
+              </span>
+              <input
+                ref={x.otherRef}
+                autoFocus
+                className="qc-other-field"
+                placeholder="Write your own answer"
+                aria-label="Your own answer"
+                value={a.other}
+                onChange={(e) => x.setOther(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing) return;
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    x.advance();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    x.dropEmptyOther();
+                    onFieldEscape();
+                  }
+                }}
+              />
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+/** Structured questions from the agent: pick options, or write your own answer. */
+export function QuestionCard({ sessionId, req, more }: { sessionId: string; req: QuestionRequest; more: number }) {
+  const x = useQuestionAnswers(req, (answers) => {
+    void respondQuestion(sessionId, req.id, answers);
+    focusComposer();
+  });
+  const { q, qs, step, last, complete, sent } = x;
+
   usePromptKeys(!sent, (e) => {
     if (/^[1-9]$/.test(e.key)) {
-      const n = Number(e.key) - 1;
-      if (n < q.options.length) {
-        e.preventDefault();
-        toggle(q.options[n].label);
-      } else if (n === q.options.length) {
-        e.preventDefault();
-        chooseOther();
-      }
+      if (x.pick(Number(e.key) - 1)) e.preventDefault();
     } else if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      advance();
+      x.advance();
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      send(true);
+      x.send(true);
     } else if (qs.length > 1 && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
       const to = step + (e.key === 'ArrowRight' ? 1 : -1);
       if (to >= 0 && to < qs.length) {
         e.preventDefault();
-        go(to);
+        x.go(to);
       }
     }
   });
@@ -99,104 +259,23 @@ export function QuestionCard({ sessionId, req, more }: { sessionId: string; req:
 
   return (
     <section className="pc qc glass-card" data-spot aria-label="Questions from the agent">
-      <header className="qc-head">
-        {q.header && <span className="qc-chip">{q.header}</span>}
-        {qs.length > 1 && (
-          <div className="qc-stepper">
-            <button type="button" className="icon-btn qc-step" aria-label="Previous question" disabled={step === 0} onClick={() => go(step - 1)}>
-              <Icon name="caret-left" size={12} />
-            </button>
-            <span className="qc-count num">
-              {step + 1} of {qs.length}
-            </span>
-            <button type="button" className="icon-btn qc-step" aria-label="Next question" disabled={last} onClick={() => go(step + 1)}>
-              <Icon name="caret-right" size={12} />
-            </button>
-          </div>
-        )}
-        {more > 0 && <span className="pc-more">{more} more waiting</span>}
-      </header>
+      <QuestionHead x={x}>{more > 0 && <span className="pc-more">{more} more waiting</span>}</QuestionHead>
 
-      <AnimatePresence mode="popLayout" initial={false} custom={dir}>
-        <motion.div
-          key={step}
-          className="qc-page"
-          custom={dir}
-          initial={{ opacity: 0, x: dir * 24 }}
-          animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0, x: dir * -24, transition: { duration: 0.12 } }}
-          transition={{ type: 'spring', stiffness: 460, damping: 38 }}
-        >
-          <h3 className="pc-title qc-question">{q.question}</h3>
-          {multi && <p className="pc-desc">Choose any that apply</p>}
-          <div className="qc-options" role={multi ? 'group' : 'radiogroup'} aria-label={q.question}>
-            {q.options.map((o, i) => {
-              const on = a.picked.includes(o.label);
-              return (
-                <button key={o.label} type="button" role={multi ? 'checkbox' : 'radio'} aria-checked={on} className="qc-opt" data-on={on || undefined} onClick={() => toggle(o.label)}>
-                  <span className={multi ? 'qc-mark qc-box' : 'qc-mark qc-radio'} aria-hidden>
-                    {on && (multi ? <Icon name="check" size={11} /> : <i />)}
-                  </span>
-                  <span className="qc-opt-text">
-                    <span className="qc-opt-label">{o.label}</span>
-                    {o.description && <span className="qc-opt-desc">{o.description}</span>}
-                  </span>
-                  {i < 9 && <KeyHint k={String(i + 1)} />}
-                </button>
-              );
-            })}
-            {a.other === null ? (
-              <button type="button" role={multi ? 'checkbox' : 'radio'} aria-checked={false} className="qc-opt qc-other" onClick={chooseOther}>
-                <span className={multi ? 'qc-mark qc-box' : 'qc-mark qc-radio'} aria-hidden />
-                <span className="qc-opt-text">
-                  <span className="qc-opt-label">Other</span>
-                </span>
-                {q.options.length < 9 && <KeyHint k={String(q.options.length + 1)} />}
-              </button>
-            ) : (
-              <div className="qc-opt qc-other" data-on={a.other.trim() ? true : undefined}>
-                <span className={multi ? 'qc-mark qc-box' : 'qc-mark qc-radio'} aria-hidden>
-                  {a.other.trim() && (multi ? <Icon name="check" size={11} /> : <i />)}
-                </span>
-                <input
-                  ref={otherRef}
-                  autoFocus
-                  className="qc-other-field"
-                  placeholder="Write your own answer"
-                  aria-label="Your own answer"
-                  value={a.other}
-                  onChange={(e) => update((cur) => ({ ...cur, other: e.target.value }))}
-                  onKeyDown={(e) => {
-                    if (e.nativeEvent.isComposing) return;
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      advance();
-                    } else if (e.key === 'Escape') {
-                      e.preventDefault();
-                      if (!a.other?.trim()) update((cur) => ({ ...cur, other: null }));
-                      focusComposer();
-                    }
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        </motion.div>
-      </AnimatePresence>
+      <QuestionPage x={x} onFieldEscape={() => focusComposer()} />
 
       <div className="pc-foot qc-foot">
-        <button type="button" className="btn btn-ghost" disabled={sent} onClick={() => send(true)}>
+        <button type="button" className="btn btn-ghost" disabled={sent} onClick={() => x.send(true)}>
           Skip
           <KeyHint k="Esc" />
         </button>
         <span className="grow" />
         {!last && (
-          <button type="button" className="btn" disabled={!answered(a)} onClick={() => go(step + 1)}>
+          <button type="button" className="btn" disabled={!x.ready} onClick={() => x.go(step + 1)}>
             Next
             <KeyHint k="↵" />
           </button>
         )}
-        <button type="button" className="btn btn-primary" disabled={!complete || sent} onClick={() => send()}>
+        <button type="button" className="btn btn-primary" disabled={!complete || sent} onClick={() => x.send()}>
           Send answers
           {last && <KeyHint k="↵" />}
         </button>

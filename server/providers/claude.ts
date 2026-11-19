@@ -34,6 +34,7 @@ import type {
   PermissionOption,
   ProviderInfo,
   RateLimit,
+  ResetOffer,
   SessionUsage,
   TextItem,
   ThinkingItem,
@@ -59,6 +60,7 @@ import { BROWSER_HINT, BROWSER_TOOL_IDS, browserTabEnabled } from './browser-too
 import { DEVICE_HINT, DEVICE_TOOL_IDS, deviceEnabled } from './device-tool';
 import { WIDGET_FENCE_HINT, WIDGET_SERVER, WIDGET_TOOL_ID, widgetsEnabled } from './widget-tool';
 import { AGENT_TOOLS, agentOfTool, agentToolId, type AgentCall } from './agent-tool';
+import { PROFILE_TOOL_ID } from './profile-tool';
 import { claimStep } from '../core/sub-agent';
 
 type Obj = Record<string, any>;
@@ -306,7 +308,22 @@ export class ClaudeProvider implements Provider {
    * alone is rarely enough for a model to reach for an optional tool unprompted).
    */
   appendix(meta?: Pick<SessionMeta, 'options'>): string {
-    return [this.concise() ? CONCISE_REPLIES_PROMPT : '', this.widgets() ? WIDGET_FENCE_HINT : '', meta && browserTabEnabled(meta) ? BROWSER_HINT : '', meta && deviceEnabled(meta) ? DEVICE_HINT : ''].filter(Boolean).join('\n\n');
+    return [this.concise() ? CONCISE_REPLIES_PROMPT : '', this.widgets() ? WIDGET_FENCE_HINT : '', meta && browserTabEnabled(meta) ? BROWSER_HINT : '', meta && deviceEnabled(meta) ? DEVICE_HINT : '', this.profileText()].filter(Boolean).join('\n\n');
+  }
+
+  /** Whether new agent processes get the user's profile and remember_about_user (Settings › Profile). */
+  profileOn() {
+    return !!this.ctx.profile?.().enabled();
+  }
+
+  /** The user's profile as it goes into the prompt, with the line about the tool (empty when off). */
+  profileText() {
+    try {
+      return this.ctx.profile?.().prompt(true) ?? '';
+    } catch (err) {
+      this.ctx.log('claude: the profile could not be read:', (err as Error).message);
+      return '';
+    }
   }
 
   agentOptions(meta: Pick<SessionMeta, 'cwd' | 'model' | 'effort' | 'mode' | 'options' | 'providerSessionId' | 'ultracode'>, owner: WarmOwner, resumeAt?: string): Options {
@@ -323,8 +340,10 @@ export class ClaudeProvider implements Provider {
     const delegates = (this.ctx.otherAgents?.() ?? []).filter((a) => a !== 'claude' && AGENT_TOOLS[a]);
     // The Android device tools (the session's "Device" capability) ask for real phones themselves.
     const device = deviceEnabled(meta);
-    const own = this.widgets() || browser || device || delegates.length > 0;
-    const allowed = [...(this.widgets() ? [WIDGET_TOOL_ID] : []), ...(browser ? BROWSER_TOOL_IDS : []), ...(device ? DEVICE_TOOL_IDS : []), ...delegates.map(agentToolId)];
+    // The user's profile: remember_about_user merges one fact into it (never secrets).
+    const profile = this.profileOn() ? (fact: unknown) => this.ctx.profile!().remember(fact) : undefined;
+    const own = this.widgets() || browser || device || delegates.length > 0 || !!profile;
+    const allowed = [...(this.widgets() ? [WIDGET_TOOL_ID] : []), ...(browser ? BROWSER_TOOL_IDS : []), ...(device ? DEVICE_TOOL_IDS : []), ...delegates.map(agentToolId), ...(profile ? [PROFILE_TOOL_ID] : [])];
     const runAgent = this.ctx.runAgent;
     const delegate =
       delegates.length && runAgent
@@ -359,7 +378,7 @@ export class ClaudeProvider implements Provider {
       // Generative UI: an in-process server with the show_widget tool, allowed without asking.
       // The user's own MCP servers still load from their settings.
       ...(own
-        ? { mcpServers: { [WIDGET_SERVER]: widgetServer({ widgets: this.widgets(), session: browser ? () => owner.session?.runtime() : undefined, device: device ? () => owner.session?.runtime() : undefined, delegate }) }, allowedTools: allowed }
+        ? { mcpServers: { [WIDGET_SERVER]: widgetServer({ widgets: this.widgets(), session: browser ? () => owner.session?.runtime() : undefined, device: device ? () => owner.session?.runtime() : undefined, delegate, profile }) }, allowedTools: allowed }
         : {}),
       canUseTool: (name, toolInput, o) =>
         owner.session ? owner.session.canUseTool(name, toolInput, o) : Promise.resolve({ behavior: 'deny', message: 'No session is attached yet.' } as PermissionResult),
@@ -374,7 +393,7 @@ export class ClaudeProvider implements Provider {
   private warm?: { key: string; q: Query; input: PushQueue<SDKUserMessage>; owner: WarmOwner; timer: NodeJS.Timeout };
 
   async prewarm(choice: WarmChoice) {
-    const key = warmKey(choice, this.concise(), this.widgets());
+    const key = warmKey(choice, this.concise(), this.widgets(), this.profileText());
     if (this.warm?.key === key) {
       this.warm.timer.refresh();
       return;
@@ -560,8 +579,14 @@ export class ClaudeProvider implements Provider {
         if (ex.currency) meta.extra.currency = String(ex.currency);
         if (this.extraCache?.inUse !== undefined) meta.extra.inUse = this.extraCache.inUse;
         if (this.extraCache?.resetsAt) meta.extra.resetsAt = this.extraCache.resetsAt;
-        this.extraCache = meta.extra;
       }
+      // Usage credits as the usage page tells them (`spend`): fills what extra_usage leaves out, and the balance.
+      const credits = claudeSpend(rl.spend);
+      if (credits) meta.extra = { ...credits, ...meta.extra, ...(credits.balance !== undefined ? { balance: credits.balance } : {}) };
+      if (meta.extra) this.extraCache = meta.extra;
+      // Limit resets the plan granted, when the answer carries them (never spent from here).
+      const resets = claudeResets(rl, rows);
+      if (resets) meta.resets = resets;
       if (rows.length) {
         meta.planLimits = true;
         this.limitsCache = rows;
@@ -775,6 +800,92 @@ export function usageWindows(rl: Obj, known: RateLimit[], now = Date.now()): { r
 export function rolledOver(l: RateLimit, now: number): RateLimit {
   return l.resetsAt && l.resetsAt <= now ? { ...l, percent: 0, resetsAt: undefined } : l;
 }
+/**
+ * Limit resets in a usage answer, read the way Claude Code reads them: `cedar_ember` (the reset
+ * grants a plan carries: full, weekly or 5-hour, each with uses left and an end date) and
+ * `juniper_tide` (a 5-hour reset once a week, usable at the limit). The CLI's plain usage read,
+ * the one the SDK's usage request makes, gets both as null (it asks for them only at a limit), so
+ * undefined here says nothing about the account. Sable never uses one (`spendable: false`): only
+ * Claude Code's own `/limit-reset` and claude.ai can.
+ */
+export function claudeResets(rl: Obj, limits: RateLimit[], now = Date.now()): LimitsMeta['resets'] {
+  const offers: ResetOffer[] = [];
+  let said = false;
+  const grants = rl?.cedar_ember as Obj | null | undefined;
+  if (grants && typeof grants === 'object' && typeof grants.eligible === 'boolean') {
+    said = true;
+    if (grants.eligible && Array.isArray(grants.grants))
+      for (const g of grants.grants) {
+        const o = grantOffer(g, limits);
+        if (o && o.left > 0 && (!o.expiresAt || o.expiresAt > now)) offers.push(o);
+      }
+  }
+  const weekly = rl?.juniper_tide as Obj | null | undefined;
+  if (weekly && typeof weekly === 'object' && typeof weekly.eligible === 'boolean') {
+    said = true;
+    if (weekly.eligible && weekly.arm === 'reset' && weekly.available === true) offers.push({ kind: 'session', left: 1, windows: claudeWindowIds(['five_hour'], limits), atLimitOnly: true });
+  }
+  if (!said) return undefined;
+  const usable = offers.filter((o) => !o.paused);
+  return { available: usable.reduce((n, o) => n + o.left, 0), windows: [...new Set(usable.flatMap((o) => o.windows))], offers, spendable: false };
+}
+
+/** One `cedar_ember` grant as an offer; undefined when it is malformed. */
+function grantOffer(g: Obj, limits: RateLimit[]): ResetOffer | undefined {
+  if (!g || typeof g !== 'object') return undefined;
+  const left = Number(g.resets_left);
+  if (!Number.isInteger(left) || left < 0) return undefined;
+  const clears: string[] = Array.isArray(g.clears) ? g.clears.filter((c: unknown): c is string => typeof c === 'string') : [];
+  const type = g.type === 'session' || g.type === 'weekly' || g.type === 'full' ? (g.type as ResetOffer['kind']) : undefined;
+  const kind: ResetOffer['kind'] = type ?? (clears.length === 1 && clears[0] === 'five_hour' ? 'session' : clears.includes('five_hour') ? 'full' : clears.length ? 'weekly' : undefined);
+  const ends = typeof g.ends_at === 'string' ? Date.parse(g.ends_at) : NaN;
+  const total = Number(g.resets_total);
+  const offer: ResetOffer = { left, windows: claudeWindowIds(clears, limits) };
+  if (kind) offer.kind = kind;
+  if (typeof g.label === 'string' && g.label.trim()) offer.label = g.label.trim().slice(0, 60);
+  if (Number.isInteger(total) && total >= left && total > 0) offer.total = total;
+  if (Number.isFinite(ends)) offer.expiresAt = ends;
+  if (g.use_requires_limit !== false) offer.atLimitOnly = true;
+  if (g.paused === true) offer.paused = true;
+  return offer;
+}
+
+/** Claude Code's window names as Sable's row ids: the "overage-included" week is the per-model row (Fable). */
+function claudeWindowIds(clears: string[], limits: RateLimit[]): string[] {
+  const models = limits.filter((l) => isModelWindow(l.id)).map((l) => l.id);
+  return [...new Set(clears.flatMap((c) => (c === OVERAGE_INCLUDED ? (models.length ? models : [MODEL_WINDOW_DEFAULT]) : [c])))];
+}
+
+/**
+ * Usage credits from a usage answer's `spend` block (what claude.ai's usage page shows): whether
+ * they are on, spent and cap, and the balance left, in hundredths of the currency (cents).
+ * Undefined when the answer has no such block.
+ */
+export function claudeSpend(spend: unknown): NonNullable<LimitsMeta['extra']> | undefined {
+  if (!spend || typeof spend !== 'object') return undefined;
+  const sp = spend as Obj;
+  const used = moneyCents(sp.used);
+  const limit = moneyCents(sp.limit);
+  const balance = moneyCents(sp.balance);
+  const currency = [sp.used, sp.limit, sp.balance].map((m) => (m && typeof m === 'object' && typeof m.currency === 'string' ? (m.currency as string) : undefined)).find(Boolean);
+  const out: NonNullable<LimitsMeta['extra']> = { enabled: sp.enabled === true };
+  if (used !== undefined) out.used = used;
+  if (limit !== undefined) out.limit = limit;
+  if (balance !== undefined) out.balance = balance;
+  if (typeof sp.percent === 'number' && Number.isFinite(sp.percent)) out.percent = Math.round(sp.percent);
+  if (currency) out.currency = currency;
+  return out;
+}
+
+/** `{ amount_minor, exponent }` as hundredths (the unit the other amounts use). */
+function moneyCents(m: unknown): number | undefined {
+  if (!m || typeof m !== 'object') return undefined;
+  const v = Number((m as Obj).amount_minor);
+  const exp = Number((m as Obj).exponent ?? 2);
+  if (!Number.isFinite(v) || !Number.isInteger(exp) || exp < 0 || exp > 6) return undefined;
+  return Math.round((v / 10 ** exp) * 100);
+}
+
 /** A window the table does not name (a newer plan, a model of its own): labelled by its length. */
 function unnamedWindow(id: string): { label: string; mins: number } | undefined {
   const m = /^(five_hour|seven_day)_(\w+)$/.exec(id);
@@ -797,9 +908,9 @@ interface WarmOwner {
 }
 
 /** Everything a process is started with: a warm process is only reused for the same choice. */
-function warmKey(c: { cwd: string; model?: string; mode?: string; effort?: Effort; options?: SessionOptions; ultracode?: boolean }, concise: boolean, widgets = true) {
+function warmKey(c: { cwd: string; model?: string; mode?: string; effort?: Effort; options?: SessionOptions; ultracode?: boolean }, concise: boolean, widgets = true, profile = '') {
   const o = c.options ?? {};
-  return JSON.stringify([path.resolve(c.cwd).toLowerCase(), c.model && c.model !== 'default' ? c.model : '', c.mode || 'default', sdkEffort(c.effort) ?? '', o.browser ?? null, !!c.ultracode, concise, widgets, o.browserTab !== false, deviceEnabled(c)]);
+  return JSON.stringify([path.resolve(c.cwd).toLowerCase(), c.model && c.model !== 'default' ? c.model : '', c.mode || 'default', sdkEffort(c.effort) ?? '', o.browser ?? null, !!c.ultracode, concise, widgets, o.browserTab !== false, deviceEnabled(c), profile]);
 }
 
 /** Control requests the SDK does not wrap (remote_control, mcp_call): the CLI answers them on stdio. */
@@ -902,7 +1013,7 @@ class ClaudeSession implements ProviderSession {
     if (this.q) return this.q;
     const meta = this.rt.meta;
     // A process started while the user was typing on the home screen, for exactly this choice.
-    const warm = !meta.providerSessionId && !this.resumeAt ? this.provider.takeWarm(warmKey(meta, this.provider.concise(), this.provider.widgets())) : undefined;
+    const warm = !meta.providerSessionId && !this.resumeAt ? this.provider.takeWarm(warmKey(meta, this.provider.concise(), this.provider.widgets(), this.provider.profileText())) : undefined;
     let q: Query;
     let input: PushQueue<SDKUserMessage>;
     if (warm) {
@@ -1292,6 +1403,8 @@ class ClaudeSession implements ProviderSession {
     if (DEVICE_TOOL_IDS.includes(name)) return { behavior: 'allow', updatedInput: input };
     // A sub-agent from the other agent: its own steps ask here, as they come, in this session's mode.
     if (agentOfTool(name)) return { behavior: 'allow', updatedInput: input };
+    // A fact for the user's profile: Sable checks it (never secrets) and the user can remove it.
+    if (name === PROFILE_TOOL_ID) return { behavior: 'allow', updatedInput: input };
 
     if (name === 'AskUserQuestion') {
       const questions = describeTool(name, input).detail.questions ?? [];

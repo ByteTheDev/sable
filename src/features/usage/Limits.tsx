@@ -386,27 +386,34 @@ function CreditsList({ refs }: { refs: AccountRef[] }) {
   );
 }
 
-/** Extra usage beyond the plan (Claude) or a credits balance (Codex), as a window line, when the agent reports one. */
+/**
+ * Usage credits beyond the plan (Claude; it called them extra usage before) or a credits balance
+ * (Codex), as a window line, when the agent reports one: spent of the cap with its meter, and the
+ * balance left when the agent tells it.
+ */
 function Extra({ report, now }: { report: LimitsReport | undefined; now: number }) {
   const ex = report?.extra;
-  if (ex?.enabled && (ex.limit || ex.used)) {
+  const hasBalance = ex?.balance !== undefined && ex.balance > 0;
+  if (ex && ((ex.enabled && (ex.limit || ex.used)) || hasBalance)) {
     const money = (v?: number) => (v === undefined ? '' : new Intl.NumberFormat(NUMBER_LOCALE, { style: 'currency', currency: ex.currency || 'USD' }).format(v / 100));
-    const pct = ex.percent ?? (ex.limit && ex.used !== undefined ? Math.round((ex.used / ex.limit) * 100) : undefined);
+    const metered = ex.enabled && !!(ex.limit || ex.used);
+    const pct = metered ? (ex.percent ?? (ex.limit && ex.used !== undefined ? Math.round((ex.used / ex.limit) * 100) : undefined)) : undefined;
     const spent = ex.limit ? `${money(ex.used ?? 0)} of ${money(ex.limit)}` : money(ex.used);
-    const note = [pct !== undefined ? spent : '', ex.inUse ? 'Running on extra usage' : ''].filter(Boolean).join(' · ');
+    const left = hasBalance ? `${money(ex.balance)} left` : '';
+    const note = [pct !== undefined ? spent : '', pct !== undefined ? left : '', !ex.enabled ? 'Off' : '', ex.inUse ? 'Running on usage credits' : ''].filter(Boolean).join(' · ');
     return (
       <div className="ulw">
-        <span className="ulw-label truncate">Extra usage</span>
+        <span className="ulw-label truncate">Usage credits</span>
         <span className="ulw-bar">
           {pct !== undefined ? (
             <>
-              <span className="meter ulw-meter" role="progressbar" aria-label="Extra usage" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+              <span className="meter ulw-meter" role="progressbar" aria-label="Usage credits" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
                 <span className="meter-fill" style={{ '--p': Math.min(100, pct) / 100 } as CSSProperties} />
               </span>
               <span className="ulw-pct num">{Math.min(100, pct)}%</span>
             </>
           ) : (
-            <span className="ulw-value num">{spent}</span>
+            <span className="ulw-value num">{metered ? spent : left}</span>
           )}
         </span>
         <ResetCell at={ex.resetsAt} now={now} />

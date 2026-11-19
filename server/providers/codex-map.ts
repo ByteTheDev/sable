@@ -26,6 +26,7 @@ import { WIDGET_TOOL, describeWidget, isWidgetTool } from './widget-tool';
 import { browserOp, describeBrowser } from './browser-tool';
 import { describeDevice, deviceOp } from './device-tool';
 import { agentOfTool, describeAgentCall } from './agent-tool';
+import { describeProfileCall, isProfileTool } from './profile-tool';
 import type {
   RateLimitResetCreditsSummary,
   AskForApproval,
@@ -628,6 +629,16 @@ export function draftItem(item: ThreadItem, opts: { streaming?: boolean } = {}):
           status,
           input: item.arguments,
           ...(status !== 'running' ? { result: { text: plain, isError: status === 'error' || undefined, ...(images.length ? { images } : {}) }, endedAt: done(status) } : {}),
+        });
+      }
+      // A fact for the user's profile: one line with the fact.
+      if (!item.namespace && isProfileTool(item.tool)) {
+        return tool({
+          name: item.tool,
+          ...describeProfileCall(item.arguments),
+          status,
+          input: item.arguments,
+          ...(status !== 'running' ? { result: { text, isError: status === 'error' || undefined }, endedAt: done(status) } : {}),
         });
       }
       // A sub-agent from the other agent (Claude Code): its steps nest under this one.

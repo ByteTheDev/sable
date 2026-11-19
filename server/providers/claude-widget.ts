@@ -6,6 +6,7 @@ import { AGENT_PARAMS, AGENT_TOOLS, agentToolDescription, readAgentCall, type Ag
 import { DEVICE_CORE, DEVICE_DESCRIPTIONS, DEVICE_OPS, DEVICE_PARAMS, DEVICE_TOOLS, runDeviceTool, type DeviceOp, type DeviceToolResult } from './device-tool';
 import { BROWSER_CORE, BROWSER_DESCRIPTIONS, BROWSER_OPS, BROWSER_PARAMS, BROWSER_TOOLS, runBrowserTool, type BrowserOp, type BrowserToolResult } from './browser-tool';
 import { WIDGET_CODE_DESCRIPTION, WIDGET_DESCRIPTION, WIDGET_SERVER, WIDGET_TITLE_DESCRIPTION, WIDGET_TOOL, widgetResult } from './widget-tool';
+import { PROFILE_DESCRIPTION, PROFILE_FACT_DESCRIPTION, PROFILE_TOOL } from './profile-tool';
 
 /**
  * The in-process MCP server that gives Claude Code Sable's own tools: `show_widget` while generative
@@ -23,6 +24,8 @@ export function widgetServer(
     device?: () => SessionRuntime | undefined;
     /** Sub-agents from the other agent: the agents offered and how a call runs (see agent-tool.ts). */
     delegate?: { agents: ProviderId[]; run: (call: AgentCall, signal?: AbortSignal) => Promise<{ ok: boolean; text: string }> };
+    /** remember_about_user (the user's profile is on): merges one fact into it. */
+    profile?: (fact: unknown) => { ok: boolean; text: string };
   } = { widgets: true },
 ): McpSdkServerConfigWithInstance {
   const tools = [];
@@ -57,6 +60,21 @@ export function widgetServer(
         },
         // Never deferred behind tool search: the agent should know it can draw without searching.
         { annotations: { title: 'Show widget', readOnlyHint: true, destructiveHint: false, openWorldHint: false }, alwaysLoad: true },
+      ),
+    );
+  }
+  const remember = opts.profile;
+  if (remember) {
+    tools.push(
+      tool(
+        PROFILE_TOOL,
+        PROFILE_DESCRIPTION,
+        { fact: z.string().describe(PROFILE_FACT_DESCRIPTION) },
+        async (args) => {
+          const r = remember(args.fact);
+          return { content: [{ type: 'text' as const, text: r.text }], isError: !r.ok };
+        },
+        { annotations: { title: 'Remember about the user', readOnlyHint: false, destructiveHint: false, openWorldHint: false }, alwaysLoad: true },
       ),
     );
   }

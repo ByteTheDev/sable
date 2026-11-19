@@ -1,0 +1,332 @@
+/* ───────────── before / after: the turn's pictures of a local page ───────────── */
+
+.cmp-dialog {
+  --cmp-w: min(1120px, calc(100 * var(--vw) - 64px));
+  width: var(--cmp-w);
+  max-height: calc(100 * var(--vh) - 32px);
+}
+
+.cmp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 10px 12px 10px 20px;
+}
+
+.cmp-title {
+  flex-shrink: 0;
+  margin: 0;
+  font-size: var(--t-ui);
+  font-weight: var(--w-semi);
+  color: var(--text);
+}
+
+.cmp-url {
+  min-width: 0;
+  font-size: var(--t-small);
+  color: var(--text-2);
+}
+
+.cmp-path {
+  color: var(--text-3);
+}
+
+.cmp-head-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* ── the stage ── */
+
+/* One height for every view (the desktop picture's at full width), so switching views moves nothing. */
+.cmp-stage-wrap {
+  display: flex;
+  justify-content: center;
+  height: min(calc(100 * var(--vh) - 196px), calc((var(--cmp-w) - 32px) / 1.6));
+  padding: 0 16px;
+}
+
+.cmp-stage {
+  position: relative;
+  height: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--recess);
+  contain: layout paint;
+  user-select: none;
+  touch-action: none;
+}
+
+.cmp-stage[data-both][data-ready] {
+  cursor: ew-resize;
+}
+
+/* The hairline sits over the pictures. */
+.cmp-stage::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--line);
+  pointer-events: none;
+}
+
+.cmp-skel {
+  position: absolute;
+  inset: 0;
+}
+
+.cmp-img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+/* Everything that zooms: the pictures, the outlines and the divider. */
+.cmp-zoom {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.cmp-stage[data-zoomed] .cmp-zoom {
+  will-change: transform;
+}
+
+/* Zoomed in, the pixels speak for themselves. */
+.cmp-regions {
+  transition: opacity var(--d-2) var(--ease);
+}
+
+.cmp-stage[data-zoomed] .cmp-regions {
+  opacity: 0;
+}
+
+.cmp-pics {
+  position: absolute;
+  inset: 0;
+  animation: fade-in var(--d-2) var(--ease-out);
+}
+
+.cmp-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  will-change: transform;
+  /* Solid, then the dither seam on its last 12 px (see SEAM). */
+  mask-image: linear-gradient(#000, #000), var(--seam);
+  mask-size: calc(100% - 12px) 100%, 12px 4px;
+  mask-position: left top, right top;
+  mask-repeat: no-repeat, repeat-y;
+}
+
+.cmp-clip > .cmp-img {
+  will-change: transform;
+}
+
+/* ── the divider: a hairline with a small ivory disc ── */
+
+.cmp-divider {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.cmp-line {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  translate: 50% 0;
+  background: var(--text);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.28);
+}
+
+.cmp-handle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  translate: 50% -50%;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-pop);
+  pointer-events: auto;
+  cursor: ew-resize;
+  transition: scale 100ms var(--ease);
+}
+
+.cmp-handle:hover {
+  scale: 1.06;
+}
+
+.cmp-handle:active {
+  scale: var(--press);
+}
+
+.cmp-handle:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 3px;
+}
+
+/* ── changed areas: thin ivory outlines that draw themselves once ── */
+
+.cmp-regions {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cmp-region {
+  position: absolute;
+}
+
+.cmp-edge {
+  position: absolute;
+  /* Ivory that turns to ink over a light page: one hairline that reads on any picture. */
+  background: var(--text);
+  mix-blend-mode: difference;
+  opacity: 0.72;
+  scale: 0 1;
+}
+
+.cmp-edge:is([data-edge='r'], [data-edge='l']) {
+  scale: 1 0;
+}
+
+.cmp-edge[data-edge='t'] {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform-origin: left;
+}
+
+.cmp-edge[data-edge='r'] {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  transform-origin: top;
+}
+
+.cmp-edge[data-edge='b'] {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform-origin: right;
+}
+
+.cmp-edge[data-edge='l'] {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  transform-origin: bottom;
+}
+
+/* Around each box in one stroke (top, right, bottom, left), boxes 70 ms apart. */
+.cmp-regions[data-landed] .cmp-edge {
+  animation: cmp-draw 110ms var(--ease) forwards;
+  animation-delay: calc(var(--i) * 70ms + var(--leg) * 95ms);
+}
+
+.cmp-edge[data-edge='t'] {
+  --leg: 0;
+}
+.cmp-edge[data-edge='r'] {
+  --leg: 1;
+}
+.cmp-edge[data-edge='b'] {
+  --leg: 2;
+}
+.cmp-edge[data-edge='l'] {
+  --leg: 3;
+}
+
+@keyframes cmp-draw {
+  to {
+    scale: 1 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cmp-edge,
+  .cmp-edge:is([data-edge='r'], [data-edge='l']) {
+    scale: 1 1;
+    opacity: 0;
+  }
+
+  .cmp-regions[data-landed] .cmp-edge {
+    animation: none;
+    opacity: 0.72;
+    transition: opacity var(--d-2) var(--ease);
+  }
+}
+
+/* ── the foot: when each was taken, the size and what changed ── */
+
+.cmp-foot {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+  min-height: 44px;
+  padding: 8px 20px 10px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.cmp-side {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cmp-side-end {
+  justify-self: end;
+}
+
+.cmp-side-name {
+  color: var(--text-2);
+}
+
+.cmp-none {
+  color: var(--text-2);
+}
+
+.cmp-mid {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.cmp-changes {
+  color: var(--text-2);
+}
+
+/* ── the control under the turn ── */
+
+.cmp-btn[data-state='capturing'] {
+  cursor: default;
+}
+
+.cmp-btn[data-state='capturing']:hover {
+  background-color: transparent;
+}

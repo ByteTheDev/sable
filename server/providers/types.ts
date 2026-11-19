@@ -15,6 +15,7 @@ import type {
 } from '../../shared/protocol';
 import type { SessionRuntime } from '../core/runtime';
 import type { AgentCall } from './agent-tool';
+import type { ProfileAccess } from '../services/profile';
 
 /** The account a provider instance serves. One instance exists per (provider, account) in use. */
 export interface AccountContext {
@@ -36,6 +37,8 @@ export interface ProviderContext {
   settings?: () => AppSettings;
   /** Agents a session can hand work to as sub-agents (installed and signed in, as last known); read when an agent process starts. */
   otherAgents?: () => ProviderId[];
+  /** The user's profile: its prompt text and the remember_about_user tool (see services/profile.ts). Absent in bare tests. */
+  profile?: () => ProfileAccess;
   /** Runs a sub-agent of another agent for `rt`, nested under the tool step `itemId` (see `agent-tool.ts`). */
   runAgent?: (rt: SessionRuntime, call: AgentCall, itemId: string | undefined, signal?: AbortSignal) => Promise<{ ok: boolean; text: string }>;
 }

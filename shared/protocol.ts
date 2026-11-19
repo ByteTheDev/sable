@@ -390,6 +390,8 @@ export interface SessionMeta {
   speed?: string;
   /** The limit handover moved this session here from this account (its preferred one). */
   movedFrom?: string;
+  /** A chat started without a folder: it runs in a fresh folder Sable made for it under the chats folder (`AppSettings.chatsFolder`). */
+  chat?: boolean;
   /** Claude Code ultracode is on for this session (see `Capabilities.features.ultracode`). */
   ultracode?: boolean;
   status: SessionStatus;
@@ -727,6 +729,31 @@ export interface Project {
   order?: number;
   /** Removed from the sidebar with its sessions (nothing deleted); opening the folder again brings both back. */
   hidden?: boolean;
+  /**
+   * The project (`FolderGroup.id`) this folder belongs to; absent: a loose folder. In a project,
+   * `order` is the folder's place among the project's folders; loose, among the sidebar's top entries.
+   */
+  group?: string;
+}
+
+/**
+ * A project: several folders under one name in the sidebar (a product with its app, server and
+ * site). It shares the manual order with loose folders and the chats group (`order`).
+ */
+export interface FolderGroup {
+  id: string;
+  name: string;
+  /** Place among the sidebar's top entries (loose folders' `Project.order`, `AppState.chatsOrder`). */
+  order: number;
+  createdAt: number;
+}
+
+/** "Use up to" for an account, in percent of its plan windows; absent or 100 means no cap. */
+export interface AccountCap {
+  /** The weekly window across all models. */
+  weekly?: number;
+  /** The 5-hour window. */
+  session?: number;
 }
 
 /** How the sidebar orders folders (chats inside a folder are always newest first). */
@@ -778,15 +805,39 @@ export interface LimitsMeta {
    * without its per-model rows): windows it does not name are kept as last known.
    */
   partial?: boolean;
-  /** Paid usage beyond the plan (Claude extra usage), when the agent reports it. Amounts in minor units of `currency`. */
-  extra?: { enabled: boolean; percent?: number; used?: number; limit?: number; currency?: string; inUse?: boolean; resetsAt?: number };
+  /**
+   * Paid usage beyond the plan (Claude's usage credits, once called extra usage), when the agent
+   * reports it. Amounts in minor units of `currency`; `balance` is what is left to spend, when known.
+   */
+  extra?: { enabled: boolean; percent?: number; used?: number; limit?: number; currency?: string; inUse?: boolean; resetsAt?: number; balance?: number };
   /** Credits the agent reports (Codex). */
   credits?: { balance?: string; unlimited?: boolean; has?: boolean; inUse?: boolean; resetsAt?: number };
   /**
-   * Reset credits the agent reports (Codex: granted resets that restore the plan windows at once).
-   * `windows` are the ids of the windows one reset restores. Absent when the agent reports none.
+   * Reset credits the agent reports (Codex: granted resets that restore the plan windows at once;
+   * Claude Code: limit resets the plan grants, when its usage answer carries them). `windows` are
+   * the ids of the windows one reset restores. Absent when the agent reports none (which says
+   * nothing about whether the account has any). `spendable` false: Sable cannot use one (only the
+   * agent's own app can); absent means it can.
    */
-  resets?: { available: number; windows: string[] };
+  resets?: { available: number; windows: string[]; offers?: ResetOffer[]; spendable?: boolean };
+}
+
+/** One kind of limit reset an account was granted, as the agent describes it (Claude Code). */
+export interface ResetOffer {
+  /** What one use restores: every window (`full`), the week, or the 5-hour window (`session`). */
+  kind?: 'full' | 'weekly' | 'session';
+  /** The agent's own name for it, when it gives one. */
+  label?: string;
+  /** Uses left, and granted in all when known. */
+  left: number;
+  total?: number;
+  /** When it can no longer be used (ms). */
+  expiresAt?: number;
+  /** The windows one use restores, as window ids. */
+  windows: string[];
+  /** Usable only once a limit is reached. */
+  atLimitOnly?: boolean;
+  paused?: boolean;
 }
 
 /** What spending a reset credit did (Codex's `account/rateLimitResetCredit/consume` outcomes). */
@@ -1005,12 +1056,27 @@ export interface AppSettings {
   creditsAtLimit?: Record<string, boolean>;
   /** A notification when a window of an account at its limit resets. Absent means off. */
   notifyLimitReset?: boolean;
+  /**
+   * The user's profile (`<home>/profile.md`): a compact form goes into each agent's prompt and
+   * agents may add short facts with `remember_about_user`. Absent means on; applies when an agent process starts.
+   */
+  userProfile?: boolean;
   /** New sessions go back to the preferred account once its limit resets (after a limit handover). Absent means off. */
   returnToPreferred?: boolean;
   /** The speed new sessions start with, per agent (a `SpeedInfo` id); absent means standard. */
   defaultSpeeds?: Partial<Record<ProviderId, string>>;
   /** How the sidebar orders folders; absent means manual (dragged into place). */
   folderOrder?: FolderOrder;
+  /**
+   * Where a chat started without a folder gets its own new folder; absent means the default
+   * (`AppState.chatsDefault`: "Sable chats" on the D: drive when there is one, else in the home folder).
+   */
+  chatsFolder?: string;
+  /**
+   * Per account (`${provider}:${accountId}`): how much of its plan limits Sable may use. Past it, a
+   * session moves between turns to the next signed-in account of its agent that is under its own cap.
+   */
+  accountCaps?: Record<string, AccountCap>;
 }
 
 /** One permission rule set from an agent's settings file (read-only view). */
@@ -1062,6 +1128,20 @@ export interface AppState {
   projects: Project[];
   sessions: SessionMeta[];
   settings: AppSettings;
+  /** Projects grouping folders in the sidebar (absent in older bridges). */
+  groups?: FolderGroup[];
+  /** The chats group's place among the sidebar's top entries; absent: after everything else. */
+  chatsOrder?: number;
+  /** Where chats without a folder go when `settings.chatsFolder` is not set. */
+  chatsDefault?: string;
+  /** Every session's open permission requests and questions, so a window sees what waits on the user without loading each timeline. */
+  prompts?: PendingPrompts;
+}
+
+/** The prompts open across all sessions (the triage deck); later changes arrive as `permission.*` / `question.*` events. */
+export interface PendingPrompts {
+  permissions: PermissionRequest[];
+  questions: QuestionRequest[];
 }
 
 // ─────────────────────────────────── events ─────────────────────────────────
@@ -1069,7 +1149,7 @@ export interface AppState {
 export type BridgeEvent =
   | { type: 'provider.updated'; provider: ProviderInfo }
   | { type: 'auth.progress'; provider: ProviderId; accountId?: string; state: 'started' | 'url' | 'done' | 'error' | 'cancelled' | 'timeout'; url?: string; message?: string }
-  | { type: 'projects.updated'; projects: Project[] }
+  | { type: 'projects.updated'; projects: Project[]; groups?: FolderGroup[]; chatsOrder?: number }
   | { type: 'settings.updated'; settings: AppSettings }
   | { type: 'session.added'; session: SessionMeta }
   | { type: 'session.updated'; id: string; patch: Partial<SessionMeta> }
@@ -1104,7 +1184,82 @@ export type BridgeEvent =
   /** Devices changed in a way the bridge saw (an emulator started, booted, stopped or failed). */
   | { type: 'device.updated'; status: DeviceStatus }
   /** Settings › Phone changed (on or off, a pairing offer, a phone asking to pair, a phone seen). Never sent to phones. */
-  | { type: 'phone.updated'; status: PhoneStatus };
+  | { type: 'phone.updated'; status: PhoneStatus }
+  /** The user's profile changed (an agent added a fact, or it was edited). */
+  | { type: 'profile.updated'; profile: UserProfile }
+  /** A turn's before / after pictures of a local page were taken or changed state (server/services/capture.ts). */
+  | { type: 'capture.updated'; sessionId: string; capture: TurnCapture };
+
+// ───────────────────────────── before / after ─────────────────────────────
+
+/** One picture of a page, kept by the bridge (`capture.image` serves it). */
+export interface CaptureShot {
+  id: string;
+  /** When it was taken (ms since epoch). */
+  at: number;
+}
+
+/** A changed area, in CSS pixels of its view. */
+export interface CaptureRegion {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** The page at one viewport: before the turn's first edit and after the turn. */
+export interface CaptureView {
+  kind: 'desktop' | 'phone';
+  /** The viewport in CSS pixels. */
+  width: number;
+  height: number;
+  /** Image pixels per CSS pixel. */
+  scale: number;
+  before?: CaptureShot;
+  after?: CaptureShot;
+  /** With both pictures: the areas that changed, largest first (empty when nothing visible changed). */
+  regions?: CaptureRegion[];
+  /** With both pictures: the share of the view that changed, 0 to 1. */
+  changed?: number;
+}
+
+/**
+ * Before / after for a turn that edited a local web page: the page captured headless just before
+ * the turn's first edit (when it was known by then) and again when the turn ended.
+ */
+export interface TurnCapture {
+  /** The turn: the id of the message that started it (the timeline's turn key). */
+  turnId: string;
+  url: string;
+  /** 'capturing' while the after pictures are taken. */
+  state: 'capturing' | 'ready' | 'failed';
+  views: CaptureView[];
+  /** Why there is no before, in plain words. */
+  noBefore?: string;
+  error?: string;
+}
+
+// ───────────────────────────────── profile ─────────────────────────────────
+
+/** A fact an agent added to the profile (a line under its "Learned" heading). */
+export interface ProfileEntry {
+  /** Stable for the same text: what `profile.forget` takes. */
+  id: string;
+  text: string;
+  /** Local date it was added or last confirmed, YYYY-MM-DD. */
+  date: string;
+}
+
+/** The user's profile as Settings › Profile shows it. */
+export interface UserProfile {
+  /** The user's own part of the file (everything but the agents' additions), as edited in Settings › Profile. */
+  text: string;
+  path: string;
+  /** Agents' additions, newest first. */
+  entries: ProfileEntry[];
+  /** About how many words of it go into each agent's prompt. */
+  promptWords: number;
+}
 
 // ───────────────────────────────── phone ─────────────────────────────────
 // The phone app (`mobile/`) talks to the bridge over the home network through `server/services/phone.ts`:
@@ -1264,12 +1419,31 @@ export interface RpcMethods {
   'project.rename': { params: { path: string; name: string }; result: { ok: boolean; name: string } };
   /** The manual folder order: `paths` first, in that order (folders known only through their sessions become projects); the rest keep theirs after them. */
   'project.reorder': { params: { paths: string[] }; result: { ok: boolean } };
+  /**
+   * The sidebar's arrangement after a drag or a menu: `top` lists top entries in their new order (a
+   * folder's path, `group:<id>` for a project, `chats` for the chats group; a folder named here is
+   * loose from now on), `inside` lists a project's folders in order (they join it). Entries not named
+   * keep their order after the named ones.
+   */
+  'project.arrange': { params: { top?: string[]; inside?: Record<string, string[]> }; result: { ok: boolean } };
+  /** A new project, with `paths` as its folders (placed where the first of them was, else on top). */
+  'group.create': { params: { name: string; paths?: string[] }; result: FolderGroup };
+  'group.rename': { params: { id: string; name: string }; result: { ok: boolean } };
+  /** Removes a project; its folders stay, loose, where it was. */
+  'group.remove': { params: { id: string }; result: { ok: boolean } };
+  /** Makes sure the chats folder exists and returns it (the home composer's "No folder"). */
+  'chats.prepare': { params: Record<string, never>; result: { path: string } };
 
   'session.create': {
     params: {
       provider: ProviderId; cwd: string; model?: string; effort?: Effort; mode?: string; resume?: string; title?: string; accountId?: string; options?: SessionOptions; ultracode?: boolean; speed?: string;
       /** "Continue in the other agent": a Sable session (any agent) whose conversation the new one starts from, as a compact handover sent ahead of the first message. The original is left as it is. */
       handoverFrom?: string;
+      /**
+       * A chat without a folder: the bridge makes a fresh folder for it under the chats folder, named
+       * by the date and the first words of `text` (the first message), and ignores `cwd`.
+       */
+      chat?: { text?: string };
     };
     result: SessionSnapshot;
   };
@@ -1327,6 +1501,11 @@ export interface RpcMethods {
   'browser.respond': { params: { sessionId: string; requestId: string; answer: BrowserAnswer }; result: { ok: boolean } };
   /** What the session's Browser tab shows now (null: nothing, or the tab is closed), for the line the agent gets with the next message. */
   'browser.page': { params: { sessionId: string; page: { url: string; title: string } | null }; result: { ok: boolean } };
+
+  /** Before / after pictures of a local page for the session's turns that edited it, oldest first (`capture.updated` follows changes). */
+  'capture.list': { params: { sessionId: string }; result: TurnCapture[] };
+  /** One picture as a data URL (null when it was pruned). */
+  'capture.image': { params: { sessionId: string; id: string }; result: { data: string } | null };
 
   /** Android devices and the emulator, through adb (server/services/device.ts). Every call has a timeout; nothing runs until asked. */
   'device.list': { params: Record<string, never>; result: DeviceStatus };
@@ -1386,6 +1565,13 @@ export interface RpcMethods {
   'term.kill': { params: { termId: string }; result: { ok: boolean } };
 
   'memory.list': { params: { cwd: string; provider: ProviderId }; result: MemoryFile[] };
+
+  /** The user's profile (written once from what is known when there is none yet). */
+  'profile.read': { params: Record<string, never>; result: UserProfile };
+  /** Replaces the user's own part of the profile (the agents' additions stay). */
+  'profile.write': { params: { text: string }; result: UserProfile };
+  /** Removes one of the agents' additions. */
+  'profile.forget': { params: { id: string }; result: UserProfile };
   'memory.write': { params: { path: string; content: string }; result: { ok: boolean } };
 
   /** Stores an image for the backdrop (base64; PNG, JPEG, WebP or GIF, at most 8 MB). The bridge picks the id. */

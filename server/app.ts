@@ -4,10 +4,12 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import {
   DEFAULT_ACCOUNT,
+  type AccountCap,
   type AccountInfo,
   type AppState,
   type BridgeEvent,
   type Capabilities,
+  type FolderGroup,
   type NoticeItem,
   type Project,
   type ProviderId,
@@ -22,10 +24,11 @@ import {
   type UserItem,
 } from '../shared/protocol';
 import { normalizeBackdrop } from '../shared/backdrop';
-import { SessionRuntime, autoTitle } from './core/runtime';
+import { SessionRuntime, autoTitle, pendingPrompts } from './core/runtime';
 import { Store, type StoredAccount } from './core/store';
 import { DiskCache } from './core/cache';
-import { creditsKey, decideAtLimit, dueResets, nextResetAlert, runningOnCredits } from './core/limit-policy';
+import { capReached, capReason, creditsKey, decideAtLimit, dueResets, hasCap, nextResetAlert, runningOnCredits } from './core/limit-policy';
+import { defaultChatsRoot, makeChatFolder, removeEmptyChatFolder } from './core/chats';
 import { speedFor, startSpeedFor } from '../shared/speed';
 import type { Provider, ProviderContext, ProviderSession } from './providers/types';
 import { findAccountFolders, folderLabel, labelFromAuth, pickNextAccount } from './accounts/folders';
@@ -34,6 +37,7 @@ import { runSubAgent } from './core/sub-agent';
 import { cutAt } from './core/fork';
 import { orderAccounts } from './accounts/order';
 import { withBrowserLine } from './providers/browser-tool';
+import { profileOf } from './services/profile';
 import { VERSION } from './version';
 
 type Handler<M extends RpcName> = (params: RpcMethods[M]['params']) => Promise<RpcMethods[M]['result']> | RpcMethods[M]['result'];
@@ -110,6 +114,10 @@ export class App {
   private stoppedEarly = new Set<string>();
   /** Automatic continues already made per session, as `${messageId}:${accountId}` (never the same twice). */
   private autoContinued = new Map<string, Set<string>>();
+  /** Per session, the cap check in flight: a send and a turn's end never move a session twice. */
+  private capChecks = new Map<string, Promise<void>>();
+  /** Sessions told once that no account is under its cap, as `${sessionId}:${accountId}:${kind}:${resetsAt}`. */
+  private capWarned = new Set<string>();
 
   constructor(opts: AppOptions) {
     this.quiet = !!opts.quiet;
@@ -192,6 +200,7 @@ export class App {
       account: accountId === DEFAULT_ACCOUNT ? undefined : { id: accountId, dir },
       settings: () => this.store.state.settings,
       otherAgents: () => this.otherAgents(),
+      profile: () => profileOf(this),
       runAgent: (rt, call, itemId, signal) => {
         if (this.sessions.get(rt.id) !== rt) return Promise.resolve({ ok: false, text: 'No session is attached yet.' });
         return runSubAgent(
@@ -524,6 +533,8 @@ export class App {
    * takes it at its next step and it stays where it was sent.
    */
   private async deliver(rt: SessionRuntime, text: string, attachments?: UserItem['attachments']) {
+    // Past its account's cap, the session moves to the next account before the message goes out.
+    if (!rt.turnActive && !this.opening.has(rt.id)) await this.checkCap(rt);
     const addUser = () => {
       if (rt.meta.titleSource === 'auto' && !rt.items.some((i) => i.type === 'user')) {
         rt.update({ title: autoTitle(text) });
@@ -612,13 +623,94 @@ export class App {
     return out;
   }
 
-  /** The signed-in account of `provider` with the most room, other than `current`; undefined when none has room. */
-  async nextAccount(provider: ProviderId, current: string): Promise<string | undefined> {
+  /**
+   * The signed-in account of `provider` to go on with, other than `current`: under its own cap, one
+   * on the same plan first, then the most room (with `model`, other models' full windows do not
+   * count); undefined when none has room.
+   */
+  async nextAccount(provider: ProviderId, current: string, model?: string): Promise<string | undefined> {
     const [info, known] = await Promise.all([this.providerInfo(provider), this.knownLimits(provider)]);
+    const accounts = info.accounts ?? [];
     return pickNextAccount(
       current,
-      (info.accounts ?? []).map((a) => ({ id: a.id, signedIn: a.auth.loggedIn, isDefault: a.isDefault, limits: known.get(a.id)?.limits ?? a.limits, planLimits: known.get(a.id)?.planLimits })),
+      accounts.map((a) => ({
+        id: a.id,
+        signedIn: a.auth.loggedIn,
+        isDefault: a.isDefault,
+        limits: known.get(a.id)?.limits ?? a.limits,
+        planLimits: known.get(a.id)?.planLimits,
+        cap: this.capOf(provider, a.id),
+        plan: a.auth.plan,
+      })),
+      Date.now(),
+      { model: model || undefined, plan: accounts.find((a) => a.id === current)?.auth.plan },
     );
+  }
+
+  // ── caps: "use up to" per account ──
+
+  /** The cap set for an account, when it has one below 100%. */
+  private capOf(provider: ProviderId, accountId: string): AccountCap | undefined {
+    const cap = this.store.state.settings.accountCaps?.[creditsKey(provider, accountId)];
+    return hasCap(cap) ? cap : undefined;
+  }
+
+  private accountLabel(provider: ProviderId, accountId: string) {
+    return this.findAccount(provider, accountId)?.label ?? 'another account';
+  }
+
+  /**
+   * Where a new session starts when `accountId` is past its cap: the next account under its own
+   * cap, with the line that says why. Undefined when it is under its cap, or no account is.
+   */
+  private async underCapStart(provider: ProviderId, accountId: string, model: string | undefined): Promise<{ to: string; line: string } | undefined> {
+    const cap = this.capOf(provider, accountId);
+    if (!cap) return undefined;
+    const known = await this.knownLimits(provider);
+    const reached = capReached(known.get(accountId)?.limits, cap, model || undefined);
+    if (!reached) return undefined;
+    const next = await this.nextAccount(provider, accountId, model).catch(() => undefined);
+    if (!next) return undefined;
+    return { to: next, line: `Started with ${this.accountLabel(provider, next)}: ${capReason(this.accountLabel(provider, accountId), reached)}` };
+  }
+
+  /**
+   * Before a message goes out and when a turn ends: a session whose account is past the cap set for
+   * it moves, between turns, to the next signed-in account under its own cap, carrying the
+   * conversation, with one line in the chat. With none under its cap it stays and says so once.
+   * Accounts without a cap cost nothing here.
+   */
+  private checkCap(rt: SessionRuntime): Promise<void> {
+    const running = this.capChecks.get(rt.id);
+    if (running) return running;
+    if (rt.turnActive || !this.capOf(rt.meta.provider, rt.meta.accountId ?? DEFAULT_ACCOUNT)) return Promise.resolve();
+    const run = this.moveOffCap(rt)
+      .catch((err) => this.log('cap check failed', (err as Error).message))
+      .finally(() => this.capChecks.delete(rt.id));
+    this.capChecks.set(rt.id, run);
+    return run;
+  }
+
+  private async moveOffCap(rt: SessionRuntime) {
+    const provider = rt.meta.provider;
+    const from = rt.meta.accountId ?? DEFAULT_ACCOUNT;
+    const model = rt.meta.model || undefined;
+    const known = await this.knownLimits(provider);
+    const reached = capReached(known.get(from)?.limits, this.capOf(provider, from), model);
+    if (!reached) return;
+    const next = await this.nextAccount(provider, from, model).catch(() => undefined);
+    // Never mid-turn: a turn that started meanwhile runs on, and its end checks again.
+    if (rt.turnActive || (rt.meta.accountId ?? DEFAULT_ACCOUNT) !== from || this.sessions.get(rt.id) !== rt) return;
+    const name = this.accountLabel(provider, from);
+    if (!next) {
+      const key = `${rt.id}:${from}:${reached.kind}:${reached.resetsAt ?? ''}`;
+      if (this.capWarned.has(key)) return;
+      this.capWarned.add(key);
+      rt.notice('info', capReason(name, reached), 'No other account is under its cap, so this chat stays here');
+      return;
+    }
+    this.movedByLimit(rt, from, next, reached.resetsAt);
+    await this.switchAccount(rt, next, { line: `Moved to ${this.accountLabel(provider, next)}: ${capReason(name, reached)}` });
   }
 
   /**
@@ -633,7 +725,7 @@ export class App {
     const own = (known.get(accountId)?.limits ?? []).filter((l) => l.percent >= 100);
     // Every window that is used up has to reset before the account can work again.
     const full = own.sort((a, b) => (b.resetsAt ?? 0) - (a.resetsAt ?? 0))[0];
-    const next = await this.nextAccount(provider, accountId).catch(() => undefined);
+    const next = await this.nextAccount(provider, accountId, rt.meta.model).catch(() => undefined);
     const limit = { ...notice.limit, provider, accountId, resetsAt: notice.limit?.resetsAt ?? full?.resetsAt, window: notice.limit?.window ?? full?.label, ...(next ? { next } : {}) };
     rt.patch<NoticeItem>(notice.id, { limit });
     // A refused turn was not carried by credits, so only the next account or the notice remain.
@@ -718,7 +810,7 @@ export class App {
    * account's folder so the same conversation resumes there; when that is not possible, a new one
    * starts and the next message carries a summary of this one.
    */
-  async switchAccount(rt: SessionRuntime, accountId: string, opts: { retry?: boolean } = {}): Promise<RpcMethods['session.switchAccount']['result']> {
+  async switchAccount(rt: SessionRuntime, accountId: string, opts: { retry?: boolean; line?: string } = {}): Promise<RpcMethods['session.switchAccount']['result']> {
     this.hydrate(rt);
     if (rt.turnActive) throw new Error('The agent is still working. Stop it first.');
     const provider = rt.meta.provider;
@@ -755,9 +847,11 @@ export class App {
     rt.update({ accountId: accountId === DEFAULT_ACCOUNT ? undefined : accountId, status: 'idle', lastError: undefined });
     this.persistSessions();
 
-    const open = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
+    // A move by a cap says why in its own line; a move at a limit closes the limit's notice.
+    const open = opts.line ? undefined : rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.continuedWith);
     if (open) rt.patch<NoticeItem>(open.id, { limit: { ...open.limit, continuedWith: accountId } });
-    if (!open || carried === 'summary') {
+    if (opts.line) rt.notice('info', opts.line, carried === 'summary' ? 'It starts with a summary of this one' : undefined);
+    else if (!open || carried === 'summary') {
       rt.notice('info', carried === 'summary' ? `New conversation with ${label}` : `Continued with ${label}`, carried === 'summary' ? 'It starts with a summary of this one' : undefined);
     }
     if (refused) {
@@ -779,7 +873,11 @@ export class App {
   private afterTurn(rt: SessionRuntime, error?: string) {
     const hit = rt.items.findLast((i): i is NoticeItem => i.type === 'notice' && !!i.limit && !i.limit.provider);
     if (hit) void this.onLimitHit(rt, hit).catch((err) => this.log('limit follow-up failed', (err as Error).message));
-    else if (!error) void this.onCredits(rt).catch((err) => this.log('credits follow-up failed', (err as Error).message));
+    else {
+      // Past its cap now: the session moves before anything else goes out (a queued message waits for it).
+      void this.checkCap(rt);
+      if (!error) void this.onCredits(rt).catch((err) => this.log('credits follow-up failed', (err as Error).message));
+    }
     if (error || rt.stopRequested) {
       // Steered messages the agent never took go back to the queue, to send or edit again.
       rt.returnUntaken({ reason: error ? 'failed' : 'stopped' });
@@ -841,6 +939,33 @@ export class App {
     this.store.saveState();
   }
 
+  /** The sidebar's arrangement changed: folders, projects and the chats group's place, in one event. */
+  private emitProjects() {
+    const st = this.store.state;
+    this.emit({ type: 'projects.updated', projects: st.projects, groups: st.groups ?? [], chatsOrder: st.chatsOrder });
+  }
+
+  /** A place above every top entry of the manual order (loose folders, projects, the chats group): where a new one goes. */
+  private topPlace(): number {
+    const st = this.store.state;
+    let min = Infinity;
+    for (const p of st.projects) if (!this.groupOf(p) && typeof p.order === 'number' && p.order < min) min = p.order;
+    for (const g of st.groups ?? []) if (g.order < min) min = g.order;
+    if (typeof st.chatsOrder === 'number' && st.chatsOrder < min) min = st.chatsOrder;
+    return Number.isFinite(min) ? min - 1 : 0;
+  }
+
+  /** The project a folder belongs to, when that project still exists. */
+  private groupOf(p: Project): FolderGroup | undefined {
+    return p.group ? this.store.state.groups?.find((g) => g.id === p.group) : undefined;
+  }
+
+  /** Where chats without a folder get their folders: the chosen place, else D:\Sable chats or ~/Sable chats. */
+  chatsRoot(): string {
+    const chosen = this.store.state.settings.chatsFolder?.trim();
+    return chosen ? path.resolve(chosen.replace(/^~(?=$|[\\/])/, this.userHome)) : defaultChatsRoot(this.userHome);
+  }
+
   private findProject(dir: string): Project | undefined {
     const key = path.resolve(dir).toLowerCase();
     return this.store.state.projects.find((x) => path.resolve(x.path).toLowerCase() === key);
@@ -852,18 +977,18 @@ export class App {
     const key = path.resolve(dir);
     let p = this.findProject(key);
     if (!p) {
-      p = { path: key, name: path.basename(key) || key, lastOpened: Date.now(), order: topOrder(projects) };
+      p = { path: key, name: path.basename(key) || key, lastOpened: Date.now(), order: this.topPlace() };
       projects.push(p);
     } else {
       p.lastOpened = Date.now();
-      // Opened again after it was removed: it comes back with its sessions, on top.
+      // Opened again after it was removed: it comes back with its sessions, on top (or in its project).
       if (p.hidden) {
         delete p.hidden;
-        p.order = topOrder(projects);
+        if (!this.groupOf(p)) p.order = this.topPlace();
       }
     }
     this.store.saveState();
-    this.emit({ type: 'projects.updated', projects });
+    this.emitProjects();
     return p;
   }
 
@@ -882,8 +1007,10 @@ export class App {
   private seedFolderOrder() {
     const projects = this.store.state.projects;
     const seen = new Set(projects.map((p) => path.resolve(p.path).toLowerCase()));
-    // Folders known only through their sessions become projects, so they can be ordered and removed.
+    // Folders known only through their sessions become projects, so they can be ordered and removed
+    // (a chat's own folder is not one: chats sit together in the chats group).
     for (const s of this.store.state.sessions) {
+      if (s.chat) continue;
       const key = path.resolve(s.cwd);
       if (seen.has(key.toLowerCase())) continue;
       seen.add(key.toLowerCase());
@@ -913,6 +1040,11 @@ export class App {
       projects: this.store.state.projects,
       sessions: [...this.sessions.values()].map((r) => r.meta),
       settings: this.store.state.settings,
+      groups: this.store.state.groups ?? [],
+      chatsOrder: this.store.state.chatsOrder,
+      chatsDefault: defaultChatsRoot(this.userHome),
+      // Read last, after the awaits: every later change reaches the window as an event.
+      prompts: pendingPrompts(this.sessions.values()),
     };
   }
 
@@ -1111,7 +1243,7 @@ export class App {
         else this.store.state.projects.push({ path: path.resolve(dir), name: path.basename(dir) || dir, lastOpened: 0, hidden: true });
       } else if (p) this.store.state.projects = this.store.state.projects.filter((x) => x !== p);
       this.store.saveState();
-      this.emit({ type: 'projects.updated', projects: this.store.state.projects });
+      this.emitProjects();
       return { ok: true };
     });
     this.register('project.reorder', ({ paths }) => {
@@ -1120,7 +1252,7 @@ export class App {
       const rest = this.store.state.projects.filter((p) => !named.includes(p)).sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
       [...named, ...rest].forEach((p, i) => (p.order = i));
       this.store.saveState();
-      this.emit({ type: 'projects.updated', projects: this.store.state.projects });
+      this.emitProjects();
       return { ok: true };
     });
     // Only the name the sidebar shows changes; the folder on disk keeps its own, which an empty name brings back.
@@ -1131,38 +1263,142 @@ export class App {
       const p = this.findProject(dir) ?? this.touchProjectQuiet(dir);
       p.name = wanted || own;
       this.store.saveState();
-      this.emit({ type: 'projects.updated', projects: this.store.state.projects });
+      this.emitProjects();
       return { ok: true, name: p.name };
+    });
+    this.register('project.arrange', ({ top, inside }) => {
+      const st = this.store.state;
+      const groups = (st.groups ??= []);
+      // Membership first: the folders named for a project join it, in that order.
+      for (const [id, paths] of Object.entries(inside && typeof inside === 'object' ? inside : {})) {
+        if (!groups.some((g) => g.id === id) || !Array.isArray(paths)) continue;
+        paths
+          .filter((x): x is string => typeof x === 'string' && !!x)
+          .forEach((dir, i) => {
+            const p = this.findProject(dir) ?? this.touchProjectQuiet(dir);
+            p.group = id;
+            p.order = i;
+          });
+      }
+      // Then the top: named entries first, in that order (a folder named here is loose from now on),
+      // the rest after them in their own order.
+      type Entry = { order: number | undefined; set: (n: number) => void; key: unknown };
+      const named: Entry[] = [];
+      const seen = new Set<unknown>();
+      const chats: Entry = { order: st.chatsOrder, set: (n) => (st.chatsOrder = n), key: 'chats' };
+      for (const key of Array.isArray(top) ? top : []) {
+        if (typeof key !== 'string' || !key) continue;
+        let e: Entry | undefined;
+        if (key === 'chats') e = chats;
+        else if (key.startsWith('group:')) {
+          const g = groups.find((x) => x.id === key.slice(6));
+          if (g) e = { order: g.order, set: (n) => (g.order = n), key: g };
+        } else {
+          const p = this.findProject(key) ?? this.touchProjectQuiet(key);
+          delete p.group;
+          e = { order: p.order, set: (n) => (p.order = n), key: p };
+        }
+        if (e && !seen.has(e.key)) {
+          seen.add(e.key);
+          named.push(e);
+        }
+      }
+      if (named.length) {
+        const rest: Entry[] = [
+          ...st.projects.filter((p) => !this.groupOf(p) && !seen.has(p)).map((p) => ({ order: p.order, set: (n: number) => (p.order = n), key: p })),
+          ...groups.filter((g) => !seen.has(g)).map((g) => ({ order: g.order, set: (n: number) => (g.order = n), key: g })),
+          ...(seen.has('chats') || typeof st.chatsOrder !== 'number' ? [] : [chats]),
+        ].sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
+        [...named, ...rest].forEach((e, i) => e.set(i));
+      }
+      this.store.saveState();
+      this.emitProjects();
+      return { ok: true };
+    });
+    this.register('group.create', ({ name, paths }) => {
+      const st = this.store.state;
+      const groups = (st.groups ??= []);
+      const list = (Array.isArray(paths) ? paths : []).filter((x): x is string => typeof x === 'string' && !!x);
+      const first = list.length ? this.findProject(list[0]) : undefined;
+      // Where its first folder stood, so the folder does not jump; otherwise on top.
+      const at = first && !this.groupOf(first) && typeof first.order === 'number' ? first.order : this.topPlace();
+      const g: FolderGroup = { id: randomUUID().replace(/-/g, '').slice(0, 10), name: cleanName(name) || 'New project', order: at, createdAt: Date.now() };
+      groups.push(g);
+      list.forEach((dir, i) => {
+        const p = this.findProject(dir) ?? this.touchProjectQuiet(dir);
+        p.group = g.id;
+        p.order = i;
+      });
+      this.store.saveState();
+      this.emitProjects();
+      return g;
+    });
+    this.register('group.rename', ({ id, name }) => {
+      const g = this.store.state.groups?.find((x) => x.id === id);
+      if (!g) throw new Error('Project not found');
+      const wanted = cleanName(name);
+      if (wanted) g.name = wanted;
+      this.store.saveState();
+      this.emitProjects();
+      return { ok: true };
+    });
+    this.register('group.remove', ({ id }) => {
+      const st = this.store.state;
+      const g = st.groups?.find((x) => x.id === id);
+      if (!g) return { ok: false };
+      // Its folders stay where it stood, loose, in their order.
+      const inside = st.projects.filter((p) => p.group === id).sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
+      inside.forEach((p, i) => {
+        delete p.group;
+        p.order = g.order + (i + 1) / (inside.length + 1);
+      });
+      st.groups = st.groups!.filter((x) => x !== g);
+      this.store.saveState();
+      this.emitProjects();
+      return { ok: true };
+    });
+    this.register('chats.prepare', () => {
+      const root = this.chatsRoot();
+      mkdirSync(root, { recursive: true });
+      return { path: root };
     });
     this.register('project.pin', ({ path: dir, pinned }) => {
       // A folder known only through its sessions becomes a project when pinned.
       const p = this.store.state.projects.find((x) => x.path === dir) ?? (pinned ? this.touchProject(dir) : undefined);
       if (p) p.pinned = pinned;
       this.store.saveState();
-      this.emit({ type: 'projects.updated', projects: this.store.state.projects });
+      this.emitProjects();
       return { ok: true };
     });
 
     // ── sessions ──
     this.register('session.create', async (p) => {
-      const accountId = p.accountId ?? this.defaultAccountId(p.provider);
-      const provider = this.provider(p.provider, accountId);
-      // The demo provider plays scripted sessions in made-up folders; real agents need a real one.
-      if (p.provider !== 'demo' && !isDir(path.resolve(p.cwd))) throw new Error(`Folder not found: ${path.resolve(p.cwd)}`);
       const settings = this.store.state.settings;
+      let accountId = p.accountId ?? this.defaultAccountId(p.provider);
+      this.provider(p.provider, accountId);
+      // An account past its cap: the session starts on the next one under its own (a resumed
+      // conversation stays where it lives).
+      const capStart = p.resume ? undefined : await this.underCapStart(p.provider, accountId, p.model ?? settings.defaultModels[p.provider]).catch(() => undefined);
+      if (capStart) accountId = capStart.to;
+      const provider = this.provider(p.provider, accountId);
+      // A chat without a folder gets a fresh folder of its own under the chats folder.
+      const cwd = p.chat ? makeChatFolder(this.chatsRoot(), p.chat.text) : p.cwd;
+      // The demo provider plays scripted sessions in made-up folders; real agents need a real one.
+      if (p.provider !== 'demo' && !isDir(path.resolve(cwd))) throw new Error(`Folder not found: ${path.resolve(cwd)}`);
       const now = Date.now();
       const meta: SessionMeta = {
         id: randomUUID(),
         provider: p.provider,
         providerSessionId: p.resume,
-        cwd: path.resolve(p.cwd),
+        cwd: path.resolve(cwd),
         title: p.title ?? 'New session',
         titleSource: p.title ? 'user' : 'auto',
         model: p.model ?? settings.defaultModels[p.provider] ?? '',
         effort: p.effort ?? settings.defaultEfforts[p.provider],
         mode: p.mode ?? settings.defaultModes[p.provider] ?? 'default',
         ...(p.ultracode ? { ultracode: true } : {}),
-        ...this.startSpeed(p.provider, accountId, p.cwd, p.model ?? settings.defaultModels[p.provider], p.speed ?? settings.defaultSpeeds?.[p.provider]),
+        ...this.startSpeed(p.provider, accountId, cwd, p.model ?? settings.defaultModels[p.provider], p.speed ?? settings.defaultSpeeds?.[p.provider]),
+        ...(p.chat ? { chat: true } : {}),
         status: 'starting',
         createdAt: now,
         updatedAt: now,
@@ -1173,6 +1409,7 @@ export class App {
       if (options && Object.keys(options).length) meta.options = { ...options };
       const rt = this.makeRuntime(meta);
       this.sessions.set(meta.id, rt);
+      if (capStart) rt.notice('info', capStart.line);
       // Continue in the other agent: the first message carries a compact account of the source
       // conversation (read from Sable's timeline; the source and its transcript stay untouched).
       const source = p.handoverFrom ? this.sessions.get(p.handoverFrom) : undefined;
@@ -1184,7 +1421,8 @@ export class App {
           rt.notice('info', `Continued from ${source.meta.title}`, 'It starts with a summary of that conversation');
         }
       }
-      this.touchProject(meta.cwd);
+      // A chat's own folder is not one of the sidebar's folders.
+      if (!meta.chat) this.touchProject(meta.cwd);
       this.emit({ type: 'session.added', session: meta });
       const opened = provider.open(rt, { loadTranscript: !!p.resume }).then(
         (handle) => {
@@ -1351,6 +1589,8 @@ export class App {
         this.sessions.delete(sessionId);
         this.store.deleteSession(sessionId);
         this.emit({ type: 'session.removed', id: sessionId });
+        // A deleted chat takes its folder along when nothing was ever put in it.
+        if (rt.meta.chat) removeEmptyChatFolder(this.chatsRoot(), rt.meta.cwd);
       }
       this.persistSessions();
       return { ok: true };
@@ -1497,12 +1737,8 @@ function subAgentMode(agent: ProviderId, parentMode: string): string {
   return { full: 'bypassPermissions', edits: 'acceptEdits', read: 'plan', ask: 'default' }[p];
 }
 
-/** A place above every folder in the manual order (where a new or returning folder goes). */
-function topOrder(projects: Project[]): number {
-  let min = Infinity;
-  for (const p of projects) if (typeof p.order === 'number' && p.order < min) min = p.order;
-  return Number.isFinite(min) ? min - 1 : 0;
-}
+/** A name as given in a field: one line, no runs of spaces, at most 120 characters. */
+const cleanName = (name: unknown) => (typeof name === 'string' ? name.replace(/\s+/g, ' ').trim().slice(0, 120) : '');
 
 const sameDir = (a: string, b: string) => path.resolve(a).replace(/[\\/]+$/, '').toLowerCase() === path.resolve(b).replace(/[\\/]+$/, '').toLowerCase();
 

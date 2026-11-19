@@ -5,6 +5,7 @@ import type {
   BrowserRequest,
   Capabilities,
   NoticeItem,
+  PendingPrompts,
   PermissionRequest,
   Question,
   QueuedMessage,
@@ -446,6 +447,11 @@ export class SessionRuntime {
     }
   }
 
+  /** The prompts open now, oldest first (as the snapshot lists them). */
+  prompts(): PendingPrompts {
+    return { permissions: [...this.permissions.values()].map((p) => p.request), questions: [...this.questions.values()].map((q) => q.request) };
+  }
+
   snapshot(): SessionSnapshot {
     return {
       session: this.meta,
@@ -458,6 +464,17 @@ export class SessionRuntime {
       queue: this.queue,
     };
   }
+}
+
+/** What waits on the user across sessions, for `app.hello` (`AppState.prompts`). */
+export function pendingPrompts(runtimes: Iterable<SessionRuntime>): PendingPrompts {
+  const out: PendingPrompts = { permissions: [], questions: [] };
+  for (const rt of runtimes) {
+    const p = rt.prompts();
+    out.permissions.push(...p.permissions);
+    out.questions.push(...p.questions);
+  }
+  return out;
 }
 
 export function autoTitle(text: string): string {

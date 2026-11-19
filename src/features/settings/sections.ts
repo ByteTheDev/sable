@@ -34,7 +34,7 @@ export const SECTIONS: SectionMeta[] = [
     id: 'usage',
     label: 'Usage',
     icon: 'gauge',
-    keywords: 'usage limits plan rate limit five hour 5-hour weekly reset pace tokens activity cost models projects sessions quota',
+    keywords: 'usage limits plan rate limit five hour 5-hour weekly reset resets limit resets usage credits extra usage balance pace tokens activity cost models projects sessions quota',
   },
   { id: 'models', label: 'Models', icon: 'brain', keywords: 'model effort default new sessions opus sonnet haiku gpt reasoning' },
   { id: 'permissions', label: 'Permissions', icon: 'shield', keywords: 'permission mode rules allow ask deny approval sandbox bypass plan' },
@@ -50,6 +50,7 @@ export const SECTIONS: SectionMeta[] = [
   { id: 'skills', label: 'Skills', icon: 'skill', keywords: 'skills slash commands custom built-in' },
   { id: 'agents', label: 'Agents', icon: 'agents', keywords: 'sub-agents subagents specialists delegate' },
   { id: 'memory', label: 'Memory', icon: 'memory', keywords: 'memory claude.md agents.md instructions files' },
+  { id: 'profile', label: 'Profile', icon: 'profile', keywords: 'profile about me profile.md preferences language taste learned remember facts personal' },
   { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', gap: true, keywords: 'keyboard shortcuts keys hotkeys bindings' },
   { id: 'about', label: 'About', icon: 'info', keywords: 'about version platform data folder bridge welcome onboarding' },
 ];
