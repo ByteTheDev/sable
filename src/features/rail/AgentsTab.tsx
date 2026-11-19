@@ -1,93 +1,85 @@
-import { memo, useMemo } from 'react';
-import { motion } from 'motion/react';
-import type { ToolItem, UserItem } from '@shared/protocol';
-import { clock } from '@/features/usage/format';
-import { AgentBlock } from '@/features/timeline/Agent';
-import { agentTask, isAgentLive as isLive } from '@/features/timeline/agent-line';
+import { memo, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
+import type { ToolItem, WorkflowRun } from '@shared/protocol';
+import { ProviderMark, Ring } from '@/art/Logo';
+import { Collapse } from '@/components/Collapse';
+import { agentProvider, agentTask, isAgentLive, workflowGlance } from '@/features/timeline/agent-line';
 import { TimelineCtx, type TimelineCtxValue } from '@/features/timeline/ctx';
-import { revealItem } from '@/features/timeline/reveal';
-import { reducedMotion } from '@/lib/motion';
+import { foldKey, useFold } from '@/features/timeline/fold';
+import { shortDuration, useHeld } from '@/features/timeline/util';
+import { clock } from '@/features/usage/format';
+import { Icon } from '@/icons';
+import { formatTokens, plural } from '@/lib/format';
 import { useStore } from '@/state/store';
-import { IconButton } from '@/ui';
-import { useToolIds } from './util';
-
-const isAgent = (it: ToolItem) => it.kind === 'agent';
-
-/** One character per agent, `1` while it works: the order and the tab's count follow it, nothing else re-renders. */
-function useLiveKey(sessionId: string, ids: string[]): string {
-  return useStore((s) => {
-    const items = s.data[sessionId]?.items;
-    let key = '';
-    for (const id of ids) key += isLive(items?.[id] as ToolItem | undefined) ? '1' : '0';
-    return key;
-  });
-}
+import { AgentDetail } from './AgentDetail';
+import { ShownCtx, indexFor, usePaneTick, useProgress, useShown } from './agents-hooks';
+import { OUTCOME_WORD, figuresOf, groupDone, liveKey, outcomeOf, promptLine, readProgress, workflowNow, type Outcome, type Progress } from './agents-model';
+import { LeaveList } from './leave';
+import './agents.css';
 
 /** How many sub-agents and workflows are working now: the figure beside the tab's icon. */
 export function useLiveAgentCount(sessionId: string): number {
-  const ids = useToolIds(sessionId, isAgent);
-  const key = useLiveKey(sessionId, ids);
-  let n = 0;
-  for (const c of key) if (c === '1') n++;
-  return n;
+  const { agents } = indexFor(sessionId);
+  return useStore((s) => {
+    const d = s.data[sessionId];
+    const ids = agents(d);
+    let n = 0;
+    for (const id of ids) if (isAgentLive(d?.items[id] as ToolItem | undefined)) n++;
+    return n;
+  });
 }
 
-/** The blocks are the conversation's own: they read the session through the same context. Rows here always animate in. */
+/** Where the open state of a row is remembered (apart from the conversation's own blocks). */
+const SCOPE = 'agents-tab';
+
+/** The conversation's context, for the opened details (file links in a report). */
 const ON = { current: true };
 
-type Row = { kind: 'head'; key: string; label: string; time?: number; count?: number } | { kind: 'agent'; key: string; live: boolean };
-
-/** The first line of a prompt, short enough for a heading. */
-function promptLine(text: string): string {
-  const line = text.trim().split('\n')[0] ?? '';
-  return line.length > 90 ? line.slice(0, 89) + '…' : line || 'Message';
+/**
+ * Every sub-agent and workflow of the session. What works now comes first, one card each, oldest
+ * first: its time, what it does now, its steps and how far it is when it says (its task list, a
+ * workflow's phases). What is done follows as one line each (outcome, time, tokens), newest
+ * first, under the message that started it when there are several. A row opens in place.
+ *
+ * `active`: the pane is on screen. Hidden (another tab, the panel closed) it holds still.
+ */
+export function AgentsTab({ sessionId, active = true }: { sessionId: string; active?: boolean }) {
+  return (
+    <ShownCtx.Provider value={active}>
+      <AgentsList sessionId={sessionId} />
+    </ShownCtx.Provider>
+  );
 }
 
-/**
- * Every sub-agent and workflow of the session, as the conversation shows them, with more room.
- * What works now is on top (oldest first, each with its live time and what it does); what is done
- * follows, grouped under the message whose turn started it, newest turn first. One flat list, so a
- * block that finishes glides from the running group into its turn.
- */
-export function AgentsTab({ sessionId }: { sessionId: string }) {
-  const ids = useToolIds(sessionId, isAgent);
+function AgentsList({ sessionId }: { sessionId: string }) {
+  const { agents, users } = indexFor(sessionId);
+  const ids = useShown((s) => agents(s.data[sessionId]));
+  const live = useShown((s) => liveKey(s.data[sessionId]?.items, agents(s.data[sessionId])));
+  const asked = useShown((s) => users(s.data[sessionId]));
   const cwd = useStore((s) => s.sessions[sessionId]?.cwd ?? '');
   const home = useStore((s) => s.home);
-  const roots = useStore((s) => s.data[sessionId]?.roots);
   const ctx = useMemo<TimelineCtxValue>(() => ({ sessionId, cwd, home, live: ON, stuck: ON }), [sessionId, cwd, home]);
-  const liveKey = useLiveKey(sessionId, ids);
 
-  const { rows, live, done } = useMemo(() => {
+  const view = useMemo(() => {
     const items = useStore.getState().data[sessionId]?.items ?? {};
-    const users: UserItem[] = [];
-    for (const id of roots ?? []) {
-      const it = items[id];
-      if (it?.type === 'user') users.push(it);
-    }
     const running: string[] = [];
-    const turns = new Map<string, { user?: UserItem; ids: string[] }>();
-    ids.forEach((id, i) => {
-      if (liveKey[i] === '1') return void running.push(id);
-      const ts = items[id]?.ts ?? 0;
-      let user: UserItem | undefined;
-      for (const u of users) if (u.ts <= ts) user = u;
-      const key = user?.id ?? '';
-      const group = turns.get(key) ?? { user, ids: [] };
-      group.ids.push(id);
-      turns.set(key, group);
-    });
-    const out: Row[] = [];
-    if (running.length) {
-      out.push({ kind: 'head', key: 'h:running', label: 'Running now', count: running.length });
-      for (const id of running) out.push({ kind: 'agent', key: id, live: true });
-    }
-    const groups = [...turns.values()].sort((a, b) => (b.user?.ts ?? 0) - (a.user?.ts ?? 0));
-    for (const g of groups) {
-      out.push({ kind: 'head', key: `h:${g.user?.id ?? 'start'}`, label: g.user ? promptLine(g.user.text) : 'Earlier', time: g.user?.ts });
-      for (const id of g.ids) out.push({ kind: 'agent', key: id, live: false });
-    }
-    return { rows: out, live: running.length, done: ids.length - running.length };
-  }, [ids, liveKey, roots, sessionId]);
+    const done: string[] = [];
+    ids.forEach((id, i) => (live[i] === '1' ? running : done).push(id));
+    return { running, done: done.length, groups: groupDone(done, items, asked) };
+  }, [ids, live, asked, sessionId]);
+
+  // `key` is the row's place in the list (what moves); `as` tells a card from a row for entrances.
+  const rows: { key: string; as: string; node: (fresh: boolean) => ReactNode }[] = [];
+  for (const id of view.running) rows.push({ key: id, as: `L${id}`, node: (fresh) => <LiveCard key={id} sessionId={sessionId} id={id} fresh={fresh} /> });
+  // Headings only where they tell something: the message behind each group, when there are several
+  // and at least one of them started more than one agent (one heading per agent tells nothing).
+  const grouped = view.groups.length > 1 && view.groups.some((g) => g.ids.length > 1);
+  if (!grouped && view.running.length && view.done) rows.push({ key: 'h:done', as: 'h:done', node: (fresh) => <Heading key="h:done" label="Done" fresh={fresh} /> });
+  for (const g of view.groups) {
+    if (grouped) rows.push({ key: `h:${g.user}`, as: `h:${g.user}`, node: (fresh) => <GroupHeading key={`h:${g.user}`} sessionId={sessionId} user={g.user} fresh={fresh} /> });
+    for (const id of g.ids) rows.push({ key: id, as: `D${id}`, node: (fresh) => <DoneRow key={id} sessionId={sessionId} id={id} fresh={fresh} /> });
+  }
+  const keys = rows.map((r) => r.key);
+  const arrived = useEntrances(rows.map((r) => r.as));
 
   if (!ids.length) {
     return (
@@ -97,58 +89,213 @@ export function AgentsTab({ sessionId }: { sessionId: string }) {
     );
   }
 
-  const motionOn = !reducedMotion();
   return (
     <div className="rail-col">
       <div className="rail-bar">
         <span className="rail-bar-title">Agents</span>
-        <span className="rail-bar-meta num">{[live && `${live} running`, done && `${done} done`].filter(Boolean).join(' · ')}</span>
+        <span className="rail-bar-meta num">{[view.running.length && `${view.running.length} running`, view.done && `${view.done} done`].filter(Boolean).join(' · ')}</span>
       </div>
       <div className="rail-scroll scroll">
         <TimelineCtx.Provider value={ctx}>
-          <ul className="agc-list">
-            {rows.map((r, i) =>
-              r.kind === 'head' ? (
-                <motion.li key={r.key} className="agc-head" layout={motionOn ? 'position' : false} transition={SPRING} data-running={r.key === 'h:running' || undefined}>
-                  <span className="agc-head-label truncate">{r.label}</span>
-                  {r.count !== undefined ? <span className="agc-head-meta num">{r.count}</span> : r.time ? <span className="agc-head-meta num">{clock(r.time)}</span> : null}
-                </motion.li>
-              ) : (
-                <AgentCard key={r.key} sessionId={sessionId} id={r.key} index={i} live={r.live} animate={motionOn} />
-              ),
-            )}
-          </ul>
+          <LeaveList className="agx-list" order={keys.join('|')}>
+            {rows.map((r) => r.node(arrived.has(r.as)))}
+          </LeaveList>
         </TimelineCtx.Provider>
       </div>
     </div>
   );
 }
 
-const SPRING = { type: 'spring', stiffness: 460, damping: 38 } as const;
+/**
+ * Rows that joined the list on screen, which rise into place once. Not the first set, not a batch,
+ * not a run of arrivals in quick succession (they simply appear), and not a finished agent whose
+ * card it was (it glides from the cards to its row instead).
+ */
+function useEntrances(keys: readonly string[]): ReadonlySet<string> {
+  const seen = useRef<Set<string> | null>(null);
+  const fresh = useRef(new Set<string>());
+  const last = useRef(0);
+  if (!seen.current) seen.current = new Set(keys);
+  else {
+    const news = keys.filter((k) => !seen.current!.has(k));
+    if (news.length) {
+      const now = performance.now();
+      const calm = news.length <= 6 && now - last.current > 400;
+      last.current = now;
+      for (const k of news) {
+        const wasCard = k[0] === 'D' && seen.current.has(`L${k.slice(1)}`);
+        seen.current.add(k);
+        if (calm && !wasCard) fresh.current.add(k);
+      }
+    }
+  }
+  return fresh.current;
+}
 
-/** How many of its latest steps a working agent shows here: one more than the conversation, there is room. */
-const TAIL = 4;
-
-const AgentCard = memo(function AgentCard({ sessionId, id, index, live, animate }: { sessionId: string; id: string; index: number; live: boolean; animate: boolean }) {
-  const item = useStore((s) => s.data[sessionId]?.items[id]) as ToolItem | undefined;
-  const reveal = useMemo(
-    () => <IconButton icon="chat" size={14} className="icon-btn-xs agc-reveal" label="Show in conversation" tipSide="left" onClick={() => revealItem(sessionId, id)} />,
-    [sessionId, id],
-  );
-  if (!item) return null;
+function Heading({ label, fresh }: { label: string; fresh: boolean }) {
   return (
-    <motion.li
-      className="agc"
-      data-spot=""
-      data-status={item.status}
-      data-live={live || undefined}
-      data-workflow={item.workflow ? '' : undefined}
-      aria-label={agentTask(item)}
-      layout={animate ? 'position' : false}
-      transition={SPRING}
-      style={{ animationDelay: `${Math.min(index, 6) * 36}ms` }}
-    >
-      <AgentBlock item={item} tail={TAIL} scope="agent-rail" extra={reveal} />
-    </motion.li>
+    <div role="listitem" data-flip={`h:${label}`} className="agx-head" data-new={fresh || undefined}>
+      <span className="agx-head-label truncate">{label}</span>
+    </div>
+  );
+}
+
+/** The message whose turn started the agents under it: its first line and when it was sent. */
+const GroupHeading = memo(function GroupHeading({ sessionId, user, fresh }: { sessionId: string; user: string; fresh: boolean }) {
+  const item = useShown((s) => (user ? s.data[sessionId]?.items[user] : undefined));
+  const text = item?.type === 'user' ? promptLine(item.text) : 'Earlier';
+  return (
+    <div role="listitem" data-flip={`h:${user}`} className="agx-head" data-new={fresh || undefined}>
+      <span className="agx-head-label truncate">{text}</span>
+      {item ? <span className="agx-head-time num">{clock(item.ts)}</span> : null}
+    </div>
+  );
+});
+
+// ── working now ──
+
+const LiveCard = memo(function LiveCard({ sessionId, id, fresh }: { sessionId: string; id: string; fresh: boolean }) {
+  const item = useShown((s) => s.data[sessionId]?.items[id]) as ToolItem | undefined;
+  const [open, setOpen] = useFold(foldKey(sessionId, id, SCOPE), false);
+  const progress = readProgress(useProgress(sessionId, id));
+  if (!item) return null;
+  const awaiting = item.status === 'awaiting' || !!progress.waiting;
+  const provider = agentProvider(item) ?? item.check?.agent ?? null;
+  const toggle = () => setOpen(!open);
+  return (
+    <div role="listitem" data-flip={id} className="agx-card" data-spot="" data-open={open || undefined} data-new={fresh || undefined} data-awaiting={awaiting || undefined}>
+      <button type="button" className="agx-card-btn" aria-expanded={open} onClick={toggle}>
+        <span className="agx-line">
+          <span className="agx-mark" aria-hidden>
+            {awaiting ? <span className="agx-wait-dot" /> : <Ring size={12} label={null} />}
+          </span>
+          <span className="sr-only">{awaiting ? 'Waiting for you' : 'Working'}</span>
+          {provider && <ProviderMark provider={provider} size={12} className="agx-provider" />}
+          <span className="agx-title truncate">{agentTask(item)}</span>
+          <span className="agx-time num">
+            <Since ts={item.ts} />
+          </span>
+        </span>
+        {item.workflow ? <WorkflowLive run={item.workflow} /> : <AgentLive item={item} progress={progress} awaiting={awaiting} />}
+      </button>
+      <Collapse open={open}>
+        <AgentDetail sessionId={sessionId} item={item} live />
+      </Collapse>
+    </div>
+  );
+});
+
+/** Its time so far, ticking once a second while the pane shows. */
+function Since({ ts }: { ts: number }) {
+  const now = usePaneTick();
+  const ms = now - ts;
+  return ms >= 1000 ? shortDuration(ms) : null;
+}
+
+/** A sub-agent's live line: what it does now and its steps; its own task list as a meter when it keeps one. */
+function AgentLive({ item, progress: p, awaiting }: { item: ToolItem; progress: Progress; awaiting: boolean }) {
+  // A run of quick steps reads as a calm sequence of titles, not a flicker.
+  const now = useHeld(p.now, 700);
+  const steps = Math.max(p.steps, item.result?.agent?.steps ?? 0);
+  const bg = item.status === 'done' && item.result?.agent?.background === 'running';
+  const doing = awaiting ? 'Needs your approval' : now || (bg && !p.steps ? 'Working in the background' : 'Starting');
+  return (
+    <>
+      <span className="agx-sub">
+        <span className={awaiting ? 'agx-now agx-now-wait' : 'agx-now'}>
+          <span className={awaiting ? undefined : 'shimmer'} key={doing}>
+            {doing}
+          </span>
+        </span>
+        {steps > 0 && <span className="agx-figs num">{plural(steps, 'step')}</span>}
+      </span>
+      {p.todo && (
+        <span className="agx-progress">
+          <span className="meter agx-meter" role="progressbar" aria-label="Tasks done" aria-valuemin={0} aria-valuemax={p.todo.total} aria-valuenow={p.todo.done}>
+            <span className="meter-fill" style={{ '--p': p.todo.done / Math.max(1, p.todo.total) } as CSSProperties} />
+          </span>
+          <span className="agx-figs num">
+            {p.todo.done} of {p.todo.total}
+          </span>
+        </span>
+      )}
+    </>
+  );
+}
+
+/** A workflow's live lines: its phase and what one of its agents does now; the phases as segments. */
+function WorkflowLive({ run }: { run: WorkflowRun }) {
+  const w = workflowNow(run);
+  const now = useHeld(w.doing, 700);
+  const g = workflowGlance(run);
+  const count = Math.max(1, g.phases);
+  return (
+    <>
+      <span className="agx-sub">
+        <span className="agx-now">
+          {w.title && g.phases > 1 && <span className="agx-phase">{w.title}</span>}
+          <span className="shimmer" key={now}>
+            {now || 'Starting'}
+          </span>
+        </span>
+        {w.agents > 0 && (
+          <span className="agx-figs num">
+            {w.done} of {w.agents} agents
+          </span>
+        )}
+      </span>
+      <span className="agx-phases" role="img" aria-label={w.phase || 'One phase'}>
+        {Array.from({ length: count }, (_, i) => {
+          const index = i + 1;
+          const state = index < g.phase ? 'done' : index === g.phase || (count === 1 && g.agents > 0) ? 'now' : 'next';
+          const mine = run.agents.filter((a) => (a.phase ?? 1) === index);
+          const fill = state === 'done' ? 1 : state === 'now' && mine.length ? mine.filter((a) => a.state === 'done' || a.state === 'error').length / mine.length : 0;
+          return (
+            <span key={index} className="agx-seg" data-state={state}>
+              <span className="agx-seg-fill" style={{ transform: `scaleX(${fill})` }} />
+            </span>
+          );
+        })}
+      </span>
+    </>
+  );
+}
+
+// ── done ──
+
+const MARK: Record<Outcome, ReactNode> = {
+  done: <Icon name="check" size={11} weight="bold" />,
+  failed: <Icon name="x" size={11} weight="bold" />,
+  stopped: <span className="agx-stop" />,
+  interrupted: <span className="agx-stop" />,
+  denied: <span className="agx-stop" />,
+  unknown: <span className="agx-stop" />,
+};
+
+const DoneRow = memo(function DoneRow({ sessionId, id, fresh }: { sessionId: string; id: string; fresh: boolean }) {
+  const item = useShown((s) => s.data[sessionId]?.items[id]) as ToolItem | undefined;
+  const [open, setOpen] = useFold(foldKey(sessionId, id, SCOPE), false);
+  if (!item) return null;
+  const outcome = outcomeOf(item);
+  const f = figuresOf(item);
+  const provider = agentProvider(item) ?? item.check?.agent ?? null;
+  const word = outcome === 'done' ? '' : OUTCOME_WORD[outcome];
+  return (
+    <div role="listitem" data-flip={id} className="agx-row" data-outcome={outcome} data-open={open || undefined} data-new={fresh || undefined}>
+      <button type="button" className="agx-row-btn" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="agx-mark" aria-hidden>
+          {outcome === 'failed' ? MARK.failed : provider ? <ProviderMark provider={provider} size={12} /> : item.workflow ? <Icon name="tree" size={13} /> : MARK[outcome]}
+        </span>
+        <span className="agx-title truncate">{agentTask(item)}</span>
+        <span className="agx-meta num">
+          {word ? <span className="agx-outcome">{word}</span> : <span className="sr-only">Done</span>}
+          <span className="agx-dur">{f.ms >= 1000 ? shortDuration(f.ms) : !word && !f.tokens && f.steps ? plural(f.steps, 'step') : ''}</span>
+          <span className="agx-tokens">{f.tokens > 0 ? `${formatTokens(f.tokens)} tokens` : ''}</span>
+        </span>
+      </button>
+      <Collapse open={open}>
+        <AgentDetail sessionId={sessionId} item={item} live={false} />
+      </Collapse>
+    </div>
   );
 });

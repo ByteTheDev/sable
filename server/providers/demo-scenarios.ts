@@ -4,7 +4,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { Question, TextItem, Todo, ToolItem, UserItem } from '../../shared/protocol';
+import type { Question, TextItem, ThinkingItem, Todo, ToolItem, UserItem } from '../../shared/protocol';
 import { makeFileDiff } from '../../shared/diff';
 import * as C from './demo-codebase';
 import { COMMANDS, SKILLS, contextBreakdown } from './demo-catalog';
@@ -775,6 +775,193 @@ const limited: Scenario = async ({ s, model }) => {
   s.finish({ suggestion: 'Review the token refresh here instead' });
 };
 
+// ─────────────── 4e. a fleet: dozens of sub-agents with hundreds of steps each ───────────────
+
+const FLEET_TASKS = [
+  'Map auth error responses',
+  'Audit auth test coverage',
+  'Review the token refresh',
+  'Trace session expiry',
+  'Check the rate limiter',
+  'Review webhook signatures',
+  'Audit the admin routes',
+  'Find unused exports',
+  'Check error handler mappings',
+  'Review request id logging',
+  'Audit cookie flags',
+  'Check the CORS settings',
+  'Review password hashing',
+  'Trace the login flow',
+  'Check input validation',
+  'Review the database migrations',
+  'Audit environment variables',
+  'Check graceful shutdown',
+  'Review the retry logic',
+  'Measure the test run time',
+  'Find slow queries',
+  'Review the cache layer',
+  'Check dependency versions',
+  'Audit file uploads',
+  'Review pagination',
+  'Check timezone handling',
+  'Review the health check',
+  'Audit the TLS settings',
+  'Find flaky tests',
+  'Review the API docs',
+  'Check type coverage',
+  'Review the build config',
+  'Audit CSRF protection',
+  'Check secrets in logs',
+];
+
+/**
+ * A load test for the Agents tab: 34 sub-agents that finish at once with 80 to 260 steps each
+ * (two fail, one is stopped, one stops at a plan limit), then a workflow (about a minute and a half)
+ * and two background agents that start with 150 steps and keep working for about three minutes, a
+ * step every second or so (the first keeps a task list), before they write their reports. Steps are added directly (no streamed inputs), like
+ * marathon.
+ */
+const fleet: Scenario = async ({ s }) => {
+  await s.say('Splitting the audit across many agents, one per area, with two long ones in the background and a workflow for the fixes.');
+  const files = C.FILES.filter((f) => f.endsWith('.ts'));
+  const kinds = ['Explore', 'general-purpose', 'Plan'];
+  const step = (parentId: string, i: number, done = true) => {
+    const rel = files[i % files.length];
+    const name = rel.split('/').pop()!;
+    const k = i % 6;
+    const kind: ToolItem['kind'] = k === 0 || k === 3 ? 'read' : k === 1 ? 'search' : k === 2 || k === 4 ? 'edit' : 'bash';
+    const title = kind === 'read' ? `Read ${name}` : kind === 'search' ? `Search for “step${i}”` : kind === 'edit' ? `Edit ${name}` : i % 4 === 1 ? 'Rerun the lane tests' : 'Run the type checker';
+    const detail = kind === 'bash' ? { command: i % 4 === 1 ? 'timeout 170 pnpm exec vitest run tests/auth.test.ts tests/session.test.ts' : 'pnpm exec tsc --noEmit', description: title } : kind === 'search' ? { pattern: `step${i}`, path: s.abs('src') } : { path: s.abs(rel) };
+    const result = kind === 'read' ? { file: { path: s.abs(rel), numLines: 40 + (i % 90) } } : kind === 'search' ? { count: i % 4 } : kind === 'edit' ? { diff: [makeFileDiff(rel, 'a\n', `a\n// step ${i}\n`)] } : { text: '', exitCode: 0 };
+    const now = Date.now();
+    return s.rt.add<ToolItem>({ type: 'tool', name: kind, kind, title, status: done ? 'done' : 'running', detail, input: {}, parentId, ...(done ? { result, endedAt: now } : {}) }).id;
+  };
+  const spawn = async (description: string, i: number, extra: Record<string, unknown> = {}) => {
+    const codex = i % 7 === 3;
+    const subagent = codex ? 'Codex' : kinds[i % kinds.length];
+    const prompt = `${description} across src/ and tests/. Report concrete findings with file:line and say which ones are safe to fix now.`;
+    return s.tool({
+      name: codex ? 'mcp__sable__delegate_to_codex' : 'Agent',
+      kind: 'agent',
+      title: description,
+      detail: { subagent, description, prompt, ...extra },
+      input: { subagent_type: subagent, description, prompt, ...extra },
+    });
+  };
+
+  // 34 that finish at once, each with its own count of steps.
+  s.activity(`Running ${FLEET_TASKS.length} agents`);
+  for (const [i, task] of FLEET_TASKS.entries()) {
+    const id = await spawn(task, i);
+    s.start(id);
+    const steps = 80 + ((i * 37) % 180);
+    for (let j = 0; j < steps; j++) {
+      step(id, i * 7 + j);
+      if (j % 40 === 39) await s.sleep(4);
+    }
+    const report = `${task}: ${3 + (i % 5)} findings, ${1 + (i % 3)} safe to fix now.\n\n- \`src/auth/middleware.ts\`: the 401 body differs from the others\n- \`src/server/errors.ts\`: TokenError has no mapping\n\nNothing else stands out.`;
+    s.rt.add<TextItem>({ type: 'text', text: report, streaming: false, parentId: id });
+    const durationMs = (40 + ((i * 523) % 2700)) * 1000;
+    const tokens = 20_000 + ((i * 10_733) % 360_000);
+    if (i === 6 || i === 21) s.complete(id, { text: 'The server is not running on port 3000, so the request could not be sent.', isError: true, agent: { steps, durationMs } }, 'error');
+    else if (i === 12) s.complete(id, { text: report, agent: { steps, tokens, durationMs, background: 'stopped' } });
+    else if (i === 17) s.complete(id, { text: "You've hit your Demo Deep limit", agent: { steps, tokens, limit: { window: 'Weekly · Demo Deep' } } });
+    else s.complete(id, { text: report, agent: { tokens, steps, durationMs } });
+  }
+
+  // Two that keep working in the background, and a workflow.
+  const long = [await spawn('Rerun the lane tests until green', 1, { background: true }), await spawn('Draft the session store migration', 2, { background: true })];
+  for (const id of long) {
+    s.start(id);
+    s.complete(id, { agent: { background: 'running' } });
+    for (let j = 0; j < 150; j++) {
+      step(id, j);
+      if (j % 40 === 39) await s.sleep(4);
+    }
+  }
+  const phases = [{ title: 'Survey' }, { title: 'Fix' }, { title: 'Verify' }];
+  const wf = await s.tool({ name: 'Workflow', kind: 'agent', title: 'Fix what the audit found', detail: { subagent: 'Workflow', description: 'Fix what the audit found', background: true }, input: {} });
+  s.start(wf);
+  s.complete(wf, { text: 'Workflow launched in the background.', agent: { background: 'running' } });
+  type Row = { index: number; label: string; phase: number; state: 'queued' | 'running' | 'done' | 'error'; startedAt?: number; tokens?: number; steps?: number; durationMs?: number; activity?: string; error?: string };
+  const rows: Row[] = [];
+  let phase = 0;
+  const t0 = Date.now();
+  const push = (status: 'running' | 'done' = 'running') =>
+    s.patchTool(wf, {
+      workflow: { name: 'audit-fixes', phases, phase, agents: rows.map((r) => ({ ...r })), status, tokens: rows.reduce((n, r) => n + (r.tokens ?? 0), 0), steps: rows.reduce((n, r) => n + (r.steps ?? 0), 0), ...(status === 'done' ? { durationMs: Date.now() - t0 } : {}) },
+    });
+  const work = async (r: Row, acts: string[], tokens: number) => {
+    r.state = 'running';
+    r.startedAt = Date.now();
+    push();
+    for (const [i, a] of acts.entries()) {
+      await s.pause(5000, 9000);
+      r.activity = a;
+      r.steps = (r.steps ?? 0) + 2 + (i % 3);
+      r.tokens = Math.round((tokens * (i + 1)) / (acts.length + 1));
+      push();
+    }
+    await s.pause(900, 1500);
+    r.tokens = tokens;
+    r.durationMs = Date.now() - (r.startedAt ?? Date.now());
+    r.state = 'done';
+    push();
+  };
+  const runWorkflow = async () => {
+    phase = 1;
+    const survey = ['survey:auth', 'survey:session', 'survey:webhooks'].map((label, i) => ({ index: i + 1, label, phase: 1, state: 'queued' as const }));
+    rows.push(...survey);
+    push();
+    await Promise.all(survey.map((r, i) => work(r, ['Read src/auth/middleware.ts', 'Search for TokenError', 'Read src/server/errors.ts', 'Read src/server/routes.ts'].slice(0, 3 + (i % 2)), 18_000 + i * 4_000)));
+    phase = 2;
+    const fix = ['fix:token-error', 'fix:admin-body'].map((label, i) => ({ index: rows.length + i + 1, label, phase: 2, state: 'queued' as const }));
+    rows.push(...fix);
+    push();
+    await Promise.all(fix.map((r) => work(r, ['Read src/server/errors.ts', 'Edit src/server/errors.ts', 'Edit src/auth/middleware.ts', 'Run the auth tests'], 26_000)));
+    phase = 3;
+    const verify: Row = { index: rows.length + 1, label: 'verify:tests', phase: 3, state: 'queued' };
+    rows.push(verify);
+    push();
+    await work(verify, ['Run npm test', 'Read the failures', 'Review the diff'], 17_900);
+    push('done');
+  };
+  // The first long agent keeps a task list (as Claude Code's agents do with TodoWrite): its progress.
+  const plan = ['Run the lane tests', 'Find the flaky tests', 'Inject the clock in the session tests', 'Pick a free port in the route tests', 'Run the lane tests three times'];
+  const runLong = async (id: string, n: number, base: number, todos = false) => {
+    let steps = 150;
+    for (let j = 0; j < n; j++) {
+      if (todos && j % 30 === 0) {
+        const done = j / 30;
+        const list = plan.map((content, k) => ({ content, status: k < done ? 'completed' : k === done ? 'in_progress' : 'pending' }) as Todo);
+        s.rt.add<ToolItem>({ type: 'tool', name: 'TodoWrite', kind: 'todo', title: 'Update the task list', status: 'done', detail: { todos: list }, input: { todos: list }, parentId: id, result: { text: '' }, endedAt: Date.now() });
+        steps++;
+      }
+      if (j % 9 === 4) {
+        s.rt.add<ThinkingItem>({ type: 'thinking', text: 'Checking what the last run changed before the next step.', streaming: false, parentId: id });
+        await s.pause(900, 1600);
+      }
+      const sid = step(id, base + j, false);
+      await s.pause(500, 1100);
+      s.complete(sid, j % 6 === 1 ? { file: { path: s.abs(files[j % files.length]), numLines: 60 } } : { text: '', exitCode: 0 });
+      steps++;
+      await s.pause(200, 600);
+    }
+    const report = 'All lane tests pass on the third run. Two were flaky: `tests/session.test.ts` waits on a real clock, and `tests/routes.test.ts` shares a port with the dev server.\n\nBoth are fixed by injecting the clock and picking a free port.';
+    const text = s.rt.add<TextItem>({ type: 'text', text: '', streaming: true, parentId: id });
+    for (const chunk of report.match(/.{1,24}/gs) ?? []) {
+      s.rt.delta(text.id, 'text', chunk);
+      await s.sleep(60);
+    }
+    s.rt.patch<TextItem>(text.id, { streaming: false });
+    s.patchTool(id, { result: { text: report, agent: { background: 'done', steps, tokens: 240_000 + base * 1000, durationMs: Date.now() - (s.rt.get<ToolItem>(id)?.ts ?? Date.now()) } } });
+  };
+  s.activity('Waiting for 3 agents');
+  await Promise.all([runWorkflow(), runLong(long[0], 150, 300, true), runLong(long[1], 120, 600)]);
+  await s.say('All agents are back. 31 finished, two could not reach the server, one was stopped and one stopped at the Demo Deep limit. The lane tests pass and the workflow fixed the token error mapping.');
+  s.finish({ suggestion: 'Start the dev server and rerun the two failed agents' });
+};
+
 // ──────────────────────────────────── 5. web search ─────────────────────────────
 
 const search: Scenario = async ({ s }) => {
@@ -1530,6 +1717,7 @@ export const SCENARIOS = {
   crew,
   workflow,
   limited,
+  fleet,
   search,
   markdown,
   errors,
@@ -1587,6 +1775,7 @@ const KEYWORDS: [RegExp, ScenarioId][] = [
   [/\b(markdown|showcase)\b/i, 'markdown'],
   [/\bmcp\b/i, 'mcp'],
   [/\b(crew|delegate)\b/i, 'crew'],
+  [/\b(fleet|swarm)\b/i, 'fleet'],
   [/\bworkflows?\b/i, 'workflow'],
   [/\b(fable|limited)\b/i, 'limited'],
   [/\b(agents?|sub-?agents?|parallel|research)\b/i, 'agents'],

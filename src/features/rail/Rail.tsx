@@ -113,7 +113,7 @@ function RailInner({ sessionId, open }: { sessionId: string; open: boolean }) {
 }
 
 /** Panes that pause their own work while hidden: they are told whether they show. */
-const WATCHES_ACTIVE: ReadonlySet<RailTab> = new Set(['browser', 'device', 'terminal', 'context']);
+const WATCHES_ACTIVE: ReadonlySet<RailTab> = new Set(['browser', 'device', 'terminal', 'context', 'agents']);
 
 /**
  * One pane's contents. Memoised: a change of tab re-renders only the panes that are told it (the
@@ -136,7 +136,7 @@ const Pane = memo(function Pane({ id, sessionId, cwd, active }: { id: RailTab; s
     case 'context':
       return <ContextTab sessionId={sessionId} active={active} />;
     case 'agents':
-      return <AgentsTab sessionId={sessionId} />;
+      return <AgentsTab sessionId={sessionId} active={active} />;
   }
 });
 

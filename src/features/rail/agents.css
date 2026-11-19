@@ -1,0 +1,614 @@
+/* ───────────── agents ─────────────
+   What works now sits on cards one step above the panel (its live time, what it does, its steps,
+   how far it is when it says); what is done is a quiet list of one-line rows under the message
+   that started it. Rows open in place. Monochrome: the agents' marks keep their colour, amber is
+   waiting on you, red a failure. */
+
+.agx-list {
+  --agx-indent: 24px;
+  display: flex;
+  flex-direction: column;
+  padding: 2px 8px 24px;
+}
+
+/* ── headings: the message behind a group, or "Done" under the cards ── */
+
+.agx-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px 8px 6px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.agx-head:first-child {
+  padding-top: 6px;
+}
+
+.agx-head-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.agx-head-time {
+  flex-shrink: 0;
+}
+
+/* ── shared pieces of a line ── */
+
+.agx-mark {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-4);
+}
+
+.agx-mark .ring {
+  color: var(--text-2);
+}
+
+.agx-title {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Waiting on you: the one amber mark. */
+.agx-wait-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--amber);
+}
+
+/* Stopped, interrupted, denied: a small square, as quiet as the tick. */
+.agx-stop {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background-color: currentColor;
+}
+
+/* ── working now: a card each ── */
+
+.agx-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background-color: var(--panel);
+}
+
+.agx-card + .agx-card {
+  margin-top: 6px;
+}
+
+.agx-card + :is(.agx-row, .agx-head) {
+  margin-top: 8px;
+}
+
+.agx-card-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 12px 11px 10px;
+  border-radius: inherit;
+  text-align: left;
+  transition: background-color var(--d-1) var(--ease);
+}
+
+.agx-card-btn:hover {
+  background-color: var(--fill-1);
+}
+
+.agx-card-btn:active {
+  background-color: var(--fill-2);
+}
+
+.agx-card-btn:focus-visible {
+  outline-offset: var(--focus-inset);
+}
+
+.agx-card[data-open] > .agx-card-btn {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.agx-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 20px;
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.agx-provider {
+  margin-right: -2px;
+}
+
+/* The live time: fixed width, so the figures tick in place. */
+.agx-time {
+  flex-shrink: 0;
+  min-width: 5ch;
+  font-size: var(--t-small);
+  font-weight: var(--w-regular);
+  text-align: right;
+  color: var(--text-3);
+}
+
+/* What it does now, under the title, with its steps at the end. */
+.agx-sub {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  height: 18px;
+  padding-left: var(--agx-indent);
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.agx-now {
+  display: flex;
+  align-items: baseline;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Each new title arrives with a short rise; the old one simply goes. A working one keeps its
+   shimmer (both animations, or the rise would replace it). */
+.agx-now > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: agx-now-in var(--d-3) var(--ease-out);
+}
+
+.agx-now > .shimmer:last-child {
+  animation:
+    agx-now-in var(--d-3) var(--ease-out),
+    shimmer 2.4s linear infinite;
+}
+
+@keyframes agx-now-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+.agx-now-wait {
+  color: var(--amber);
+}
+
+.agx-phase {
+  flex-shrink: 0;
+  margin-right: 8px;
+  color: var(--text-2);
+}
+
+.agx-figs {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Its own task list, when it keeps one: the only progress it can honestly show. */
+.agx-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0 0 var(--agx-indent);
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.agx-meter {
+  flex: 1;
+  height: 3px;
+}
+
+/* A workflow's phases as segments: done ones full, the one that runs filled by its agents done. */
+.agx-phases {
+  display: flex;
+  gap: 3px;
+  height: 3px;
+  margin: 6px 0 1px var(--agx-indent);
+}
+
+.agx-seg {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 99px;
+  background-color: var(--fill-3);
+}
+
+.agx-seg-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  background-color: var(--text-3);
+  transition: transform var(--d-4) var(--ease-out);
+}
+
+.agx-seg[data-state='done'] > .agx-seg-fill {
+  background-color: var(--text-2);
+}
+
+/* ── done: one line each ── */
+
+.agx-row {
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  transition: background-color var(--d-2) var(--ease);
+}
+
+.agx-row[data-open] {
+  margin: 4px 0;
+  border-color: var(--line);
+  background-color: var(--panel);
+}
+
+.agx-row-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: var(--rail-row-h, 30px);
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  font-size: var(--t-ui);
+  text-align: left;
+  color: var(--text-2);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.agx-row-btn:hover {
+  background-color: var(--fill-2);
+  color: var(--text);
+}
+
+.agx-row-btn:active {
+  background-color: var(--fill-3);
+}
+
+.agx-row-btn:focus-visible {
+  outline-offset: var(--focus-inset);
+}
+
+.agx-row[data-open] > .agx-row-btn {
+  color: var(--text);
+}
+
+.agx-row[data-open] > .agx-row-btn:hover {
+  background-color: var(--fill-1);
+}
+
+.agx-row[data-outcome='failed'] .agx-mark {
+  color: var(--red);
+}
+
+/* A finished hand-over keeps its agent's mark, one step quieter than on a working card. */
+.agx-row .agx-mark .provider-mark[data-provider='codex'] {
+  color: var(--text-2);
+}
+
+/* Outcome (when it is not plain done), then time and tokens in two columns of figures, so the
+   list reads down as cleanly as across. */
+.agx-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  font-size: var(--t-small);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.agx-dur {
+  min-width: 6.5ch;
+  text-align: right;
+}
+
+.agx-tokens {
+  min-width: 10.5ch;
+  text-align: right;
+}
+
+.agx-outcome {
+  color: var(--text-2);
+}
+
+/* A row that joins the list on screen rises into place, once. */
+:is(.agx-row, .agx-card, .agx-head)[data-new] {
+  animation: rise-in var(--d-3) var(--ease-out) backwards;
+}
+
+/* ── opened ── */
+
+.agx-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 2px 12px 10px calc(8px + var(--agx-indent));
+  font-size: var(--t-small);
+  color: var(--text-2);
+}
+
+.agx-card .agx-detail {
+  padding-left: calc(10px + var(--agx-indent));
+}
+
+.agx-detail > * {
+  max-width: 100%;
+}
+
+.agx-facts {
+  color: var(--text-3);
+}
+
+.agx-why,
+.agx-error {
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The task it was given: three lines on a hairline, the whole of it on a click. */
+.agx-prompt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  padding: 0 0 0 10px;
+  border-left: 1.5px solid var(--line-3);
+  font-size: var(--t-small);
+  line-height: 1.55;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-3);
+  transition: color var(--d-1) var(--ease);
+}
+
+.agx-prompt:hover {
+  color: var(--text-2);
+}
+
+.agx-prompt[data-whole] {
+  display: block;
+}
+
+.agx-prompt:focus-visible {
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Its latest steps: titles only, the commands stay in the conversation. */
+.agx-steps {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+}
+
+.agx-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 22px;
+  color: var(--text-2);
+}
+
+.agx-step-icon {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.agx-step-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.agx-step-meta {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.agx-fail {
+  color: var(--red);
+}
+
+/* Its report: a long one folds to its first lines over a short fade in the card's own tone. */
+.agx-report {
+  align-self: stretch;
+  font-size: var(--t-small);
+}
+
+.agx-report .md {
+  font-size: var(--t-small);
+}
+
+.agx-report-text {
+  position: relative;
+}
+
+.agx-report[data-folded] .agx-report-text {
+  max-height: 180px;
+  overflow: hidden;
+}
+
+.agx-report[data-folded] .agx-report-text::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 48px;
+  background: linear-gradient(to bottom, rgb(18 18 20 / 0), var(--panel));
+  pointer-events: none;
+}
+
+.agx-more,
+.agx-goto {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin-left: -8px;
+  padding: 0 8px;
+  border-radius: var(--r-ctl-xs);
+  font-size: var(--t-small);
+  color: var(--text-3);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.agx-more {
+  margin-top: 4px;
+}
+
+.agx-more:hover,
+.agx-goto:hover {
+  background-color: var(--fill-2);
+  color: var(--text);
+}
+
+.agx-more:active,
+.agx-goto:active {
+  background-color: var(--fill-3);
+}
+
+.agx-goto {
+  margin-top: -2px;
+}
+
+/* ── a workflow, opened: its phases with their agents ── */
+
+.agx-wf {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  gap: 6px;
+}
+
+.agx-wf-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  color: var(--text-2);
+}
+
+.agx-wf-index {
+  width: 12px;
+  flex-shrink: 0;
+  color: var(--text-4);
+}
+
+.agx-wf-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.agx-wf-count {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.agx-wf-phase[data-state='next'] .agx-wf-title {
+  color: var(--text-3);
+}
+
+.agx-wf-agent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 22px;
+  padding-left: 20px;
+  color: var(--text-3);
+}
+
+.agx-wf-mark {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  flex-shrink: 0;
+  color: var(--text-4);
+}
+
+.agx-wf-mark .ring {
+  color: var(--text-2);
+}
+
+.agx-wf-agent[data-state='error'] .agx-wf-mark {
+  color: var(--red);
+}
+
+.agx-wf-queued {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--text-4);
+}
+
+.agx-wf-label {
+  flex: 0 1 auto;
+  max-width: 50%;
+  color: var(--text-2);
+}
+
+.agx-wf-dim {
+  color: var(--text-3);
+}
+
+.agx-wf-now {
+  flex: 1;
+  min-width: 0;
+}
+
+.agx-wf-meta {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* A narrow panel keeps the time and lets the tokens go (they are in the opened row). */
+@container rail (max-width: 360px) {
+  .agx-tokens {
+    display: none;
+  }
+}
+
+.agx-facts-tokens {
+  display: none;
+}
+
+@container rail (max-width: 360px) {
+  .agx-facts-tokens {
+    display: inline;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.agx-row, .agx-card, .agx-head)[data-new],
+  .agx-now > span:last-child,
+  .agx-now > .shimmer:last-child {
+    animation: none;
+  }
+  .agx-seg-fill {
+    transition: none;
+  }
+}
