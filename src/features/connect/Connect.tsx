@@ -324,7 +324,7 @@ function AccountRow({
                 </button>
                 {phase === 'url' && live?.url && (
                   <>
-                    <CopyButton text={live.url} label="Copy sign-in link" />
+                    <CopyButton text={live.codeUrl ?? live.url} label="Copy sign-in link" />
                     <button type="button" className="btn btn-sm" onClick={() => window.open(live.url, '_blank', 'noopener')}>
                       <Icon name="external" size={14} />
                       Open sign-in page
@@ -390,7 +390,7 @@ function AccountRow({
 
       <AutoHeight>{showLimits && <MiniLimits limits={limits!} />}</AutoHeight>
       {/* The browser may show a code to paste instead of returning to Sable. */}
-      <AutoHeight>{phase === 'url' && live?.codeUrl && <LoginCode provider={provider} accountId={accountId} />}</AutoHeight>
+      <AutoHeight>{phase === 'url' && live?.codeUrl && <LoginCode provider={provider} accountId={accountId} codeUrl={live.codeUrl} />}</AutoHeight>
     </div>
   );
 }

@@ -193,7 +193,7 @@ function SignIn({ provider, accountId, onRetry, onCancel, onDone }: { provider: 
       <div className="aa-actions">
         {phase === 'waiting' && flow?.url && (
           <>
-            <CopyButton text={flow.url} label="Copy sign-in link" />
+            <CopyButton text={flow.codeUrl ?? flow.url} label="Copy sign-in link" />
             <button type="button" className="btn btn-sm" autoFocus onClick={() => window.open(flow.url, '_blank', 'noopener')}>
               <Icon name="external" size={14} />
               Open sign-in page
@@ -214,7 +214,7 @@ function SignIn({ provider, accountId, onRetry, onCancel, onDone }: { provider: 
         )}
       </div>
       {/* The browser may show a code to paste instead of returning to Sable. */}
-      <AutoHeight>{phase === 'waiting' && flow?.codeUrl && <LoginCode provider={provider} accountId={accountId} />}</AutoHeight>
+      <AutoHeight>{phase === 'waiting' && flow?.codeUrl && <LoginCode provider={provider} accountId={accountId} codeUrl={flow.codeUrl} />}</AutoHeight>
     </div>
   );
 }

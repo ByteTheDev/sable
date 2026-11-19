@@ -7,7 +7,7 @@ import { Spinner } from '@/ui';
  * A sign-in whose browser page shows a code instead of returning to Sable (Claude Code's
  * "paste this code" page): the code goes here and finishes the sign-in in progress.
  */
-export function LoginCode({ provider, accountId }: { provider: ProviderId; accountId?: string }) {
+export function LoginCode({ provider, accountId, codeUrl }: { provider: ProviderId; accountId?: string; codeUrl?: string }) {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -34,6 +34,12 @@ export function LoginCode({ provider, accountId }: { provider: ProviderId; accou
         spellCheck={false}
         autoComplete="off"
       />
+      {/* The page that shows a code works on any device or browser, also when the return to Sable cannot. */}
+      {codeUrl && !code.trim() && (
+        <button type="button" className="btn btn-sm btn-ghost" onClick={() => window.open(codeUrl, '_blank', 'noopener')}>
+          Get a code
+        </button>
+      )}
       <button type="submit" className="btn btn-sm" disabled={!code.trim() || busy}>
         {busy && <Spinner size={13} />}
         Continue
