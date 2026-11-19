@@ -77,7 +77,7 @@ export function Home({ under }: { under: boolean }) {
 
   return (
     <div className="screen home" data-under={under || undefined}>
-      <Field palette={paletteFor(defaultProvider)} amount={1.05} focusY={1.04} spread={0.5} active={running && !under} hidden={under} />
+      <Field palette={paletteFor(defaultProvider)} amount={0.7} focusY={1.1} spread={0.78} active={running && !under} hidden={under} />
       <header className="home-head">
         <div className="home-brand">
           <LogoMark size={18} />

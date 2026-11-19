@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { PHONE_PATH, type PhoneFrame, type PhoneStatus } from '@shared/protocol';
+import { PHONE_PATH, type PhoneFrame, type PhoneStatus, type PhoneTail, type TextItem, type TimelineItem, type ToolItem, type UserItem } from '@shared/protocol';
 import { App, withDefaultOptions } from '../server/app';
 import { DemoProvider } from '../server/providers/demo';
 import { registerFs } from '../server/services/fs';
-import { registerPhone, type PhoneService } from '../server/services/phone';
+import { LIMITS, phoneDetail, phoneEvent, phonePage, registerPhone, type PhoneService } from '../server/services/phone';
 import { qrMatrix } from '../server/services/qr';
+import { mergeHosts } from '../mobile/src/lib/hosts';
 
 const homes: string[] = [];
 const apps: App[] = [];
@@ -195,6 +196,161 @@ describe('phone endpoint', () => {
     again.ws.send(JSON.stringify({ hello: { token } }));
     expect(await again.next((f) => 'welcome' in f)).toBeTruthy();
     again.ws.close();
+  });
+});
+
+describe('conversations in pages', () => {
+  const big = 'x'.repeat(2_000_000);
+  /** A long conversation: `turns` turns, each a message, `steps` tool calls with big output, an answer and its end. */
+  function long(turns: number, steps: number): TimelineItem[] {
+    const out: TimelineItem[] = [];
+    let n = 0;
+    for (let t = 0; t < turns; t++) {
+      out.push({ id: `u${t}`, ts: n++, type: 'user', text: `message ${t}`, attachments: [{ id: 'a', kind: 'image', name: 'shot.png', dataUrl: `data:image/png;base64,${'A'.repeat(300_000)}` }] });
+      for (let s = 0; s < steps; s++) {
+        out.push({
+          id: `t${t}-${s}`,
+          ts: n++,
+          type: 'tool',
+          name: 'Bash',
+          kind: 'bash',
+          title: 'Run tests',
+          status: 'done',
+          detail: { command: 'pnpm test', newText: big },
+          input: { command: 'pnpm test', blob: big },
+          output: big,
+          result: { text: big, images: ['data:image/png;base64,AAAA'], diff: [{ path: 'a.ts', status: 'modified', additions: 3, deletions: 1, hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 3, lines: ['-a', '+b', '+c', '+d'] }] }] },
+        });
+        out.push({ id: `k${t}-${s}`, ts: n++, type: 'text', text: big, streaming: false, parentId: `t${t}-${s}` });
+      }
+      out.push({ id: `a${t}`, ts: n++, type: 'text', text: `answer ${t} ${'y'.repeat(20_000)}`, streaming: false });
+      out.push({ id: `e${t}`, ts: n++, type: 'turn', durationMs: 1000 });
+    }
+    return out;
+  }
+
+  it('sends the newest page, trimmed, with a cursor to the one before', () => {
+    const items = long(60, 5);
+    const page = phonePage(items);
+    expect(page.total).toBe(60 * 8);
+    const bytes = JSON.stringify(page).length;
+    expect(bytes).toBeLessThan(100_000);
+    // Newest last, starting at a message (a turn is not split).
+    expect(page.items[page.items.length - 1].id).toBe('e59');
+    expect(page.items[0].type).toBe('user');
+    expect(page.cursor).toBe(page.items[0].id);
+    const tool = page.items.find((i) => i.type === 'tool') as ToolItem & { more?: boolean };
+    expect(tool.output).toBeUndefined();
+    expect(tool.input).toBeUndefined();
+    expect(tool.detail.newText).toBeUndefined();
+    expect(tool.detail.command).toBe('pnpm test');
+    expect(tool.result?.text).toBeUndefined();
+    expect(tool.result?.images).toBeUndefined();
+    expect(tool.result?.diff?.[0]).toMatchObject({ additions: 3, deletions: 1, hunks: [] });
+    expect(tool.more).toBe(true);
+    expect((tool as { kids?: number }).kids).toBe(1);
+    // No sub-agent steps in a page; no picture data.
+    expect(page.items.some((i) => i.parentId)).toBe(false);
+    const user = page.items.find((i) => i.type === 'user') as UserItem;
+    expect(user.attachments?.[0]).toEqual({ id: 'a', kind: 'image', name: 'shot.png' });
+    // An answer keeps a generous length and says it was cut.
+    const answer = page.items.find((i) => i.type === 'text') as TextItem & { cut?: boolean };
+    expect(answer.text.length).toBe(LIMITS.answer);
+    expect(answer.cut).toBe(true);
+  });
+
+  it('pages back to the start without gaps or repeats', () => {
+    const items = long(25, 4);
+    const roots = items.filter((i) => !i.parentId).map((i) => i.id);
+    const seen: string[] = [];
+    let before: string | undefined;
+    for (let i = 0; i < 100; i++) {
+      const page = phonePage(items, { before });
+      seen.unshift(...page.items.map((x) => x.id));
+      before = page.cursor;
+      if (!before) break;
+    }
+    expect(seen).toEqual(roots);
+    // A cursor that is gone gives an empty page.
+    expect(phonePage(items, { before: 'nope' }).items).toEqual([]);
+  });
+
+  it('cuts text between steps to a line, and returns one item in full on request', () => {
+    const items: TimelineItem[] = [
+      { id: 'u', ts: 0, type: 'user', text: 'go' },
+      { id: 'x', ts: 1, type: 'text', text: 'z'.repeat(5000), streaming: false },
+      { id: 't', ts: 2, type: 'tool', name: 'Bash', kind: 'bash', title: 'Run', status: 'done', detail: { command: 'ls' }, output: 'line\n'.repeat(1000) },
+      { id: 'c', ts: 3, type: 'thinking', text: 'w'.repeat(5000), streaming: false, parentId: 't' },
+    ];
+    const page = phonePage(items);
+    expect((page.items[1] as TextItem).text.length).toBe(LIMITS.step);
+    const d = phoneDetail(items, 't');
+    expect((d.item as ToolItem).output?.split('\n').length).toBeLessThanOrEqual(202);
+    expect(d.children.map((c) => c.id)).toEqual(['c']);
+    expect(() => phoneDetail(items, 'gone')).toThrow();
+  });
+
+  it('trims live events: no tool output, no big results, text deltas pass', () => {
+    expect(phoneEvent({ type: 'item.delta', sessionId: 's', id: 't', field: 'output', delta: big })).toBeNull();
+    expect(phoneEvent({ type: 'item.delta', sessionId: 's', id: 't', field: 'text', delta: 'hi' })).toMatchObject({ delta: 'hi' });
+    const patch = phoneEvent({ type: 'item.patch', sessionId: 's', id: 't', patch: { status: 'done', output: big, result: { text: big, exitCode: 0 } } as Partial<TimelineItem> });
+    expect(JSON.stringify(patch).length).toBeLessThan(400);
+    const reset = phoneEvent({ type: 'timeline.reset', sessionId: 's', items: long(30, 3) }) as { items: unknown[]; cursor?: string };
+    expect(JSON.stringify(reset).length).toBeLessThan(100_000);
+    expect(reset.cursor).toBeTruthy();
+  });
+
+  it('over the socket: a page, its compressed size, and events only for open conversations', async () => {
+    const { app, port } = await setup();
+    const { c } = await pairPhone(app, port);
+    const created = (await c.call('session.create', { provider: 'demo', cwd: path.resolve('.') })) as { result: PhoneTail };
+    const id = created.result.session.id;
+    const other = await app.call('session.create', { provider: 'demo', cwd: path.resolve('.') });
+    // A huge timeline loaded into the session.
+    const rt = app.sessions.get(id)!;
+    rt.load(long(40, 6), [], []);
+    const before = (c.ws as unknown as { _socket: { bytesRead: number } })._socket.bytesRead;
+    const tail = (await c.call('phone.tail', { sessionId: id })) as { ok: boolean; result: PhoneTail };
+    const wire = (c.ws as unknown as { _socket: { bytesRead: number } })._socket.bytesRead - before;
+    expect(tail.ok).toBe(true);
+    expect(tail.result.items.length).toBeGreaterThan(5);
+    expect(wire).toBeLessThan(40_000);
+    // session.snapshot from a phone is cut to its page too.
+    const snap = (await c.call('session.snapshot', { sessionId: id })) as { result: PhoneTail };
+    expect(snap.result.cursor).toBeTruthy();
+    expect(JSON.stringify(snap.result).length).toBeLessThan(100_000);
+    const more = (await c.call('phone.tail', { sessionId: id, before: tail.result.cursor })) as { result: PhoneTail };
+    expect(more.result.items[more.result.items.length - 1].id).not.toBe(tail.result.items[0].id);
+    const one = (await c.call('phone.item', { sessionId: id, itemId: 't39-0' })) as { result: { item: ToolItem; children: unknown[] } };
+    expect(one.result.item.result?.text?.length).toBeGreaterThan(1000);
+    expect(one.result.children).toHaveLength(1);
+    // Item events: the open conversation's, not another's.
+    const n = c.frames.length;
+    app.emit({ type: 'item.delta', sessionId: other.session.id, id: 'x', field: 'text', delta: 'elsewhere' });
+    app.emit({ type: 'item.delta', sessionId: id, id: 'a39', field: 'text', delta: 'here' });
+    app.emit({ type: 'item.delta', sessionId: id, id: 't39-0', field: 'output', delta: big });
+    await c.next((f) => 'event' in f && (f.event as { delta?: string }).delta === 'here');
+    await new Promise((r) => setTimeout(r, 50));
+    const got = c.frames.slice(n).filter((f) => 'event' in f).map((f) => (f as { event: { delta?: string } }).event.delta);
+    expect(got).toEqual(['here']);
+    // Still only for phones: the localhost bridge has no such methods.
+    await expect(app.call('phone.tail' as never, { sessionId: id } as never)).rejects.toThrow();
+    c.ws.close();
+  });
+});
+
+describe('desktop addresses', () => {
+  it('the welcome lists them; a phone adds new ones to its pairing, the last good one first', async () => {
+    const { app, port } = await setup();
+    const { c } = await pairPhone(app, port);
+    const w = c.frames.find((f) => 'welcome' in f) as { welcome: { hosts?: string[] } };
+    expect(Array.isArray(w.welcome.hosts)).toBe(true);
+    c.ws.close();
+    // Paired at home, Tailscale installed later: its 100.x address joins, nothing repeats.
+    expect(mergeHosts(['192.168.1.20', '10.0.0.5'], ['192.168.1.20', '100.101.7.9'], '192.168.1.20')).toEqual(['192.168.1.20', '100.101.7.9', '10.0.0.5']);
+    expect(mergeHosts(['a1', 'a2', 'a3', 'a4'], ['b1', 'b2', 'b3', 'b4'], 'a2')).toHaveLength(6);
+    expect(mergeHosts(['a1'], ['bad host!', 42, 'b1'], undefined)).toEqual(['b1', 'a1']);
+    expect(mergeHosts(['a1'], undefined, 'a1')).toEqual(['a1']);
   });
 });
 

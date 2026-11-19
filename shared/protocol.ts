@@ -1430,7 +1430,8 @@ export type PhoneHello = { hello: { token: string; name?: string } } | { pair: {
 
 /** Frames the phone endpoint sends besides `ServerFrame`s. */
 export type PhoneFrame =
-  | { welcome: { deviceId: string; desktop: string; version: string } }
+  /** `hosts`: the desktop's addresses now (a phone adds new ones, e.g. Tailscale's, to its pairing). */
+  | { welcome: { deviceId: string; desktop: string; version: string; hosts?: string[] } }
   | { waiting: true }
   | { paired: { token: string; deviceId: string; desktop: string } }
   | { denied: string };
@@ -1463,6 +1464,48 @@ export const PHONE_METHODS = [
   'fs.roots',
   'fs.list',
 ] as const satisfies readonly RpcName[];
+
+/**
+ * A timeline item as a phone gets it: what the phone shows, big fields cut (no tool input or
+ * output, no images or attachment data, long texts shortened). `phone.item` returns more of it.
+ */
+export type PhoneItem = TimelineItem & {
+  /** Its text was shortened for the phone. */
+  cut?: boolean;
+  /** Items nested under it on the desktop (a sub-agent's steps). */
+  kids?: number;
+  /** The desktop holds more of it (output, the change's lines, the full input). */
+  more?: boolean;
+};
+
+/** A page of a conversation for the phone: the newest root items, or those before a cursor. */
+export interface PhoneTail extends Omit<SessionSnapshot, 'items'> {
+  /** Root items in order (a sub-agent's steps come with `phone.item`). */
+  items: PhoneItem[];
+  /** Pass as `before` for the page before this one; absent at the conversation's start. */
+  cursor?: string;
+  /** Root items in the whole conversation. */
+  total: number;
+}
+
+/** Methods only the phone endpoint answers, besides `PHONE_METHODS`. */
+export interface PhoneMethods {
+  /** The newest page of a conversation (or the one before `before`), trimmed; from here on its live events reach this phone. */
+  'phone.tail': { params: { sessionId: string; before?: string; limit?: number }; result: PhoneTail };
+  /** One item with more of it (a step's output and change, a long text in full) and the last steps nested under it. */
+  'phone.item': { params: { sessionId: string; itemId: string }; result: { item: PhoneItem; children: PhoneItem[] } };
+}
+
+export const PHONE_OWN_METHODS = ['phone.tail', 'phone.item'] as const satisfies readonly (keyof PhoneMethods)[];
+
+/** `timeline.reset` as a phone gets it: the newest page, trimmed, with its cursor. */
+export interface PhoneReset {
+  type: 'timeline.reset';
+  sessionId: string;
+  items: PhoneItem[];
+  cursor?: string;
+  total?: number;
+}
 
 // ──────────────────────────────────── RPC ───────────────────────────────────
 

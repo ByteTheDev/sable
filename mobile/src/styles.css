@@ -2875,3 +2875,243 @@ textarea {
     transition-duration: 1ms !important;
   }
 }
+
+/* /until: a check Sable ran is a step-sized row; the loop's end one calm line. */
+.check-row {
+  margin: 2px 0 4px;
+}
+
+.check-row .step-icon {
+  color: var(--text-3);
+}
+
+.check-row[data-status='error'] .step-icon {
+  color: var(--red);
+}
+
+.check-result,
+.check-round {
+  font-size: var(--t-xs);
+  color: var(--text-4);
+  flex-shrink: 0;
+}
+
+.check-row[data-status='error'] .check-result {
+  color: var(--text-3);
+}
+
+.until-end {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.until-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px;
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+.until-line span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * ── material ──
+ * Every surface is the desktop composer's material: frosted ink with a faint grain, an almost
+ * invisible hairline and one soft shadow, layered (each layer a step lighter) over the dither
+ * field. Surfaces that scroll are the same ink without the blur (a blur under moving text costs
+ * frames for nothing you would see); the composer and the sheets keep it.
+ */
+:root {
+  --ink-0: rgb(9 9 11 / 0.62);
+  --ink-1: rgb(16 16 19 / 0.76);
+  --ink-2: rgb(25 25 29 / 0.82);
+  --ink-bar: rgb(11 11 13 / 0.9);
+  --edge: inset 0 0 0 1px rgb(255 255 255 / 0.065);
+  --edge-2: inset 0 0 0 1px rgb(255 255 255 / 0.085);
+  --lift: 0 18px 44px -18px rgb(0 0 0 / 0.75);
+  --lift-sm: 0 10px 24px -14px rgb(0 0 0 / 0.8);
+  --grain-bg: var(--grain) 0 0 / 160px 160px;
+}
+
+/* home: the field lies under the list, wide and quiet; folders are cards of ink */
+.home > .field {
+  z-index: 0;
+  opacity: 0.55;
+}
+
+.home::after {
+  display: none;
+}
+
+.search {
+  background: var(--grain-bg), var(--ink-0);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.07);
+  border-radius: 16px;
+}
+
+.group {
+  padding: 10px 0 14px;
+}
+
+.group-name {
+  padding: 6px 14px 8px;
+}
+
+.rows {
+  position: relative;
+  padding: 4px;
+  border-radius: 20px;
+  background: var(--grain-bg), var(--ink-1);
+  box-shadow: var(--edge), var(--lift);
+}
+
+.rows > li {
+  position: relative;
+}
+
+.rows > li + li::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 42px;
+  right: 14px;
+  height: 1px;
+  background: rgb(255 255 255 / 0.045);
+  pointer-events: none;
+}
+
+.row {
+  padding: 12px 12px;
+  border-radius: 16px;
+}
+
+.row:active {
+  background: rgb(255 255 255 / 0.05);
+}
+
+.more-row {
+  padding-left: 44px;
+}
+
+/* screen headers: ink with grain, a hairline under them, one shadow */
+.glass-bar {
+  background: var(--grain-bg), var(--ink-bar);
+  box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.06), 0 14px 30px -18px rgb(0 0 0 / 0.85);
+}
+
+.glass-bar::after {
+  display: none;
+}
+
+/* the conversation: your messages one step lighter, steps and blocks as cards, answers on the ground */
+.user-bubble.glass {
+  background: var(--ink-2);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--edge-2), var(--lift-sm);
+}
+
+.steps {
+  margin: 2px 0 0;
+  padding: 0 4px;
+  border-radius: 16px;
+  background: var(--grain-bg), var(--ink-1);
+  box-shadow: var(--edge), var(--lift-sm);
+}
+
+.steps-line {
+  min-height: 42px;
+  padding: 0 10px;
+  border-radius: 14px;
+}
+
+.steps-list {
+  padding-bottom: 4px;
+}
+
+.step-detail {
+  background: rgb(0 0 0 / 0.36);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
+}
+
+.step-detail-wait {
+  display: block;
+  width: 62%;
+  height: 10px;
+  margin-top: 8px;
+}
+
+.block,
+.limit-card {
+  border-radius: 16px;
+  background: var(--grain-bg), var(--ink-1);
+  box-shadow: var(--edge), var(--lift-sm);
+}
+
+.md-pre {
+  background: rgb(0 0 0 / 0.42);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+}
+
+.md-rest {
+  align-self: flex-start;
+  margin-top: -4px;
+}
+
+.thread-more {
+  display: grid;
+  place-items: center;
+  height: 40px;
+  padding: 0;
+  color: var(--text-3);
+}
+
+.thread-more-line {
+  width: 28px;
+  height: 1px;
+  background: var(--line-2);
+}
+
+/* the composer: the desktop's card at hand size */
+.composer.glass {
+  background-color: rgb(16 16 19 / 0.78);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  backdrop-filter: blur(22px) saturate(140%);
+  box-shadow: var(--edge), var(--lift);
+}
+
+.composer.glass[data-focus] {
+  background-color: rgb(19 19 22 / 0.86);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1), 0 22px 50px -18px rgb(0 0 0 / 0.85);
+}
+
+/* sheets: frosted ink, a lit top edge, the shadow upward; their lists one step lighter */
+.sheet.glass {
+  background-color: rgb(17 17 20 / 0.9);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  backdrop-filter: blur(22px) saturate(140%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), inset 0 0 0 1px rgb(255 255 255 / 0.04), 0 -18px 44px -18px rgb(0 0 0 / 0.8);
+}
+
+.sheet .choices {
+  padding: 4px;
+  border-radius: 18px;
+  background: rgb(255 255 255 / 0.025);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
+}
+
+.sheet .choice {
+  border-radius: 14px;
+}
+
+.sheet .choice[data-selected] {
+  background: rgb(255 255 255 / 0.07);
+}

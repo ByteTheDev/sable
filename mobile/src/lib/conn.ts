@@ -1,5 +1,9 @@
-import { PHONE_PATH, type BridgeEvent, type PhoneFrame, type RpcMethods, type RpcName, type RpcResponse } from '@shared/protocol';
+import { PHONE_PATH, type BridgeEvent, type PhoneFrame, type PhoneMethods, type RpcMethods, type RpcResponse } from '@shared/protocol';
+
+/** Everything the phone may ask: the allowlisted bridge methods and the phone endpoint's own. */
+type Methods = RpcMethods & PhoneMethods;
 import { loadPairing, savePairing } from './native';
+import { mergeHosts, sameHosts } from './hosts';
 
 /** What the phone keeps after pairing: where the desktop is and the token it gave this phone. */
 export interface Pairing {
@@ -177,9 +181,12 @@ class Conn {
             return;
           }
           if ('welcome' in f) {
-            if (p.lastHost !== host || p.desktop !== f.welcome.desktop) {
+            // The desktop's addresses now join the saved ones (Tailscale installed after pairing: reachable there next time).
+            const hosts = mergeHosts(p.hosts, f.welcome.hosts, host);
+            if (p.lastHost !== host || p.desktop !== f.welcome.desktop || !sameHosts(hosts, p.hosts)) {
               p.lastHost = host;
               p.desktop = f.welcome.desktop;
+              p.hosts = hosts;
               void savePairing(p);
             }
             this.adopt(ws);
@@ -272,7 +279,7 @@ class Conn {
     for (const l of this.openListeners) l();
   }
 
-  call<M extends RpcName>(method: M, params: RpcMethods[M]['params'], timeoutMs = 30_000): Promise<RpcMethods[M]['result']> {
+  call<M extends keyof Methods>(method: M, params: Methods[M]['params'], timeoutMs = 30_000): Promise<Methods[M]['result']> {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Not connected to the desktop'));
     const id = this.nextId++;
@@ -312,6 +319,10 @@ class Conn {
           void savePairing(this.pairing);
         } else if ('welcome' in f) {
           clearTimeout(timer);
+          if (this.pairing) {
+            this.pairing.hosts = mergeHosts(this.pairing.hosts, f.welcome.hosts, host);
+            void savePairing(this.pairing);
+          }
           this.adopt(ws);
           resolve();
         } else if ('denied' in f) {

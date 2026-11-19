@@ -5,6 +5,9 @@ import type {
   Capabilities,
   LimitsReport,
   PermissionRequest,
+  PhoneItem,
+  PhoneReset,
+  PhoneTail,
   Project,
   ProviderId,
   ProviderInfo,
@@ -24,7 +27,7 @@ import { conn, type ConnState } from './conn';
  */
 
 export interface SessionData {
-  items: Record<string, TimelineItem>;
+  items: Record<string, PhoneItem>;
   /** Root items in order (no parentId). */
   roots: string[];
   /** Items nested under a tool (sub-agents), by parent id. */
@@ -34,6 +37,10 @@ export interface SessionData {
   queue: QueuedMessage[];
   todos: Todo[];
   caps?: Capabilities;
+  /** Pass to `phone.tail` for the page before the oldest one here; absent once the start is in. */
+  cursor?: string;
+  /** Shown from the phone's cache while the desktop is asked. */
+  cached?: boolean;
 }
 
 export interface State {
@@ -51,7 +58,10 @@ export interface State {
   caps: Record<string, Capabilities>;
   /** A message from the desktop to show once. */
   toast?: { text: string; level: 'info' | 'success' | 'error'; at: number };
+  /** The list of chats is there (maybe from the cache, see `fresh`). */
   loaded: boolean;
+  /** The list came from the desktop in this run (not only from the cache). */
+  fresh?: boolean;
 }
 
 let state: State = { conn: 'unpaired', providers: {}, projects: [], sessions: {}, data: {}, limits: {}, caps: {}, loaded: false };
@@ -97,7 +107,9 @@ function patchSession(id: string, patch: Partial<SessionMeta>) {
   setState({ sessions: { ...state.sessions, [id]: { ...s, ...patch } } });
 }
 
-export function applySnapshot(snap: SessionSnapshot) {
+type Tail = (SessionSnapshot | PhoneTail) & { cursor?: string };
+
+export function applySnapshot(snap: Tail, cached = false) {
   // Streamed pieces still waiting for the next frame are already in the snapshot: adding them again would repeat words.
   for (const key of [...deltas.keys()]) if (key.startsWith(`${snap.session.id}\u0000`)) deltas.delete(key);
   const items: Record<string, TimelineItem> = {};
@@ -112,10 +124,25 @@ export function applySnapshot(snap: SessionSnapshot) {
     sessions: { ...state.sessions, [snap.session.id]: snap.session },
     data: {
       ...state.data,
-      [snap.session.id]: { items, roots, children, permissions: snap.permissions, questions: snap.questions, queue: snap.queue, todos: snap.todos, caps: snap.caps },
+      [snap.session.id]: {
+        items,
+        roots,
+        children,
+        permissions: snap.permissions,
+        questions: snap.questions,
+        queue: snap.queue,
+        todos: snap.todos,
+        caps: snap.caps,
+        cursor: snap.cursor,
+        ...(cached ? { cached: true } : {}),
+      },
     },
   });
+  if (!cached) saveTailSoon(snap.session.id);
 }
+
+/** A streamed text grows on the phone up to this length; the rest is a tap away (`phone.item`). */
+const STREAM_CAP = 60_000;
 
 
 function flushDeltas() {
@@ -137,8 +164,10 @@ function flushDeltas() {
     const items = { ...d.items };
     for (const [id, field, text] of list) {
       const it = items[id] as unknown as Record<string, unknown> | undefined;
-      if (!it) continue;
-      items[id] = { ...it, [field]: String(it[field] ?? '') + text } as unknown as TimelineItem;
+      // A text the desktop shortened for the phone does not grow here (it would grow from the wrong place).
+      if (!it || it.cut) continue;
+      const next = String(it[field] ?? '') + text;
+      items[id] = (next.length > STREAM_CAP ? { ...it, [field]: next.slice(0, STREAM_CAP), cut: true } : { ...it, [field]: next }) as unknown as TimelineItem;
     }
     data[sid] = { ...d, items };
   }
@@ -170,9 +199,15 @@ export function applyEvent(e: BridgeEvent) {
       flushDeltas();
       return patchData(e.sessionId, (d) => {
         if (d.items[e.item.id]) return { items: { ...d.items, [e.item.id]: e.item } };
-        const next: Partial<SessionData> = { items: { ...d.items, [e.item.id]: e.item } };
-        if (e.item.parentId) next.children = { ...d.children, [e.item.parentId]: [...(d.children[e.item.parentId] ?? []), e.item.id] };
-        else next.roots = [...d.roots, e.item.id];
+        const items = { ...d.items, [e.item.id]: e.item };
+        const next: Partial<SessionData> = { items };
+        const pid = e.item.parentId;
+        if (pid) {
+          next.children = { ...d.children, [pid]: [...(d.children[pid] ?? []), e.item.id] };
+          // The parent's count of nested steps (the desktop's count when the page came, then live).
+          const parent = d.items[pid] as PhoneItem | undefined;
+          if (parent) items[pid] = { ...parent, kids: (parent.kids ?? 0) + 1 };
+        } else next.roots = [...d.roots, e.item.id];
         return next;
       });
     case 'item.patch':
@@ -186,7 +221,8 @@ export function applyEvent(e: BridgeEvent) {
     case 'timeline.reset': {
       const s = state.sessions[e.sessionId];
       const d = state.data[e.sessionId];
-      if (s && d) applySnapshot({ session: s, items: e.items, caps: d.caps, permissions: d.permissions, questions: d.questions, todos: d.todos, queue: d.queue });
+      const r = e as unknown as PhoneReset;
+      if (s && d) applySnapshot({ session: s, items: r.items, cursor: r.cursor, caps: d.caps, permissions: d.permissions, questions: d.questions, todos: d.todos, queue: d.queue });
       return;
     }
     case 'session.added':
@@ -239,7 +275,8 @@ export async function refresh(openIds: string[]) {
   for (const s of hello.sessions) sessions[s.id] = s;
   const providers: State['providers'] = {};
   for (const p of hello.providers) providers[p.id] = p;
-  setState({ sessions, providers, projects: hello.projects, settings: hello.settings, version: hello.version, desktop: conn.pairing?.desktop, loaded: true });
+  setState({ sessions, providers, projects: hello.projects, settings: hello.settings, version: hello.version, desktop: conn.pairing?.desktop, loaded: true, fresh: true });
+  saveHome();
   void conn
     .call('usage.limits', {})
     .then((reports) => {
@@ -251,13 +288,87 @@ export async function refresh(openIds: string[]) {
   await Promise.all(openIds.filter((id) => sessions[id]).map((id) => openSession(id).catch(() => {})));
 }
 
+/** A desktop from before pages answers only `session.snapshot` (all of it). */
+let pages = true;
+
+/** Opens a conversation on its newest page (from the cache at once when the phone has it, then from the desktop). */
 export async function openSession(id: string) {
-  const snap = await conn.call('session.snapshot', { sessionId: id });
+  showCached(id);
+  let snap: Tail | undefined;
+  if (pages) {
+    try {
+      snap = await conn.call('phone.tail', { sessionId: id });
+    } catch (err) {
+      if (!/Not available from the phone/.test((err as Error).message)) throw err;
+      pages = false;
+    }
+  }
+  snap ??= await conn.call('session.snapshot', { sessionId: id });
   applySnapshot(snap);
+}
+
+const opensTurn = (it: TimelineItem | undefined) => it?.type === 'user' && !it.steered;
+
+/**
+ * The pages before the oldest one shown, newest first, back to the message that opened the
+ * oldest turn (a long turn's steps fold into one line, so one page of them would show nothing
+ * new). Empty when the start is in. Apply each with `applyOlder`, in order.
+ */
+export async function fetchOlder(id: string, maxPages = 12): Promise<{ before: string; page: PhoneTail }[]> {
+  const d = state.data[id];
+  if (!d?.cursor || !pages || d.cached) return [];
+  const out: { before: string; page: PhoneTail }[] = [];
+  let before: string | undefined = d.cursor;
+  while (before && out.length < maxPages) {
+    const page: PhoneTail = await conn.call('phone.tail', { sessionId: id, before });
+    out.push({ before, page });
+    if (!page.items.length || opensTurn(page.items[0])) break;
+    before = page.cursor;
+  }
+  return out;
+}
+
+/** Puts an older page in front of what is shown (only when nothing moved the start meanwhile). */
+export function applyOlder(id: string, older: { before: string; page: PhoneTail }) {
+  const d = state.data[id];
+  if (!d || d.cursor !== older.before) return;
+  const items = { ...d.items };
+  const add: string[] = [];
+  for (const it of older.page.items) {
+    if (items[it.id]) continue;
+    items[it.id] = it;
+    add.push(it.id);
+  }
+  setState({ data: { ...state.data, [id]: { ...d, items, roots: [...add, ...d.roots], cursor: older.page.cursor } } });
+}
+
+/** One item with more of it (a step's output, a long text in full) and the last steps nested under it. */
+export function fetchItem(sid: string, itemId: string) {
+  return conn.call('phone.item', { sessionId: sid, itemId });
+}
+
+/** A sub-agent's last steps, from `phone.item`, merged with those that arrived live. */
+export function applyChildren(sid: string, parentId: string, list: PhoneItem[]) {
+  patchData(sid, (d) => {
+    const items = { ...d.items };
+    const have = d.children[parentId] ?? [];
+    const add: string[] = [];
+    for (const c of list) {
+      if (!items[c.id]) add.push(c.id);
+      items[c.id] = c;
+    }
+    return { items, children: { ...d.children, [parentId]: [...add, ...have] } };
+  });
+}
+
+/** Replaces a shortened text with the whole of it. */
+export function applyFull(sid: string, item: PhoneItem) {
+  patchData(sid, (d) => (d.items[item.id] ? { items: { ...d.items, [item.id]: { ...d.items[item.id], ...item, cut: false } as PhoneItem } } : {}));
 }
 
 export function closeSessionData(id: string) {
   if (!state.data[id]) return;
+  saveTail(id);
   const data = { ...state.data };
   delete data[id];
   setState({ data });
@@ -266,4 +377,99 @@ export function closeSessionData(id: string) {
 export const sessionData = (s: State, id: string): SessionData => s.data[id] ?? EMPTY;
 
 conn.on(applyEvent);
-conn.onState(() => setState({ conn: conn.state, connError: conn.error, desktop: conn.pairing?.desktop ?? state.desktop }));
+conn.onState(() => {
+  if (conn.state === 'unpaired') clearCache();
+  setState({ conn: conn.state, connError: conn.error, desktop: conn.pairing?.desktop ?? state.desktop });
+});
+
+// ── the phone's cache: the list of chats and the newest page of the last chats opened ──
+// Shown at once at the next start (Android closes apps in the background), then refreshed.
+
+const HOME = 'sable.home';
+const TAILS = 'sable.tails';
+const TAIL = (id: string) => `sable.tail.${id}`;
+const TAIL_KEEP = 6;
+const TAIL_ROOTS = 60;
+
+function saveHome() {
+  try {
+    const { sessions, providers, projects, settings, version } = state;
+    localStorage.setItem(HOME, JSON.stringify({ desktop: conn.pairing?.desktop, sessions: Object.values(sessions), providers, projects, settings, version }));
+  } catch {
+    /* full or unavailable: the next start asks the desktop */
+  }
+}
+
+/** The list of chats from the last run, before the desktop answers. */
+export function loadCachedHome() {
+  try {
+    const raw = localStorage.getItem(HOME);
+    if (!raw || state.fresh) return;
+    const c = JSON.parse(raw) as { desktop?: string; sessions: SessionMeta[]; providers: State['providers']; projects: Project[]; settings?: AppSettings; version?: string };
+    const sessions: Record<string, SessionMeta> = {};
+    for (const s of c.sessions) sessions[s.id] = s;
+    setState({ sessions, providers: c.providers ?? {}, projects: c.projects ?? [], settings: c.settings, version: c.version, desktop: c.desktop, loaded: true });
+  } catch {
+    /* a broken cache is ignored */
+  }
+}
+
+function saveTail(id: string) {
+  const d = state.data[id];
+  const s = state.sessions[id];
+  if (!d || !s || d.cached) return;
+  try {
+    const roots = d.roots.slice(-TAIL_ROOTS);
+    const items = roots.map((r) => d.items[r]).filter(Boolean);
+    const cursor = roots.length < d.roots.length ? roots[0] : d.cursor;
+    localStorage.setItem(TAIL(id), JSON.stringify({ session: s, items, cursor, permissions: [], questions: [], todos: d.todos, queue: [], caps: d.caps }));
+    const ids = [id, ...(JSON.parse(localStorage.getItem(TAILS) ?? '[]') as string[]).filter((x) => x !== id)];
+    for (const old of ids.slice(TAIL_KEEP)) localStorage.removeItem(TAIL(old));
+    localStorage.setItem(TAILS, JSON.stringify(ids.slice(0, TAIL_KEEP)));
+  } catch {
+    /* full: nothing cached */
+  }
+}
+
+const tailTimers = new Map<string, number>();
+function saveTailSoon(id: string) {
+  clearTimeout(tailTimers.get(id));
+  tailTimers.set(
+    id,
+    window.setTimeout(() => {
+      tailTimers.delete(id);
+      saveTail(id);
+    }, 4000),
+  );
+}
+
+/** The newest page of a chat as the phone last had it, until the desktop answers. */
+export function showCached(id: string) {
+  if (state.data[id]) return;
+  try {
+    const raw = localStorage.getItem(TAIL(id));
+    if (raw) applySnapshot(JSON.parse(raw) as Tail, true);
+  } catch {
+    /* ignored */
+  }
+}
+
+/** Forgets what the phone kept of the desktop (after "Forget this computer"). */
+export function clearCache() {
+  try {
+    for (const id of JSON.parse(localStorage.getItem(TAILS) ?? '[]') as string[]) localStorage.removeItem(TAIL(id));
+    localStorage.removeItem(TAILS);
+    localStorage.removeItem(HOME);
+  } catch {
+    /* ignored */
+  }
+}
+
+let homeTimer = 0;
+let savedSessions: State['sessions'] | undefined;
+subscribe(() => {
+  if (!state.fresh || state.sessions === savedSessions) return;
+  savedSessions = state.sessions;
+  clearTimeout(homeTimer);
+  homeTimer = window.setTimeout(saveHome, 3000);
+});

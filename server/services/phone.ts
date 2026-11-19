@@ -7,16 +7,28 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import {
   PHONE_METHODS,
+  PHONE_OWN_METHODS,
   PHONE_PATH,
   PHONE_PORT,
+  type Attachment,
   type BridgeEvent,
   type PhoneDevice,
   type PhoneFrame,
   type PhoneHello,
+  type PhoneItem,
+  type PhoneReset,
   type PhoneStatus,
+  type PhoneTail,
+  type QueuedMessage,
   type RpcName,
   type RpcRequest,
   type ServerFrame,
+  type SessionSnapshot,
+  type TimelineItem,
+  type ToolDetail,
+  type ToolItem,
+  type ToolResult,
+  type WorkflowRun,
 } from '../../shared/protocol';
 import type { App } from '../app';
 import { VERSION } from '../version';
@@ -36,6 +48,9 @@ import { qrSvgPath } from './qr';
  * - Authenticated sockets may call only `PHONE_METHODS`, with their parameters narrowed; they get
  *   the conversation events, never terminal output, browser requests, sign-in links or this
  *   service's own state (which holds the pairing key).
+ * - Conversations reach a phone in pages (`phone.tail`, `phone.item`; a snapshot from any method
+ *   is cut to its newest page), items trimmed to what the phone shows, and item events only for
+ *   the conversations it has open, trimmed the same way. Frames over 1 KB are compressed.
  */
 
 interface StoredPhone {
@@ -102,6 +117,266 @@ const PHONE_EVENTS = new Set<BridgeEvent['type']>([
 ]);
 
 const ALLOWED = new Set<string>(PHONE_METHODS);
+const OWN = new Set<string>(PHONE_OWN_METHODS);
+
+/** Events that carry a conversation's items: sent only for the conversations a phone has open. */
+const ITEM_EVENTS = new Set<BridgeEvent['type']>(['item.added', 'item.delta', 'item.patch', 'item.removed', 'timeline.reset']);
+/** Conversations a socket follows (the ones it opened last). */
+const WATCH_MAX = 8;
+
+// ── what a phone gets of a conversation ──
+//
+// Real conversations reach hundreds of MB (tool output, file reads, screenshots). A phone gets
+// pages of root items with what it shows: titles, kinds, states, a change's counts, texts up to a
+// generous length; `phone.item` returns one item with more of it.
+
+/** Root items per page, by default and at most. */
+export const PAGE_ITEMS = 40;
+const PAGE_MAX = 120;
+/** A page stops growing past this many bytes of JSON (it always holds a few items). */
+export const PAGE_BYTES = 90_000;
+/** How far a page reaches back for the message that opened its first turn. */
+const TURN_REACH = 160;
+/** Text lengths: an answer or a message, text between steps, thinking, a notice. */
+export const LIMITS = { answer: 8000, step: 320, thinking: 320, notice: 1200, field: 400 };
+/** `phone.item`: how much of one item. */
+const FULL = { text: 200_000, thinking: 40_000, field: 4000, outLines: 200, outChars: 12_000, files: 6, hunks: 4, hunkLines: 80, children: 40 };
+
+const cap = (s: string, n: number) => (s.length > n ? s.slice(0, n) : s);
+
+const DETAIL_TEXT = ['command', 'description', 'cwd', 'path', 'url', 'query', 'pattern', 'glob', 'subagent', 'server', 'tool', 'skill'] as const;
+
+function trimDetail(d: ToolDetail | undefined, n: number, full = false): ToolDetail {
+  const out: ToolDetail = {};
+  if (!d) return out;
+  for (const k of DETAIL_TEXT) if (typeof d[k] === 'string') out[k] = cap(d[k] as string, n);
+  if (d.range) out.range = d.range;
+  if (d.background) out.background = true;
+  if (full) {
+    for (const k of ['oldText', 'newText', 'content', 'prompt', 'plan'] as const) if (typeof d[k] === 'string') out[k] = cap(d[k] as string, n);
+    if (d.todos) out.todos = d.todos.slice(0, 40);
+  }
+  return out;
+}
+
+function lines(s: string, max: number, chars: number): string {
+  const all = s.split('\n');
+  const head = all.slice(0, max).join('\n');
+  return cap(head, chars) + (all.length > max ? `\n… ${all.length - max} more lines` : '');
+}
+
+function trimResult(r: ToolResult | undefined, full = false): ToolResult | undefined {
+  if (!r) return undefined;
+  const out: ToolResult = {};
+  for (const k of ['exitCode', 'isError', 'interrupted', 'truncated', 'count'] as const) if (r[k] !== undefined) (out as Record<string, unknown>)[k] = r[k];
+  if (r.agent) out.agent = r.agent;
+  if (r.diff) {
+    out.diff = r.diff.slice(0, full ? FULL.files : 24).map((f) => ({
+      path: cap(f.path, 400),
+      ...(f.oldPath ? { oldPath: cap(f.oldPath, 400) } : {}),
+      status: f.status,
+      additions: f.additions,
+      deletions: f.deletions,
+      ...(f.binary ? { binary: true } : {}),
+      hunks: full ? f.hunks.slice(0, FULL.hunks).map((h) => ({ ...h, lines: h.lines.slice(0, FULL.hunkLines).map((l) => cap(l, 400)) })) : [],
+    }));
+  }
+  if (full) {
+    if (r.text) out.text = lines(r.text, FULL.outLines, FULL.outChars);
+    if (r.stderr) out.stderr = lines(r.stderr, FULL.outLines, FULL.outChars);
+    if (r.files) out.files = r.files.slice(0, 50);
+    if (r.links) out.links = r.links.slice(0, 20);
+    if (r.file) out.file = { path: r.file.path, startLine: r.file.startLine, numLines: r.file.numLines, totalLines: r.file.totalLines, ...(r.file.content ? { content: lines(r.file.content, FULL.outLines, FULL.outChars) } : {}) };
+  }
+  return out;
+}
+
+function trimWorkflow(w: WorkflowRun): WorkflowRun {
+  return {
+    ...w,
+    phases: w.phases.slice(0, 24).map((p) => ({ title: cap(p.title, 120), ...(p.detail ? { detail: cap(p.detail, 200) } : {}) })),
+    agents: w.agents.slice(0, 40).map((a) => ({ ...a, label: cap(a.label, 120), ...(a.activity ? { activity: cap(a.activity, 160) } : {}), ...(a.error ? { error: cap(a.error, 200) } : {}) })),
+  };
+}
+
+/** Attachments without their data (a picture shows as its name). */
+const trimAttachments = (list: Attachment[] | undefined) => list?.map((a) => ({ id: a.id, kind: a.kind, name: cap(a.name, 120), ...(a.mime ? { mime: a.mime } : {}), ...(a.size ? { size: a.size } : {}) }));
+
+function hasMore(t: ToolItem): boolean {
+  const r = t.result;
+  const d = t.detail ?? {};
+  return !!(t.output || r?.text || r?.stderr || r?.diff?.some((f) => f.hunks.length) || r?.file?.content || r?.files?.length || r?.links?.length || d.oldText || d.newText || d.content || d.prompt || d.plan);
+}
+
+/**
+ * An item as a phone gets it. `role` says where it shows: an answer or a message (long texts),
+ * text between steps (a line), or `full` for `phone.item`.
+ */
+export function phoneItem(it: TimelineItem, opts: { role?: 'answer' | 'step' | 'full'; kids?: number } = {}): PhoneItem {
+  const full = opts.role === 'full';
+  const textCap = (s: string, n: number): { text: string; cut?: true } => (s.length > n ? { text: s.slice(0, n), cut: true } : { text: s });
+  // A `/until` check's output: the start of it (the phone shows a few lines).
+  const until = (it.type === 'user' || it.type === 'notice') && it.until?.check?.output ? { until: { ...it.until, check: { ...it.until.check, output: cap(it.until.check.output, full ? FULL.field : 3000) } } } : {};
+  switch (it.type) {
+    case 'user': {
+      const { attachments, ...rest } = it;
+      return { ...rest, ...textCap(it.text, full ? FULL.text : it.until ? LIMITS.step : LIMITS.answer), ...(attachments ? { attachments: trimAttachments(attachments) } : {}), ...until };
+    }
+    case 'text':
+      return { ...it, ...textCap(it.text, full ? FULL.text : opts.role === 'step' ? LIMITS.step : LIMITS.answer) };
+    case 'thinking':
+      return { ...it, ...textCap(it.text, full ? FULL.thinking : LIMITS.thinking) };
+    case 'notice':
+      return { ...it, text: cap(it.text, full ? FULL.field : LIMITS.notice), ...(it.detail ? { detail: cap(it.detail, full ? FULL.field : LIMITS.notice) } : {}), ...until };
+    case 'turn':
+      return it.error ? { ...it, error: cap(it.error, LIMITS.notice) } : it;
+    case 'tool': {
+      const n = full ? FULL.field : LIMITS.field;
+      const out: PhoneItem = {
+        id: it.id,
+        ts: it.ts,
+        ...(it.parentId ? { parentId: it.parentId } : {}),
+        type: 'tool',
+        name: cap(it.name, 120),
+        kind: it.kind,
+        title: cap(it.title, 300),
+        status: it.status,
+        detail: trimDetail(it.detail, n, full),
+        ...(it.endedAt ? { endedAt: it.endedAt } : {}),
+        ...(it.waitedMs ? { waitedMs: it.waitedMs } : {}),
+        ...(it.result ? { result: trimResult(it.result, full) } : {}),
+        ...(it.workflow ? { workflow: trimWorkflow(it.workflow) } : {}),
+        ...(opts.kids ? { kids: opts.kids } : {}),
+        ...(!full && hasMore(it) ? { more: true } : {}),
+      };
+      // A widget shows by its title only.
+      if (it.kind === 'widget') {
+        const title = (it.input as { title?: unknown } | undefined)?.title;
+        if (typeof title === 'string') (out as ToolItem).input = { title: cap(title, 200) };
+      }
+      if (full && it.output) (out as ToolItem).output = lines(it.output.replace(/\x1b\[[0-9;]*m/g, ''), FULL.outLines, FULL.outChars);
+      return out;
+    }
+  }
+}
+
+/** A patch to an item, trimmed like the item (no output, input or images; long text cut). */
+export function phonePatch(patch: Partial<TimelineItem>): Partial<PhoneItem> | null {
+  const p = { ...patch } as Record<string, unknown>;
+  delete p.input;
+  delete p.inputText;
+  delete p.output;
+  if (p.detail) p.detail = trimDetail(p.detail as ToolDetail, LIMITS.field);
+  if (p.result) p.result = trimResult(p.result as ToolResult);
+  if (p.workflow) p.workflow = trimWorkflow(p.workflow as WorkflowRun);
+  if (p.attachments) p.attachments = trimAttachments(p.attachments as Attachment[]);
+  if (typeof p.text === 'string' && p.text.length > LIMITS.answer) {
+    p.text = p.text.slice(0, LIMITS.answer);
+    p.cut = true;
+  }
+  if (typeof p.detail === 'string') p.detail = cap(p.detail, LIMITS.notice);
+  if (typeof p.error === 'string') p.error = cap(p.error, LIMITS.notice);
+  if ((patch as Partial<ToolItem>).output || (patch as Partial<ToolItem>).result?.text) p.more = true;
+  return Object.keys(p).length ? (p as Partial<PhoneItem>) : null;
+}
+
+const turnStart = (it: TimelineItem) => it.type === 'user' && !it.steered;
+
+/**
+ * One page of a conversation's root items, newest last: up to `limit` before `before` (or the
+ * newest), reaching back to the message that opened the first turn when that is near, within a
+ * byte budget. Text between steps is cut to a line; answers keep their length.
+ */
+export function phonePage(items: TimelineItem[], opts: { before?: string; limit?: number; budget?: number } = {}): { items: PhoneItem[]; cursor?: string; total: number } {
+  const roots: TimelineItem[] = [];
+  const kids = new Map<string, number>();
+  for (const it of items) {
+    if (it.parentId) kids.set(it.parentId, (kids.get(it.parentId) ?? 0) + 1);
+    else roots.push(it);
+  }
+  const total = roots.length;
+  let end = total;
+  if (opts.before) {
+    end = roots.findIndex((r) => r.id === opts.before);
+    if (end < 0) return { items: [], total };
+  }
+  const limit = Math.max(1, Math.min(PAGE_MAX, opts.limit ?? PAGE_ITEMS));
+  const budget = opts.budget ?? PAGE_BYTES;
+  // A text item is an answer unless a step follows it in its turn (then it shows as a step's line).
+  const roleAt = (i: number): 'answer' | 'step' => {
+    if (roots[i].type !== 'text') return 'answer';
+    for (let j = i + 1; j < total; j++) {
+      const t = roots[j];
+      if (turnStart(t) || t.type === 'turn') return 'answer';
+      if (t.type === 'tool' || t.type === 'thinking') return 'step';
+    }
+    return 'answer';
+  };
+  const out: PhoneItem[] = [];
+  let bytes = 0;
+  let start = end;
+  const take = (i: number) => {
+    const p = phoneItem(roots[i], { role: roleAt(i), kids: kids.get(roots[i].id) });
+    out.push(p);
+    bytes += JSON.stringify(p).length;
+    start = i;
+  };
+  while (start > 0 && end - start < limit && (bytes < budget || end - start < 4)) take(start - 1);
+  // Reach back to the message that opened this turn when it is near (a turn is not split).
+  if (start > 0 && !turnStart(roots[start])) {
+    let s = start - 1;
+    while (s > 0 && start - s < TURN_REACH && !turnStart(roots[s])) s--;
+    if (turnStart(roots[s])) while (start > s && bytes < budget * 1.6) take(start - 1);
+  }
+  out.reverse();
+  return { items: out, ...(start > 0 ? { cursor: roots[start].id } : {}), total };
+}
+
+const trimQueue = (q: QueuedMessage[]) => q.map((m) => (m.attachments ? { ...m, attachments: trimAttachments(m.attachments) } : m)) as QueuedMessage[];
+
+/** A snapshot as a phone gets it: the newest page instead of every item. */
+export function phoneTail(snap: SessionSnapshot, opts: { before?: string; limit?: number } = {}): PhoneTail {
+  const page = phonePage(snap.items, opts);
+  return { ...snap, queue: trimQueue(snap.queue ?? []), items: page.items, total: page.total, ...(page.cursor ? { cursor: page.cursor } : {}) };
+}
+
+/** One item with more of it, and the last steps nested under it. */
+export function phoneDetail(items: TimelineItem[], itemId: string): { item: PhoneItem; children: PhoneItem[] } {
+  const it = items.find((i) => i.id === itemId);
+  if (!it) throw new Error('That part of the conversation is no longer there');
+  const kids = items.filter((i) => i.parentId === itemId);
+  const count = new Map<string, number>();
+  for (const k of items) if (k.parentId) count.set(k.parentId, (count.get(k.parentId) ?? 0) + 1);
+  return { item: phoneItem(it, { role: 'full', kids: kids.length }), children: kids.slice(-FULL.children).map((k) => phoneItem(k, { role: 'step', kids: count.get(k.id) })) };
+}
+
+/** An event as a phone gets it, or null when it does not need it. */
+export function phoneEvent(event: BridgeEvent): BridgeEvent | PhoneReset | null {
+  switch (event.type) {
+    case 'item.added':
+      return { ...event, item: phoneItem(event.item, { role: event.item.type === 'text' && event.item.parentId ? 'step' : 'answer' }) };
+    case 'item.delta':
+      // Live tool output and streamed tool input stay on the desktop (`phone.item` has it).
+      return event.field === 'text' ? event : null;
+    case 'item.patch': {
+      const patch = phonePatch(event.patch);
+      return patch ? { ...event, patch } : null;
+    }
+    case 'timeline.reset': {
+      const page = phonePage(event.items);
+      return { type: 'timeline.reset', sessionId: event.sessionId, items: page.items, total: page.total, ...(page.cursor ? { cursor: page.cursor } : {}) };
+    }
+    case 'permission.added':
+    case 'question.added':
+      return event;
+    case 'queue.updated':
+      return { ...event, queue: trimQueue(event.queue) };
+    default:
+      return event;
+  }
+}
+
+const isSnapshot = (r: unknown): r is SessionSnapshot => !!r && typeof r === 'object' && Array.isArray((r as SessionSnapshot).items) && !!(r as SessionSnapshot).session;
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -266,7 +541,12 @@ export class PhoneService {
     });
     server.headersTimeout = 10_000;
     server.requestTimeout = 10_000;
-    const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
+    // Compressed frames (permessage-deflate) above 1 KB: JSON of a conversation shrinks several times over Wi-Fi.
+    const wss = new WebSocketServer({
+      noServer: true,
+      maxPayload: 16 * 1024 * 1024,
+      perMessageDeflate: { threshold: 1024, zlibDeflateOptions: { level: 5 }, concurrencyLimit: 4 },
+    });
     server.on('upgrade', (req, socket, head) => this.onUpgrade(wss, req, socket, head));
     wss.on('connection', (ws: WebSocket, req: IncomingMessage) => this.onSocket(ws, req));
     this.server = server;
@@ -499,11 +779,23 @@ export class PhoneService {
     let set = this.live.get(device.id);
     if (!set) this.live.set(device.id, (set = new Set()));
     set.add(ws);
-    this.sendFrame(ws, { welcome: { deviceId: device.id, desktop: os.hostname(), version: VERSION } });
+    // Its addresses now: a phone keeps new ones (Tailscale, a new network) and reaches it there later.
+    this.sendFrame(ws, { welcome: { deviceId: device.id, desktop: os.hostname(), version: VERSION, hosts: lanAddresses() } });
     this.changed();
 
+    // The conversations this socket has open (opened last at the end): their items' events reach it.
+    const watching: string[] = [];
+    const watch = (id: string) => {
+      const i = watching.indexOf(id);
+      if (i >= 0) watching.splice(i, 1);
+      watching.push(id);
+      if (watching.length > WATCH_MAX) watching.shift();
+    };
     const unsubscribe = this.app.subscribe((event) => {
-      if (PHONE_EVENTS.has(event.type)) this.sendFrame(ws, { event });
+      if (!PHONE_EVENTS.has(event.type)) return;
+      if (ITEM_EVENTS.has(event.type) && !watching.includes((event as { sessionId: string }).sessionId)) return;
+      const e = phoneEvent(event);
+      if (e) this.sendFrame(ws, { event: e as BridgeEvent });
     });
     let alive = true;
     ws.on('pong', () => (alive = true));
@@ -521,17 +813,37 @@ export class PhoneService {
         return;
       }
       if (typeof req?.id !== 'number' || typeof req.method !== 'string') return;
-      if (!ALLOWED.has(req.method)) {
+      if (!ALLOWED.has(req.method) && !OWN.has(req.method)) {
         this.sendFrame(ws, { id: req.id, ok: false, error: `Not available from the phone: ${req.method}` });
         return;
       }
       try {
-        const params = narrow(req.method, req.params && typeof req.params === 'object' ? (req.params as Record<string, unknown>) : {});
-        let result: unknown = await this.app.call(req.method as RpcName, params as never);
-        // Folder browsing for a new chat: folders only, never file names.
-        if (req.method === 'fs.list' && result && typeof result === 'object') {
-          const r = result as { entries?: { dir: boolean }[] };
-          result = { ...r, entries: (r.entries ?? []).filter((e) => e.dir) };
+        const raw = req.params && typeof req.params === 'object' ? (req.params as Record<string, unknown>) : {};
+        const own = req.method as string;
+        let result: unknown;
+        if (own === 'phone.tail' || own === 'phone.item') {
+          const sessionId = String(raw.sessionId ?? '');
+          // The session's own snapshot (loads it from disk the first time, marks it read), then trimmed.
+          const snap = await this.app.call('session.snapshot', { sessionId });
+          if (own === 'phone.tail') {
+            watch(sessionId);
+            const before = typeof raw.before === 'string' ? raw.before : undefined;
+            const limit = typeof raw.limit === 'number' ? raw.limit : undefined;
+            result = phoneTail(snap, { before, limit });
+          } else result = phoneDetail(snap.items, String(raw.itemId ?? ''));
+        } else {
+          const params = narrow(req.method, raw);
+          result = await this.app.call(req.method as RpcName, params as never);
+          // Folder browsing for a new chat: folders only, never file names.
+          if (req.method === 'fs.list' && result && typeof result === 'object') {
+            const r = result as { entries?: { dir: boolean }[] };
+            result = { ...r, entries: (r.entries ?? []).filter((e) => e.dir) };
+          }
+          // A conversation (opened, created, carried to another account): its newest page, never all of it.
+          if (isSnapshot(result)) {
+            watch(result.session.id);
+            result = phoneTail(result);
+          }
         }
         this.sendFrame(ws, { id: req.id, ok: true, result });
       } catch (err) {

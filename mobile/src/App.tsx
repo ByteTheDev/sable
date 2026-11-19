@@ -1,17 +1,20 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import type { SessionMeta } from '@shared/protocol';
 import { goBack, pushBack } from '@m/lib/back';
 import { conn } from '@m/lib/conn';
 import { inForeground, notify, onAppState, onBackButton, onNotificationTap, onPairLink } from '@m/lib/native';
 import { nav, useNav } from '@m/lib/nav';
-import { closeSessionData, getState, refresh, setState, subscribeStore, useStore } from '@m/lib/store';
+import { closeSessionData, getState, loadCachedHome, refresh, setState, subscribeStore, useStore } from '@m/lib/store';
 import { SPRING } from '@m/ui/Sheet';
 import { fieldBeat } from '@m/ui/Field';
-import { Chat } from './screens/Chat';
 import { Home } from './screens/Home';
 import { Pair } from './screens/Pair';
 import { prefs, Settings } from './screens/Settings';
+
+// The conversation (markdown, steps, composer) loads as its own chunk: home draws first, then it is fetched while idle.
+const loadChat = () => import('./screens/Chat');
+const Chat = lazy(() => loadChat().then((m) => ({ default: m.Chat })));
 
 /** Notifies when a turn ends or starts waiting on you while the app is in the background. */
 function watchTurns() {
@@ -64,14 +67,17 @@ export function App() {
       onNotificationTap((id) => nav.chat(id)),
     ];
     const stopWatch = subscribeStore(watchTurns());
+    const idle = window.setTimeout(() => void loadChat(), 400);
     // Back where it was: Android may have closed the app in the background.
     void conn.init().then(() => {
-      if (conn.pairing) nav.restore();
+      // The list of chats as it was last time, at once; the desktop's answer replaces it.
+      if (conn.pairing) loadCachedHome(), nav.restore();
       setReady(true);
     });
     return () => {
       offs.forEach((f) => f());
       stopWatch();
+      clearTimeout(idle);
     };
   }, []);
 
@@ -112,7 +118,13 @@ export function App() {
             exit={{ x: '100%', transition: { type: 'spring', stiffness: 520, damping: 48 } }}
             transition={SPRING}
           >
-            {r.name === 'chat' ? <Chat id={r.id} /> : <Settings />}
+            {r.name === 'chat' ? (
+              <Suspense fallback={<div className="screen chat" />}>
+                <Chat id={r.id} />
+              </Suspense>
+            ) : (
+              <Settings />
+            )}
           </motion.div>
         ))}
       </AnimatePresence>

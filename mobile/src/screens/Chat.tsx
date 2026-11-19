@@ -4,8 +4,8 @@ import { baseName } from '@desk/lib/format';
 import { conn } from '@m/lib/conn';
 import { haptic, openExternal } from '@m/lib/native';
 import { nav } from '@m/lib/nav';
-import { getState, openSession, sessionData, useStore } from '@m/lib/store';
-import { buildTurns, shapeKey } from '@m/lib/turns';
+import { applyOlder, fetchOlder, getState, openSession, sessionData, showCached, useStore } from '@m/lib/store';
+import { buildTurns, reuseTurns, shapeKey, type Turn } from '@m/lib/turns';
 import { Field, paletteFor } from '@m/ui/Field';
 import { Icon } from '@m/ui/icons';
 import { ProviderMark, Ring, StatusMark } from '@m/ui/marks';
@@ -21,13 +21,15 @@ const PAGE = 24;
 export function Chat({ id }: { id: string }) {
   const s = useStore((st) => st.sessions[id]);
   const loaded = useStore((st) => !!st.data[id]);
-  const listed = useStore((st) => st.loaded);
+  const listed = useStore((st) => !!st.fresh);
   const connState = useStore((st) => st.conn);
   const [error, setError] = useState<string>();
   const [remote, setRemote] = useState(false);
 
-  useEffect(() => {
+  // The newest page as the phone last had it shows at once; the desktop's follows.
+  useLayoutEffect(() => {
     setError(undefined);
+    showCached(id);
     if (getState().conn === 'open') void openSession(id).catch((err) => setError((err as Error).message));
   }, [id]);
 
@@ -120,10 +122,19 @@ function Thread({ id }: { id: string }) {
   const roots = useStore((st) => sessionData(st, id).roots);
   const items = useStore((st) => sessionData(st, id).items);
   const status = useStore((st) => st.sessions[id]?.status);
+  const cursor = useStore((st) => sessionData(st, id).cursor);
   const key = shapeKey(roots, items);
   // Turn structure depends only on order and kinds: recomputed when those change, not on every streamed word.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const turns = useMemo(() => buildTurns(roots, items), [key]);
+  // Turns that did not change keep their object, so their rows do not render again.
+  const prevTurns = useRef<Turn[]>([]);
+  const turns = useMemo(() => {
+    const t = reuseTurns(buildTurns(roots, items), prevTurns.current);
+    prevTurns.current = t;
+    return t;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  const [older, setOlder] = useState(false);
+  const olderBusy = useRef(false);
   const [count, setCount] = useState(PAGE);
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -153,6 +164,9 @@ function Thread({ id }: { id: string }) {
         return;
       }
       if (atBottom.current) toBottom();
+      // A short page that does not fill the screen: the one before it comes at once.
+      const sc = scroller.current;
+      if (sc && sc.scrollHeight < sc.clientHeight + 400) olderRef.current();
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -174,11 +188,41 @@ function Thread({ id }: { id: string }) {
     if (gap < 48) atBottom.current = true;
     else if (byHand) atBottom.current = false;
     setShowJump(gap > 600);
-    if (el.scrollTop < 400 && start > 0 && !anchor.current) {
-      anchor.current = { h: el.scrollHeight, top: el.scrollTop };
-      setCount((c) => c + PAGE);
+    if (el.scrollTop < 600 && !anchor.current) {
+      if (start > 0) {
+        anchor.current = { h: el.scrollHeight, top: el.scrollTop };
+        setCount((c) => c + PAGE);
+      } else olderRef.current();
     }
   };
+
+  // Scrolling up past what the phone holds asks the desktop for the page before (kept in place: no jump).
+  const loadOlder = () => {
+    if (olderBusy.current || !cursor || start > 0) return;
+    olderBusy.current = true;
+    setOlder(true);
+    void fetchOlder(id)
+      .then((pages) => {
+        const sc = scroller.current;
+        if (!pages.length || !sc) return;
+        const a = (anchor.current = { h: sc.scrollHeight, top: sc.scrollTop });
+        let added = 0;
+        for (const r of pages) {
+          applyOlder(id, r);
+          added += r.page.items.length;
+        }
+        setCount((c) => c + added);
+        // Steps that went into a folded line add no height: then nothing moves and the next scroll may ask again.
+        requestAnimationFrame(() => requestAnimationFrame(() => anchor.current === a && (anchor.current = null)));
+      })
+      .catch(() => {})
+      .finally(() => {
+        olderBusy.current = false;
+        setOlder(false);
+      });
+  };
+  const olderRef = useRef(loadOlder);
+  olderRef.current = loadOlder;
 
   // Sending scrolls to the newest.
   const lastUser = useMemo(() => [...turns].reverse().find((t) => t.user)?.user, [turns]);
@@ -197,7 +241,11 @@ function Thread({ id }: { id: string }) {
       onTouchCancel={() => (touch.current = { down: false, at: performance.now() })}
     >
       <div className="thread-content" ref={content}>
-        {start > 0 && <div className="thread-more">Earlier messages</div>}
+        {(start > 0 || cursor) && (
+          <div className="thread-more" aria-busy={older || undefined}>
+            {older ? <Ring size={13} /> : <span className="thread-more-line" />}
+          </div>
+        )}
         {turns.length === 0 && <p className="empty thread-empty">Send a message to start.</p>}
         {shown.map((t, i) => (
           <TurnView key={t.user ?? `t${start + i}`} sid={id} turn={t} live={live && start + i === turns.length - 1} />

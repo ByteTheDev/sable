@@ -18,6 +18,8 @@ export interface Turn {
   end?: string;
   /** Messages steered into this turn while it ran. */
   steered: string[];
+  /** Where a `/until` loop ended: under the answer. */
+  ends: string[];
 }
 
 const BLOCK_KINDS = new Set(['agent', 'widget']);
@@ -27,7 +29,7 @@ export function buildTurns(roots: string[], items: Record<string, TimelineItem>)
   const turns: Turn[] = [];
   let cur: Turn | undefined;
   const open = (user?: string) => {
-    cur = { user, steps: [], blocks: [], notices: [], answer: [], steered: [] };
+    cur = { user, steps: [], blocks: [], notices: [], answer: [], steered: [], ends: [] };
     turns.push(cur);
     return cur;
   };
@@ -62,7 +64,7 @@ export function buildTurns(roots: string[], items: Record<string, TimelineItem>)
         else t.steps.push(id);
         break;
       case 'notice':
-        t.notices.push(id);
+        (it.until ? t.ends : t.notices).push(id);
         break;
       case 'turn':
         t.end = id;
@@ -70,6 +72,19 @@ export function buildTurns(roots: string[], items: Record<string, TimelineItem>)
     }
   }
   return turns;
+}
+
+const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/** Keeps the previous object of every turn that did not change (its row then does not render again). */
+export function reuseTurns(next: Turn[], prev: Turn[]): Turn[] {
+  if (!prev.length) return next;
+  const old = new Map<string, Turn>();
+  for (const t of prev) if (t.user) old.set(t.user, t);
+  return next.map((t) => {
+    const o = t.user ? old.get(t.user) : prev[0]?.user ? undefined : prev[0];
+    return o && o.end === t.end && same(o.steps, t.steps) && same(o.blocks, t.blocks) && same(o.notices, t.notices) && same(o.answer, t.answer) && same(o.steered, t.steered) && same(o.ends, t.ends) ? o : t;
+  });
 }
 
 /** A string that changes only when the turn structure would: order and types of the roots. */
