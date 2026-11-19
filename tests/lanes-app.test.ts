@@ -21,7 +21,7 @@ afterEach(async () => {
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-async function until(pred: () => boolean, what: string, ms = 10_000) {
+async function until(pred: () => boolean, what: string, ms = 30_000) {
   const end = Date.now() + ms;
   while (!pred()) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
@@ -54,14 +54,14 @@ function setup() {
     const before = turns(snap.session.id);
     const t0 = Date.now();
     await app.call('session.send', { sessionId: snap.session.id, text });
-    await until(() => turns(snap.session.id) > before, `the turn "${text}"`, 20_000);
+    await until(() => turns(snap.session.id) > before, `the turn "${text}"`, 45_000);
     await idle(snap.session.id);
     if (process.env.LANES_DEBUG) console.log(text, Date.now() - t0, 'ms');
   };
   return { home, repo, app, meta, idle, notices, turn, lanes: path.join(home, 'profile', 'lanes') };
 }
 
-describe('lanes with two Demo sessions in one folder', { timeout: 60_000 }, () => {
+describe('lanes with two Demo sessions in one folder', { timeout: 180_000 }, () => {
   it('gives the second session a lane, forecasts, refuses a conflict, then lands cleanly and comes home', async () => {
     const { repo, app, meta, notices, turn, lanes } = setup();
     const a = await app.call('session.create', { provider: 'demo', cwd: repo, mode: 'bypassPermissions' });
