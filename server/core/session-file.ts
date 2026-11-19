@@ -1,5 +1,6 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, rmSync, statSync } from 'node:fs';
 import { open, rename, writeFile } from 'node:fs/promises';
+import { Worker } from 'node:worker_threads';
 import type { QueuedMessage, TimelineItem, Todo } from '../../shared/protocol';
 
 /**
@@ -49,7 +50,55 @@ export const SMALL_BASE = 4 * 1024 * 1024;
 /** Items at the end of the chat a new base leaves to the tail (where streaming happens). */
 export const TAIL_KEEP = 24;
 /** Above this size a base is read line by line (one string cannot hold much more than 512 MB). */
-export const READ = { byLineAbove: 256 * 1024 * 1024 };
+export const READ = { byLineAbove: 256 * 1024 * 1024, inWorkerAbove: 16 * 1024 * 1024 };
+
+type BaseFile = { gen?: number; items: TimelineItem[]; todos?: Todo[]; queue?: QueuedMessage[] };
+
+/**
+ * The base read in a worker thread (plain CommonJS, so it runs the same in tests, the dev server and
+ * the packaged app): the same rules as `readJson` / `readBaseByLine`.
+ */
+const WORKER = `
+const { parentPort, workerData } = require('node:worker_threads');
+const fs = require('node:fs');
+const { file, byLine } = workerData;
+const whole = () => JSON.parse(fs.readFileSync(file, 'utf8'));
+function lines() {
+  const buf = fs.readFileSync(file);
+  const at = buf.indexOf(10);
+  if (at < 0) return null;
+  const m = /^\\{"gen":(\\d+),"items":\\[$/.exec(buf.subarray(0, at).toString('utf8'));
+  if (!m) return null;
+  const items = [];
+  let pos = at + 1;
+  for (let nl = buf.indexOf(10, pos); nl >= 0; nl = buf.indexOf(10, pos)) {
+    const line = buf.subarray(pos, nl).toString('utf8');
+    items.push(JSON.parse(line.endsWith(',') ? line.slice(0, -1) : line));
+    pos = nl + 1;
+  }
+  const foot = buf.subarray(pos).toString('utf8');
+  if (!foot.startsWith(']')) return null;
+  const rest = JSON.parse('{"items":[' + foot);
+  return { gen: Number(m[1]), items, todos: rest.todos, queue: rest.queue };
+}
+try {
+  parentPort.postMessage({ ok: true, value: (byLine && lines()) || whole() });
+} catch {
+  parentPort.postMessage({ ok: false });
+}
+`;
+
+function readInWorker(file: string, byLine: boolean): Promise<Read<BaseFile>> {
+  return new Promise((resolve, reject) => {
+    const w = new Worker(WORKER, { eval: true, workerData: { file, byLine } });
+    w.once('message', (r: Read<BaseFile>) => {
+      resolve(r);
+      void w.terminate();
+    });
+    w.once('error', reject);
+    w.once('exit', (code) => reject(new Error(`The reading worker ended (${code})`)));
+  });
+}
 /** Pieces of the base written per step (characters). */
 const CHUNK = 1 << 20;
 
@@ -165,9 +214,31 @@ export class SessionFiles {
     } catch {
       /* read below says */
     }
-    let read: Read<{ gen?: number; items: TimelineItem[]; todos?: Todo[]; queue?: QueuedMessage[] }> = size > READ.byLineAbove ? readBaseByLine(file) : readJson<SessionData & { gen?: number }>(file);
+    let read: Read<BaseFile> = size > READ.byLineAbove ? readBaseByLine(file) : readJson<BaseFile>(file);
     // A big file of an older version is one long line (up to about 512 MB): read it whole.
-    if (!read.ok && size > READ.byLineAbove) read = readJson<SessionData & { gen?: number }>(file);
+    if (!read.ok && size > READ.byLineAbove) read = readJson<BaseFile>(file);
+    return this.finish(id, read, size);
+  }
+
+  /**
+   * As `load`, but a big file is read and parsed in a worker thread: the main process (the desktop's
+   * window and every other chat) keeps running while a chat of hundreds of megabytes loads; only
+   * handing the parsed timeline over takes a moment on it.
+   */
+  async loadAsync(id: string): Promise<SessionData> {
+    const file = this.pathOf(id);
+    let size = 0;
+    try {
+      size = existsSync(file) ? statSync(file).size : 0;
+    } catch {
+      /* read below says */
+    }
+    if (size < READ.inWorkerAbove) return this.load(id);
+    const read = await readInWorker(file, size > READ.byLineAbove).catch(() => undefined);
+    return read ? this.finish(id, read, size) : this.load(id);
+  }
+
+  private finish(id: string, read: Read<BaseFile>, size: number): SessionData {
     if (!read.ok) {
       this.unreadable.add(id);
       return { items: [], todos: [], unreadable: true };

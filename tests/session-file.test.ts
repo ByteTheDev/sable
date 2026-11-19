@@ -226,6 +226,30 @@ describe('session files: a base and a small tail', () => {
     }
   });
 
+  it('reads a big chat in a worker thread with the same result as on the main thread', async () => {
+    const { files, pathOf, tail } = setup();
+    const was = { ...READ };
+    READ.inWorkerAbove = 0;
+    try {
+      const items = [...big(), text('line one\nline two', 'q')];
+      writeFileSync(pathOf('old'), JSON.stringify({ items, todos: [] }));
+      expect(await new SessionFiles(pathOf).loadAsync('old')).toEqual(new SessionFiles(pathOf).load('old'));
+      // A new base read line by line, with a tail.
+      READ.byLineAbove = 1024;
+      await files.save('s', save(items, 'all'));
+      items.push(text('more', 'm'));
+      await files.save('s', save(items, new Set(['m'])));
+      expect(existsSync(tail('s'))).toBe(true);
+      const inWorker = await new SessionFiles(pathOf).loadAsync('s');
+      expect(inWorker.items).toEqual(items);
+      expect(inWorker).toEqual(new SessionFiles(pathOf).load('s'));
+      writeFileSync(pathOf('bad'), '{"items":[');
+      expect(await new SessionFiles(pathOf).loadAsync('bad')).toMatchObject({ unreadable: true, items: [] });
+    } finally {
+      Object.assign(READ, was);
+    }
+  });
+
   it('settles a base up to the last finished turn, and before a step still running', () => {
     const items = [text('a', 'a'), turn('t'), text('b', 'b')];
     expect(settledEnd(items)).toBe(2);

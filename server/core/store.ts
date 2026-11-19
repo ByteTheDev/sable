@@ -149,6 +149,11 @@ export class Store {
     return this.sessionFiles.load(id);
   }
 
+  /** As `loadSession`, a big file read in a worker thread (the main process keeps running). */
+  loadSessionAsync(id: string): Promise<SessionData> {
+    return this.sessionFiles.loadAsync(id);
+  }
+
   /** `data` is read when the write happens; its `dirty` names the items changed since the last save. */
   saveSession(id: string, data: () => SessionSave) {
     this.sessionPending.set(id, data);

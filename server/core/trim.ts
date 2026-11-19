@@ -20,6 +20,15 @@ export const CUT_AT = 16_000;
  * at first (300 px of output or code), so the step looks the same before its whole text arrives.
  */
 export const KEEP = { head: 3_000, tail: 3_000 };
+/**
+ * Steps before the last few turns are rarely opened (and fetched whole in a few ms when they are):
+ * they keep only a short start and end, so a chat of hundreds of megabytes reaches the window in a
+ * few. The last `RECENT_TURNS` turns keep `KEEP`.
+ */
+export const OLD = { at: 1_200, head: 600, tail: 300 };
+export const RECENT_TURNS = 3;
+type Cut = { at: number; head: number; tail: number };
+const RECENT: Cut = { at: CUT_AT, head: KEEP.head, tail: KEEP.tail };
 /** A cut file list keeps this many paths. */
 const KEEP_FILES = 200;
 
@@ -74,28 +83,28 @@ const size = (list: string[]) => list.reduce((n, s) => n + s.length + 3, 0);
  * pictures go, a long file list keeps its first paths. Its diff (edits), answers and the agent's
  * figures stay as they are. The same object when nothing is long.
  */
-function cutResult(r: ToolResult): ToolResult {
+function cutResult(r: ToolResult, c: Cut): ToolResult {
   let out: ToolResult | undefined;
   const put = <K extends keyof ToolResult>(k: K, v: ToolResult[K]) => {
     out ??= { ...r };
     if (v === undefined) delete out[k];
     else out[k] = v;
   };
-  if (r.text && r.text.length > CUT_AT) put('text', headTail(r.text));
-  if (r.stderr && r.stderr.length > CUT_AT) put('stderr', headTail(r.stderr));
-  if (r.file?.content && r.file.content.length > CUT_AT) put('file', { ...r.file, content: headOnly(r.file.content) });
-  if (r.images?.length && size(r.images) > CUT_AT) put('images', undefined);
-  if (r.files && r.files.length > KEEP_FILES && size(r.files) > CUT_AT) put('files', r.files.slice(0, KEEP_FILES));
+  if (r.text && r.text.length > c.at) put('text', headTail(r.text, c.head, c.tail));
+  if (r.stderr && r.stderr.length > c.at) put('stderr', headTail(r.stderr, c.head, c.tail));
+  if (r.file?.content && r.file.content.length > c.at) put('file', { ...r.file, content: headOnly(r.file.content, c.head + c.tail) });
+  if (r.images?.length && size(r.images) > c.at) put('images', undefined);
+  if (r.files && r.files.length > KEEP_FILES && size(r.files) > c.at) put('files', r.files.slice(0, KEEP_FILES));
   return out ?? r;
 }
 
 /** An item as a window gets it in a whole timeline: a settled step with long output or result cut and marked `more`; anything else as it is. */
-export function cutItem(it: TimelineItem): TimelineItem {
+export function cutItem(it: TimelineItem, c: Cut = RECENT): TimelineItem {
   if (it.type !== 'tool' || !settled(it)) return it;
   let out: ToolItem | undefined;
-  if (it.output && it.output.length > CUT_AT) (out ??= { ...it }).output = headTail(it.output);
+  if (it.output && it.output.length > c.at) (out ??= { ...it }).output = headTail(it.output, c.head, c.tail);
   if (it.result) {
-    const r = cutResult(it.result);
+    const r = cutResult(it.result, c);
     if (r !== it.result) (out ??= { ...it }).result = r;
   }
   if (!out) return it;
@@ -103,7 +112,17 @@ export function cutItem(it: TimelineItem): TimelineItem {
   return out;
 }
 
-export const cutItems = (items: TimelineItem[]): TimelineItem[] => items.map(cutItem);
+/** A whole timeline for a window: steps of the last `RECENT_TURNS` turns cut to `KEEP`, older ones to `OLD`. */
+export function cutItems(items: TimelineItem[]): TimelineItem[] {
+  let from = 0;
+  for (let i = items.length - 1, seen = 0; i >= 0; i--) {
+    if (items[i].type === 'turn' && ++seen > RECENT_TURNS) {
+      from = i + 1;
+      break;
+    }
+  }
+  return items.map((it, i) => cutItem(it, i < from ? OLD : RECENT));
+}
 
 /** A conversation as RPC results carry it (session.snapshot, session.create, session.fork, ...). */
 export const isSnapshot = (r: unknown): r is SessionSnapshot => !!r && typeof r === 'object' && Array.isArray((r as SessionSnapshot).items) && !!(r as SessionSnapshot).session;

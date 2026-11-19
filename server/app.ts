@@ -642,7 +642,31 @@ export class App {
   /** Loads a restored session's timeline from disk the first time it is needed. */
   private hydrate(rt: SessionRuntime) {
     if (!this.lazy.delete(rt.id)) return;
-    const file = this.store.loadSession(rt.id);
+    this.loadInto(rt, this.store.loadSession(rt.id));
+  }
+
+  private reading = new Map<string, Promise<void>>();
+
+  /**
+   * As `hydrate`, with a big file read in a worker thread, so opening a chat of hundreds of megabytes
+   * does not hold the app up. A sync `hydrate` meanwhile (a message sent to it) simply wins.
+   */
+  private hydrateAsync(rt: SessionRuntime): Promise<void> {
+    if (!this.lazy.has(rt.id)) return Promise.resolve();
+    let run = this.reading.get(rt.id);
+    if (!run) {
+      run = this.store
+        .loadSessionAsync(rt.id)
+        .then((file) => {
+          if (this.lazy.delete(rt.id)) this.loadInto(rt, file);
+        })
+        .finally(() => this.reading.delete(rt.id));
+      this.reading.set(rt.id, run);
+    }
+    return run;
+  }
+
+  private loadInto(rt: SessionRuntime, file: ReturnType<Store['loadSession']>) {
     rt.load(file.items, file.todos, file.queue ?? []);
     rt.markSaved();
     // A file that is there but cannot be read is left exactly as it is (nothing is written to it).
@@ -1702,8 +1726,9 @@ export class App {
       return rt.snapshot();
     });
 
-    this.register('session.snapshot', ({ sessionId }) => {
+    this.register('session.snapshot', async ({ sessionId }) => {
       const rt = this.runtime(sessionId);
+      await this.hydrateAsync(rt).catch(() => {});
       this.hydrate(rt);
       if (rt.meta.unread) rt.update({ unread: false });
       return rt.snapshot();
