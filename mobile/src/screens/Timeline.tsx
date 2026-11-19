@@ -2,11 +2,12 @@ import { animate } from 'motion';
 import { AnimatePresence, motion } from 'motion/react';
 import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { NoticeItem, TextItem, ThinkingItem, TimelineItem, ToolItem, TurnItem, UserItem } from '@shared/protocol';
-import { formatDuration, formatTokens, plural } from '@desk/lib/format';
+import { formatDuration, formatTokens, plural, resetIn } from '@desk/lib/format';
+import { useNow } from '@m/lib/useNow';
 import { conn } from '@m/lib/conn';
-import { renderMarkdown } from '@m/lib/md';
+import { diffLines, renderMarkdown } from '@m/lib/md';
 import { haptic } from '@m/lib/native';
-import { sessionData, useStore } from '@m/lib/store';
+import { sessionData, setState, useStore } from '@m/lib/store';
 import { takeFlight } from '@m/lib/flight';
 import type { Turn } from '@m/lib/turns';
 import { Icon, TOOL_ICON } from '@m/ui/icons';
@@ -98,6 +99,9 @@ function Steps({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) 
   const lastStep = useItem<TimelineItem>(sid, turn.steps[turn.steps.length - 1]);
   const n = turn.steps.length;
 
+  // While it runs, the step in progress is the line itself; the trail under it shows the ones before.
+  const current = live && ((lastStep?.type === 'thinking' && lastStep.streaming) || (lastStep?.type === 'tool' && (lastStep.status === 'running' || lastStep.status === 'pending')));
+  const trail = open ? turn.steps : current ? turn.steps.slice(-4, -1) : turn.steps.slice(-3);
   const label = live
     ? activity || (lastStep?.type === 'tool' ? lastStep.title : lastStep?.type === 'thinking' ? 'Thinking' : 'Working')
     : end
@@ -122,7 +126,7 @@ function Steps({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) 
         {n > 0 && <Icon name="caretDown" size={13} weight="bold" className="steps-caret" />}
       </button>
       <AnimatePresence initial={false}>
-        {(open || live) && n > 0 && (
+        {(open || live) && trail.length > 0 && (
           <motion.div
             className="steps-list"
             initial={{ height: 0, opacity: 0 }}
@@ -130,7 +134,7 @@ function Steps({ sid, turn, live }: { sid: string; turn: Turn; live: boolean }) 
             exit={{ height: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 420, damping: 40 }}
           >
-            {(open ? turn.steps : turn.steps.slice(-3)).map((id) => (
+            {trail.map((id) => (
               <Step key={id} sid={sid} id={id} quiet={!open} />
             ))}
           </motion.div>
@@ -160,7 +164,7 @@ const Step = memo(function Step({ sid, id, quiet }: { sid: string; id: string; q
       <AnimatePresence initial={false}>
         {open && detail && (
           <motion.pre className="step-detail" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: 'spring', stiffness: 420, damping: 40 }}>
-            {detail}
+            <Detail d={detail} />
           </motion.pre>
         )}
       </AnimatePresence>
@@ -182,23 +186,38 @@ function ThinkingStep({ it, quiet }: { it: ThinkingItem; quiet?: boolean }) {
   );
 }
 
-function toolDetail(it: ToolItem): string {
+/** What a step did, for its detail: the command or target, the first lines of output, the first hunks of a change. */
+function toolDetail(it: ToolItem): { head?: string; out?: string; diff?: string } | null {
   const d = it.detail;
-  const out: string[] = [];
-  if (d.command) out.push(`$ ${d.command}`);
-  else if (d.path) out.push(d.path);
-  else if (d.url) out.push(d.url);
-  else if (d.query || d.pattern) out.push(String(d.query ?? d.pattern));
+  const head = d.command ? `$ ${d.command}` : d.path || d.url || (d.query || d.pattern ? String(d.query ?? d.pattern) : undefined);
+  let out: string | undefined;
   const res = it.output || it.result?.text || it.result?.stderr;
   if (res) {
     const lines = res.replace(/\x1b\[[0-9;]*m/g, '').split('\n');
-    out.push(lines.slice(0, 24).join('\n') + (lines.length > 24 ? `\n… ${lines.length - 24} more lines` : ''));
+    out = (lines.slice(0, 24).join('\n') + (lines.length > 24 ? `\n… ${lines.length - 24} more lines` : '')).slice(0, 3000);
   }
+  let diff: string | undefined;
   if (it.result?.diff?.length) {
-    for (const f of it.result.diff.slice(0, 3))
-      for (const h of f.hunks.slice(0, 2)) out.push(h.lines.slice(0, 16).join('\n'));
+    const parts: string[] = [];
+    for (const f of it.result.diff.slice(0, 3)) for (const h of f.hunks.slice(0, 2)) parts.push(h.lines.slice(0, 16).join('\n'));
+    diff = parts.join('\n').slice(0, 3000);
   }
-  return out.join('\n\n').slice(0, 4000);
+  return head || out || diff ? { head, out: diff ? undefined : out, diff } : null;
+}
+
+function Detail({ d }: { d: NonNullable<ReturnType<typeof toolDetail>> }) {
+  return (
+    <>
+      {d.head && <span className="step-detail-head">{d.head}</span>}
+      {d.out && `${d.head ? '\n' : ''}${d.out}`}
+      {d.diff && (
+        <>
+          {d.head ? '\n' : ''}
+          <span dangerouslySetInnerHTML={{ __html: diffLines(d.diff) }} />
+        </>
+      )}
+    </>
+  );
 }
 
 function DiffStat({ diff }: { diff: NonNullable<ToolItem['result']>['diff'] }) {
@@ -256,20 +275,47 @@ const Block = memo(function Block({ sid, id }: { sid: string; id: string }) {
   const bg = stats?.background;
   const runningNow = it.status === 'running' || it.status === 'pending' || bg === 'running';
   const name = it.detail.subagent || it.title;
+  return <AgentBlock sid={sid} id={id} it={it} name={name} running={runningNow} background={!!bg} kids={kids} />;
+});
+
+/** A sub-agent: what it was asked, how far it got; a tap opens its own steps (the last 40). */
+function AgentBlock({ sid, id, it, name, running, background, kids }: { sid: string; id: string; it: ToolItem; name: string; running: boolean; background: boolean; kids: number }) {
+  const [open, setOpen] = useState(false);
+  const children = useStore((s) => (open ? sessionData(s, sid).children[id] : undefined));
+  const stats = it.result?.agent;
+  const steps = (children ?? []).slice(-40);
   return (
-    <div className="block">
-      <div className="block-head">
-        <span className="block-icon">{runningNow ? <Ring size={14} /> : <Icon name="agent" size={16} />}</span>
-        <span className="block-title">{name}</span>
-        <span className="block-aside">{it.status === 'error' ? 'Failed' : runningNow ? (bg ? 'In the background' : 'Working') : 'Done'}</span>
-      </div>
-      {it.detail.description && it.detail.description !== name && <div className="block-desc">{it.detail.description}</div>}
-      <div className="block-sub num">
-        {[stats?.steps ? plural(stats.steps, 'step') : kids ? plural(kids, 'step') : '', stats?.tokens && `${formatTokens(stats.tokens)} tokens`, stats?.durationMs && formatDuration(stats.durationMs)].filter(Boolean).join(' · ')}
-      </div>
+    <div className="block" data-open={open || undefined}>
+      <button type="button" className="block-toggle" aria-expanded={open} disabled={!kids} onClick={() => (haptic('select'), setOpen((v) => !v))}>
+        <span className="block-head">
+          <span className="block-icon">{running ? <Ring size={14} /> : <Icon name="agent" size={16} />}</span>
+          <span className="block-title">{name}</span>
+          <span className="block-aside">{it.status === 'error' ? 'Failed' : running ? (background ? 'In the background' : 'Working') : 'Done'}</span>
+        </span>
+        {it.detail.description && it.detail.description !== name && <span className="block-desc">{it.detail.description}</span>}
+        <span className="block-sub num">
+          {[stats?.steps ? plural(stats.steps, 'step') : kids ? plural(kids, 'step') : '', stats?.tokens && `${formatTokens(stats.tokens)} tokens`, stats?.durationMs && formatDuration(stats.durationMs)].filter(Boolean).join(' · ')}
+          {kids > 0 && <Icon name="caretDown" size={12} weight="bold" className="block-caret" />}
+        </span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && steps.length > 0 && (
+          <motion.div
+            className="block-steps"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 40 }}
+          >
+            {steps.map((cid) => (
+              <Step key={cid} sid={sid} id={cid} />
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
-});
+}
 
 const statusWord = (s: string) => (s === 'running' ? 'Running' : s === 'done' ? 'Done' : s === 'failed' ? 'Failed' : 'Stopped');
 
@@ -281,6 +327,7 @@ const Notice = memo(function Notice({ sid, id }: { sid: string; id: string }) {
   if (!it) return null;
   // At a plan limit: carry on with the account the desktop suggests (the refused message goes again).
   const next = it.limit?.next && !it.limit.continuedWith ? accounts?.find((a) => a.id === it.limit!.next && a.auth.loggedIn) : undefined;
+  if (it.limit) return <LimitCard sid={sid} it={it} next={next} went={it.limit.continuedWith ? (accounts?.find((a) => a.id === it.limit!.continuedWith)?.label ?? 'another account') : undefined} />;
   return (
     <div className="notice" data-variant={it.variant}>
       {it.variant === 'error' && <Icon name="warning" size={15} />}
@@ -306,12 +353,60 @@ const Notice = memo(function Notice({ sid, id }: { sid: string; id: string }) {
   );
 });
 
+/** A turn refused at a plan limit: which window, when it resets, and the account to carry on with. */
+function LimitCard({ sid, it, next, went }: { sid: string; it: NoticeItem; next?: { id: string; label: string }; went?: string }) {
+  const now = useNow();
+  const [busy, setBusy] = useState(false);
+  const l = it.limit!;
+  return (
+    <div className="limit-card">
+      <div className="limit-card-head">
+        <span className="limit-card-dot" aria-hidden />
+        <span className="limit-card-title">{l.window ? `${l.window} reached` : it.text}</span>
+        {l.resetsAt && <span className="limit-card-reset num">{resetIn(l.resetsAt, now)}</span>}
+      </div>
+      {it.detail && <div className="limit-card-detail">{it.detail}</div>}
+      {next && (
+        <button
+          type="button"
+          className="btn btn-primary limit-card-go"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            haptic('send');
+            void conn.call('session.switchAccount', { sessionId: sid, accountId: next.id, retry: true }).finally(() => setBusy(false));
+          }}
+        >
+          {busy ? <span className="dots" /> : `Continue with ${next.label}`}
+        </button>
+      )}
+      {went && <div className="limit-card-detail">Carried on with {went}</div>}
+    </div>
+  );
+}
+
 const Answer = memo(function Answer({ sid, id }: { sid: string; id: string }) {
   const it = useItem<TextItem>(sid, id);
   const html = useMemo(() => (it ? renderMarkdown(it.text, it.streaming) : ''), [it]);
   if (!it || !it.text.trim()) return null;
-  return <div className="md" data-streaming={it.streaming || undefined} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className="md" data-streaming={it.streaming || undefined} onClick={copyCode} dangerouslySetInnerHTML={{ __html: html }} />;
 });
+
+/** The copy key on a code block: its text to the clipboard, a short confirmation on the key itself. */
+function copyCode(e: React.MouseEvent) {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.md-copy');
+  const code = btn?.parentElement?.querySelector('code');
+  if (!btn || !code) return;
+  void navigator.clipboard
+    ?.writeText(code.textContent ?? '')
+    .then(() => {
+      haptic('success');
+      setState({ toast: { text: 'Copied', level: 'success', at: Date.now() } });
+      btn.dataset.done = '';
+      window.setTimeout(() => delete btn.dataset.done, 1400);
+    })
+    .catch(() => {});
+}
 
 export function Empty({ children }: { children: ReactNode }) {
   return <p className="empty">{children}</p>;

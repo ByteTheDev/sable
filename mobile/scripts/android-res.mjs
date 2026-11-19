@@ -111,6 +111,8 @@ if (!m.includes('android:scheme="sable"')) {
             </intent-filter>`,
   );
 }
+// The pairing token stays on the phone: no cloud or adb backup of the app's data.
+m = m.replace('android:allowBackup="true"', 'android:allowBackup="false"');
 if (!m.includes('usesCleartextTraffic')) m = m.replace('android:supportsRtl="true"', 'android:supportsRtl="true"\n        android:usesCleartextTraffic="true"');
 if (!m.includes('windowSoftInputMode')) m = m.replace('android:launchMode="singleTask"', 'android:launchMode="singleTask"\n            android:windowSoftInputMode="adjustResize"');
 for (const perm of ['android.permission.CAMERA', 'android.permission.POST_NOTIFICATIONS', 'android.permission.VIBRATE']) {

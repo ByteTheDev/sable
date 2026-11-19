@@ -1,8 +1,10 @@
 // Builds the debug APK: web bundle, Capacitor sync, Gradle, then copies it to release-mobile/.
 //   node scripts/build-apk.mjs   (from mobile/; needs ANDROID_HOME and a JDK 21 in JAVA_HOME)
-// Heavy: takes scratch/heavy.lock for the Gradle step so it never runs beside another build.
+// Heavy: the Gradle step runs under scratch/heavy.lock. Another agent's lock younger than 15 minutes
+// stops the build; a lock that starts with SABLE_LOCK_OWNER (default "mobile apk build") is ours and
+// is kept as it was; a lock this script wrote is removed again at the end.
 import { execSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,16 +18,20 @@ run('npx tsc --noEmit -p tsconfig.json');
 run('npx vite build');
 run('npx cap sync android');
 
-if (existsSync(lock) && Date.now() - statSync(lock).mtimeMs < 3 * 60_000) {
-  console.error('scratch/heavy.lock is held by another build; try again in a moment.');
+const owner = process.env.SABLE_LOCK_OWNER ?? 'mobile apk build';
+const held = existsSync(lock) ? readFileSync(lock, 'utf8') : '';
+const ours = held.startsWith(owner);
+if (held && !ours && Date.now() - statSync(lock).mtimeMs < 15 * 60_000) {
+  console.error(`scratch/heavy.lock is held (${held.trim()}); try again later.`);
   process.exit(1);
 }
 mkdirSync(path.dirname(lock), { recursive: true });
-writeFileSync(lock, `mobile apk build ${new Date().toISOString()}\n`);
+const wrote = !ours;
+if (wrote) writeFileSync(lock, `${owner} ${new Date().toISOString()}\n`);
 try {
   run(process.platform === 'win32' ? '.\\gradlew.bat assembleDebug --no-daemon -q' : './gradlew assembleDebug --no-daemon -q', path.join(root, 'android'));
 } finally {
-  rmSync(lock, { force: true });
+  if (wrote && existsSync(lock) && readFileSync(lock, 'utf8').startsWith(owner)) rmSync(lock, { force: true });
 }
 const apk = path.join(root, 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
 const out = path.join(repo, 'release-mobile');

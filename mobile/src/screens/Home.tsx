@@ -1,15 +1,17 @@
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project, SessionMeta } from '@shared/protocol';
 import { baseName, timeAgo } from '@desk/lib/format';
+import { pushBack } from '@m/lib/back';
 import { conn } from '@m/lib/conn';
 import { haptic } from '@m/lib/native';
 import { nav } from '@m/lib/nav';
-import { useStore } from '@m/lib/store';
+import { getState, refresh, useStore } from '@m/lib/store';
 import { useNow } from '@m/lib/useNow';
 import { Field, paletteFor } from '@m/ui/Field';
 import { Icon } from '@m/ui/icons';
-import { LogoMark, ProviderMark, StatusMark, type Tone } from '@m/ui/marks';
+import { LogoMark, ProviderMark, Ring, StatusMark, type Tone } from '@m/ui/marks';
+import { Pull } from '@m/ui/Pull';
 import { Sheet } from '@m/ui/Sheet';
 import { LimitsSheet } from './Limits';
 import { NewChatSheet } from './NewChat';
@@ -75,16 +77,31 @@ export function Home({ under }: { under: boolean }) {
 
   return (
     <div className="screen home" data-under={under || undefined}>
-      <Field palette={paletteFor(defaultProvider)} amount={1.05} focusY={1.04} spread={0.5} active={running && !under} />
+      <Field palette={paletteFor(defaultProvider)} amount={1.05} focusY={1.04} spread={0.5} active={running && !under} hidden={under} />
       <header className="home-head">
         <div className="home-brand">
           <LogoMark size={18} />
           <span className="home-name">{desktop ?? 'Sable'}</span>
-          {connState !== 'open' && (
-            <span className="conn-pill" data-state={connState}>
-              {connState === 'connecting' ? 'Connecting' : connState === 'denied' ? 'Not paired' : 'Offline'}
-            </span>
-          )}
+          <AnimatePresence initial={false}>
+            {connState !== 'open' && (
+              <motion.span
+                className="home-status"
+                data-state={connState}
+                initial={{ opacity: 0, x: -4 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -4 }}
+                transition={{ duration: 0.18 }}
+              >
+                {connState === 'denied' ? (
+                  'Not paired'
+                ) : (
+                  <>
+                    <Ring size={11} /> {connState === 'connecting' && !loaded ? 'Connecting' : 'Reconnecting'}
+                  </>
+                )}
+              </motion.span>
+            )}
+          </AnimatePresence>
         </div>
         <div className="home-tools">
           <button type="button" className="icon-btn" aria-label="Limits" onClick={() => (haptic('tap'), setLimits(true))}>
@@ -96,7 +113,14 @@ export function Home({ under }: { under: boolean }) {
         </div>
       </header>
 
-      <div className="home-scroll">
+      <Pull
+        className="home-scroll"
+        onRefresh={async () => {
+          haptic('tap');
+          if (getState().conn !== 'open') return conn.wake();
+          await refresh([]);
+        }}
+      >
         <label className="search">
           <Icon name="search" size={17} />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" aria-label="Search chats" enterKeyHint="search" />
@@ -111,7 +135,8 @@ export function Home({ under }: { under: boolean }) {
           <div className="unreachable">
             <Icon name="offline" size={22} />
             <p>Can't reach {desktop ?? 'the computer'}</p>
-            <button type="button" className="btn" onClick={() => conn.wake()}>
+            <p className="unreachable-hint">Sable must be running there with Phone on.</p>
+            <button type="button" className="btn" onClick={() => (haptic('tap'), conn.wake())}>
               Try again
             </button>
           </div>
@@ -148,20 +173,27 @@ export function Home({ under }: { under: boolean }) {
           })
         )}
         <div className="home-pad" />
-      </div>
+      </Pull>
 
-      <motion.button
-        type="button"
-        className="fab"
-        whileTap={{ scale: 0.96 }}
-        onClick={() => {
-          haptic('tap');
-          setNewChat(true);
-        }}
-        disabled={connState !== 'open'}
-      >
-        <Icon name="plus" size={18} weight="bold" /> New chat
-      </motion.button>
+      <AnimatePresence initial={false}>
+        {connState === 'open' && (
+          <motion.button
+            type="button"
+            className="fab"
+            initial={{ opacity: 0, y: 24, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 24, scale: 0.96 }}
+            transition={{ type: 'spring', stiffness: 460, damping: 36 }}
+            whileTap={{ scale: 0.96 }}
+            onClick={() => {
+              haptic('tap');
+              setNewChat(true);
+            }}
+          >
+            <Icon name="plus" size={18} weight="bold" /> New chat
+          </motion.button>
+        )}
+      </AnimatePresence>
 
       <LimitsSheet open={limits} onClose={() => setLimits(false)} />
       <NewChatSheet open={newChat} onClose={() => setNewChat(false)} />
@@ -205,13 +237,13 @@ const Row = memo(function Row({ s, onMenu }: { s: SessionMeta; onMenu: (id: stri
           nav.chat(s.id);
         }}
       >
-        <ProviderMark provider={s.provider} size={16} />
-        <span className="row-text">
+        {/* One line holds the mark, the title and the time (centred at any text size); what it does now sits under the title. */}
+        <span className="row-line">
+          <ProviderMark provider={s.provider} size={16} />
           <span className="row-title">{s.title}</span>
-          {busy && s.activity && <span className="row-sub">{tone === 'awaiting' ? 'Waiting for you' : s.activity}</span>}
-          {tone === 'awaiting' && !s.activity && <span className="row-sub">Waiting for you</span>}
+          <span className="row-end">{tone === 'idle' ? <span className="row-time num">{timeAgo(s.updatedAt, now)}</span> : <StatusMark tone={tone} />}</span>
         </span>
-        <span className="row-end">{tone === 'idle' ? <span className="row-time num">{timeAgo(s.updatedAt, now)}</span> : <StatusMark tone={tone} />}</span>
+        {busy && <span className="row-sub">{tone === 'awaiting' ? 'Waiting for you' : (s.activity ?? 'Working')}</span>}
       </button>
     </li>
   );
@@ -227,6 +259,7 @@ function ChatActions({ id, onClose }: { id: string | null; onClose: () => void }
     setTitle(s?.title ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+  useEffect(() => (renaming ? pushBack(() => (setRenaming(false), true)) : undefined), [renaming]);
   const update = (patch: { pinned?: boolean; archived?: boolean }) => {
     if (!s) return;
     haptic('select');

@@ -15,6 +15,8 @@ const TILE_ORDER = [
   [15, 7, 13, 5],
 ] as const;
 
+const FILLED = new Set(MARK_CELLS.map(([c, r]) => `${c},${r}`));
+
 export function LogoMark({ size = 22, cells = false, className }: { size?: number; cells?: boolean; className?: string }) {
   const cell = Math.max(2, Math.round((size * (window.devicePixelRatio || 1)) / 6)) / (window.devicePixelRatio || 1);
   const at = (size - cell * 4) / 2;
@@ -23,7 +25,15 @@ export function LogoMark({ size = 22, cells = false, className }: { size?: numbe
       {cells ? (
         <g fill="currentColor">
           {MARK_CELLS.map(([c, r], i) => (
-            <rect key={i} style={{ '--i': i } as CSSProperties} x={at + c * cell} y={at + r * cell} width={cell} height={cell} />
+            // Each cell reaches half a pixel under a filled neighbour, so no hairline seam shows between them.
+            <rect
+              key={i}
+              style={{ '--i': i, '--d': TILE_ORDER[r][c] } as CSSProperties}
+              x={at + c * cell}
+              y={at + r * cell}
+              width={cell + (FILLED.has(`${c + 1},${r}`) ? 0.5 : 0)}
+              height={cell + (FILLED.has(`${c},${r + 1}`) ? 0.5 : 0)}
+            />
           ))}
         </g>
       ) : (

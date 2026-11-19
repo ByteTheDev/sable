@@ -32,10 +32,25 @@ export function fieldBeat(kind: Beat['kind']) {
   for (const f of beats) f(b);
 }
 
-export function Field({ palette, amount = 1, focusY = 1.06, spread = 0.62, active = false }: { palette: Palette; amount?: number; focusY?: number; spread?: number; active?: boolean }) {
+export function Field({
+  palette,
+  amount = 1,
+  focusY = 1.06,
+  spread = 0.62,
+  active = false,
+  hidden = false,
+}: {
+  palette: Palette;
+  amount?: number;
+  focusY?: number;
+  spread?: number;
+  active?: boolean;
+  /** Covered by another screen: draws nothing (not even on a resize) until it shows again. */
+  hidden?: boolean;
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
-  const live = useRef({ palette, amount, active, focusY, spread });
-  live.current = { palette, amount, active, focusY, spread };
+  const live = useRef({ palette, amount, active, focusY, spread, hidden });
+  live.current = { palette, amount, active, focusY, spread, hidden };
   const api = useRef<{ draw: () => void; kick: () => void } | null>(null);
 
   useEffect(() => {
@@ -77,7 +92,8 @@ export function Field({ palette, amount = 1, focusY = 1.06, spread = 0.62, activ
     };
 
     const draw = () => {
-      if (!img) return;
+      // Hidden: skipped; showing again kicks a fresh frame (the effect on `hidden` below).
+      if (!img || live.current.hidden) return;
       const { palette: pal, amount: amt } = live.current;
       const stops = PALETTES[pal];
       const now = performance.now();
@@ -177,7 +193,7 @@ export function Field({ palette, amount = 1, focusY = 1.06, spread = 0.62, activ
 
   useEffect(() => {
     api.current?.kick();
-  }, [palette, amount, active]);
+  }, [palette, amount, active, hidden]);
 
   return <canvas ref={ref} className="field" aria-hidden />;
 }

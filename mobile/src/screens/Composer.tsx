@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Attachment, Effort, ModeTone, QueuedMessage } from '@shared/protocol';
 import { effortName, modelName, modelNameById, visibleModels } from '@desk/lib/models';
 import { conn } from '@m/lib/conn';
@@ -12,7 +12,38 @@ import { Choice, Sheet } from '@m/ui/Sheet';
 
 const MODE_ICON: Record<ModeTone, IconName> = { ask: 'hand', edit: 'edit', plan: 'plan', auto: 'bolt', danger: 'shield' };
 
-const drafts = new Map<string, string>();
+/** Unsent words per chat, kept across restarts (Android may close the app in the background). */
+const DRAFTS = 'sable.drafts';
+const drafts = new Map<string, string>(
+  (() => {
+    try {
+      return Object.entries(JSON.parse(localStorage.getItem(DRAFTS) ?? '{}') as Record<string, string>);
+    } catch {
+      return [];
+    }
+  })(),
+);
+let saveTimer = 0;
+const saveDrafts = () => {
+  clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(() => {
+    try {
+      const o: Record<string, string> = {};
+      for (const [k, v] of drafts) if (v.trim()) o[k] = v;
+      localStorage.setItem(DRAFTS, JSON.stringify(o));
+    } catch {
+      /* private mode */
+    }
+  }, 400);
+};
+
+/**
+ * A message whose send was cut off by a lost connection may or may not have reached the desktop.
+ * It goes back into the field; when the conversation reloads and shows it arrived, the field clears
+ * again (so it is never lost and never sent twice).
+ */
+const unsure = new Map<string, { text: string; at: number }>();
+const LOST = /connection to the desktop was lost|did not answer in time/i;
 
 /**
  * The composer: a frosted bar at the bottom, as on the desktop. Send (an ivory disc), stop while a
@@ -26,11 +57,46 @@ export function Composer({ sid }: { sid: string }) {
   const visibility = useStore((st) => st.settings?.modelVisibility);
   const sendWithEnter = useStore((st) => st.settings?.sendWithEnter !== false);
   const [text, setText] = useState(() => drafts.get(sid) ?? '');
+  const online = useStore((st) => st.conn === 'open');
+  // The newest message of yours, to settle a send the connection cut off.
+  const lastUser = useStore((st) => {
+    const d = st.data[sid];
+    if (!d) return undefined;
+    for (let i = d.roots.length - 1; i >= 0; i--) {
+      const it = d.items[d.roots[i]];
+      if (it?.type === 'user') return it;
+    }
+    return undefined;
+  });
   const [files, setFiles] = useState<Attachment[]>([]);
   const [sheet, setSheet] = useState<'model' | 'mode' | 'effort' | null>(null);
   const [focused, setFocused] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const u = unsure.get(sid);
+    if (!u || !lastUser || lastUser.type !== 'user') return;
+    if (lastUser.text.trim() === u.text && lastUser.ts >= u.at - 15_000) {
+      unsure.delete(sid);
+      if (area.current && area.current.value.trim() === u.text) {
+        setText('');
+        drafts.set(sid, '');
+        saveDrafts();
+        area.current.style.height = 'auto';
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastUser, sid]);
+
+  // The field takes the height of a draft that came back from storage.
+  useEffect(() => {
+    const el = area.current;
+    if (el && el.value) {
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+    }
+  }, []);
+
   if (!s) return null;
 
   const running = s.status === 'running' || s.status === 'starting' || s.status === 'awaiting';
@@ -43,6 +109,7 @@ export function Composer({ sid }: { sid: string }) {
   const update = (v: string) => {
     setText(v);
     drafts.set(sid, v);
+    saveDrafts();
     const el = area.current;
     if (el) {
       el.style.height = 'auto';
@@ -52,7 +119,7 @@ export function Composer({ sid }: { sid: string }) {
 
   const send = async () => {
     const t = text.trim();
-    if (!t && !files.length) return;
+    if ((!t && !files.length) || !online) return;
     const el = area.current;
     if (el && t) launchFlight(t, el.getBoundingClientRect());
     haptic('send');
@@ -63,10 +130,12 @@ export function Composer({ sid }: { sid: string }) {
     try {
       await conn.call('session.send', { sessionId: sid, text: t, attachments });
     } catch (err) {
+      const msg = (err as Error).message;
       haptic('deny');
       update(t);
       setFiles(attachments ?? []);
-      setState({ toast: { text: (err as Error).message, level: 'error', at: Date.now() } });
+      if (LOST.test(msg)) unsure.set(sid, { text: t, at: Date.now() });
+      setState({ toast: { text: LOST.test(msg) ? 'The connection dropped while sending' : msg, level: 'error', at: Date.now() } });
     }
   };
 
@@ -132,7 +201,8 @@ export function Composer({ sid }: { sid: string }) {
               <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(e) => void pick(e.target.files).then(() => (e.target.value = ''))} />
             </>
           )}
-          <div className="chips">
+          <div className="chips-wrap">
+            <div className="chips">
             {mode && (
               <button type="button" className="chip-btn" data-tone={mode.tone} onClick={() => (haptic('tap'), setSheet('mode'))}>
                 <Icon name={MODE_ICON[mode.tone] ?? 'hand'} size={15} />
@@ -150,13 +220,14 @@ export function Composer({ sid }: { sid: string }) {
               </button>
             )}
           </div>
+          </div>
           <AnimatePresence mode="popLayout" initial={false}>
             {running && empty ? (
               <motion.button key="stop" type="button" className="send" aria-label="Stop" onClick={stop} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={{ type: 'spring', stiffness: 520, damping: 34 }}>
                 <span className="stop-square" />
               </motion.button>
             ) : (
-              <motion.button key="send" type="button" className="send" aria-label={running ? 'Queue' : 'Send'} disabled={empty} onClick={() => void send()} whileTap={{ scale: 0.92 }} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={{ type: 'spring', stiffness: 520, damping: 34 }}>
+              <motion.button key="send" type="button" className="send" aria-label={running ? 'Queue' : 'Send'} disabled={empty || !online} onClick={() => void send()} whileTap={{ scale: 0.92 }} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={{ type: 'spring', stiffness: 520, damping: 34 }}>
                 <Icon name="up" size={18} weight="bold" />
               </motion.button>
             )}

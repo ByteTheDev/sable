@@ -12,6 +12,8 @@ const config: CapacitorConfig = {
     // Development only (SABLE_MOBILE_DEV=1 before `cap sync`): load the web build from `vite preview` through `adb reverse tcp:5190 tcp:5190`.
     ...(process.env.SABLE_MOBILE_DEV ? { url: 'http://localhost:5190' } : {}),
   },
+  // Plugin calls are not written to the device log: the pairing token passes through Preferences.
+  loggingBehavior: 'none',
   android: {
     backgroundColor: '#070708',
   },

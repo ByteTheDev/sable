@@ -17,6 +17,8 @@ export default defineConfig({
     // The shared files import nothing from node_modules but these; resolve them here, not at the root.
     dedupe: ['react', 'react-dom'],
   },
-  server: { fs: { allow: ['..'] } },
+  server: { fs: { allow: ['..'] }, watch: { ignored: ['**/android/**', '**/dist/**'] } },
+  // Only the app's own entry: the Android build folder holds old bundles the scan would trip over.
+  optimizeDeps: { entries: ['index.html'] },
   build: { target: 'es2022', sourcemap: false, outDir: 'dist', assetsInlineLimit: 0 },
 });

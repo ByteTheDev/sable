@@ -46,12 +46,16 @@ export function App() {
   const error = useStore((s) => s.connError);
   const stack = useNav();
   const [link, setLink] = useState<string | null>(null);
+  // Until the saved pairing is read (a few ms), nothing is drawn: no pairing screen flashes at a cold start.
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const offs = [
       conn.onOpen(() => {
         const open = nav.stack.filter((r) => r.name === 'chat').map((r) => (r as { id: string }).id);
-        void refresh(open).catch(() => {});
+        void refresh(open)
+          .then(() => nav.prune((id) => !!getState().sessions[id]))
+          .catch(() => {});
       }),
       onAppState((active) => active && conn.wake()),
       onBackButton(goBack),
@@ -60,7 +64,11 @@ export function App() {
       onNotificationTap((id) => nav.chat(id)),
     ];
     const stopWatch = subscribeStore(watchTurns());
-    void conn.init();
+    // Back where it was: Android may have closed the app in the background.
+    void conn.init().then(() => {
+      if (conn.pairing) nav.restore();
+      setReady(true);
+    });
     return () => {
       offs.forEach((f) => f());
       stopWatch();
@@ -74,6 +82,7 @@ export function App() {
   }, [stack]);
 
   const unpaired = state === 'unpaired' || (state === 'denied' && !getState().loaded);
+  if (!ready && !link) return <div className="app" />;
   const top = stack[stack.length - 1];
 
   if (unpaired || link) {

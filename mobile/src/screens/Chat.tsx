@@ -8,7 +8,7 @@ import { getState, openSession, sessionData, useStore } from '@m/lib/store';
 import { buildTurns, shapeKey } from '@m/lib/turns';
 import { Field, paletteFor } from '@m/ui/Field';
 import { Icon } from '@m/ui/icons';
-import { ProviderMark, StatusMark } from '@m/ui/marks';
+import { ProviderMark, Ring, StatusMark } from '@m/ui/marks';
 import { Sheet } from '@m/ui/Sheet';
 import { Composer } from './Composer';
 import { toneOf } from './Home';
@@ -21,6 +21,8 @@ const PAGE = 24;
 export function Chat({ id }: { id: string }) {
   const s = useStore((st) => st.sessions[id]);
   const loaded = useStore((st) => !!st.data[id]);
+  const listed = useStore((st) => st.loaded);
+  const connState = useStore((st) => st.conn);
   const [error, setError] = useState<string>();
   const [remote, setRemote] = useState(false);
 
@@ -32,8 +34,8 @@ export function Chat({ id }: { id: string }) {
   if (!s) {
     return (
       <div className="screen chat">
-        <ChatHead title="Chat" onBack={() => nav.pop()} />
-        <p className="empty">This chat is no longer on the desktop.</p>
+        <ChatHead title="" onBack={() => nav.pop()} />
+        {listed ? <p className="empty">This chat is no longer on the desktop.</p> : <div className="thread-skel"><ThreadSkeleton /></div>}
       </div>
     );
   }
@@ -45,7 +47,8 @@ export function Chat({ id }: { id: string }) {
       <Field palette={paletteFor(s.provider)} amount={0.95} focusY={1.1} spread={0.52} active={live} />
       <ChatHead
         title={s.title}
-        sub={baseName(s.cwd)}
+        sub={connState === 'open' ? baseName(s.cwd) : undefined}
+        status={connState === 'open' ? undefined : connState === 'denied' ? 'Not paired' : 'Reconnecting'}
         mark={<ProviderMark provider={s.provider} size={17} />}
         tone={toneOf(s)}
         onBack={() => nav.pop()}
@@ -68,7 +71,23 @@ export function Chat({ id }: { id: string }) {
   );
 }
 
-function ChatHead({ title, sub, mark, tone, onBack, right }: { title: string; sub?: string; mark?: React.ReactNode; tone?: ReturnType<typeof toneOf>; onBack: () => void; right?: React.ReactNode }) {
+function ChatHead({
+  title,
+  sub,
+  status,
+  mark,
+  tone,
+  onBack,
+  right,
+}: {
+  title: string;
+  sub?: string;
+  status?: string;
+  mark?: React.ReactNode;
+  tone?: ReturnType<typeof toneOf>;
+  onBack: () => void;
+  right?: React.ReactNode;
+}) {
   return (
     <header className="chat-head glass-bar">
       <button type="button" className="icon-btn" aria-label="Back" onClick={() => (haptic('tap'), onBack())}>
@@ -80,7 +99,17 @@ function ChatHead({ title, sub, mark, tone, onBack, right }: { title: string; su
           <span>{title}</span>
           {tone && tone !== 'idle' && tone !== 'unread' && <StatusMark tone={tone} />}
         </div>
-        {sub && <div className="chat-sub">{sub}</div>}
+        <AnimatePresence mode="popLayout" initial={false}>
+          {status ? (
+            <motion.div key="status" className="chat-sub chat-status" initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }} transition={{ duration: 0.16 }}>
+              <Ring size={11} /> {status}
+            </motion.div>
+          ) : sub ? (
+            <motion.div key="sub" className="chat-sub" initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }} transition={{ duration: 0.16 }}>
+              {sub}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </div>
       {right ?? <span className="icon-btn-spacer" />}
     </header>
@@ -129,11 +158,21 @@ function Thread({ id }: { id: string }) {
     return () => ro.disconnect();
   }, [toBottom]);
 
+  // Only your own scrolling lets go of the newest line (a smooth jump or a growing answer never does).
+  const touch = useRef({ down: false, at: 0 });
+  const frame = useRef(0);
   const onScroll = () => {
+    if (!frame.current) frame.current = requestAnimationFrame(measure);
+  };
+  // Read once per frame, not once per scroll event.
+  const measure = () => {
+    frame.current = 0;
     const el = scroller.current;
     if (!el) return;
     const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
-    atBottom.current = gap < 48;
+    const byHand = touch.current.down || performance.now() - touch.current.at < 1200;
+    if (gap < 48) atBottom.current = true;
+    else if (byHand) atBottom.current = false;
     setShowJump(gap > 600);
     if (el.scrollTop < 400 && start > 0 && !anchor.current) {
       anchor.current = { h: el.scrollHeight, top: el.scrollTop };
@@ -149,7 +188,14 @@ function Thread({ id }: { id: string }) {
   }, [lastUser, toBottom]);
 
   return (
-    <div className="thread" ref={scroller} onScroll={onScroll}>
+    <div
+      className="thread"
+      ref={scroller}
+      onScroll={onScroll}
+      onTouchStart={() => (touch.current.down = true)}
+      onTouchEnd={() => (touch.current = { down: false, at: performance.now() })}
+      onTouchCancel={() => (touch.current = { down: false, at: performance.now() })}
+    >
       <div className="thread-content" ref={content}>
         {start > 0 && <div className="thread-more">Earlier messages</div>}
         {turns.length === 0 && <p className="empty thread-empty">Send a message to start.</p>}

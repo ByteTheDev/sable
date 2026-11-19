@@ -1,8 +1,9 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Capabilities, DirEntry, ProviderId } from '@shared/protocol';
 import { baseName, dirName } from '@desk/lib/format';
 import { modelName, visibleModels } from '@desk/lib/models';
+import { pushBack } from '@m/lib/back';
 import { conn } from '@m/lib/conn';
 import { haptic } from '@m/lib/native';
 import { nav } from '@m/lib/nav';
@@ -59,7 +60,9 @@ export function NewChatSheet({ open, onClose }: { open: boolean; onClose: () => 
   const models = useMemo(() => (agent && caps ? visibleModels(agent, caps.models, settings?.modelVisibility) : []), [agent, caps, settings?.modelVisibility]);
   const chosenModel = model && models.some((m) => m.id === model) ? model : (settings?.defaultModels[agent ?? 'claude'] ?? models.find((m) => m.isDefault)?.id ?? models[0]?.id);
 
+  const openedAt = useRef(0);
   useEffect(() => {
+    if (open) openedAt.current = performance.now();
     if (!open) {
       setBrowse(false);
       setError(undefined);
@@ -68,7 +71,8 @@ export function NewChatSheet({ open, onClose }: { open: boolean; onClose: () => 
   }, [open]);
 
   const start = async () => {
-    if (!agent || !folder) return;
+    // A second tap on "New chat" lands where "Start chat" rises: taps in the first moments do not start anything.
+    if (!agent || !folder || performance.now() - openedAt.current < 600) return;
     setBusy(true);
     setError(undefined);
     haptic('send');
@@ -181,6 +185,18 @@ function FolderBrowser({ start, onPick, onCancel }: { start: string | null; onPi
       setError((err as Error).message);
     }
   };
+
+  // Back goes up one folder, then out of the browser (not out of the sheet).
+  useEffect(
+    () =>
+      pushBack(() => {
+        if (here?.path) void load(here.parent ?? null);
+        else onCancel();
+        return true;
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [here],
+  );
 
   useEffect(() => {
     void load(start ? dirName(start) || null : null);

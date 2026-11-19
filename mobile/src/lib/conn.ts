@@ -113,6 +113,8 @@ class Conn {
   private connecting = false;
 
   async init() {
+    // A network that comes back (Wi-Fi again after mobile data) reconnects at once.
+    window.addEventListener('online', () => this.wake());
     this.pairing = await loadPairing();
     if (this.pairing) void this.connect();
     else this.setState('unpaired');
@@ -186,7 +188,8 @@ class Conn {
             reject(Object.assign(new Error(f.denied), { denied: true }));
           }
         };
-        ws.onclose = () => reject(new Error('The desktop closed the connection'));
+        ws.onclose = (ev) =>
+          reject(ev.code === 4001 ? Object.assign(new Error('This phone was removed on the desktop'), { denied: true }) : new Error('The desktop closed the connection'));
         ws.send(JSON.stringify({ hello: { token: p.token } }));
       });
     } catch (err) {
@@ -202,14 +205,27 @@ class Conn {
     }
   }
 
+  /**
+   * Backoff with a little jitter: 0.6, 1.2, 2.4, 4.8 s, then every 8 s while the app is in front
+   * (30 s in the background, where Android throttles timers anyway). Coming back to the front, a
+   * network change or a tap on "Try again" reconnects at once (`wake`).
+   */
   private scheduleRetry() {
     clearTimeout(this.retryTimer);
-    const delay = Math.min(8000, 600 * 2 ** this.retry++);
+    const cap = document.hidden ? 30_000 : 8000;
+    const delay = Math.min(cap, 600 * 2 ** this.retry++) * (0.85 + Math.random() * 0.3);
     this.retryTimer = window.setTimeout(() => void this.connect(), delay);
   }
 
   /** An authenticated socket becomes the connection. */
   private adopt(ws: WebSocket) {
+    // One socket feeds the store, never two: a second one would apply every streamed piece twice.
+    const old = this.ws;
+    if (old && old !== ws) {
+      old.onmessage = null;
+      old.onclose = null;
+      old.close();
+    }
     this.ws = ws;
     this.retry = 0;
     ws.onmessage = (ev) => {
@@ -277,6 +293,7 @@ class Conn {
   async pair(offer: PairOffer, name: string, onWaiting: () => void): Promise<void> {
     this.forgetSocket();
     const { ws, host } = await race(offer.hosts, offer.port);
+    this.pairSocket = ws;
     await new Promise<void>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         ws.close();
@@ -310,6 +327,14 @@ class Conn {
     });
   }
 
+  private pairSocket?: WebSocket;
+
+  /** Gives up a pairing in progress (the desktop's question goes away with the socket). */
+  cancelPair() {
+    this.pairSocket?.close();
+    this.pairSocket = undefined;
+  }
+
   private forgetSocket() {
     clearTimeout(this.retryTimer);
     const ws = this.ws;
@@ -327,3 +352,7 @@ class Conn {
 }
 
 export const conn = new Conn();
+
+// Development: a module swapped in place closes its old socket (two live sockets would double every event).
+import.meta.hot?.dispose(() => conn.cancelPair());
+import.meta.hot?.dispose(() => (conn as unknown as { forgetSocket: () => void }).forgetSocket());

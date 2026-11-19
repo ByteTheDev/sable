@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
 import { useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { pushBack } from '@m/lib/back';
 
 export const SPRING = { type: 'spring', stiffness: 460, damping: 40, mass: 0.9 } as const;
@@ -28,7 +29,12 @@ export function Sheet({
 }) {
   const drag = useDragControls();
   useEffect(() => (open ? pushBack(() => (onClose(), true)) : undefined), [open, onClose]);
-  return (
+  // A sheet that rises takes the screen: the keyboard of the field under it goes down.
+  useEffect(() => {
+    if (open && document.activeElement instanceof HTMLElement && document.activeElement.closest('.sheet') === null) document.activeElement.blur();
+  }, [open]);
+  // On the body, above every screen and its header (a screen's own layers would trap it under them).
+  return createPortal(
     <AnimatePresence>
       {open && (
         <div className="sheet-layer" role="presentation">
@@ -71,12 +77,39 @@ export function Sheet({
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }
 
 /** One choice in a sheet's list: a 48 px row with a check on the current one. */
-export function Choice({ selected, onPick, children, icon, aside }: { selected?: boolean; onPick: () => void; children: ReactNode; icon?: ReactNode; aside?: ReactNode }) {
+export function Choice({
+  selected,
+  onPick,
+  children,
+  icon,
+  aside,
+  mark,
+}: {
+  selected?: boolean;
+  onPick: () => void;
+  children: ReactNode;
+  icon?: ReactNode;
+  aside?: ReactNode;
+  /** Answers to a question: a round mark (one answer) or a square one (several), filled when picked. */
+  mark?: 'radio' | 'check';
+}) {
+  if (mark)
+    return (
+      <button type="button" className="choice choice-mark" data-selected={selected || undefined} onClick={onPick} role={mark === 'radio' ? 'radio' : 'checkbox'} aria-checked={!!selected}>
+        <span className="pick" data-kind={mark} aria-hidden>
+          <svg viewBox="0 0 16 16" width="12" height="12">
+            <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <span className="choice-label">{children}</span>
+      </button>
+    );
   return (
     <button type="button" className="choice" data-selected={selected || undefined} onClick={onPick} aria-pressed={selected}>
       {icon && <span className="choice-icon">{icon}</span>}

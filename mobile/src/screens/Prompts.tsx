@@ -1,7 +1,8 @@
+import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useState } from 'react';
 import type { PermissionOption, PermissionRequest, QuestionRequest } from '@shared/protocol';
 import { conn } from '@m/lib/conn';
-import { renderMarkdown } from '@m/lib/md';
+import { diffLines, renderMarkdown } from '@m/lib/md';
 import { haptic } from '@m/lib/native';
 import { sessionData, useStore } from '@m/lib/store';
 import { Icon, TOOL_ICON } from '@m/ui/icons';
@@ -46,6 +47,7 @@ export function Prompts({ sid }: { sid: string }) {
 
 function PermissionBody({ sid, req, onLater }: { sid: string; req: PermissionRequest; onLater: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [showDiff, setShowDiff] = useState(false);
   const answer = async (o: PermissionOption) => {
     setBusy(o.id);
     haptic(o.tone === 'deny' ? 'deny' : 'success');
@@ -59,6 +61,9 @@ function PermissionBody({ sid, req, onLater }: { sid: string; req: PermissionReq
   const add = req.diff?.reduce((n, f) => n + f.additions, 0) ?? 0;
   const del = req.diff?.reduce((n, f) => n + f.deletions, 0) ?? 0;
   const ordered = [...req.options].sort((a, b) => rank(a) - rank(b));
+  // Granting keys stacked (the first one ivory); refusing and "Later" side by side under them.
+  const grants = ordered.filter((o) => o.tone !== 'deny');
+  const denials = ordered.filter((o) => o.tone === 'deny');
   return (
     <div className="prompt">
       <div className="prompt-head">
@@ -74,26 +79,63 @@ function PermissionBody({ sid, req, onLater }: { sid: string; req: PermissionReq
       {!d.command && d.path && !req.title.includes(d.path.split(/[\\/]/).pop() ?? '') && <div className="prompt-path">{d.path}</div>}
       {d.url && <div className="prompt-path">{d.url}</div>}
       {req.diff && req.diff.length > 0 && (
-        <div className="prompt-diff num">
-          {req.diff.length === 1 ? req.diff[0].path.split(/[\\/]/).pop() : `${req.diff.length} files`}
-          <span className="add">+{add}</span>
-          <span className="del">−{del}</span>
-        </div>
+        <>
+          <button type="button" className="prompt-diff num" aria-expanded={showDiff} onClick={() => (haptic('select'), setShowDiff((v) => !v))}>
+            <span className="prompt-diff-name">{req.diff.length === 1 ? req.diff[0].path.split(/[\\/]/).pop() : `${req.diff.length} files`}</span>
+            <span className="add">+{add}</span>
+            <span className="del">−{del}</span>
+            <Icon name="caretDown" size={13} weight="bold" className="prompt-diff-caret" />
+          </button>
+          <AnimatePresence initial={false}>
+            {showDiff && (
+              <motion.pre
+                className="prompt-code prompt-patch"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ type: 'spring', stiffness: 420, damping: 40 }}
+                dangerouslySetInnerHTML={{ __html: patchHtml(req.diff) }}
+              />
+            )}
+          </AnimatePresence>
+        </>
       )}
       {d.plan && <div className="md prompt-plan" dangerouslySetInnerHTML={{ __html: renderMarkdown(d.plan) }} />}
       {req.reason && <p className="prompt-reason">{req.reason}</p>}
       <div className="prompt-actions">
-        {ordered.map((o, i) => (
-          <button key={o.id} type="button" className={`btn btn-lg btn-block ${i === 0 ? 'btn-primary' : o.tone === 'deny' ? 'btn-ghost' : ''}`} disabled={!!busy} onClick={() => void answer(o)}>
+        {grants.map((o, i) => (
+          <button key={o.id} type="button" className={`btn btn-lg btn-block ${i === 0 ? 'btn-primary' : ''}`} disabled={!!busy} onClick={() => void answer(o)}>
             {busy === o.id ? <span className="dots" /> : o.label}
           </button>
         ))}
-        <button type="button" className="link-btn" onClick={onLater}>
-          Later
-        </button>
+        <div className="prompt-split">
+          {denials.map((o) => (
+            <button key={o.id} type="button" className="btn btn-lg btn-ghost" disabled={!!busy} onClick={() => void answer(o)}>
+              {busy === o.id ? <span className="dots" /> : o.label}
+            </button>
+          ))}
+          <button type="button" className="btn btn-lg btn-ghost prompt-later" onClick={onLater}>
+            Later
+          </button>
+        </div>
       </div>
     </div>
   );
+}
+
+/** The change an edit asks to make: its hunks, coloured, at most 160 lines. */
+function patchHtml(diff: NonNullable<PermissionRequest['diff']>): string {
+  const lines: string[] = [];
+  for (const f of diff) {
+    if (diff.length > 1) lines.push(`@@ ${f.path.split(/[\\/]/).pop()}`);
+    for (const h of f.hunks) {
+      lines.push(`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines}`);
+      lines.push(...h.lines);
+      if (lines.length > 160) break;
+    }
+    if (lines.length > 160) break;
+  }
+  return diffLines(lines.slice(0, 160).join('\n'));
 }
 
 const rank = (o: PermissionOption) => (o.tone === 'allow' ? 0 : o.tone === 'always' ? 1 : 2);
@@ -133,6 +175,7 @@ function QuestionBody({ sid, req, onLater }: { sid: string; req: QuestionRequest
               return (
                 <Choice
                   key={o.label}
+                  mark={q.multiSelect ? 'check' : 'radio'}
                   selected={on}
                   onPick={() => {
                     haptic('select');

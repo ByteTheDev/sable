@@ -50,7 +50,7 @@
 
   --glass: rgb(20 20 23 / 0.74);
   --glass-strong: rgb(22 22 25 / 0.9);
-  --blur: blur(20px) saturate(140%);
+  --blur: blur(16px) saturate(140%);
   --shadow: 0 18px 44px -18px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(0 0 0 / 0.35);
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.08 0 0 0 -0.035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -176,6 +176,12 @@ textarea {
   image-rendering: pixelated;
   pointer-events: none;
   z-index: 0;
+  transition: opacity 320ms var(--ease);
+}
+
+/* Writing: the light steps back so the words and the keyboard have the screen. */
+.chat:has(.composer[data-focus]) > .field {
+  opacity: 0.35;
 }
 
 /* ── buttons ── */
@@ -405,11 +411,49 @@ textarea {
   position: relative;
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
+  gap: 10px;
+  /* the two keys' height, kept while they give way to Cancel: the mark does not jump */
+  min-height: 114px;
+}
+
+.pair-buttons {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
-.pair-actions .btn.glass {
-  background: var(--glass);
+/* the second way in: frosted ink like the composer, quiet next to the ivory key */
+.pair-alt {
+  background: rgb(20 20 23 / 0.82);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+}
+
+.pair-cancel {
+  align-self: center;
+  min-width: 148px;
+  margin-bottom: 31px;
+  color: var(--text-2);
+}
+
+/* while the desktop is reached or asked, the mark glints cell by cell (the working loop) */
+.pair-mark[data-busy] rect {
+  animation: glint 1.6s steps(1, end) infinite;
+  animation-delay: calc(var(--d) * 100ms);
+}
+
+@keyframes glint {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  8% {
+    opacity: 0.2;
+  }
+  22% {
+    opacity: 0.6;
+  }
 }
 
 .pair-paste {
@@ -556,17 +600,44 @@ textarea {
   display: flex;
 }
 
-.conn-pill {
-  font-size: var(--t-xs);
+.home-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 2px;
+  font-size: var(--t-sm);
   color: var(--text-3);
-  padding: 3px 9px;
-  border-radius: var(--r-pill);
-  background: var(--fill-2);
+  white-space: nowrap;
 }
 
-.conn-pill[data-state='offline'],
-.conn-pill[data-state='denied'] {
+.home-status[data-state='denied'] {
   color: var(--amber);
+}
+
+/* pull to refresh: the mark builds from its cells as you pull (--p 0..1), glints while it loads */
+.pull {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  margin-left: -11px;
+  color: var(--text);
+  opacity: 0;
+  pointer-events: none;
+  --p: 0;
+}
+
+.pull rect {
+  opacity: clamp(0.1, calc(var(--p) * 16 - var(--d)), 1);
+}
+
+.pull[data-busy] rect {
+  animation: glint 1.2s steps(1, end) infinite;
+  animation-delay: calc(var(--d) * 75ms);
+}
+
+.pull-body {
+  position: relative;
+  background: var(--bg);
 }
 
 .home-scroll {
@@ -574,9 +645,13 @@ textarea {
   z-index: 1;
   flex: 1;
   overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 6px 12px 0;
+  overscroll-behavior: none;
+  padding: 0;
   -webkit-overflow-scrolling: touch;
+}
+
+.pull-body {
+  padding: 6px 12px 0;
 }
 
 .search {
@@ -645,8 +720,9 @@ textarea {
 .row {
   -webkit-touch-callout: none;
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
   width: 100%;
   min-height: 46px;
   padding: 12px 10px;
@@ -659,17 +735,16 @@ textarea {
   background: var(--fill-2);
 }
 
-.row .pmark {
-  align-self: flex-start;
-  margin-top: 3px;
+.row-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
-.row-text {
+.row-title {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 
 .row-title {
@@ -678,7 +753,7 @@ textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 22px;
+  line-height: 1.5;
 }
 
 .row[data-tone='unread'] .row-title,
@@ -689,6 +764,8 @@ textarea {
 }
 
 .row-sub {
+  padding-left: 28px;
+  padding-right: 40px;
   font-size: var(--t-sm);
   color: var(--text-3);
   white-space: nowrap;
@@ -702,11 +779,10 @@ textarea {
 
 .row-end {
   display: grid;
-  place-items: center;
+  place-items: center end;
   min-width: 28px;
-  height: 22px;
   color: var(--text-3);
-  align-self: flex-start;
+  flex-shrink: 0;
 }
 
 .row-time {
@@ -784,6 +860,14 @@ textarea {
   margin: 0;
   color: var(--text-2);
   font-size: var(--t-body);
+}
+
+.unreachable .unreachable-hint {
+  margin: -6px 0 4px;
+  max-width: 260px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.5;
 }
 
 .list-skel {
@@ -893,11 +977,21 @@ textarea {
   padding: calc(var(--sat) + 4px) 4px 6px;
 }
 
+/* Screen headers: solid ink with a short fade under them, no blur (the text scrolls under it at
+   60 fps; blur here cost a third of each frame on the emulator for nothing you would notice). */
 .glass-bar {
-  background: rgb(9 9 10 / 0.8);
-  -webkit-backdrop-filter: var(--blur);
-  backdrop-filter: var(--blur);
-  box-shadow: 0 1px 0 var(--line);
+  background: var(--bg);
+}
+
+.glass-bar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 20px;
+  background: linear-gradient(var(--bg), rgb(7 7 8 / 0));
+  pointer-events: none;
 }
 
 .chat-titles {
@@ -927,6 +1021,21 @@ textarea {
 .chat-sub {
   font-size: var(--t-xs);
   color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.chat-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+}
+
+.step-detail-head {
+  color: var(--text);
 }
 
 .remote-btn[data-tone='ok'] {
@@ -1019,29 +1128,19 @@ textarea {
   transform-origin: 100% 100%;
 }
 
-.user-bubble[data-long] {
-  max-height: 248px;
-}
-
-.user-bubble[data-long]::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 72px;
-  border-radius: 0 0 6px var(--r-lg);
-  background: linear-gradient(rgb(22 22 25 / 0), rgb(22 22 25 / 0.97) 70%);
-  pointer-events: none;
+/* a long message: whole lines up to seven, then "Show more" under them (no fade over words) */
+.user-bubble[data-long] .user-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 7;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .user-more {
-  position: absolute;
-  left: 15px;
-  bottom: 10px;
+  margin-top: 8px;
   font-size: var(--t-sm);
   font-weight: 560;
-  color: var(--text);
+  color: var(--text-2);
 }
 
 .user-text {
@@ -1336,6 +1435,99 @@ textarea {
   background: var(--red);
 }
 
+.block-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: calc(100% + 28px);
+  margin: -12px -14px;
+  padding: 12px 14px;
+  border-radius: inherit;
+  text-align: left;
+  transition: background-color 100ms;
+}
+
+.block-toggle:not(:disabled):active {
+  background: var(--fill-1);
+}
+
+.block-toggle:disabled {
+  cursor: default;
+}
+
+.block-toggle > * {
+  width: 100%;
+}
+
+.block-sub:has(.block-caret) {
+  display: flex;
+  align-items: center;
+}
+
+.block-caret {
+  margin-left: auto;
+  color: var(--text-4);
+  transition: transform 180ms var(--ease);
+}
+
+.block[data-open] .block-caret {
+  transform: rotate(180deg);
+}
+
+.block-steps {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin: 8px -6px -4px 22px;
+}
+
+/* a turn refused at a plan limit */
+.limit-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.limit-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.limit-card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--amber);
+  flex-shrink: 0;
+}
+
+.limit-card-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 540;
+}
+
+.limit-card-reset {
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+.limit-card-detail {
+  padding-left: 18px;
+  font-size: var(--t-sm);
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.limit-card-go {
+  margin-top: 4px;
+}
+
 .block-quiet {
   flex-direction: row;
   align-items: center;
@@ -1439,6 +1631,52 @@ textarea {
   background: var(--fill-2);
 }
 
+.md-code {
+  position: relative;
+  margin: 4px 0 14px;
+}
+
+.md-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgb(5 5 6 / 0.94);
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-sm);
+  color: var(--text-4);
+  transition: color 100ms, background-color 100ms, transform 100ms;
+}
+
+.md-copy:active {
+  background: var(--fill-2);
+  color: var(--text);
+  transform: scale(0.94);
+}
+
+.md-copy[data-done] {
+  color: var(--text);
+}
+
+.md-code .md-pre {
+  margin: 0;
+  padding-right: 44px;
+}
+
+.dl-add {
+  color: var(--green);
+}
+
+.dl-del {
+  color: var(--red);
+}
+
+.dl-hunk {
+  color: var(--text-4);
+}
+
 .md-pre {
   margin: 4px 0 14px;
   padding: 12px 14px;
@@ -1453,7 +1691,7 @@ textarea {
   padding: 0;
   background: none;
   font-size: 12.5px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--text-2);
   white-space: pre;
 }
@@ -1605,6 +1843,24 @@ textarea {
   align-items: center;
   gap: 6px;
   min-height: 44px;
+}
+
+/* chips that do not fit (large text) scroll and fade out before the send key */
+.chips-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.chips-wrap::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  background: linear-gradient(90deg, rgb(19 19 22 / 0), rgb(19 19 22 / 0.95));
+  pointer-events: none;
 }
 
 .chips {
@@ -1849,7 +2105,7 @@ textarea {
 .sheet-body {
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 14px 4px;
+  padding: 0 14px 8px;
 }
 
 .choices {
@@ -1912,6 +2168,50 @@ textarea {
 
 .choice-quiet {
   color: var(--text-3);
+}
+
+/* an answer to a question: the mark leads, the row stays clear (no fill when picked) */
+.choice-mark {
+  align-items: flex-start;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.choice-mark[data-selected] {
+  background: var(--fill-1);
+}
+
+.pick {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--line-3);
+  color: var(--ink);
+  flex-shrink: 0;
+  transition: background-color 140ms var(--ease);
+}
+
+.pick[data-kind='check'] {
+  border-radius: 6px;
+}
+
+.pick svg {
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 140ms var(--ease), transform 200ms var(--ease);
+}
+
+.choice[data-selected] .pick {
+  background: var(--text);
+  box-shadow: none;
+}
+
+.choice[data-selected] .pick svg {
+  opacity: 1;
+  transform: none;
 }
 
 .choice-caret {
@@ -1977,12 +2277,13 @@ textarea {
   color: var(--text);
 }
 
+/* the sheet's main key stays in reach; a solid ink edge under it and a soft one above (nothing shows through) */
 .newchat > .btn-block,
 .browser > .btn-block {
   position: sticky;
   bottom: 0;
   margin-top: 18px;
-  box-shadow: 0 -16px 24px 4px rgb(22 22 25 / 0.92);
+  box-shadow: 0 10px 0 10px rgb(21 21 24), 0 -18px 22px 4px rgb(21 21 24 / 0.94);
 }
 
 .btn[data-busy] {
@@ -2214,9 +2515,56 @@ textarea {
 
 .prompt-diff {
   display: flex;
+  align-items: center;
   gap: 10px;
+  min-height: 40px;
+  margin: -6px -8px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
   font-size: var(--t-sm);
   color: var(--text-2);
+  text-align: left;
+  transition: background-color 100ms;
+}
+
+.prompt-diff:active {
+  background: var(--fill-1);
+}
+
+.prompt-diff-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-diff-caret {
+  margin-left: auto;
+  color: var(--text-4);
+  transition: transform 180ms var(--ease);
+}
+
+.prompt-diff[aria-expanded='true'] .prompt-diff-caret {
+  transform: rotate(180deg);
+}
+
+.prompt-patch {
+  max-height: 34vh;
+  white-space: pre;
+  word-break: normal;
+  overflow: auto;
+  color: var(--text-2);
+}
+
+.prompt-split {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 8px;
+}
+
+.prompt-later {
+  color: var(--text-3);
 }
 
 .prompt-plan {
@@ -2240,6 +2588,15 @@ textarea {
   gap: 8px;
   margin-top: 6px;
   align-items: stretch;
+}
+
+/* a long question keeps its answer key in reach */
+.sheet[data-tall] .prompt-actions {
+  position: sticky;
+  bottom: -8px;
+  margin: 0 -8px;
+  padding: 20px 8px 8px;
+  background: linear-gradient(rgb(22 22 25 / 0), rgb(22 22 25) 22px);
 }
 
 .prompt-row {

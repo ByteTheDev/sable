@@ -77,6 +77,10 @@ export function useStore<T>(selector: (s: State) => T): T {
   return useSyncExternalStore(subscribe, () => selector(state));
 }
 
+// Streamed text arrives in many small pieces: gathered per frame.
+const deltas = new Map<string, string>();
+let deltaFrame = 0;
+
 const EMPTY: SessionData = { items: {}, roots: [], children: {}, permissions: [], questions: [], queue: [], todos: [] };
 
 function patchData(id: string, fn: (d: SessionData) => Partial<SessionData>) {
@@ -94,6 +98,8 @@ function patchSession(id: string, patch: Partial<SessionMeta>) {
 }
 
 export function applySnapshot(snap: SessionSnapshot) {
+  // Streamed pieces still waiting for the next frame are already in the snapshot: adding them again would repeat words.
+  for (const key of [...deltas.keys()]) if (key.startsWith(`${snap.session.id}\u0000`)) deltas.delete(key);
   const items: Record<string, TimelineItem> = {};
   const roots: string[] = [];
   const children: Record<string, string[]> = {};
@@ -111,9 +117,6 @@ export function applySnapshot(snap: SessionSnapshot) {
   });
 }
 
-// Streamed text arrives in many small pieces: gathered per frame.
-const deltas = new Map<string, string>();
-let deltaFrame = 0;
 
 function flushDeltas() {
   if (deltaFrame) cancelAnimationFrame(deltaFrame);

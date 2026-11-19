@@ -29,10 +29,26 @@ const md = new Marked({
     code({ text, lang }: Tokens.Code) {
       const l = (lang ?? '').trim().split(/\s+/)[0].toLowerCase();
       if (l === 'widget' || l === 'mermaid') return `<div class="md-widget">${l === 'mermaid' ? 'Diagram' : 'Widget'} <span>Open on the desktop to see it</span></div>`;
-      return `<pre class="md-pre"><code>${esc(text)}</code></pre>`;
+      const body = l === 'diff' || l === 'patch' ? diffLines(text) : esc(text);
+      return `<div class="md-code"><pre class="md-pre"><code>${body}</code></pre><button type="button" class="md-copy" aria-label="Copy">${COPY}</button></div>`;
     },
   },
 });
+
+// Phosphor's Copy (regular), drawn inline in the rendered HTML.
+const COPY =
+  '<svg viewBox="0 0 256 256" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg>';
+
+/** Diff lines with their colour: additions green, removals red, hunk headers dim. */
+export function diffLines(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const c = line.startsWith('+') && !line.startsWith('+++') ? 'dl-add' : line.startsWith('-') && !line.startsWith('---') ? 'dl-del' : line.startsWith('@@') ? 'dl-hunk' : '';
+      return c ? `<span class="${c}">${esc(line)}</span>` : esc(line);
+    })
+    .join('\n');
+}
 
 const cache = new Map<string, string>();
 
