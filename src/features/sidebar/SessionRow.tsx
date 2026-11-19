@@ -35,7 +35,7 @@ export const SidebarRowContext = createContext<RowCtx>({ setRenaming, askDelete:
 
 /** The fields a row shows. Anything else changing on a session (usage, model, options) must not re-render it. */
 const SHOWN = ['id', 'title', 'status', 'unread', 'pinned', 'archived', 'updatedAt', 'activity', 'lastError', 'provider', 'accountId'] as const;
-const sameShown = (a: SessionMeta, b: SessionMeta) => SHOWN.every((k) => a[k] === b[k]);
+const sameShown = (a: SessionMeta, b: SessionMeta) => SHOWN.every((k) => a[k] === b[k]) && a.until?.phase === b.until?.phase;
 
 // ── what each row shows, from one store subscription for the whole list ──
 
@@ -182,7 +182,8 @@ function ActivePill() {
 // ── status mark ──
 
 export function statusTone(s: SessionMeta): StatusTone {
-  if (s.status === 'running' || s.status === 'starting') return 'working';
+  // Between an /until loop's turns Sable runs the check: the chat is still at work.
+  if (s.status === 'running' || s.status === 'starting' || (s.status === 'idle' && s.until?.phase === 'checking')) return 'working';
   if (s.status === 'awaiting') return 'awaiting';
   if (s.status === 'error') return 'error';
   return s.unread ? 'unread' : 'idle';
@@ -194,6 +195,7 @@ export function StatusMark({ session }: { session: SessionMeta }) {
 
 export function statusLabel(s: SessionMeta): string | null {
   if (s.status === 'running' || s.status === 'starting') return s.activity || 'Working';
+  if (s.status === 'idle' && s.until?.phase === 'checking') return 'Running the check';
   if (s.status === 'awaiting') return 'Needs approval';
   if (s.status === 'error') return s.lastError ? `Error: ${s.lastError}` : 'Error';
   return null;
