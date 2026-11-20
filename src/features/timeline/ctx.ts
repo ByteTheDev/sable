@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import type { TimelineItem, ToolItem } from '@shared/protocol';
 import { loadWholeItem } from '@/state/actions';
 import { useStore } from '@/state/store';
+import type { NavFeed } from './nav-bus';
 
 export interface TimelineCtxValue {
   sessionId: string;
@@ -13,6 +14,8 @@ export interface TimelineCtxValue {
   stuck: { current: boolean };
   /** When the reader last scrolled (performance.now()); the conversation's own view keeps it. */
   scrolled?: { current: number };
+  /** Where the turn list hands its layout to the conversation's map (Navigator). */
+  nav?: NavFeed;
 }
 
 export const TimelineCtx = createContext<TimelineCtxValue>({ sessionId: '', cwd: '', home: '', live: { current: false }, stuck: { current: true }, scrolled: { current: 0 } });

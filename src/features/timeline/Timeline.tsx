@@ -5,6 +5,8 @@ import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
 import { interrupt } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { EMPTY, TimelineCtx, type TimelineCtxValue } from './ctx';
+import { navFeed } from './nav-bus';
+import { Navigator } from './Navigator';
 import { REVEAL_EVENT, type RevealDetail } from './reveal';
 import { TurnList } from './TurnView';
 import './timeline.css';
@@ -15,6 +17,8 @@ const STICK = 48;
 const AWAY = 160;
 /** The follower's natural frequency (rad/s): critically damped, so it never overshoots the end. */
 const FOLLOW_W = 24;
+/** Dev only: `?nonav` leaves the conversation's map out, to measure what it costs (scripts/perf-headless.mjs with SABLE_URL). */
+const NO_NAV = import.meta.env.DEV && typeof location !== 'undefined' && new URLSearchParams(location.search).has('nonav');
 
 /**
  * Where the reader left each conversation they had scrolled away from the end of, as the distance
@@ -49,7 +53,9 @@ export function Timeline({ sessionId }: { sessionId: string }) {
   const live = useRef(false);
   const [away, setAway] = useState(false);
 
-  const ctx = useMemo<TimelineCtxValue>(() => ({ sessionId, cwd, home, live, stuck, scrolled }), [sessionId, cwd, home]);
+  // The turn list hands its layout to the conversation's map through this.
+  const feed = useMemo(() => navFeed(), [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ctx = useMemo<TimelineCtxValue>(() => ({ sessionId, cwd, home, live, stuck, scrolled, nav: feed }), [sessionId, cwd, home, feed]);
 
   const glide = useRef({ raf: 0, pos: 0, v: 0, last: 0 });
 
@@ -255,6 +261,16 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     };
   }, []);
 
+  /** The map moves the view (a jump, a scrub, the wheel over it): as the reader would, it lets go of the end. */
+  const hold = useCallback(() => {
+    intent.current = performance.now();
+    restoreTo.current = null;
+    stuck.current = false;
+    cancelAnimationFrame(glide.current.raf);
+    glide.current.raf = 0;
+    glide.current.v = 0;
+  }, []);
+
   const onScroll = useCallback(() => {
     const el = scroller.current;
     if (!el || restoreTo.current !== null) return;
@@ -342,6 +358,7 @@ export function Timeline({ sessionId }: { sessionId: string }) {
             {empty ? <p className="tl-empty">Send a message to start</p> : loaded && <TurnList ids={roots} />}
           </div>
         </div>
+        {!NO_NAV && <Navigator key={sessionId} sessionId={sessionId} feed={feed} scroller={scroller} content={content} hold={hold} />}
         <AnimatePresence>
           {away && (
             <motion.button

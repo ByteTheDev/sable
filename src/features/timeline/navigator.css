@@ -1,0 +1,197 @@
+/*
+ * The conversation's map (Navigator.tsx): a slim strip along the right edge of the conversation,
+ * left of the scrollbar's gutter and clear of the reading column. A short tick per message the
+ * person sent, the view as a quiet band, find results as brighter ticks. Barely there at rest,
+ * clearer under the pointer.
+ *
+ * The band: `.nav-travel` is as tall as the band's travel (the track less the band); the script
+ * moves it by transform when a scroll comes to rest, so the band's top is
+ * scrollTop × track / scrollHeight, the scale of the ticks. While the view follows the end
+ * (`data-end`) it rests there.
+ */
+
+.nav {
+  position: absolute;
+  z-index: 2;
+  /* Clear of the top fade and of the find bar when it opens. */
+  top: 52px;
+  right: 10px;
+  /* Ends a little above the composer, which covers the conversation's last (dock - 30) px. */
+  bottom: calc(var(--dock-h, 150px) - 14px);
+  width: 18px;
+  contain: strict;
+  touch-action: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--d-3) var(--ease),
+    visibility 0s linear var(--d-3);
+}
+
+.nav[data-show] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity var(--d-3) var(--ease);
+}
+
+/* No transition: a glide would keep the main thread drawing frames for it (measured: reading back
+   a long chat about 10% busier). The band simply stands where the view has come to rest. */
+.nav-travel {
+  position: absolute;
+  inset: 0 0 auto;
+}
+
+.nav[data-end] .nav-travel {
+  transform: translateY(100%);
+}
+
+/* The view: a quiet band behind the ticks. */
+.nav-band {
+  position: absolute;
+  inset: 0 0 auto;
+  border-radius: 5px;
+  background-color: rgb(255 255 255 / 0.04);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background-color var(--d-2) var(--ease);
+}
+
+.nav:hover .nav-band,
+.nav[data-held] .nav-band {
+  background-color: var(--fill-2);
+}
+
+/* Ticks: placed by transform from the top of the track, drawn centred on their place. */
+.nav-ticks,
+.nav-waits,
+.nav-hits {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.nav-ticks {
+  opacity: 0.24;
+  transition: opacity var(--d-2) var(--ease);
+}
+
+.nav:hover .nav-ticks {
+  opacity: 0.6;
+}
+
+.nav[data-held] .nav-ticks {
+  opacity: 0.8;
+}
+
+/* While find has results, the messages step back for them. */
+.nav[data-find] .nav-ticks {
+  opacity: 0.16;
+}
+
+.nav-tick,
+.nav-hit,
+.nav-lit {
+  position: absolute;
+  top: -1px;
+  right: 3px;
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background-color: var(--text);
+}
+
+/* A message steered into a running turn: a shorter tick. */
+.nav-tick[data-steered] {
+  width: 5px;
+}
+
+/* A turn that changed files: a dot before its tick. */
+.nav-tick[data-files]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: calc(100% + 2px);
+  width: 2px;
+  height: 2px;
+  border-radius: 1px;
+  background-color: inherit;
+}
+
+/* Waiting on you: amber, at full strength. */
+.nav-waits .nav-tick {
+  width: 10px;
+  background-color: var(--amber);
+}
+
+.nav-hit {
+  width: 10px;
+  opacity: 0.7;
+}
+
+.nav-hit[data-at] {
+  right: 2px;
+  width: 14px;
+  opacity: 1;
+}
+
+/* The tick under the pointer. */
+.nav-lit {
+  right: 2px;
+  width: 12px;
+  transition: transform 80ms var(--ease-out);
+}
+
+.nav-lit[data-steered] {
+  width: 8px;
+}
+
+/* ── the preview: left of the track, centred on the tick ── */
+
+.nav-peek {
+  position: absolute;
+  z-index: 3;
+  top: 52px;
+  right: 36px;
+  width: max-content;
+  max-width: min(320px, calc(100% - 96px));
+  padding: 7px 12px 8px;
+  border-radius: var(--r-md);
+  translate: 0 -50%;
+  pointer-events: none;
+  transition: transform 120ms var(--ease-out);
+  animation: nav-peek-in 120ms var(--ease-out);
+}
+
+@keyframes nav-peek-in {
+  from {
+    opacity: 0;
+    scale: 0.98;
+  }
+}
+
+.nav-peek-text {
+  font-size: var(--t-ui);
+  line-height: 18px;
+  color: var(--text);
+}
+
+.nav-peek-meta {
+  margin-top: 1px;
+  font-size: var(--t-micro);
+  line-height: 16px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.nav-peek-wait {
+  color: var(--amber);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-lit,
+  .nav-peek {
+    transition: none;
+    animation: none;
+  }
+}

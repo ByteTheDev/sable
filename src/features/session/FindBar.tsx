@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { setFindMarks, stepMessage } from '@/features/timeline/nav-bus';
 import { revealItem } from '@/features/timeline/reveal';
 import { Icon } from '@/icons';
 import { useStore } from '@/state/store';
@@ -88,6 +89,11 @@ export function ConversationFind({ sessionId }: { sessionId: string }) {
   const current = cursor && hits[cursor.hit] ? hits[cursor.hit] : undefined;
   at.current = current?.itemId ?? at.current;
 
+  // The matches as ticks on the conversation's map, the current one marked.
+  const hitIds = useMemo(() => hits.map((h) => h.itemId), [hits]);
+  useEffect(() => setFindMarks(sessionId, open && q ? { ids: hitIds, current: current?.itemId } : null), [sessionId, open, q, hitIds, current?.itemId]);
+  useEffect(() => () => setFindMarks(sessionId, null), [sessionId]);
+
   // Show the current match: the timeline builds, opens and centres its message; then the marks.
   useEffect(() => {
     if (!open || !q || !current || !cursor) {
@@ -154,9 +160,14 @@ export function ConversationFind({ sessionId }: { sessionId: string }) {
 
   const move = useCallback((dir: 1 | -1) => setCursor((c) => step(hitsRef.current, c, dir)), []);
 
-  /** Alt+Up and Alt+Down: the previous or next message of yours, from where the view is. */
+  /**
+   * Alt+Up and Alt+Down: the previous or next message of yours, from where the view is. The
+   * conversation's map takes them (it knows where every message stands, built or not, and lands
+   * each near the top); this is for a view without one.
+   */
   const jump = useCallback(
     (dir: 1 | -1) => {
+      if (stepMessage(sessionId, dir)) return;
       const { users } = sourcesOf(sessionId);
       const scroller = document.querySelector<HTMLElement>('.stage .tl-scroll');
       if (!users.length || !scroller) return;

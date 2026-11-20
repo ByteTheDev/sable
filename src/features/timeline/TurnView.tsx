@@ -1,4 +1,4 @@
-import { memo, startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ThinkingItem, TimelineItem, ToolItem } from '@shared/protocol';
 import { Tiles } from '@/art/Logo';
 import { Collapse } from '@/components/Collapse';
@@ -16,6 +16,7 @@ import { Tail } from './Tail';
 import { TurnFoot } from './Turn';
 import { LINE, shapeIndex, turnsIndex, type FlowChunk, type Group, type Segment, type TurnGroup, type TurnLayout } from './turns';
 import { leadTitle } from './lead-in';
+import { groupHeight } from './nav-model';
 import { shortDuration, thinkingHeadline, useHeld, useTick } from './util';
 
 /** Groups built when a transcript opens, and how many more each step up builds. */
@@ -29,6 +30,31 @@ const AHEAD = 56;
 const IDLE_CHUNK = 2;
 /** How long the view must have been still before building ahead (ms). */
 const STILL_MS = 400;
+/**
+ * A message far up that is asked for (a jump from the map, a find, Alt+Up) is built with a few
+ * groups before it and more after it (what the view shows under it), as a run of its own, instead
+ * of every turn from it down to the newest: a second spacer stands for the groups between, built
+ * as the reader scrolls toward them.
+ */
+const BEFORE = 6;
+const AFTER = 6;
+/** A message this close to what is built already (groups) joins it instead. */
+const REACH = 16;
+/** How far beyond the view the spacers start building (px). */
+const MARGIN = 1500;
+
+interface BuiltState {
+  /** Groups before this one are not built (null: not decided yet, the last `TAIL` are). */
+  hidden: number | null;
+  /** A run built on its own around a message far up: groups [from, to), short of `hidden`. */
+  win: { from: number; to: number } | null;
+}
+
+/** A run that has reached the newest turns joins them. */
+function settle(b: BuiltState): BuiltState {
+  if (b.win && b.hidden !== null && b.win.to >= b.hidden) return { hidden: Math.min(b.hidden, b.win.from), win: null };
+  return b;
+}
 
 const chunkSig = (c: FlowChunk) => (c.kind === 'line' ? '|' : c.kind === 'steps' ? `${c.key}+${c.ids.length}+${c.count}` : c.id);
 const segSig = (s: Segment) => `${s.lead}>${s.flow.map(chunkSig).join(',')}>${s.reply}>${s.answer}>${s.errors.join(',')}`;
@@ -89,27 +115,24 @@ function keepChunk(c: FlowChunk, cache: Map<string, unknown>, next: Map<string, 
   return chunk;
 }
 
-function groupHeight(g: Group, items: Record<string, TimelineItem>): number {
-  if (g.kind === 'item') return estimate(items[g.id]);
-  let h = 30;
-  for (const s of g.segments) {
-    if (s.lead) h += estimate(items[s.lead]);
-    for (const c of s.flow) {
-      if (c.kind === 'line') h += 34;
-      else if (c.kind !== 'steps') h += estimate(items[c.id]);
-    }
-    h += s.errors.length * 64;
-  }
-  return h + (g.checks?.length ?? 0) * 80;
+/** The estimated height of groups [from, to), as their spacer stands for them. */
+function spanHeight(groups: readonly Group[], from: number, to: number, sessionId: string): number {
+  if (from >= to) return 0;
+  const items = useStore.getState().data[sessionId]?.items ?? {};
+  let h = 0;
+  for (let i = from; i < to; i++) h += groupHeight(groups[i], items, estimate);
+  return h;
 }
 
 /**
  * The conversation as turns: each message, what the agent said, a quiet line for the work behind
  * it, and the answer. A long transcript opens with only its last turns built; the ones above wait
  * behind a spacer of about their height and are built a few at a time as the reader scrolls up.
+ * A message far up that is asked for is built with a few turns around it, as a run of its own (see
+ * `BEFORE`, `AFTER`), so a jump there never builds the whole conversation at once.
  */
 export const TurnList = memo(function TurnList({ ids }: { ids: string[] }) {
-  const { sessionId, scrolled } = useTimeline();
+  const { sessionId, scrolled, nav } = useTimeline();
   // One character per root item (see `turns.ts`), following the items write by write: a streamed
   // word re-reads the item it grew, not every root.
   const [shapes] = useState(shapeIndex);
@@ -132,32 +155,81 @@ export const TurnList = memo(function TurnList({ ids }: { ids: string[] }) {
   const groups = layout.groups;
   const running = busy && groups.some((g) => g.kind === 'turn' && g.state === 'running');
 
-  const [hiddenState, setHidden] = useState<number | null>(null);
-  const hidden = Math.min(groups.length, hiddenState ?? Math.max(0, groups.length - TAIL));
+  const [built, setBuilt] = useState<BuiltState>({ hidden: null, win: null });
+  const size = useRef(groups.length);
+  size.current = groups.length;
+  /** A state's first built group of the newest turns: decided, and within the groups there are. */
+  const hiddenOf = (b: BuiltState) => Math.min(size.current, b.hidden ?? Math.max(0, size.current - TAIL));
+  const hidden = hiddenOf(built);
+  const win = built.win && built.win.from < built.win.to ? built.win : null;
+  // Groups before `lead` wait behind the first spacer, groups [gapFrom, hidden) behind the second
+  // (between a run built around a message far up and the newest turns); the rest are built.
+  const lead = win ? Math.min(win.from, hidden) : hidden;
+  const gapFrom = win && win.to < hidden ? win.to : hidden;
   useEffect(() => {
-    if (hiddenState === null && groups.length) setHidden(hidden);
-  }, [hiddenState, groups.length, hidden]);
+    if (built.hidden === null) {
+      if (groups.length) setBuilt((b) => (b.hidden === null ? { ...b, hidden } : b));
+    }
+    // A run that has reached the newest turns joins them.
+    else if (built.win && built.win.to >= hidden) setBuilt((b) => (b.win ? { hidden: Math.min(hiddenOf(b), b.win.from), win: null } : b));
+  }, [built, groups.length, hidden]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The conversation's map follows what is built (after the commit, so it can measure it).
+  useEffect(() => {
+    nav?.set({ groups, built: { lead, gapFrom, hidden } });
+  }, [nav, groups, lead, gapFrom, hidden]);
 
   const spacer = useRef<HTMLDivElement>(null);
-  const spacerHeight = useMemo(() => {
-    if (!hidden) return 0;
-    const items = useStore.getState().data[sessionId]?.items ?? {};
-    let h = 0;
-    for (let i = 0; i < hidden; i++) h += groupHeight(groups[i], items);
-    return h;
-  }, [hidden, groups, sessionId]);
+  const spacerHeight = useMemo(() => spanHeight(groups, 0, lead, sessionId), [lead, groups, sessionId]);
+  const gap = useRef<HTMLDivElement>(null);
+  const gapHeight = useMemo(() => spanHeight(groups, gapFrom, hidden, sessionId), [gapFrom, hidden, groups, sessionId]);
 
   useEffect(() => {
     const el = spacer.current;
-    if (!el || !hidden) return;
-    // Interruptible: a chunk built under a moving scroll yields to its frames.
-    const io = new IntersectionObserver((entries) => entries[0]?.isIntersecting && startTransition(() => setHidden((h) => Math.max(0, (h ?? hidden) - CHUNK))), {
-      root: el.closest('.tl-scroll'),
-      rootMargin: '1500px 0px',
-    });
+    if (!el || !lead) return;
+    // Interruptible: a chunk built under a moving scroll yields to its frames. Above a run built
+    // around a message, the run grows up; otherwise the newest turns do.
+    const io = new IntersectionObserver(
+      (entries) =>
+        entries[0]?.isIntersecting &&
+        startTransition(() =>
+          setBuilt((b) => {
+            const h = hiddenOf(b);
+            if (b.win && b.win.to < h) return { hidden: h, win: { ...b.win, from: Math.max(0, b.win.from - CHUNK) } };
+            return { hidden: Math.max(0, (b.win ? Math.min(b.win.from, h) : h) - CHUNK), win: null };
+          }),
+        ),
+      { root: el.closest('.tl-scroll'), rootMargin: `${MARGIN}px 0px` },
+    );
     io.observe(el);
     return () => io.disconnect();
-  }, [hidden]);
+  }, [lead, hidden]);
+
+  // The second spacer: coming down from the run above it, the run grows down; coming up from the
+  // newest turns (or dropped into its middle), the newest turns grow up, as under the first one.
+  useEffect(() => {
+    const el = gap.current;
+    if (!el || gapFrom >= hidden) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const e = entries[0];
+        if (!e?.isIntersecting) return;
+        const down = e.rootBounds ? e.boundingClientRect.top > e.rootBounds.top + MARGIN : false;
+        startTransition(() =>
+          setBuilt((b) => {
+            const h = hiddenOf(b);
+            if (!b.win || b.win.to >= h) return b;
+            // What is left between them is short: all of it.
+            if (h - b.win.to <= CHUNK) return { hidden: b.win.from, win: null };
+            return down ? { hidden: h, win: { ...b.win, to: b.win.to + CHUNK } } : { hidden: h - CHUNK, win: b.win };
+          }),
+        );
+      },
+      { root: el.closest('.tl-scroll'), rootMargin: `${MARGIN}px 0px` },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [gapFrom, hidden]);
 
   // Ahead of the reader: in idle moments the nearest older groups are built a couple at a time (off
   // screen they skip layout and paint), so reading back up never waits for a chunk to build.
@@ -168,15 +240,16 @@ export const TurnList = memo(function TurnList({ ids }: { ids: string[] }) {
     let id = 0;
     const build = () => {
       if (performance.now() - (scrolled?.current ?? 0) < STILL_MS) return void (id = requestIdleCallback(build, { timeout: 4000 }));
-      startTransition(() => setHidden((h) => Math.max(0, (h ?? hidden) - IDLE_CHUNK)));
+      startTransition(() => setBuilt((b) => settle({ ...b, hidden: Math.max(0, hiddenOf(b) - IDLE_CHUNK) })));
     };
     id = requestIdleCallback(build, { timeout: 4000 });
     return () => cancelIdleCallback(id);
   }, [hidden, groups.length, scrolled]);
 
-  // Reveal requests (sable:reveal-item): build every turn from the target down, open the steps
-  // that hide it, then bring it into view.
-  const [reveal, setReveal] = useState<{ id: string; root: string; at: number } | null>(null);
+  // Reveal requests (sable:reveal-item): build the target (with every turn from it down when it is
+  // near, as a run of its own when it is far up), open the steps that hide it, then bring it into
+  // view (unless the caller scrolls itself: `quiet`).
+  const [reveal, setReveal] = useState<{ id: string; root: string; at: number; quiet?: boolean } | null>(null);
   useEffect(() => {
     const onReveal = (e: Event) => {
       const d = (e as CustomEvent<RevealDetail>).detail;
@@ -186,15 +259,24 @@ export const TurnList = memo(function TurnList({ ids }: { ids: string[] }) {
       if (idx < 0) return;
       const g = groups[idx];
       if (g.kind === 'turn') for (const seg of g.segments) if (seg.work.includes(root)) setFold(foldKey(sessionId, seg.key), true);
-      setHidden((h) => Math.min(h ?? Math.max(0, groups.length - TAIL), idx));
-      setReveal({ id: d.itemId, root, at: Date.now() });
+      setBuilt((b) => {
+        const h = hiddenOf(b);
+        const w = b.win;
+        if (idx >= h || (w && idx >= w.from && idx < w.to)) return b.hidden === h ? b : { hidden: h, win: w };
+        // Near the newest turns: build down to it, with a few above.
+        if (h - idx <= REACH) return settle({ hidden: Math.max(0, idx - BEFORE), win: w });
+        // Near the run built before: the run grows to it.
+        if (w && idx >= w.from - REACH && idx < w.to + REACH) return settle({ hidden: h, win: { from: Math.min(w.from, Math.max(0, idx - BEFORE)), to: Math.max(w.to, idx + AFTER) } });
+        return settle({ hidden: h, win: { from: Math.max(0, idx - BEFORE), to: Math.min(h, idx + AFTER) } });
+      });
+      setReveal({ id: d.itemId, root, at: Date.now(), quiet: d.quiet });
     };
     window.addEventListener(REVEAL_EVENT, onReveal);
     return () => window.removeEventListener(REVEAL_EVENT, onReveal);
   }, [sessionId, groups]);
 
   useLayoutEffect(() => {
-    if (!reveal) return;
+    if (!reveal || reveal.quiet) return;
     let raf = 0;
     let tries = 0;
     let fix = 0;
@@ -226,10 +308,21 @@ export const TurnList = memo(function TurnList({ ids }: { ids: string[] }) {
     };
   }, [reveal]);
 
+  const rows: ReactNode[] = [];
+  for (let i = lead; i < groups.length; i++) {
+    if (i === gapFrom && gapFrom < hidden) {
+      rows.push(<div key="gap" ref={gap} className="tl-gap" style={{ height: gapHeight }} aria-hidden />);
+      i = hidden - 1;
+      continue;
+    }
+    const g = groups[i];
+    rows.push(g.kind === 'item' ? <ItemRow key={g.key} id={g.id} /> : <TurnView key={g.key} turn={g} />);
+  }
+
   return (
     <>
-      {hidden > 0 && <div ref={spacer} className="tl-older" style={{ height: spacerHeight }} aria-hidden />}
-      {groups.map((g, i) => (i < hidden ? null : g.kind === 'item' ? <ItemRow key={g.key} id={g.id} /> : <TurnView key={g.key} turn={g} />))}
+      {lead > 0 && <div ref={spacer} className="tl-older" style={{ height: spacerHeight }} aria-hidden />}
+      {rows}
       {layout.queued.map((id) => (
         <ItemRow key={id} id={id} />
       ))}
@@ -243,7 +336,7 @@ export const TurnList = memo(function TurnList({ ids }: { ids: string[] }) {
 const TurnView = memo(function TurnView({ turn }: { turn: TurnGroup }) {
   const last = turn.segments.length - 1;
   return (
-    <section className="tg" data-state={turn.state}>
+    <section className="tg" data-state={turn.state} data-turn={turn.key}>
       {turn.segments.map((seg, i) => (
         <SegmentView key={seg.key} seg={seg} turn={turn} index={i} live={turn.state === 'running' && i === last} />
       ))}

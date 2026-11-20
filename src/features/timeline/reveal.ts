@@ -6,10 +6,11 @@ import type { TimelineItem } from '@shared/protocol';
  */
 export const REVEAL_EVENT = 'sable:reveal-item';
 
-export type RevealDetail = { sessionId: string; itemId: string };
+/** `quiet`: build it and open what hides it, but leave the scrolling to the caller (no centring, no glow). */
+export type RevealDetail = { sessionId: string; itemId: string; quiet?: boolean };
 
-export function revealItem(sessionId: string, itemId: string) {
-  window.dispatchEvent(new CustomEvent<RevealDetail>(REVEAL_EVENT, { detail: { sessionId, itemId } }));
+export function revealItem(sessionId: string, itemId: string, opts?: { quiet?: boolean }) {
+  window.dispatchEvent(new CustomEvent<RevealDetail>(REVEAL_EVENT, { detail: { sessionId, itemId, quiet: opts?.quiet } }));
 }
 
 /** The top-level item an item lives under (sub-agent tool calls nest under their agent). */
