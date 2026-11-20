@@ -483,7 +483,7 @@ function PickerBody({ onClose }: { onClose: () => void }) {
 
 function PlaceRow({ icon, label, title, active, onClick }: { icon: IconName; label: string; title: string; active: boolean; onClick: () => void }) {
   return (
-    <button type="button" className="place" data-active={active || undefined} title={title} onClick={onClick}>
+    <button type="button" className={cx('place', active && 'dither-sel')} data-active={active || undefined} title={title} onClick={onClick}>
       <Icon name={icon} size={15} />
       <span className="truncate">{label}</span>
     </button>

@@ -226,7 +226,7 @@ function Deck() {
             <motion.div
               key="end"
               ref={endRef}
-              className="tri-end"
+              className="tri-end glass-rim"
               role="status"
               initial={{ opacity: 0, y: 8, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1, transition: { ...SPRING, delay: state.answered ? 0.12 : 0 } }}
@@ -295,7 +295,7 @@ function Card({
 
   return (
     <motion.article
-      className="tri-card"
+      className="tri-card glass-rim"
       data-depth={depth}
       data-spot={(!behind && present) || undefined}
       aria-hidden={behind || !present || undefined}

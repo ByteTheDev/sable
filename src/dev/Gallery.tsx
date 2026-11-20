@@ -569,12 +569,25 @@ export default function Gallery() {
                 A floating layer
               </div>
               <div className="gal-caption" style={{ marginTop: 18 }}>
+                Rim only (.glass-rim)
+              </div>
+              <div className="glass-rim gal-pane gal-rim" data-spot="">
+                A fill of its own
+              </div>
+              <div className="gal-caption" style={{ marginTop: 18 }}>
                 Toast
               </div>
               <button className="toast" data-level="success">
                 <Icon name="check-circle" size={16} />
                 <span>Account added</span>
               </button>
+              <div className="gal-caption" style={{ marginTop: 18 }}>
+                Tooltip
+              </div>
+              <div className="tooltip gal-tip">
+                Search and commands
+                <Kbd combo="mod+k" />
+              </div>
             </div>
           </div>
           <Head />

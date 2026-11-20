@@ -381,6 +381,7 @@
 }
 
 .race-cmp-row {
+  position: relative;
   height: 28px;
   border-radius: var(--r-sm);
   font-size: var(--t-small);
@@ -393,8 +394,8 @@
   background-color: var(--fill-1);
 }
 
+/* The chosen file carries the selected-row pill (.dither-sel: one fill step, raised a hair). */
 .race-cmp-row[aria-selected='true'] {
-  background-color: var(--hl);
   color: var(--text);
 }
 

@@ -300,9 +300,11 @@
   gap: 4px;
 }
 
-/* The list: one row per comment, its file and lines over its first words. */
+/* The list: one row per comment, its file and lines over its first words. It scrolls inside the
+   menu's glass (never the .pop itself: its rim and shadow would scroll away with the rows). */
 .rv-list {
-  max-height: min(420px, calc(var(--vh) * 60));
+  position: relative;
+  max-height: min(412px, calc(var(--vh) * 60 - 8px));
   overflow-y: auto;
 }
 

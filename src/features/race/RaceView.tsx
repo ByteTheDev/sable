@@ -12,7 +12,7 @@ import { plural } from '@/lib/format';
 import { modelName, modelNameById } from '@/lib/models';
 import { interrupt, openSession, sendMessage } from '@/state/actions';
 import { useStore, type Store } from '@/state/store';
-import { IconButton, PathLabel, Segmented, Spinner, Tip } from '@/ui';
+import { IconButton, PathLabel, Segmented, Spinner, Tip, cx } from '@/ui';
 import { compareRows, discardRace, keepRace, stepCount, totals, useRaceDiff, useRacePair } from './race';
 import '@/features/composer/composer.css';
 import './race.css';
@@ -435,7 +435,7 @@ function RaceCompare({ pair, names }: { pair: [string, string]; names: { provide
           ))}
         </div>
         {rows.map((r) => (
-          <button key={r.path} type="button" role="option" aria-selected={r.path === current?.path} className="race-cmp-row" tabIndex={-1} onClick={() => setPicked(r.path)}>
+          <button key={r.path} type="button" role="option" aria-selected={r.path === current?.path} className={cx('race-cmp-row', r.path === current?.path && 'dither-sel')} tabIndex={-1} onClick={() => setPicked(r.path)}>
             <PathLabel path={r.path} />
             <CmpCount f={r.left} />
             <CmpCount f={r.right} />

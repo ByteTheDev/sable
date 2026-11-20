@@ -6,6 +6,7 @@ import { ProviderMark, StatusGlyph } from '@/art/Logo';
 import { baseName, timeAgo } from '@/lib/format';
 import { openSession } from '@/state/actions';
 import { useStore } from '@/state/store';
+import { byKeys, useSlidePill } from '@/ui';
 import { cycle, firstIndex, recentOrder, visit } from './quick';
 import './quick.css';
 
@@ -36,6 +37,8 @@ export function QuickSwitch() {
   const [index, setIndex] = useState(0);
   const [shown, setShown] = useState(false);
   const live = useRef<{ list: SessionMeta[]; index: number } | null>(null);
+  // The selection pill travels with Tab (and lands under the pointer at once), as in the palette.
+  const pill = useSlidePill(list && shown ? index : null, 10, byKeys);
 
   useEffect(() => {
     watchVisits();
@@ -116,6 +119,7 @@ export function QuickSwitch() {
                 setIndex(i);
               }}
             >
+              {i === index && <span ref={pill} className="qs-pill dither-sel" aria-hidden />}
               <ProviderMark provider={s.provider} size={14} className="qs-mark" />
               <span className="qs-title truncate">{s.title || 'New session'}</span>
               {/* Only a session that is working or waiting on you carries a mark. */}

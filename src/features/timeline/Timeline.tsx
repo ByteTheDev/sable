@@ -346,7 +346,7 @@ export function Timeline({ sessionId }: { sessionId: string }) {
           {away && (
             <motion.button
               type="button"
-              className="tl-jump"
+              className="tl-jump glass"
               onClick={jump}
               initial={{ opacity: 0, y: 8, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}

@@ -1,4 +1,4 @@
-/* Command palette: a solid floating sheet in the top third. */
+/* Command palette: a floating sheet of opaque liquid glass in the top third, as a dialog is. */
 
 .palette-overlay {
   position: fixed;
@@ -21,10 +21,10 @@
   width: min(640px, calc(100 * var(--vw) - 32px));
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line-2);
   border-radius: var(--r-xl);
-  background: var(--grain) 0 0 / var(--grain-size), var(--panel);
-  box-shadow: var(--shadow-pop);
+  /* The rim is .glass-rim's ::before (ui.css "material: liquid glass"); like a dialog it never blurs. */
+  background: var(--glass-sheen), var(--grain) 0 0 / var(--grain-size), var(--panel);
+  box-shadow: var(--rim-inner), var(--shadow-glass);
   overflow: hidden;
   transform-origin: 50% 0;
   animation: palette-in var(--d-2) var(--ease-out);

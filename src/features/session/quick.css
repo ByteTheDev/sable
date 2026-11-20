@@ -1,4 +1,6 @@
-/* The quick switcher (Ctrl+Tab held): a small list of recent sessions over the middle of the window. */
+/* The quick switcher (Ctrl+Tab held): a small list of recent sessions over the middle of the window,
+   on frosted liquid glass (.glass: rim, inner edge, depth). The session it will open carries the
+   selected-row pill, as in the palette. */
 
 .qs {
   position: fixed;
@@ -9,10 +11,11 @@
   margin-left: calc(min(420px, 100vw - 48px) / -2);
   padding: 5px;
   border-radius: 16px;
-  box-shadow: var(--shadow-pop);
 }
 
 .qs-row {
+  position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -24,8 +27,15 @@
 }
 
 .qs-row[data-on] {
-  background-color: var(--hl);
   color: var(--text);
+}
+
+.qs-pill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
 }
 
 .qs-mark {

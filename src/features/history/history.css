@@ -264,7 +264,8 @@
   color: var(--text-4);
 }
 
-/* Import: only conversations not yet in Sable. On, the chip takes one fill step and full ink. */
+/* Import: only conversations not yet in Sable. On, the chip takes one fill step and full ink, and
+   sets in (.chip, ui.css "material: tactile"). */
 .history-new {
   flex-shrink: 0;
   height: 32px;

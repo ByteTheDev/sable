@@ -71,7 +71,7 @@ export const ReviewBar = memo(function ReviewBar({ sessionId }: { sessionId: str
               </MenuTrigger>
               <RM.Portal>
                 <RM.Content
-                  className="pop rv-list scroll"
+                  className="pop rv-pop"
                   data-spot=""
                   side="top"
                   align="start"
@@ -84,29 +84,32 @@ export const ReviewBar = memo(function ReviewBar({ sessionId }: { sessionId: str
                     jumped.current = false;
                   }}
                 >
-                  {ordered.map((c) => {
-                    const [dir, base] = splitPath(c.path);
-                    const range = rangeLabel(c.lines);
-                    return (
-                      <RM.Item
-                        key={c.id}
-                        className="menu-item rv-item"
-                        onSelect={() => {
-                          jumped.current = true;
-                          jumpToComment(sessionId, c);
-                        }}
-                      >
-                        <span className="rv-item-where">
-                          <span className="rv-item-path truncate">
-                            {dir && <span className="rv-item-dir">{dir}</span>}
-                            {base}
+                  {/* The rows scroll inside the glass: the rim and the shadow stay with the pane. */}
+                  <div className="rv-list scroll">
+                    {ordered.map((c) => {
+                      const [dir, base] = splitPath(c.path);
+                      const range = rangeLabel(c.lines);
+                      return (
+                        <RM.Item
+                          key={c.id}
+                          className="menu-item rv-item"
+                          onSelect={() => {
+                            jumped.current = true;
+                            jumpToComment(sessionId, c);
+                          }}
+                        >
+                          <span className="rv-item-where">
+                            <span className="rv-item-path truncate">
+                              {dir && <span className="rv-item-dir">{dir}</span>}
+                              {base}
+                            </span>
+                            {range && <span className="rv-item-range num">{upper(range)}</span>}
                           </span>
-                          {range && <span className="rv-item-range num">{upper(range)}</span>}
-                        </span>
-                        <span className="rv-item-text truncate">{firstLine(c.text)}</span>
-                      </RM.Item>
-                    );
-                  })}
+                          <span className="rv-item-text truncate">{firstLine(c.text)}</span>
+                        </RM.Item>
+                      );
+                    })}
+                  </div>
                 </RM.Content>
               </RM.Portal>
             </Menu>

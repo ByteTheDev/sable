@@ -112,20 +112,22 @@
   --r-2xl: 18px;
   --r-pill: 999px;
 
-  /* ── depth: in-flow surfaces cast nothing; floating layers cast one soft shadow ── */
+  /* ── depth: in-flow surfaces cast nothing; floating layers cast one soft shadow ──
+     Floating layers use --shadow-glass (below). --shadow-pop is for what is lifted in flow (a row in
+     the hand) and the small hover bars inside scrolling content, which never wear the rim. */
   --shadow-pop: 0 12px 32px -12px rgb(0 0 0 / 0.75), 0 0 0 1px rgb(0 0 0 / 0.35);
-  --shadow-float: var(--shadow-pop);
   --shadow-composer: 0 18px 44px -18px rgb(0 0 0 / 0.75);
 
-  /* Floating layers: flat frosted ink, a uniform hairline, a faint static grain. */
+  /* Floating layers: frosted ink and a faint static grain (their rim and depth: "liquid glass" below). */
   --glass: rgb(20 20 23 / 0.88);
   --glass-strong: rgb(22 22 25 / 0.95);
   /* Glass without its blur (shed under load) must hide what is behind it completely. */
   --glass-solid: rgb(22 22 25);
   --glass-menu: rgb(23 23 27 / 0.78);
+  /* The old uniform hairline of floating layers; the rim replaces it. Left only for two composer
+     surfaces (composer.css: the drop label, a queued message in the hand) until their pass. */
   --glass-edge: inset 0 0 0 1px rgb(255 255 255 / 0.075);
   --blur: blur(22px) saturate(150%);
-  --blur-soft: blur(10px) saturate(120%);
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.08 0 0 0 -0.035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   --grain-size: 160px 160px;
 
@@ -166,6 +168,9 @@
   /* The reactive hairline on glass: the rim's specular answer to the pointer, a little stronger and wider. */
   --spot-glass: rgb(255 255 255 / 0.5);
   --spot-glass-r: 190px;
+  /* A tooltip is too small and too frequent for the rim: the same light in one box-shadow (a lit
+     top edge over a faint ring, a dark contact line, a short drop). */
+  --shadow-tip: inset 0 1px 0 0 rgb(255 255 255 / 0.075), inset 0 0 0 1px rgb(255 255 255 / 0.055), 0 0 0 1px rgb(0 0 0 / 0.42), 0 5px 14px -5px rgb(0 0 0 / 0.7);
 
   /* ── dither: the house texture for small accents (white pixels; set strength with opacity) ──
      --dither-fade runs dense to empty, left to right (24 x 4 cells); -50 and -25 are flat tones.

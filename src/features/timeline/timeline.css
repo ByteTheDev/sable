@@ -2529,13 +2529,12 @@ button:hover > .row-caret {
   gap: 6px;
   height: 30px;
   padding: 0 13px 0 10px;
-  border: 1px solid var(--line-2);
   border-radius: var(--r-pill);
   font-size: var(--t-small);
   font-weight: var(--w-medium);
   color: var(--text-2);
-  background-color: var(--panel-2);
-  box-shadow: var(--shadow-pop);
+  /* Frosted liquid glass (.glass in ui.css: fill, blur, rim, inner edge, depth), as the composer
+     under it; it floats over the conversation and never scrolls with it. */
   transition: color var(--d-1) var(--ease);
 }
 

@@ -39,7 +39,7 @@ export function Palette() {
       <RD.Portal>
         <RD.Overlay className="palette-overlay" />
         <RD.Content
-          className="palette"
+          className="palette glass-rim"
           data-spot=""
           aria-describedby={undefined}
           onOpenAutoFocus={() => {

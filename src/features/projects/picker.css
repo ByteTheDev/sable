@@ -50,6 +50,7 @@
 }
 
 .place {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -75,6 +76,7 @@
   color: var(--text);
 }
 
+/* The place you are in wears the selected-row pill (.dither-sel), as the Settings nav does. */
 .place[data-active] {
   color: var(--text);
   background-color: var(--fill-3);

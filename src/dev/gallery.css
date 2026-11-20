@@ -311,6 +311,18 @@ html[data-gallery] body {
   color: var(--text-2);
 }
 
+/* .glass-rim brings the rim only: the layer sets its own fill and depth. */
+.gal-rim {
+  background: var(--glass-sheen), var(--grain) 0 0 / var(--grain-size), var(--panel);
+  box-shadow: var(--rim-inner), var(--shadow-glass);
+}
+
+/* A tooltip shown in place, at rest. */
+.gal-tip {
+  display: inline-flex;
+  animation: none;
+}
+
 .gal-tactile {
   border-radius: var(--r-pill);
   color: var(--text);

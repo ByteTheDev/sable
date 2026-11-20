@@ -964,14 +964,14 @@ textarea.field {
   gap: 8px;
   min-height: 24px;
   padding: 3px 8px;
-  border: 1px solid var(--line-2);
   border-radius: var(--r-ctl-sm);
   font-size: var(--t-small);
   font-weight: var(--w-medium);
   line-height: 1.35;
   color: var(--text);
+  /* Opaque and simple, lit as glass is (--shadow-tip): no rim layer, no blur. */
   background-color: var(--panel-3);
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--shadow-tip);
   animation: pop-in var(--d-1) var(--ease-out);
   transform-origin: var(--radix-tooltip-content-transform-origin);
   pointer-events: none;
@@ -1275,9 +1275,12 @@ textarea.field {
    The reactive hairline is the rim's specular answer to the pointer (--spot-glass). What sits on
    glass (rows, text) stays flat. Any other floating layer can wear `.glass-liquid` (an opaque
    pane with the rim, the inner edge and the depth; add `.glass` instead for the frosted fill).
+   A layer that keeps a fill of its own (the palette, the triage cards) wears `.glass-rim`, the rim
+   alone, and sets its fill and `box-shadow: var(--rim-inner), var(--shadow-glass)` itself.
    The rim is a masked ring like .spot-ring: it never changes, so it is rastered once. Do not
-   animate it, and never put it on a scroller or on in-flow content. */
-:where(.glass-liquid, .glass, .toast) {
+   animate it (fade its opacity if it must step back), and never put it on a scroller (it would
+   scroll away with the content: put the scroller inside) or on in-flow content. */
+:where(.glass-liquid, .glass, .toast, .glass-rim) {
   position: relative;
 }
 
@@ -1287,6 +1290,7 @@ textarea.field {
 }
 
 .glass-liquid::before,
+.glass-rim::before,
 .glass::before,
 .pop::before,
 .dialog::before,
@@ -1312,7 +1316,7 @@ textarea.field {
 }
 
 /* The pointer's light on glass lands on the rim itself, a little stronger and wider. */
-:is(.glass-liquid, .glass, .pop, .dialog, .toast) > .spot-ring {
+:is(.glass-liquid, .glass-rim, .glass, .pop, .dialog, .toast) > .spot-ring {
   --spot: var(--spot-glass);
   --spot-r: var(--spot-glass-r);
 }
@@ -1327,6 +1331,12 @@ textarea.field {
 }
 
 .tactile:is(:active, [data-active='true'], [aria-pressed='true'], [aria-expanded='true'], [data-state='open']) {
+  box-shadow: var(--press-down);
+}
+
+/* A bare chip (.chip, like the composer's model and effort chips) is flat at rest and sets in
+   while it is held, open or on. */
+.chip:is(:active, [aria-pressed='true'], [data-state='open']) {
   box-shadow: var(--press-down);
 }
 
