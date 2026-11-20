@@ -20,7 +20,8 @@
 }
 
 .set-nav-title {
-  padding: 6px 10px 12px;
+  /* On the icon edge of the rows below (the list's 2px inset plus a row's 10px). */
+  padding: 6px 12px 12px;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.014em;
@@ -209,7 +210,8 @@
   align-items: center;
   gap: 10px;
   min-height: 22px;
-  padding: 0 4px 9px;
+  /* One left edge down the page: the title, group titles, toolbars, cards and notes. */
+  padding: 0 0 9px;
 }
 
 .set-group-title {
@@ -231,9 +233,9 @@
   margin-left: auto;
 }
 
-/* A switch beside a group's title ends on the cards' control column, not 12px past it. */
+/* A switch beside a group's title ends on the cards' control column, not 16px past it. */
 .set-group-aside > .seg {
-  margin-right: 12px;
+  margin-right: 16px;
 }
 
 .set-card {
@@ -320,15 +322,6 @@
   min-width: 0;
 }
 
-/* Text in a toolbar sits on the same inset as the section titles below it. */
-.set-toolbar > .set-context:first-child {
-  padding-left: 4px;
-}
-
-.set-toolbar > .set-scope:last-child {
-  padding-right: 4px;
-}
-
 /* Where a page's settings come from: the agent and the project folder, quiet, at the toolbar's end. */
 .set-scope {
   display: inline-flex;
@@ -374,7 +367,6 @@
 
 .set-foot-note {
   margin-top: -8px;
-  padding: 0 4px;
   font-size: var(--t-small);
   line-height: 1.6;
   color: var(--text-3);
@@ -451,6 +443,13 @@
   position: relative;
   display: flex;
   align-items: center;
+}
+
+/* In a toolbar the search takes the row; the scope keeps a clear step from its end. */
+.set-toolbar > .set-search {
+  flex: 1;
+  min-width: 0;
+  margin-right: 6px;
 }
 
 .set-search > svg {

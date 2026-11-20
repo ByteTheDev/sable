@@ -81,9 +81,10 @@ export function AccountSwitcher() {
             <span className="account-plan">{headline}</span>
             {several && current && <span className="acs-label truncate">{name}</span>}
             {current && <LimitDot provider={focus} accountId={current.id} className="acs-dot" />}
+            {/* The caret belongs to the name (a pop-up label), so the row's end is the figure's alone. */}
+            <Icon name="caret-updown" size={13} className="account-caret" />
           </span>
           <PoolFigure provider={focus} total={pool} />
-          <Icon name="caret-updown" size={13} className="account-caret" />
         </button>
       </RM.Trigger>
       <RM.Portal>
@@ -134,11 +135,15 @@ export function AccountSwitcher() {
           ))}
           <RM.Separator className="menu-sep" />
           <RM.Item className="menu-item" onFocus={() => setPeek(null)} onSelect={() => openAddAccount(agents.length > 1 ? undefined : focus)}>
-            <Icon name="plus" size={16} />
+            <span className="acs-check-col" aria-hidden>
+              <Icon name="plus" size={15} />
+            </span>
             <span className="grow">Add account</span>
           </RM.Item>
           <RM.Item className="menu-item" onFocus={() => setPeek(null)} onSelect={() => openSettings('accounts')}>
-            <Icon name="settings" size={16} />
+            <span className="acs-check-col" aria-hidden>
+              <Icon name="settings" size={15} />
+            </span>
             <span className="grow">Manage accounts</span>
           </RM.Item>
 

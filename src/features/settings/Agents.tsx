@@ -31,10 +31,9 @@ export function Agents() {
   return (
     <div className="set-stack">
       <div className="set-toolbar">
-        <span className="grow" />
+        {agents.length > 5 ? <SearchField value={query} onChange={setQuery} placeholder="Search agents" count={shown.length} /> : <span className="grow" />}
         <Scope provider={provider} cwd={cwd} />
       </div>
-      {agents.length > 5 && <SearchField value={query} onChange={setQuery} placeholder="Search agents" count={shown.length} />}
       {!caps ? (
         <Card>
           <Skeleton rows={3} />

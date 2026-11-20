@@ -78,10 +78,13 @@
   color: var(--text-3);
 }
 
-/* The menu's caret answers the pointer; at rest the row is only who you are. */
+/* The menu's caret answers the pointer; at rest the row is only who you are. It stands right
+   after the name, so nothing is held open for it at the row's end: what is left across the
+   accounts sits on the row's right edge. */
 .account-caret {
   flex-shrink: 0;
-  margin-left: auto;
+  align-self: center;
+  margin-left: -2px;
   color: var(--text-3);
   opacity: 0;
   transition: opacity var(--d-1) var(--ease);

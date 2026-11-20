@@ -43,11 +43,11 @@ export function Skills() {
 
   return (
     <div className="set-stack">
+      {/* One row: the search, and where the list comes from at its end. */}
       <div className="set-toolbar">
-        <span className="grow" />
+        {caps && total > 0 ? <SearchField value={query} onChange={setQuery} placeholder="Search skills and commands" count={shown} /> : <span className="grow" />}
         <Scope provider={provider} cwd={cwd} />
       </div>
-      {caps && total > 0 && <SearchField value={query} onChange={setQuery} placeholder="Search skills and commands" count={shown} />}
       {!caps ? (
         <Card>
           <Skeleton rows={4} />

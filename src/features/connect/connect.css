@@ -144,20 +144,23 @@
 }
 
 .acc-default {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
   flex-shrink: 0;
   font-size: var(--t-small);
   color: var(--text-3);
+  white-space: nowrap;
 }
 
-/* A small dot sets the marker apart without a badge. */
+/* A small dot sets the marker apart without a badge. Inline, so the word keeps the line's baseline
+   (as a flex item the dot came first and lent its own bottom edge as the baseline: the word sat
+   3px under the name beside it). */
 .acc-default::before {
   content: '';
+  display: inline-block;
   width: 3px;
   height: 3px;
+  margin-right: 8px;
   border-radius: 50%;
+  vertical-align: 0.26em;
   background: var(--text-4);
 }
 

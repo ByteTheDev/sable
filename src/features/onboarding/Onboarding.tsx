@@ -571,7 +571,7 @@ function Folder({ reduce, onChoose, onDone, chooseRef }: { reduce: boolean; onCh
 
 // ── progress ──
 
-/** Pill geometry: dots 6 px, centres 16 px apart; the pill reaches 7 px past a dot either side. */
+/** Pill geometry: dots 6 px, centres 16 px apart; the pill reaches 7 px past a dot either side, and the other dots stand that much further off. */
 const DOT = 6;
 const PITCH = 16;
 const REACH = 7;
@@ -608,7 +608,8 @@ function Progress({ step, dir, reduce }: { step: number; dir: Dir; reduce: boole
   return (
     <div className="onb-progress" role="img" aria-label={`Step ${step + 1} of ${STEPS}`} style={{ width: TRACK }}>
       {Array.from({ length: STEPS }, (_, i) => (
-        <span key={i} className="onb-dot" data-done={i < step || undefined} style={{ left: REACH + i * PITCH }} />
+        // The dots beside the pill step away by its reach, so the gaps on both sides of it match the gap between two dots.
+        <span key={i} className="onb-dot" data-done={i < step || undefined} style={{ left: REACH + i * PITCH, transform: `translateX(${Math.sign(i - step) * REACH}px)` }} />
       ))}
       <motion.span className="onb-pill" style={{ clipPath: clip }} />
     </div>

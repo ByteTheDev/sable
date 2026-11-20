@@ -25,6 +25,12 @@ svg[data-anim] {
   overflow: visible;
 }
 
+/* A part named like a class of the app keeps the icon's own colour: the search lens and the history
+   dial are `.ring`, and the status spinner's `.ring` (art.css) painted them ivory beside a dim handle. */
+svg[data-anim] .ring {
+  color: inherit;
+}
+
 /* Rest state lives in the drawing's attributes (helpers that only appear while an icon moves have
    opacity 0, the sliders' segments are dashes), so an icon reads the same with or without this file. */
 

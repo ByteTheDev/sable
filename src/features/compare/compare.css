@@ -297,7 +297,9 @@
   color: var(--text-3);
 }
 
-.cmp-side {
+/* Scoped to the foot: the composer's toolbar has a .cmp-side of its own (composer.css), and this
+   sheet, once loaded, set its chips on a baseline 3px under the keys beside them. */
+.cmp-foot > .cmp-side {
   display: inline-flex;
   align-items: baseline;
   gap: 8px;

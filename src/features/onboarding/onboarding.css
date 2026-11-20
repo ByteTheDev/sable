@@ -66,16 +66,20 @@ html[data-desktop] .onb-top {
 
 /* ── the mark: one size, scaled; its box follows so the column below sits right ── */
 
+/* Flex, not grid: the mark's 64px box is taller than the later steps' 32px, and a grid track grows
+   to it and hangs it from the top (the small mark sat 12px low, on the heading); flex centres an
+   overflowing item on both sides. */
 .onb-mark {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   height: 64px;
   margin-bottom: 26px;
 }
 
 .onb-col:not([data-step='0']) .onb-mark {
   height: 32px;
-  margin-bottom: 20px;
+  margin-bottom: 14px;
 }
 
 .onb-mark-travel,
@@ -419,7 +423,9 @@ html[data-handover] .home .logo-mark {
   border-radius: 50%;
   background: var(--text);
   opacity: 0.22;
-  transition: opacity var(--d-3) var(--ease);
+  transition:
+    opacity var(--d-3) var(--ease),
+    transform var(--d-4) var(--ease-out);
 }
 
 .onb-dot[data-done] {

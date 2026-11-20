@@ -12,7 +12,12 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(min(760px, 70%) min(420px, 52%) at 50% 44%, rgb(12 12 14 / 0.5) 0%, rgb(12 12 14 / 0.22) 55%, transparent 100%);
+  /* Radii in percent: a radial-gradient with min() radii is dropped as invalid (the veil never drew). */
+  background:
+    radial-gradient(ellipse 62% 48% at 50% 44%, rgb(12 12 14 / 0.5) 0%, rgb(12 12 14 / 0.22) 55%, transparent 100%),
+    /* The top bar's controls lie over the field here: a short shade under them, eased out with no
+       edge, so they keep their contrast on a bright backdrop (nothing to see on a quiet one). */
+    linear-gradient(to bottom, rgb(12 12 14 / 0.72) 0, rgb(12 12 14 / 0.6) 24px, rgb(12 12 14 / 0.34) 52px, rgb(12 12 14 / 0.12) 78px, transparent 104px);
 }
 
 .home-col {
