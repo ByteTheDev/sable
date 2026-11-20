@@ -11,6 +11,7 @@ import { STATUS_TONE, commitAll, gitKey, isSmall, loadAllDiffs, loadDiff, refres
 import { LeaveList } from './leave';
 import { LaneSection } from './LaneSection';
 import { useSessionLane } from '@/features/session/lane';
+import { useJumpOpen } from '@/features/review/jump';
 import { splitPath, useArrivals, useToolIds } from './util';
 
 /** How many files the Changes tab lists (working tree, or this session's edits outside a repo). */
@@ -55,16 +56,24 @@ export function ChangesTab({ sessionId, cwd }: { sessionId: string; cwd: string 
     );
   }
   if (!status.isRepo) return <SessionEdits sessionId={sessionId} cwd={cwd} />;
-  return <RepoChanges cwd={cwd} foot={lane ? <LaneSection key={lane.path} sessionId={sessionId} lane={lane} cwd={cwd} /> : undefined} />;
+  return <RepoChanges sessionId={sessionId} cwd={cwd} foot={lane ? <LaneSection key={lane.path} sessionId={sessionId} lane={lane} cwd={cwd} /> : undefined} />;
 }
+
+/** Adds a file to the open set (a review comment asked to be shown). */
+const withPath = (path: string) => (o: ReadonlySet<string>) => (o.has(path) ? o : new Set(o).add(path));
 
 // ───────────────────────────── repository ─────────────────────────────
 
 /** `foot`: what takes the commit box's place (a lane's section, which lands instead). */
-function RepoChanges({ cwd, foot }: { cwd: string; foot?: ReactNode }) {
+function RepoChanges({ sessionId, cwd, foot }: { sessionId: string; cwd: string; foot?: ReactNode }) {
   const repo = useRepo(cwd)!;
   const status = repo.status!;
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+  // The review bar's list jumps to a comment on one of these files: its row opens.
+  useJumpOpen(
+    (r) => r.sessionId === sessionId && r.scope.startsWith('git:'),
+    (r) => setOpen(withPath(r.scope.slice(4))),
+  );
   const small = isSmall(status);
   const allOpen = status.files.length > 0 && status.files.every((f) => open.has(f.path));
   const arrived = useArrivals(status.files.map((f) => f.path));
@@ -158,7 +167,7 @@ function RepoChanges({ cwd, foot }: { cwd: string; foot?: ReactNode }) {
         ) : (
           <LeaveList className="ch-list" order={status.files.map((f) => f.path).join('|')}>
             {(shown < status.files.length ? status.files.slice(0, shown) : status.files).map((f) => (
-              <FileRow key={f.path} cwd={cwd} file={f} fresh={arrived.has(f.path)} open={open.has(f.path)} entry={repo.diffs[f.path]} onToggle={toggle} />
+              <FileRow key={f.path} sessionId={sessionId} cwd={cwd} file={f} fresh={arrived.has(f.path)} open={open.has(f.path)} entry={repo.diffs[f.path]} onToggle={toggle} />
             ))}
           </LeaveList>
         )}
@@ -291,6 +300,7 @@ const sameFile = (a: GitFileStatus, b: GitFileStatus) => a === b || (a.path === 
 
 const FileRow = memo(
   function FileRow({
+    sessionId,
     cwd,
     file,
     fresh,
@@ -298,6 +308,7 @@ const FileRow = memo(
     entry,
     onToggle,
   }: {
+    sessionId: string;
     cwd: string;
     file: GitFileStatus;
     /** It joined the list while the list was on screen. */
@@ -311,6 +322,7 @@ const FileRow = memo(
     // The row's actions are built the first time it is hovered or focused, not with the list.
     const [hot, setHot] = useState(false);
     const wake = hot ? undefined : () => setHot(true);
+    const review = useMemo(() => ({ sessionId, scope: `git:${file.path}`, path: file.path }), [sessionId, file.path]);
     return (
       <div role="listitem" data-flip={file.path} className="ch-item rail-row-host" data-open={open || undefined} data-new={fresh || undefined} onPointerEnter={wake} onFocus={wake}>
         <button type="button" className="ch-row" aria-expanded={open} onClick={() => onToggle(file.path)}>
@@ -329,7 +341,7 @@ const FileRow = memo(
         <Collapse open={open}>
           <div className="ch-diff">
             {diff ? (
-              <DiffView diff={diff} showHeader={false} maxLines={240} />
+              <DiffView diff={diff} showHeader={false} maxLines={240} review={review} />
             ) : entry?.state === 'error' ? (
               <p className="ch-note">
                 Could not load this diff. <button type="button" className="rail-link" onClick={() => loadDiff(cwd, file.path)}>Try again</button>
@@ -347,7 +359,7 @@ const FileRow = memo(
       </div>
     );
   },
-  (a, b) => a.cwd === b.cwd && a.fresh === b.fresh && a.open === b.open && a.entry === b.entry && a.onToggle === b.onToggle && sameFile(a.file, b.file),
+  (a, b) => a.sessionId === b.sessionId && a.cwd === b.cwd && a.fresh === b.fresh && a.open === b.open && a.entry === b.entry && a.onToggle === b.onToggle && sameFile(a.file, b.file),
 );
 
 /**
@@ -411,6 +423,12 @@ function useSessionEdits(sessionId: string, cwd: string): EditedFile[] {
 function SessionEdits({ sessionId, cwd }: { sessionId: string; cwd: string }) {
   const files = useSessionEdits(sessionId, cwd);
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+  useJumpOpen(
+    (r) => r.sessionId === sessionId && r.scope.startsWith('edits:'),
+    (r) => setOpen(withPath(r.scope.slice(6))),
+  );
+  // One target per file, kept while the file stays, so its diff only draws again when it changes.
+  const reviews = useMemo(() => new Map(files.map((f) => [f.path, { sessionId, scope: `edits:${f.path}`, path: f.path }])), [files, sessionId]);
   const adds = files.reduce((n, f) => n + f.additions, 0);
   const dels = files.reduce((n, f) => n + f.deletions, 0);
   const allOpen = files.length > 0 && files.every((f) => open.has(f.path));
@@ -474,7 +492,7 @@ function SessionEdits({ sessionId, cwd }: { sessionId: string; cwd: string }) {
                     <RowActions path={f.path} deleted={f.status === 'deleted'} />
                     <Collapse open={isOpen}>
                       <div className="ch-diff">
-                        <DiffView diff={f} showHeader={false} maxLines={240} lineNumbers={f.edits === 1} />
+                        <DiffView diff={f} showHeader={false} maxLines={240} lineNumbers={f.edits === 1} review={reviews.get(f.path)} />
                       </div>
                     </Collapse>
                   </li>

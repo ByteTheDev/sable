@@ -1,0 +1,421 @@
+/* Review comments on diffs (features/review): the "+" and picked lines in a diff, the field and
+   the cards under the lines, the review bar above the composer, and the review in the timeline. */
+
+/* ───────────── in a diff ───────────── */
+
+/* The visible width of the lines, so a card under them spans the view, not the longest line. */
+.dv[data-review] .dv-body {
+  container-type: inline-size;
+}
+
+/* The lines are one keyboard stop; the keyboard's line shows the "+", not a ring round them all. */
+.dv[data-review] .dv-lines:focus-visible {
+  outline: none;
+}
+
+.dv[data-review] .dv-gutter {
+  cursor: pointer;
+}
+
+/* The "+" of a hovered line: a small chip over the sign column, drawn by the gutter itself, so a
+   press on it is a press on the line numbers (one handler for the diff, no element per line). */
+.dv[data-review] .dv-gutter::after {
+  --chip: min(18px, calc(var(--code-lh) - 2px));
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: var(--chip);
+  height: var(--chip);
+  margin-top: calc(var(--chip) / -2);
+  border-radius: 5px;
+  color: var(--text-2);
+  background:
+    linear-gradient(currentColor 0 0) center / 8px 1.5px no-repeat,
+    linear-gradient(currentColor 0 0) center / 1.5px 8px no-repeat,
+    var(--panel-4);
+  box-shadow:
+    inset 0 0 0 1px var(--line-2),
+    0 1px 3px rgb(0 0 0 / 0.5);
+  opacity: 0;
+  transform: scale(0.8);
+  transition:
+    opacity var(--d-1) var(--ease),
+    transform var(--d-2) var(--ease-out),
+    color var(--d-1) var(--ease);
+}
+
+.dv[data-review] .dv-row:hover > .dv-gutter::after,
+.dv[data-review] .dv-lines:focus-visible > .dv-row[data-cursor] > .dv-gutter::after {
+  opacity: 1;
+  transform: none;
+}
+
+/* On the numbers or the chip itself: the plus turns ivory. */
+.dv[data-review] .dv-gutter:hover::after {
+  color: var(--text);
+}
+
+.dv[data-review] .dv-gutter:active::after {
+  transform: scale(0.92);
+  transition-duration: var(--d-1), 70ms, var(--d-1);
+}
+
+/* Picked lines (a drag, Shift+arrows, the open field, a hovered card): one light veil and an ivory
+   rule down their left edge. */
+.dv[data-review] .dv-row[data-sel] {
+  background:
+    linear-gradient(var(--fill-2) 0 0),
+    var(--row-bg);
+}
+
+.dv[data-review] .dv-row[data-sel] > .dv-gutter {
+  background:
+    linear-gradient(var(--fill-2) 0 0),
+    linear-gradient(var(--row-bg), var(--row-bg)),
+    var(--well-solid);
+  box-shadow: inset 2px 0 0 var(--text-2);
+}
+
+.dv[data-review] .dv-row:is([data-sel], [data-noted]) .dv-n {
+  color: var(--text-2);
+}
+
+/* The keyboard's line, while the lines have the keyboard. */
+.dv[data-review] .dv-lines:focus-visible > .dv-row[data-cursor]:not([data-sel]) {
+  background:
+    linear-gradient(var(--fill-1) 0 0),
+    var(--row-bg);
+}
+
+.dv[data-review] .dv-lines:focus-visible > .dv-row[data-cursor] .dv-n {
+  color: var(--text);
+}
+
+/* ── under the lines ── */
+
+/* Spans the lines' full width; the pin inside stays in view while long lines scroll sideways and
+   lines its card up with the code column (the indent is counted in the gutter's own font). */
+.rv-slot {
+  white-space: normal;
+}
+
+.rv-pin {
+  --rv-indent: calc(14px + var(--rv-cols, 2) * (var(--dv-digits, 2) * 1ch + 10px) + 22px);
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 100cqi;
+  padding: 0 10px 0 clamp(8px, var(--rv-indent), calc(100cqi - 248px));
+}
+
+/* Opens to its height and closes to nothing, so the lines below move with it (Thread.tsx Grow). */
+.rv-grow {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--d-3) var(--ease-out),
+    opacity var(--d-2) var(--ease);
+}
+
+.rv-grow[data-open] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.rv-grow-inner {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.rv-grow[data-settled] > .rv-grow-inner {
+  overflow: visible;
+}
+
+/* It unfolds from the line above it. */
+.rv-grow > .rv-grow-inner > .rv-card {
+  transform: translateY(-5px);
+  transition: transform var(--d-3) var(--ease-out);
+}
+
+.rv-grow[data-open] > .rv-grow-inner > .rv-card {
+  transform: none;
+}
+
+.rv-card {
+  margin: 4px 0 6px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background-color: var(--panel-2);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  font-family: var(--font-sans);
+  font-size: var(--t-ui);
+  font-variant-ligatures: normal;
+  line-height: 1.5;
+  letter-spacing: normal;
+  color: var(--text);
+  cursor: auto;
+}
+
+/* Lit once when the review bar's list jumps to it. */
+.rv-card[data-flash] {
+  animation: rv-flash 1.3s var(--ease-out);
+}
+
+@keyframes rv-flash {
+  0%,
+  35% {
+    background-color: var(--panel-4);
+  }
+}
+
+/* The field: the card is the field (its hairline turns soft ivory with the keyboard in it). */
+.rv-draft {
+  padding: 2px 5px 5px;
+}
+
+.rv-draft:focus-within {
+  border-color: var(--focus-field);
+}
+
+.rv-field {
+  display: block;
+  width: 100%;
+  padding: 6px 6px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  overflow-wrap: anywhere;
+}
+
+.rv-field::placeholder {
+  color: var(--text-3);
+}
+
+.rv-draft-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.rv-submit .kbds {
+  margin-left: 1px;
+}
+
+/* A comment: its words, with Edit and Delete at its top right on hover or focus. */
+.rv-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px 4px 7px 11px;
+}
+
+.rv-note-body {
+  flex: 1;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.rv-note-range {
+  margin-bottom: 1px;
+  font-size: var(--t-micro);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.rv-note-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rv-note-acts {
+  display: flex;
+  gap: 1px;
+  margin-top: -1px;
+  opacity: 0;
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.rv-note:hover .rv-note-acts,
+.rv-note:focus-within .rv-note-acts {
+  opacity: 1;
+}
+
+/* ───────────── the review bar above the composer ───────────── */
+
+.rv-bar {
+  gap: 6px;
+  padding-left: 4px;
+}
+
+.rv-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  min-width: 0;
+  padding: 0 8px 0 7px;
+  border-radius: var(--r-ctl-sm);
+  font-size: var(--t-small);
+  color: var(--text);
+  transition:
+    background-color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
+}
+
+.rv-count:hover,
+.rv-count[data-state='open'] {
+  background-color: var(--ctl-hover);
+}
+
+.rv-count:active {
+  background-color: var(--ctl-press);
+  scale: var(--press);
+  transition-duration: var(--d-1), 70ms;
+}
+
+.rv-count > svg:first-child {
+  color: var(--text-2);
+}
+
+.rv-count-caret {
+  color: var(--text-3);
+  transition: transform var(--d-2) var(--ease-out);
+}
+
+.rv-count[data-state='open'] .rv-count-caret {
+  transform: rotate(180deg);
+}
+
+.rv-bar .us-actions {
+  margin-left: auto;
+  gap: 4px;
+}
+
+/* The list: one row per comment, its file and lines over its first words. */
+.rv-list {
+  max-height: min(420px, calc(var(--vh) * 60));
+  overflow-y: auto;
+}
+
+.rv-item.menu-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  padding: 6px 10px 7px;
+}
+
+.rv-item-where {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--t-small);
+}
+
+.rv-item-path {
+  min-width: 0;
+  color: var(--text);
+}
+
+.rv-item-dir {
+  color: var(--text-3);
+}
+
+.rv-item-range {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.rv-item-text {
+  color: var(--text-2);
+}
+
+.rv-item[data-highlighted] .rv-item-text {
+  color: var(--text);
+}
+
+.rv-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.rv-confirm-title {
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+}
+
+.rv-confirm-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* ───────────── the review in the conversation ───────────── */
+
+/* The comments as a short list under what was typed: file and lines, then the words. */
+.rv-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.user-text + .rv-msg {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.rv-msg-where {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--t-small);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.rv-msg-where > svg {
+  align-self: center;
+  flex-shrink: 0;
+}
+
+.rv-msg-path {
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.rv-msg-dir {
+  color: var(--text-3);
+}
+
+.rv-msg-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rv-grow,
+  .rv-grow > .rv-grow-inner > .rv-card,
+  .dv[data-review] .dv-gutter::after {
+    transition: none;
+  }
+
+  .rv-card[data-flash] {
+    animation: none;
+  }
+}

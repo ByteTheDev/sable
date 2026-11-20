@@ -24,6 +24,7 @@ import type {
 } from '@shared/protocol';
 import { DEFAULT_ACCOUNT, DEFAULT_SETTINGS } from '@shared/protocol';
 import { bridge, type ConnStatus } from '@/lib/bridge';
+import type { Reviews } from '@/features/review/model';
 
 export { changedSince } from './revision';
 
@@ -149,6 +150,8 @@ export interface Store {
   auth: Partial<Record<string, AuthFlow>>;
   toasts: Toast[];
   drafts: Record<string, Draft>;
+  /** Review comments on diffs not sent yet, per session (features/review; actions `*ReviewComment`, `sendReview`). */
+  reviews: Reviews;
   ui: Ui;
 
   setUi: (patch: Partial<Ui>) => void;
@@ -218,6 +221,7 @@ export const useStore = create<Store>((set, get) => ({
   auth: {},
   toasts: [],
   drafts: {},
+  reviews: {},
   ui: {
     activeSessionId: null,
     sidebarOpen: true,
@@ -516,7 +520,10 @@ export function applyEvent(e: BridgeEvent) {
         delete sessions[e.id];
         delete data[e.id];
         const ui = s.ui.activeSessionId === e.id ? { ...s.ui, activeSessionId: null } : s.ui;
-        return { sessions, data, ui };
+        if (!s.reviews[e.id]) return { sessions, data, ui };
+        const reviews = { ...s.reviews };
+        delete reviews[e.id];
+        return { sessions, data, ui, reviews };
       });
       return;
     case 'session.caps':

@@ -55,6 +55,7 @@ import { GaugeIcon } from '@phosphor-icons/react/dist/csr/Gauge';
 import { ClockCounterClockwiseIcon } from '@phosphor-icons/react/dist/csr/ClockCounterClockwise';
 import { ChatCircleIcon } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { ChatsCircleIcon } from '@phosphor-icons/react/dist/csr/ChatsCircle';
+import { ChatTeardropTextIcon } from '@phosphor-icons/react/dist/csr/ChatTeardropText';
 import { SparkleIcon } from '@phosphor-icons/react/dist/csr/Sparkle';
 import { LightningIcon } from '@phosphor-icons/react/dist/csr/Lightning';
 import { BrainIcon } from '@phosphor-icons/react/dist/csr/Brain';
@@ -245,6 +246,8 @@ const ICONS = {
   history: ClockCounterClockwiseIcon,
   chat: ChatCircleIcon,
   chats: ChatsCircleIcon,
+  /** A review comment on a diff (features/review). */
+  comment: ChatTeardropTextIcon,
   sparkle: SparkleIcon,
   bolt: LightningIcon,
   brain: BrainIcon,

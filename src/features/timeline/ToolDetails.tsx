@@ -10,6 +10,7 @@ import { Icon } from '@/icons';
 import { parseAnsi } from '@/lib/ansi';
 import { langFromPath, plural, relPath } from '@/lib/format';
 import { onLinkClick } from '@/lib/links';
+import { stepScope } from '@/features/review/jump';
 import { useTimeline, useWhole } from './ctx';
 import { hostOf, isActive, looksJson, partialJsonString, prettyJson } from './util';
 
@@ -108,11 +109,16 @@ function Terminal({ item }: { item: ToolItem }) {
 // ───────────────────────────────── edit / write ─────────────────────────────────
 
 function Edits({ item }: { item: ToolItem }) {
-  const { cwd, home, live } = useTimeline();
+  const { sessionId, cwd, home, live } = useTimeline();
   // Laying out history: diffs build just after the first paint instead of inside it.
   const eager = live.current;
   const d = item.detail;
   const diffs = item.result?.diff;
+  // What was applied can be commented on for the chat's review (features/review).
+  const reviews = useMemo(
+    () => (sessionId ? diffs?.map((diff, i) => ({ sessionId, scope: stepScope(item.id, i), path: relPath(diff.path, cwd, home) })) : undefined),
+    [diffs, sessionId, item.id, cwd, home],
+  );
   // Before the call has run there is no result yet: preview what the input asks for.
   const preview = useMemo<FileDiff | null>(() => {
     if (diffs?.length || !d.path) return null;
@@ -127,7 +133,7 @@ function Edits({ item }: { item: ToolItem }) {
     return (
       <div className="detail-stack">
         {diffs.map((diff, i) => (
-          <DiffView key={i} diff={diff} showHeader={many} maxLines={many ? 40 : 60} eager={eager} />
+          <DiffView key={i} diff={diff} showHeader={many} maxLines={many ? 40 : 60} eager={eager} review={reviews?.[i]} />
         ))}
       </div>
     );

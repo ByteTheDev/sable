@@ -1,6 +1,7 @@
 import { DEFAULT_ACCOUNT, type AccountCap, type AccountInfo, type Attachment, type FolderGroup, type Project, type BackdropConfig, type BackdropImage, type BrowserAnswer, type Effort, type ProviderId, type QueuedMessage, type SessionMeta, type SessionOptions } from '@shared/protocol';
 import { DEFAULT_BACKDROP, normalizeBackdrop } from '@shared/backdrop';
 import { bridge } from '@/lib/bridge';
+import { addComment, clearReview, editComment, removeComment, reviewMessage, type ReviewComment } from '@/features/review/model';
 import { applySnapshot, applyWholeItem, capsKey, loadSession, useStore, type RailTab, type SettingsSection, type Store } from './store';
 
 /** Everything the UI can ask the bridge to do. Components call these, never bridge.call directly. */
@@ -223,6 +224,34 @@ export function reorderQueue(sessionId: string, ids: string[]) {
 }
 /** Gives a queued message to the agent now (mid-turn when one is running). */
 export const sendQueuedNow = (sessionId: string, id: string) => bridge.call('queue.sendNow', { sessionId, id }).catch(fail);
+
+// ── review comments on diffs (features/review): kept per session in the window until sent ──
+
+export const addReviewComment = (sessionId: string, c: ReviewComment) => useStore.setState((s) => ({ reviews: addComment(s.reviews, sessionId, c) }));
+/** New words for a comment; empty words remove it. */
+export const editReviewComment = (sessionId: string, id: string, text: string) => useStore.setState((s) => ({ reviews: editComment(s.reviews, sessionId, id, text) }));
+export const removeReviewComment = (sessionId: string, id: string) => useStore.setState((s) => ({ reviews: removeComment(s.reviews, sessionId, id) }));
+export const discardReview = (sessionId: string) => useStore.setState((s) => ({ reviews: clearReview(s.reviews, sessionId) }));
+
+/**
+ * Sends the chat's pending review as one message: the words in the composer first (not a command or
+ * a shell line, those stay where they are), then every comment with its file, lines and quote.
+ * While a turn runs it is queued like any message. The comments sent (and the words taken from the
+ * composer) are cleared once the bridge has it.
+ */
+export async function sendReview(sessionId: string): Promise<boolean> {
+  const s = useStore.getState();
+  const comments = s.reviews[sessionId] ?? [];
+  if (!comments.length) return false;
+  const typed = s.drafts[sessionId]?.text.trim() ?? '';
+  const lead = /^[/!]/.test(typed) ? '' : typed;
+  const res = await sendMessage(sessionId, reviewMessage(comments, lead));
+  if (!res.ok) return false;
+  const sent = new Set(comments.map((c) => c.id));
+  useStore.setState((st) => ({ reviews: clearReview(st.reviews, sessionId, sent) }));
+  if (lead && useStore.getState().drafts[sessionId]?.text.trim() === lead) useStore.getState().setDraft(sessionId, { text: '' });
+  return true;
+}
 
 export const setModel = (sessionId: string, model: string) => bridge.call('session.setModel', { sessionId, model }).catch(fail);
 

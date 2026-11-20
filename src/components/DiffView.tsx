@@ -1,10 +1,11 @@
-import { memo, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { memo, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { FileDiff } from '@shared/protocol';
 import { Icon } from '@/icons';
 import { langFromPath } from '@/lib/format';
 import { useHighlight } from '@/lib/highlight';
 import { useNearViewport } from '@/lib/view-hooks';
 import { wordDiff, type Range } from '@/lib/word-diff';
+import { useDiffReview, type ReviewTarget } from '@/features/review/diff-review';
 import { markedLine } from './code-render';
 import { Collapse } from './Collapse';
 import './code.css';
@@ -22,6 +23,8 @@ export interface DiffViewProps {
   lineNumbers?: boolean;
   /** Build the lines before the first paint when already on screen (default). Off while a transcript is being laid out, so the lines build in a task of their own behind a same-height box. */
   eager?: boolean;
+  /** Lets the person comment on lines for the chat's review (features/review): which chat, which diff, which file. */
+  review?: ReviewTarget;
   className?: string;
 }
 
@@ -123,7 +126,7 @@ const STATUS: Record<string, { label: string; tone: string } | undefined> = {
 const HIGHLIGHT_MAX_LINES = 700;
 
 /** A unified diff for one file: line numbers, word-level marks, syntax colours when cheap. */
-export const DiffView = memo(function DiffView({ diff, defaultOpen = true, maxLines, showHeader = true, lineNumbers = true, eager = true, className }: DiffViewProps) {
+export const DiffView = memo(function DiffView({ diff, defaultOpen = true, maxLines, showHeader = true, lineNumbers = true, eager = true, review, className }: DiffViewProps) {
   const [open, setOpen] = useState(defaultOpen || !showHeader);
   const [all, setAll] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -139,6 +142,7 @@ export const DiffView = memo(function DiffView({ diff, defaultOpen = true, maxLi
   const [dir, base] = splitPath(diff.path);
   const status = STATUS[diff.status];
   const empty = diff.binary || model.lines === 0;
+  const rv = useDiffReview(empty ? undefined : review, model.rows, lineNumbers, base);
 
   let limit = model.rows.length;
   let hidden = 0;
@@ -151,6 +155,53 @@ export const DiffView = memo(function DiffView({ diff, defaultOpen = true, maxLi
       }
     }
     hidden = model.lines - maxLines;
+    // A comment (or the field) below the cut: the lines show that far, so it is never hidden.
+    if (rv.reach >= limit) {
+      limit = model.rows.length;
+      hidden = 0;
+    }
+  }
+
+  // Built once per change of the lines or their colours, so a render for anything else (a comment,
+  // a picked range) never draws the rows again.
+  const cols = lineNumbers ? (diff.status === 'added' || diff.status === 'deleted' ? 1 : 2) : 0;
+  const drawn = visible && near && !empty;
+  const rowEls = useMemo(
+    () =>
+      (drawn ? model.rows.slice(0, limit) : []).map((row, i) => {
+        if (row.t === 'sep') {
+          if (!lineNumbers) return null;
+          return (
+            <div className="dv-sep" key={i}>
+              <span>{row.text}</span>
+            </div>
+          );
+        }
+        const toks = row.t === '-' ? oldTokens?.[row.oi] : newTokens?.[row.ni];
+        return (
+          <div className="dv-row" data-t={row.t === ' ' ? undefined : row.t} data-i={i} key={i}>
+            <span className="dv-gutter" aria-hidden>
+              {lineNumbers && diff.status !== 'added' && <span className="dv-n">{row.old}</span>}
+              {lineNumbers && diff.status !== 'deleted' && <span className="dv-n">{row.neu}</span>}
+            </span>
+            <span className="dv-sign" aria-hidden>
+              {row.t === ' ' ? '' : row.t === '+' ? '+' : '−'}
+            </span>
+            <span className="dv-code">{markedLine(row.text, toks, row.marks, 'dv-mark')}</span>
+          </div>
+        );
+      }),
+    [drawn, model, limit, lineNumbers, diff.status, oldTokens, newTokens],
+  );
+  let lines: ReactNode = rowEls;
+  if (rv.on) {
+    const out: ReactNode[] = [];
+    rowEls.forEach((el, i) => {
+      out.push(el);
+      const s = rv.slot(i);
+      if (s) out.push(s);
+    });
+    lines = out;
   }
 
   // Far from the viewport the lines are not mounted: a box of the same height stands in.
@@ -174,31 +225,9 @@ export const DiffView = memo(function DiffView({ diff, defaultOpen = true, maxLi
     <div style={{ height: placeholder }} aria-hidden />
   ) : (
     <>
-      <div className="dv-body hscroll" style={{ '--dv-digits': model.digits } as CSSProperties}>
-        <div className="dv-lines">
-          {model.rows.slice(0, limit).map((row, i) => {
-            if (row.t === 'sep') {
-              if (!lineNumbers) return null;
-              return (
-                <div className="dv-sep" key={i}>
-                  <span>{row.text}</span>
-                </div>
-              );
-            }
-            const toks = row.t === '-' ? oldTokens?.[row.oi] : newTokens?.[row.ni];
-            return (
-              <div className="dv-row" data-t={row.t === ' ' ? undefined : row.t} key={i}>
-                <span className="dv-gutter" aria-hidden>
-                  {lineNumbers && diff.status !== 'added' && <span className="dv-n">{row.old}</span>}
-                  {lineNumbers && diff.status !== 'deleted' && <span className="dv-n">{row.neu}</span>}
-                </span>
-                <span className="dv-sign" aria-hidden>
-                  {row.t === ' ' ? '' : row.t === '+' ? '+' : '−'}
-                </span>
-                <span className="dv-code">{markedLine(row.text, toks, row.marks, 'dv-mark')}</span>
-              </div>
-            );
-          })}
+      <div className="dv-body hscroll" style={{ '--dv-digits': model.digits, '--rv-cols': cols } as CSSProperties}>
+        <div className="dv-lines" {...rv.linesProps}>
+          {lines}
         </div>
       </div>
       {hidden > 0 && (
@@ -211,7 +240,7 @@ export const DiffView = memo(function DiffView({ diff, defaultOpen = true, maxLi
   );
 
   return (
-    <div ref={root} className={`dv ${className ?? ''}`} data-spot data-open={visible || undefined} data-status={diff.status}>
+    <div ref={root} className={`dv ${className ?? ''}`} data-spot data-open={visible || undefined} data-status={diff.status} data-review={rv.on || undefined} data-rv-scope={rv.on ? review!.scope : undefined}>
       {showHeader && (
         <button type="button" className="dv-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           <Icon name={lang === 'text' || lang === 'markdown' ? 'file-text' : 'file-code'} size={15} className="dv-icon" />

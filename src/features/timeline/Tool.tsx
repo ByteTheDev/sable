@@ -5,6 +5,7 @@ import { Markdown } from '@/components/Markdown';
 import { Icon, TOOL_ICON } from '@/icons';
 import { formatDuration, plural, relPath } from '@/lib/format';
 import { PathLabel } from '@/ui';
+import { stepOf, useJumpOpen } from '@/features/review/jump';
 import { AgentBlock } from './Agent';
 import { useTimeline } from './ctx';
 import { ToolDetails, hasDetails } from './ToolDetails';
@@ -154,6 +155,8 @@ function ToolRow({ item }: { item: ToolItem }) {
   const [choice, setChoice] = useState<boolean | null>(null);
   const expandable = hasDetails(item);
   const open = expandable && (choice ?? autoOpen(item));
+  // The review bar's list jumps to a comment on this edit: the step opens to show it.
+  useJumpOpen((r) => stepOf(r.scope) === item.id, () => setChoice(true), item.kind === 'edit' || item.kind === 'write');
   const active = isActive(item);
   const icon = TOOL_ICON[item.kind] ?? TOOL_ICON.other;
   const t = rowText(item, cwd, home);

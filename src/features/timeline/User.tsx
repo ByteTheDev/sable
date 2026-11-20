@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { UserItem } from '@shared/protocol';
 import { CopyButton } from '@/components/CopyButton';
 import { Icon } from '@/icons';
@@ -8,6 +8,8 @@ import { useStore } from '@/state/store';
 import { IconButton, Popover, PopoverClose, PopoverContent, PopoverTrigger, Switch, Tip } from '@/ui';
 import { fieldBeat } from '@/art/events';
 import { landInTimeline } from '@/features/composer/flight';
+import { parseReview } from '@/features/review/model';
+import { ReviewComments } from '@/features/review/ReviewMessage';
 import { afterSend, sendInAir } from '@/features/composer/settle';
 import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
 import { MessageAgain } from './Again';
@@ -47,7 +49,10 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
   const queued = item.state === 'queued';
   const images = item.attachments?.filter((a) => a.kind === 'image' && a.dataUrl) ?? [];
   const files = item.attachments?.filter((a) => !(a.kind === 'image' && a.dataUrl)) ?? [];
-  const long = isLongMessage(item.text);
+  // A review sent from the review bar: what was typed, then the comments as a short list.
+  const review = useMemo(() => parseReview(item.text), [item.text]);
+  const words = review ? review.lead : item.text;
+  const long = isLongMessage(words);
 
   // The message sent from the composer (or a queue row) lands here: it flies in as this bubble and the two swap.
   const root = useRef<HTMLDivElement>(null);
@@ -162,11 +167,12 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
             ))}
           </div>
         )}
-        {item.text && (
+        {words && (
           <div className="user-text" data-clipped={(long && !expanded) || undefined}>
-            {item.text}
+            {words}
           </div>
         )}
+        {review && <ReviewComments review={review} />}
         {long && (
           <button type="button" className="user-more" onClick={() => setExpanded((e) => !e)} aria-expanded={expanded}>
             {expanded ? 'Show less' : 'Show more'}
