@@ -32,3 +32,9 @@ export function fieldBeat(kind: FieldBeat, el: Element | null | undefined, stren
   if (!r.width) return;
   window.dispatchEvent(new CustomEvent<FieldEventDetail>(FIELD_EVENT, { detail: { kind, x: r.left + r.width / 2, y: at === 'top' ? r.top : r.top + r.height / 2, strength } }));
 }
+
+/** Sends a beat from a point (viewport coordinates): for senders that follow something drawn, not an element (the sent message's drop). */
+export function fieldBeatAt(kind: FieldBeat, x: number, y: number, strength = 1) {
+  if (reduced() || typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent<FieldEventDetail>(FIELD_EVENT, { detail: { kind, x, y, strength } }));
+}

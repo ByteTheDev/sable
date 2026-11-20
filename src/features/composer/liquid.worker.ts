@@ -1,4 +1,4 @@
-import { makeRenderer, type LiquidRenderer } from './liquid-gl';
+import { makeRenderer, type Backdrop, type LiquidRenderer } from './liquid-gl';
 import { liquidAt, planLiquid, type LiquidFrame, type LiquidPlan, type LiquidSpec, type Shift } from './liquid-shape';
 
 /**
@@ -20,6 +20,10 @@ export type LiquidMessage =
   /** A message starts on canvas `layer`, which stands at `origin` (page px); `at` is the page's absolute time of its start. */
   | { type: 'start'; id: number; layer: number; origin: { x: number; y: number }; spec: LiquidSpec; shifts: Shift[]; at: number }
   | { type: 'retarget'; id: number; spec: LiquidSpec }
+  /** The message's start, corrected (the page's absolute time). */
+  | { type: 'retime'; id: number; at: number }
+  /** A still of the field behind message `id` (drawn on canvas `layer`), for the glass to bend; it may come before or after the start. */
+  | { type: 'backdrop'; id: number; layer: number; back: Backdrop }
   | { type: 'shift'; id: number; shift: Shift }
   | { type: 'cancel'; id: number }
   /** Dev: draws every message at a fixed time after its start (null: runs on). */
@@ -39,6 +43,8 @@ interface Host {
   t0: number;
   /** Cancelled: fades from this time on. */
   fade: number;
+  /** Its backdrop on its canvas's renderer (0: none). */
+  back: number;
   drawn: number[];
 }
 
@@ -55,12 +61,25 @@ interface Layer {
 }
 
 const hosts = new Map<number, Host>();
+/** Backdrops that came before their message started: message id to handle. */
+const early = new Map<number, { layer: number; back: number }>();
 const layers = new Map<number, Layer>();
 let frozen: number | null = null;
 let looping = false;
 let lost = false;
 
 const FADE_OUT = 120;
+
+/**
+ * The governor: when this worker's own frames come late (a loaded machine, a weak GPU), detail is
+ * shed before frames are: the bend and the soft shadow go (`lite`), the shapes and their light
+ * stay. Two late frames in a row shed it for the rest of what is in the air; it comes back with
+ * the next message.
+ */
+const LATE_MS = 26;
+let lastFrame = 0;
+let late = 0;
+let lite = false;
 
 scope.onmessage = (e: MessageEvent<LiquidMessage>) => {
   const m = e.data;
@@ -80,12 +99,36 @@ scope.onmessage = (e: MessageEvent<LiquidMessage>) => {
       break;
     case 'start':
       if (!layers.has(m.layer) || lost) return scope.postMessage({ type: 'done', id: m.id });
-      hosts.set(m.id, { layer: m.layer, origin: m.origin, plan: planLiquid(m.spec, m.shifts), t0: m.at - performance.timeOrigin, fade: -1, drawn: [] });
+      hosts.set(m.id, { layer: m.layer, origin: m.origin, plan: planLiquid(m.spec, m.shifts), t0: m.at - performance.timeOrigin, fade: -1, back: early.get(m.id)?.back ?? 0, drawn: [] });
+      early.delete(m.id);
       loop();
       break;
+    case 'backdrop': {
+      const l = layers.get(m.layer);
+      if (!l || lost) return m.back.bitmap.close();
+      const back = l.r.backdrop(m.back);
+      const h = hosts.get(m.id);
+      if (h) h.back = back;
+      else if (back) {
+        // Never started (given up before its first frame): let go of it after a while.
+        early.set(m.id, { layer: m.layer, back });
+        setTimeout(() => {
+          const e = early.get(m.id);
+          if (!e) return;
+          early.delete(m.id);
+          layers.get(e.layer)?.r.release(e.back);
+        }, 4000);
+      }
+      break;
+    }
     case 'retarget': {
       const h = hosts.get(m.id);
       if (h) h.plan = planLiquid(m.spec, h.plan.shifts);
+      break;
+    }
+    case 'retime': {
+      const h = hosts.get(m.id);
+      if (h) h.t0 = m.at - performance.timeOrigin;
       break;
     }
     case 'shift':
@@ -111,20 +154,26 @@ function loop() {
 
 function frame(now: number) {
   looping = false;
-  const drawn = new Map<number, { frames: LiquidFrame[]; origin: { x: number; y: number } }>();
+  if (lastFrame && frozen == null) {
+    late = now - lastFrame > LATE_MS ? late + 1 : 0;
+    if (late >= 2) lite = true;
+  }
+  lastFrame = now;
+  const drawn = new Map<number, { frames: { f: LiquidFrame; back?: number }[]; origin: { x: number; y: number } }>();
   for (const [id, h] of hosts) {
     const t = frozen ?? now - h.t0;
     const f = liquidAt(h.plan, t);
-    if (h.fade >= 0) f.alpha *= Math.max(0, 1 - (t - h.fade) / FADE_OUT);
+    if (h.fade >= 0) f.alpha *= Math.min(1, Math.max(0, 1 - (t - h.fade) / FADE_OUT));
     const over = f.done || (h.fade >= 0 && t - h.fade >= FADE_OUT);
     if (over && frozen == null) {
       hosts.delete(id);
+      if (h.back) layers.get(h.layer)?.r.release(h.back);
       scope.postMessage({ type: 'done', id, frames: import.meta.env.DEV ? h.drawn : undefined });
       continue;
     }
     if (import.meta.env.DEV && h.drawn.length < 80) h.drawn.push(Math.round(t));
     const d = drawn.get(h.layer) ?? { frames: [], origin: h.origin };
-    d.frames.push(f);
+    d.frames.push({ f, back: h.back || undefined });
     drawn.set(h.layer, d);
   }
   for (const [id, l] of layers) {
@@ -137,7 +186,7 @@ function frame(now: number) {
       continue;
     }
     if (d) {
-      l.r.draw(d.frames, d.origin);
+      l.r.draw(d.frames, d.origin, lite);
       l.dirty = true;
     } else if (l.dirty) {
       // One clear frame, then the canvas is free.
@@ -153,4 +202,9 @@ function frame(now: number) {
   }
   // A canvas with nothing left on it was cleared in this frame: the next is only for messages still in the air.
   if (hosts.size && frozen == null) loop();
+  else {
+    lastFrame = 0;
+    late = 0;
+    lite = false;
+  }
 }

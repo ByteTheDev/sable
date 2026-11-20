@@ -4,23 +4,30 @@
  * and the tests all read the same numbers, so the silhouette and the words agree in every frame
  * without talking.
  *
- * The beats (ms after the key's first frame):
- * - collapse (0 to COLLAPSE): the words gather into the bar's top-right corner as one piece and
- *   fade, while the field closes to one line on the same curve. The bar is empty and at rest.
- * - bead (BORN to SWELL): a bead of ink rises out of the bar's top edge there, joined to it by a
- *   meniscus (a smooth union of the edge and the bead, so the two read as one liquid);
- * - pinch (SWELL to SNAP): the bead lifts, the meniscus draws into a neck that thins and parts;
- *   what is left on the edge sinks back into it;
- * - rise (SNAP to land): the drop flies to the bottom-right of where the message will sit,
- *   stretched along its speed, leaving fast and arriving still moving;
- * - spread (land to hand): it touches down and spreads into the card's shape, each edge on its own
- *   spring (the top one carries the drop's momentum a little past, the far edge races out and
- *   settles), the corners easing from round to the card's, the tail corner last. The words are
- *   revealed in place by the spreading ink (never scaled);
- * - hand (hand to end): the conversation's own card takes over (a bubble), or the sheet melts into
- *   the queue row it landed on (a row).
+ * One body of liquid on one path, with one speed that never steps (ms after the key's first frame):
+ * - collapse (0 to COLLAPSE): the words run into the bar's top-right corner as one piece (their
+ *   width leading, so they draw into a stream there) and fade, while the field closes to one line.
+ *   The bar is empty and at rest for a moment.
+ * - swell (BORN on): the liquid that went in comes back out. The drop starts under the bar's top
+ *   edge, at rest, and is pushed up through it: first the edge swells over it (a meniscus: the
+ *   smooth union of the edge and the drop), then it stands out of it.
+ * - thread (`launch` to `snap`): the drop is clear of the edge and already flying; a thread of
+ *   liquid still ties it to the bar, thinning as it stretches, until surface tension parts it. What
+ *   is left recoils both ways: the tail snaps up into the drop (which rings once, a little shorter
+ *   then longer along its path), the foot falls back into the edge, which bobs once.
+ * - flight (to `land`): the push is over; the drop coasts on, slowing, stretched along its speed.
+ *   The whole way from under the edge to the landing is one path (a quadratic curve that leaves
+ *   the bar straight up) run at one speed curve: a thrust that comes on smoothly, then drag.
+ * - spread (`land` to `hand`): it touches down still moving and wets its place: every edge of the
+ *   sheet is a spring that starts at the drop's own edge with the drop's own speed, runs out to
+ *   the card's and settles a pixel or two past. The words are revealed in place by the sheet.
+ * - hand (`hand` to `end`): the conversation's own card takes over (a bubble), or the sheet melts
+ *   into the queue row it landed on (a row).
  *
- * A bead with no edge (words leaving a queue row) simply swells where the words gathered.
+ * A message into the queue row right above the bar is thrown up and falls into it (a hop). A drop
+ * with no edge (words leaving a queue row) swells where the words gathered and leaves from there.
+ * Under a first message the bar itself leaves for the dock while the thread still holds
+ * (`spec.bar`): the edge, the meniscus and the thread's foot ride down with it.
  * Geometry is in the page's CSS px (viewport, already divided by the interface zoom).
  */
 
@@ -36,15 +43,17 @@ export interface Box {
 }
 
 export interface LiquidSpec {
-  /** Where the bead forms: a point on the bar's top edge (`edge`), or a free point. */
+  /** Where the drop comes out: a point on the bar's top edge (`edge`), or a free point. */
   from: { x: number; y: number; edge: boolean };
   /** The shape it ends as. */
   to: Box;
   /** A bubble becomes the message card; a row melts into a queue row. */
   kind: 'bubble' | 'row';
+  /** The bar glides away from `BAR_LEAVES` on (home/handoff.ts, the same spring): by this much in all. */
+  bar?: { dx: number; dy: number };
 }
 
-/** A late correction of the landing: everything after the snap moves by (dx, dy), eased in from `at` over `dur` ms. */
+/** A late correction of the landing: everything still to come bends toward a landing moved by (dx, dy), eased in from `at` over `dur` ms. */
 export interface Shift {
   at: number;
   dx: number;
@@ -54,13 +63,13 @@ export interface Shift {
 
 export interface LiquidPlan {
   spec: LiquidSpec;
-  /** The bead's radius. */
+  /** The drop's radius. */
   r: number;
-  /** The bead starts to rise out of the edge (or to swell in place). */
+  /** The drop starts to move (under the edge, or as a point where the words gathered). */
   born: number;
-  /** The bead is whole, still joined. */
-  swell: number;
-  /** The neck has parted; the drop leaves. */
+  /** It stands clear of the edge: from here on it is only tied to it by the thread. */
+  launch: number;
+  /** The thread parts. */
   snap: number;
   /** The drop touches its place and spreads. */
   land: number;
@@ -68,34 +77,50 @@ export interface LiquidPlan {
   hand: number;
   /** Nothing is left to draw. */
   end: number;
-  /** Where the drop leaves from (its centre at the snap) and where it lands (its centre). */
-  leave: { x: number; y: number };
+  /** The path: from `start` (the drop's centre at `born`) past the handle `via` to `impact` (its centre at `land`). */
+  start: { x: number; y: number };
+  via: { x: number; y: number };
   impact: { x: number; y: number };
-  /** The drop's stretch when it lands (it still moves). */
+  /** The way along the path per ms since `born` (0..1, one entry per ms), and the factor that turns the speed curve into way per ms. */
+  way: Float32Array;
+  rate: number;
+  /** The speed curve's drag: what is left of the push at the end, and how fast it gets there (ms). */
+  drag: { floor: number; tau: number };
+  /** How far the drop is from the edge when the thread parts (px). */
+  reach: number;
+  /** The thread as it parts: its waist and its two ends' radii, the waist relative to the foot and to the drop. */
+  parted: { foot: { x: number; y: number }; tail: { x: number; y: number }; rf: number; rb: number };
+  /** The drop's stretch and speed (px/ms) as it lands. */
   arrive: { sx: number; sy: number; vx: number; vy: number };
-  /** A hop (into a queue row): how far the drop's path bows up over the straight line at its top, px (0: a straight flight). */
+  /** A hop (into a queue row): how far the path tops out over its higher end, px (0: no hop). */
   arc: number;
   shifts: Shift[];
 }
 
 /** The words gather into the corner and the field closes, in this long. */
-export const COLLAPSE = 180;
-/** The bar's own beats: the bead starts under the edge as the words go, is whole, and parts. */
-export const BORN = 158;
-export const SWELL = 206;
-export const SNAP = 252;
-/** A bead with no edge to part from (a queue row's words) swells and leaves sooner. */
-const FREE = { born: 96, swell: 176, snap: 196 };
+export const COLLAPSE = 160;
+/** The drop starts under the bar's edge as the last of the words go in. */
+export const BORN = 116;
+/** A drop with no edge (a queue row's words) starts sooner: the row is short. */
+const FREE_BORN = 92;
+/** Under a first message the bar leaves for the dock at this time: the drop is out, the thread holds. */
+export const BAR_LEAVES = BORN + 40;
 /** From touching down to the handover (a thin queue row fills sooner), and the handover itself. */
-const SPREAD = 160;
-const SPREAD_ROW = 136;
+const SPREAD = 170;
+const SPREAD_ROW = 140;
 export const HAND = 90;
-const BEAD = 11;
-/** How far over the edge the drop's centre is when it leaves (its radius plus a gap the neck has crossed). */
-const LIFT_GAP = 8;
-/** The drop's flight: the leaving and arriving speeds as shares of the mean (a cubic's handles). */
-const LEAVE = 0.6;
-const ARRIVE = 0.86;
+const DROP = 12;
+/** The push: how fast it comes on, and until when (ms after `born`); drag takes over then. */
+const RISE = 20;
+const PUSH = 46;
+/** How long the thread holds once the drop is clear of the edge (ms, at the drop's speed then). */
+const THREAD_MS = 26;
+/** How long the edge keeps showing after the thread has parted (the foot falling back, the bob; a bar that is leaving only the first). */
+const EDGE_REST = 100;
+const EDGE_REST_LEAVING = 48;
+const edgeRest = (spec: LiquidSpec) => (spec.bar ? EDGE_REST_LEAVING : EDGE_REST);
+/** The drop is still its own shape this long into the spread (merging into the sheet). */
+const MERGE = 56;
 
 export const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 export const lerp = (a: number, b: number, u: number) => a + (b - a) * u;
@@ -103,8 +128,6 @@ export const smooth = (a: number, b: number, v: number) => {
   const u = clamp((v - a) / (b - a || 1), 0, 1);
   return u * u * (3 - 2 * u);
 };
-/** The bead's way out of the edge: fast out, slower while the neck holds, leaving with speed (a cubic). */
-const bead = (u: number) => 3 * u * (1 - u) * (1 - u) * 0.62 + 3 * u * u * (1 - u) * 0.58 + u * u * u;
 /** Out with a small overshoot (about 4 %): a bead that plops out and settles. */
 const backOut = (u: number) => {
   const c = 1.25;
@@ -115,7 +138,7 @@ const backOut = (u: number) => {
 /**
  * The collapse's progress (0..1 over COLLAPSE): a critically damped spring, so the words answer the
  * key in its first frame and the bar settles softly. The field's height closes on the same curve
- * (composer.css, `linearEasing(collapseEase)`), so the words never stand outside the bar.
+ * (flight.ts, `linearEasing(collapseEase)`), so the words never stand outside the bar.
  */
 const COLLAPSE_K = 6.2;
 export const collapseEase = (u: number) => {
@@ -123,10 +146,13 @@ export const collapseEase = (u: number) => {
   return (1 - (1 + v) * Math.exp(-v)) / (1 - (1 + COLLAPSE_K) * Math.exp(-COLLAPSE_K));
 };
 
-/** The words while they gather: one uniform scale toward the corner, and how much of them shows. */
-export function collapseAt(u: number): { s: number; o: number } {
-  const e = collapseEase(u);
-  return { s: lerp(1, 0.03, e), o: 1 - smooth(0.08, 0.62, u) };
+/**
+ * The words while they gather: scaled toward the corner, their width a little ahead of their
+ * height (they draw into a stream that runs up into the point the drop comes out of), and how
+ * much of them shows.
+ */
+export function collapseAt(u: number): { sx: number; sy: number; o: number } {
+  return { sx: lerp(1, 0.02, collapseEase(Math.min(1, u * 1.3))), sy: lerp(1, 0.03, collapseEase(u)), o: 1 - smooth(0.16, 0.64, u) };
 }
 
 /** The ease a shift comes in with (shared with the words' WAAPI correction through `linearEasing`). */
@@ -142,62 +168,170 @@ export function linearEasing(ease: (u: number) => number, n = 24): string {
   return `linear(${stops.join(', ')})`;
 }
 
-/** The rise's progress (a cubic with handles LEAVE and ARRIVE: it leaves fast and arrives still moving) and its derivative. */
-const riseAt = (u: number) => 3 * u * (1 - u) * (1 - u) * LEAVE + 3 * u * u * (1 - u) * ARRIVE + u * u * u;
-const riseSpeed = (u: number) => 3 * LEAVE * (1 - u) * (1 - 3 * u) + 3 * ARRIVE * u * (2 - 3 * u) + 3 * u * u;
+// ── the bar's glide (home/handoff.ts flies the bar on it; the edge here rides the same samples) ──
 
-/** How long the drop flies for a trip of `dist` px: as a thrown drop, with the root of the distance (above the dock ~80 ms, from home ~130). */
-export const riseMs = (dist: number) => clamp(30 + 5.5 * Math.sqrt(dist), 48, 172);
+/** The spring the home composer glides to the dock on: semi-implicit Euler in `step` ms, a sample every `every` steps. */
+export const GLIDE = { stiff: 440, damp: 40, step: 4, every: 4 };
+
+let glideSamples: Float32Array | null = null;
+/**
+ * The glide's progress `ms` after it starts (0..1): the unit step of the spring as handoff.ts
+ * steps and samples it, read between samples the way its keyframes are (linearly), so the edge
+ * drawn here and the bar animated there are the same pixels.
+ */
+export function glideUnit(ms: number): number {
+  if (ms <= 0) return 0;
+  if (!glideSamples) {
+    const n = 64;
+    const s = new Float32Array(n + 1);
+    const h = GLIDE.step / 1000;
+    let x = 0;
+    let v = 0;
+    for (let i = 1; i <= n * GLIDE.every; i++) {
+      v += (GLIDE.stiff * (1 - x) - GLIDE.damp * v) * h;
+      x += v * h;
+      if (i % GLIDE.every === 0) s[i / GLIDE.every] = x;
+    }
+    glideSamples = s;
+  }
+  const at = ms / (GLIDE.step * GLIDE.every);
+  const i = Math.floor(at);
+  if (i >= glideSamples.length - 1) return 1;
+  return lerp(glideSamples[i], glideSamples[i + 1], at - i);
+}
+
+/** Where the point the drop comes out of is at `t`: fixed, or riding the bar as it leaves. */
+export function footAt(spec: LiquidSpec, t: number): { x: number; y: number } {
+  const { from, bar } = spec;
+  if (!bar) return from;
+  const g = glideUnit(t - BAR_LEAVES);
+  return { x: from.x + bar.dx * g, y: from.y + bar.dy * g };
+}
+
+// ── the drop's speed and path ──
 
 /**
  * A queued message's drop has almost no way to go (the tray's new row sits right over the bar it
- * rises from), so it hops: thrown up out of the parting neck, over the top of a small arc, and
- * down into the row, which it hits still falling (the spread takes that fall). Constant gravity:
- * the path is a parabola in time, as a thrown drop's is.
+ * rises from), so it hops: thrown up, over the top of a small arc, and down into the row, which it
+ * hits still falling (the spread takes that fall).
  */
-export const HOP = { height: 26, ms: 120 };
+export const HOP = { height: 26, ms: 150 };
+
+/** How long the drop is on its way, from under the edge to touching down, for a trip of `dist` px (as a thrown drop: with the root of the distance). */
+export const tripMs = (dist: number) => clamp(64 + 8.2 * Math.sqrt(dist), 110, 236);
+
+/**
+ * The speed curve (unitless, peak 1) `ms` after `born`: the push comes on smoothly from rest (no
+ * step in speed or in acceleration at the start), holds until PUSH, then drag eats it down toward
+ * `floor`. One curve from the first swell under the edge to the landing.
+ */
+function speedAt(ms: number, floor: number, tau: number): number {
+  if (ms <= 0) return 0;
+  const on = 1 - Math.exp(-((ms / RISE) * (ms / RISE)));
+  return ms < PUSH ? on : on * (floor + (1 - floor) * Math.exp(-(ms - PUSH) / tau));
+}
 
 /** How far the drop is stretched along its speed (px/ms): longer and thinner, about the same area. */
 function stretch(v: number): { along: number; across: number } {
-  const q = clamp(v * 0.17, 0, 0.42);
+  const q = clamp(v * 0.2, 0, 0.46);
   return { along: 1 + q, across: 1 / Math.sqrt(1 + q) };
 }
 
+const bez = (a: number, c: number, b: number, q: number) => (1 - q) * (1 - q) * a + 2 * q * (1 - q) * c + q * q * b;
+const bezD = (a: number, c: number, b: number, q: number) => 2 * (1 - q) * (c - a) + 2 * q * (b - c);
+
 export function planLiquid(spec: LiquidSpec, shifts: Shift[] = []): LiquidPlan {
-  const r = spec.kind === 'row' ? BEAD * 0.82 : BEAD;
-  const beats = spec.from.edge ? { born: BORN, swell: SWELL, snap: SNAP } : FREE;
-  const leave = spec.from.edge ? { x: spec.from.x, y: spec.from.y - r - LIFT_GAP } : { x: spec.from.x, y: spec.from.y };
-  const { to } = spec;
+  const { from, to } = spec;
+  const r = spec.kind === 'row' ? DROP * 0.8 : DROP;
+  const born = from.edge ? BORN : FREE_BORN;
+  // Under the edge at first (deep enough that its meniscus starts from nothing), or where the words gathered.
+  const start = from.edge ? { x: from.x, y: from.y + r * 1.3 } : { x: from.x, y: from.y };
   // It lands in the card's bottom-right (the tail corner: where it came from), as round as the card allows.
   const c = Math.min(to.height, to.width, 42) / 2;
   const impact = { x: to.left + to.width - c, y: to.top + to.height - c };
-  const dx = impact.x - leave.x;
-  const dy = impact.y - leave.y;
-  const dist = Math.hypot(dx, dy);
-  const arc = spec.kind === 'row' && spec.from.edge ? HOP.height : 0;
-  const rise = arc ? HOP.ms : riseMs(dist);
-  // Its speed as it touches down (px/ms): along the line, or down out of the hop's arc.
-  const vx = arc ? dx / rise : dist > 0.01 ? (dx / dist) * ((dist * riseSpeed(1)) / rise) : 0;
-  const vy = arc ? (dy + 4 * arc) / rise : dist > 0.01 ? (dy / dist) * ((dist * riseSpeed(1)) / rise) : 0;
-  const v = Math.hypot(vx, vy);
-  const s = stretch(v);
-  const k = v > 0.0001 ? 1 / v : 0;
-  const land = beats.snap + rise;
+  const dist = Math.hypot(impact.x - start.x, impact.y - start.y);
+  const arc = spec.kind === 'row' && from.edge ? HOP.height : 0;
+  // The handle: straight up out of the bar, then over to the landing; a hop tops out `arc` over its higher end.
+  const up = Math.max(0, start.y - impact.y);
+  const via = arc ? { x: (start.x + impact.x) / 2, y: (4 * (Math.min(from.y, impact.y) - arc) - start.y - impact.y) / 2 } : { x: start.x, y: start.y - Math.max(up * 0.5, r * 2.4) };
+  const T = Math.round(arc ? HOP.ms : tripMs(dist));
+  const drag = arc ? { floor: 0.9, tau: 40 } : { floor: 0.36, tau: (T - PUSH) * 0.5 };
+  const way = new Float32Array(T + 1);
+  let sum = 0;
+  for (let i = 1; i <= T; i++) {
+    sum += (speedAt(i - 1, drag.floor, drag.tau) + speedAt(i, drag.floor, drag.tau)) / 2;
+    way[i] = sum;
+  }
+  for (let i = 1; i <= T; i++) way[i] /= sum;
+  const land = born + T;
   const hand = land + (spec.kind === 'row' ? SPREAD_ROW : SPREAD);
-  return {
+  const plan: LiquidPlan = {
     spec,
     r,
-    ...beats,
+    born,
+    launch: born,
+    snap: born,
     land,
     hand,
     end: hand + (spec.kind === 'row' ? HAND * 1.5 : HAND) + 16,
-    leave,
+    start,
+    via,
     impact,
-    // Vertical flights stretch tall; the stretch is kept per axis for the spread's start.
-    arrive: { sx: lerp(s.across, s.along, Math.abs(vx) * k), sy: lerp(s.across, s.along, Math.abs(vy) * k), vx: vx || 0, vy: vy || 0 },
+    way,
+    rate: 1 / sum,
+    drag,
+    reach: r * 2,
+    parted: { foot: { x: 0, y: 0 }, tail: { x: 0, y: 0 }, rf: 0, rb: 0 },
+    arrive: { sx: 1, sy: 1, vx: 0, vy: 0 },
     arc,
     shifts,
   };
+  if (from.edge) {
+    // When it stands clear of the edge, and when the thread has stretched as far as it holds.
+    let t = born;
+    while (t < land && gapAt(plan, t) < 0) t++;
+    plan.launch = t;
+    // The thread holds for about as long whatever the drop's speed (surface tension's own time): a
+    // fast drop draws a longer one.
+    const l = dropAt(plan, t, 0, 0);
+    plan.reach = Math.min(clamp(Math.hypot(l.vx, l.vy) * THREAD_MS, r * 1.5, r * 4.6), dist * 0.42);
+    while (t < land && gapAt(plan, t) < plan.reach) t++;
+    plan.snap = Math.min(t, land - 8);
+    const d = dropAt(plan, plan.snap, 0, 0);
+    const f = footAt(spec, plan.snap);
+    const w = WAIST;
+    plan.parted = { foot: { x: (d.x - f.x) * w, y: (d.y - f.y) * w }, tail: { x: (f.x - d.x) * (1 - w), y: (f.y - d.y) * (1 - w) }, rf: threadRadii(r, 1).rf, rb: threadRadii(r, 1).rb };
+  }
+  const a = dropAt(plan, land, 0, 0);
+  const v = Math.hypot(a.vx, a.vy);
+  const s = stretch(v);
+  const k = v > 0.0001 ? 1 / v : 0;
+  // Vertical flights stretch tall; the stretch is kept per axis for the spread's start.
+  plan.arrive = { sx: lerp(s.across, s.along, Math.abs(a.vx) * k), sy: lerp(s.across, s.along, Math.abs(a.vy) * k), vx: a.vx, vy: a.vy };
+  return plan;
+}
+
+/** The drop's centre and speed (px/ms) at `t` (born..land), its landing moved by (sx, sy). */
+function dropAt(plan: LiquidPlan, t: number, sx: number, sy: number): { x: number; y: number; vx: number; vy: number } {
+  const ms = clamp(t - plan.born, 0, plan.way.length - 1);
+  const i = Math.min(plan.way.length - 2, Math.floor(ms));
+  const q = lerp(plan.way[i], plan.way[i + 1], ms - i);
+  const qd = speedAt(ms, plan.drag.floor, plan.drag.tau) * plan.rate;
+  const { start: S, via: C, impact: I } = plan;
+  return { x: bez(S.x, C.x, I.x + sx, q), y: bez(S.y, C.y, I.y + sy, q), vx: bezD(S.x, C.x, I.x + sx, q) * qd, vy: bezD(S.y, C.y, I.y + sy, q) * qd };
+}
+
+/** How far the drop's underside stands over the edge it came out of (negative: still in it). */
+function gapAt(plan: LiquidPlan, t: number): number {
+  return footAt(plan.spec, t).y - dropAt(plan, t, 0, 0).y - plan.r;
+}
+
+/** Where along the thread its waist is (from the foot), and its radii for a stretch `u` of 0..1 (1: about to part). */
+const WAIST = 0.42;
+function threadRadii(r: number, u: number): { rf: number; rm: number; rb: number } {
+  const left = 1 - clamp(u, 0, 1);
+  const rm = r * 0.4 * Math.pow(left, 0.7);
+  return { rf: rm + 1.2 + r * 0.3 * left, rm, rb: rm + 0.8 + r * 0.22 * left };
 }
 
 /** The sum of the late corrections at `t`. */
@@ -212,28 +346,30 @@ export function shiftAt(plan: LiquidPlan, t: number): { x: number; y: number } {
   return { x, y };
 }
 
+// ── the spread ──
+
 /**
- * A spring's step response over a fixed span, as progress 0..1 for u in 0..1: `zw` (decay) and
- * `wd` (ring) in units of the span, nudged so it is exactly 1 at u = 1 (the card takes over then).
+ * A damped spring's position `t` ms after it is let go at `x0` with speed `v0` (px/ms), pulled to
+ * `to`: natural frequency `w` (rad/ms), damping ratio `z` (under 1).
  */
-export function springUnit(u: number, zw: number, wd: number): number {
-  if (u <= 0) return 0;
-  if (u >= 1) return 1;
-  const at = (v: number) => 1 - Math.exp(-zw * v) * (Math.cos(wd * v) + (zw / wd) * Math.sin(wd * v));
-  return at(u) + (1 - at(1)) * u * u * u;
+export function springFrom(t: number, x0: number, v0: number, to: number, w: number, z: number): number {
+  const a = x0 - to;
+  const wd = w * Math.sqrt(1 - z * z);
+  const b = (v0 + z * w * a) / wd;
+  return to + Math.exp(-z * w * t) * (a * Math.cos(wd * t) + b * Math.sin(wd * t));
 }
 
-/** A push that dies out (the drop's own speed carried into an edge): px for `t` ms after leaving at `v0` px/ms. */
-const momentum = (t: number, v0: number) => v0 * t * Math.exp(-t / 22);
+/** The damping ratio that takes a spring `past` px beyond its place after a run of `run` px (at least a hair, at most 5 %). */
+export function dampFor(run: number, past: number): number {
+  const f = clamp(past / Math.max(1, Math.abs(run)), 0.002, 0.05);
+  const l = Math.log(f);
+  return -l / Math.sqrt(Math.PI * Math.PI + l * l);
+}
 
-/**
- * The spread's edges: the far one races out and goes a little past (about 3 %), the top rings
- * once with the drop's momentum, the near ones settle without fuss. All of them are exactly on
- * the card's box at the handover.
- */
-const FAR = { zw: 4.6, wd: 4.3 };
-const TOP = { zw: 4.2, wd: 5.6 };
-const NEAR = { zw: 5.6, wd: 3.2 };
+/** The sheet's edges: how quick each spring is (rad/ms) and how far it may go past (px). */
+const FAR = { w: 0.046, past: 1.8 };
+const TOP = { w: 0.052, past: 1.4 };
+const NEAR = { w: 0.06, past: 0.4 };
 
 export interface Sheet {
   left: number;
@@ -247,17 +383,23 @@ export interface Sheet {
 export function sheetAt(plan: LiquidPlan, t: number): Sheet {
   const { to } = plan.spec;
   const { impact: I, arrive: A, r } = plan;
-  const T = Math.max(0, t - plan.land);
-  const u = Math.min(1, T / (plan.hand - plan.land));
+  const span = plan.hand - plan.land;
+  const T = clamp(t - plan.land, 0, span);
+  const u = T / span;
   const hx = r * A.sx;
   const hy = r * A.sy;
   const right = to.left + to.width;
   const bottom = to.top + to.height;
-  const go = (from: number, target: number, k: { zw: number; wd: number }, v0: number) => from + (target - from) * springUnit(u, k.zw, k.wd) + momentum(T, v0) * (1 - u);
-  const L = go(I.x - hx, to.left, FAR, A.vx * 0.5);
-  const R = go(I.x + hx, right, NEAR, A.vx * 0.5);
-  const Tp = go(I.y - hy, to.top, TOP, A.vy);
-  const B = go(I.y + hy, bottom, NEAR, A.vy * 0.35);
+  // Each edge leaves as the drop's own edge, at the drop's own speed, and is exactly the card's at the handover.
+  const go = (from: number, target: number, k: { w: number; past: number }, v0: number) => {
+    const z = dampFor(target - from, k.past);
+    const at = (ms: number) => springFrom(ms, from, v0, target, k.w, z);
+    return at(T) + (target - at(span)) * u * u * u;
+  };
+  const L = go(I.x - hx, to.left, FAR, A.vx * 0.6);
+  const R = Math.min(go(I.x + hx, right, NEAR, A.vx * 0.6), right + 1);
+  const Tp = go(I.y - hy, to.top, TOP, A.vy * 0.7);
+  const B = Math.min(go(I.y + hy, bottom, NEAR, A.vy * 0.5), bottom + 1);
   const w = Math.max(0.5, R - L);
   const h = Math.max(0.5, B - Tp);
   // Round as the drop at first, the card's corners as it fills its place.
@@ -269,82 +411,133 @@ export function sheetAt(plan: LiquidPlan, t: number): Sheet {
   return { left: L, top: Tp, right: L + w, bottom: Tp + h, radii };
 }
 
-/** What to draw at `t`. All of it is one ink; `alpha` fades it as the card or row takes over. */
+// ── what to draw ──
+
+/** A tapered piece of the thread: from (ax, ay) with radius `ra` to (bx, by) with radius `rb`. */
+export interface Taper {
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  ra: number;
+  rb: number;
+}
+
+/** What to draw at `t`. All of it is one liquid; `alpha` fades it as the card or row takes over. */
 export interface LiquidFrame {
   /**
-   * The bar's top edge while the bead is joined to it (and a moment after, while what is left on it
-   * sinks back): only what stands above it is drawn, and the bead flows into it with a smooth
-   * union of radius `k`.
+   * The bar's top edge while the drop is tied to it (and a moment after, while what is left on it
+   * falls back): only what stands above it is drawn, and the drop flows into it with a smooth
+   * union of radius `k`. `bob`: the edge's one small swell after the thread has parted (px).
    */
-  edge?: { y: number; k: number };
-  /** The bead or the drop: centre, radius, its stretch along `ang` (`sx`) and across it (`sy`). */
+  edge?: { x: number; y: number; k: number; bob: number };
+  /** The drop: centre, radius, its stretch along `ang` (`sx`) and across it (`sy`). */
   drop?: { x: number; y: number; r: number; sx: number; sy: number; ang: number };
+  /** The thread: its lower piece (out of the edge) and its upper piece (the drop's tail). */
+  foot?: Taper;
+  tail?: Taper;
   sheet?: Sheet;
-  /** The light on the ink's rim: full in the drop, the card's own quiet hairline at 0. */
+  /** How softly the drop runs into the sheet while both are drawn (a smooth union's radius). */
+  join: number;
+  /** How much it is a drop of glass: 1 in the air (lit, bending what is behind it), the card's own quiet surface at 0. */
   light: number;
+  /** How deep the glass is rounded in from its rim, px: the drop's radius in the air, a hairline bevel on the card. */
+  lens: number;
   alpha: number;
   done: boolean;
 }
 
-const UP = -Math.PI / 2;
-
 export function liquidAt(plan: LiquidPlan, t: number): LiquidFrame {
   const { spec, r } = plan;
   const { from } = spec;
-  if (t >= plan.end) return { alpha: 0, light: 0, done: true };
-  const f: LiquidFrame = { alpha: 1, light: 1, done: false };
+  if (t >= plan.end) return { alpha: 0, light: 0, lens: 1, join: 0, done: true };
+  const f: LiquidFrame = { alpha: 1, light: 1, lens: r, join: 0, done: false };
   if (t < plan.born) return f;
-  if (t < plan.snap) {
-    const u = clamp((t - plan.born) / (plan.swell - plan.born), 0, 1);
-    if (from.edge) {
-      // Rising out of the edge in one motion (under it at first: only what is above shows): quick
-      // out, held back a moment by the neck as it thins, and leaving at the speed the rise takes
-      // over with. Round as soon as it is out; the meniscus narrows until it parts.
-      const w = clamp((t - plan.born) / (plan.snap - plan.born), 0, 1);
-      const rr = r * lerp(0.4, 1, backOut(u));
-      const y = lerp(from.y + r * 0.9, plan.leave.y, bead(w));
-      const along = 1 + 0.12 * smooth(0.45, 1, w);
-      f.edge = { y: from.y, k: r * lerp(1.15, 0.62, smooth(0.2, 1, w)) };
-      // The bar's own ink while it is part of the bar; it takes the light as it lifts away.
-      f.light = smooth(plan.born + 30, plan.snap, t);
-      f.drop = { x: from.x, y, r: rr, sx: along, sy: 1 / Math.sqrt(along), ang: UP };
-    } else {
-      // Swelling in place.
-      f.drop = { x: from.x, y: from.y, r: r * lerp(0.12, 1, backOut(u)), sx: 1, sy: 1, ang: UP };
-    }
-    return f;
-  }
   const sh = shiftAt(plan, t);
-  // What is left on the edge sinks back as the drop leaves (the smooth union lets go by itself).
-  if (from.edge && t < plan.snap + 60) f.edge = { y: from.y, k: r * 0.7 * (1 - smooth(plan.snap, plan.snap + 60, t)) };
-  if (t < plan.land) {
-    const span = plan.land - plan.snap;
-    const u = (t - plan.snap) / span;
-    const L = plan.leave;
-    const I = plan.impact;
-    const dx = I.x + sh.x - L.x;
-    const dy = I.y + sh.y - L.y;
-    if (plan.arc) {
-      // The hop: level speed across, constant gravity down (up over the top of the arc, then falling in).
-      const vx = dx / span;
-      const vy = (dy - 4 * plan.arc * (1 - 2 * u)) / span;
-      const s = stretch(Math.hypot(vx, vy));
-      f.drop = { x: L.x + dx * u, y: L.y + dy * u - 4 * plan.arc * u * (1 - u), r, sx: s.along, sy: s.across, ang: Math.atan2(vy, vx) };
-      return f;
+  const ms = t - plan.born;
+
+  if (from.edge && t < plan.snap + edgeRest(spec)) {
+    const F = footAt(spec, t);
+    const since = t - plan.snap;
+    // The meniscus is wide while the drop comes through the edge and lets go as it leaves; after
+    // the thread has parted the edge bobs once, low and wide, and is the bar's alone again.
+    const k = r * lerp(0.3, 1.15, smooth(0, 26, ms)) * lerp(1, 0.45, smooth(plan.launch, plan.snap, t)) * (1 - smooth(0, 28, since));
+    const u = clamp((since - 16) / 72, 0, 1);
+    f.edge = { x: F.x, y: F.y, k, bob: since > 0 ? 2.2 * Math.sin(Math.PI * u) * (1 - u) : 0 };
+    if (t >= plan.launch) {
+      if (since < 0) {
+        // The thread, stretched between the edge and the drop: its waist thins as it lengthens.
+        const d = dropAt(plan, t, sh.x, sh.y);
+        const tr = threadRadii(r, gapAt(plan, t) / plan.reach);
+        const mx = lerp(F.x, d.x, WAIST);
+        const my = lerp(F.y, d.y, WAIST);
+        f.foot = { ax: F.x, ay: F.y, bx: mx, by: my, ra: tr.rf, rb: tr.rm };
+        f.tail = { ax: d.x, ay: d.y, bx: mx, by: my, ra: tr.rb, rb: tr.rm };
+      } else if (since < 64) {
+        // Parted: the foot falls back into the edge.
+        const e = Math.exp(-since / 12);
+        f.foot = { ax: F.x, ay: F.y, bx: F.x + plan.parted.foot.x * e, by: F.y + plan.parted.foot.y * e, ra: plan.parted.rf * Math.exp(-since / 18), rb: 0.1 };
+      }
     }
-    const e = riseAt(u);
-    const dist = Math.hypot(dx, dy) || 1;
-    const v = (dist * riseSpeed(u)) / span;
+  }
+
+  if (t < plan.land) {
+    const d = dropAt(plan, t, sh.x, sh.y);
+    const v = Math.hypot(d.vx, d.vy);
     const s = stretch(v);
-    f.drop = { x: L.x + dx * e, y: L.y + dy * e, r, sx: s.along, sy: s.across, ang: Math.atan2(dy, dx) };
+    let along = s.along;
+    let size = r;
+    if (from.edge) {
+      // The bar's own ink while it is part of the bar; it takes the light as it lifts away.
+      f.light = smooth(plan.born + 8, plan.launch + 12, t);
+      const since = t - plan.snap;
+      if (since >= 0) {
+        if (since < 56) {
+          // The tail snaps up into the drop.
+          const e = Math.exp(-since / 10);
+          f.tail = { ax: d.x, ay: d.y, bx: d.x + plan.parted.tail.x * e, by: d.y + plan.parted.tail.y * e, ra: plan.parted.rb * Math.exp(-since / 16), rb: 0.1 };
+        }
+        // And the drop rings once with it: shorter along its path, then a little longer, then itself.
+        along *= 1 - 0.13 * Math.exp(-since / 34) * Math.sin((2 * Math.PI * since) / 56);
+      }
+    } else {
+      // Swelling where the words gathered, as it starts to move.
+      size = r * lerp(0.12, 1, backOut(clamp(ms / 64, 0, 1)));
+      f.light = smooth(0, 44, ms);
+    }
+    f.lens = size;
+    f.drop = { x: d.x, y: d.y, r: size, sx: along, sy: 1 / Math.sqrt(along), ang: v > 0.004 ? Math.atan2(d.vy, d.vx) : -Math.PI / 2 };
     return f;
   }
+
   const s = sheetAt(plan, t);
   f.sheet = { left: s.left + sh.x, right: s.right + sh.x, top: s.top + sh.y, bottom: s.bottom + sh.y, radii: s.radii };
-  // The drop's light thins out over the growing sheet and is the card's own at the handover.
-  f.light = 1 - smooth(plan.land, plan.hand, t);
+  const into = t - plan.land;
+  if (into < MERGE) {
+    // The drop is still there for a moment, running on into the sheet it becomes (one skin around both).
+    const A = plan.arrive;
+    const go = 7 * (1 - Math.exp(-into / 10));
+    const left = 1 - smooth(0, MERGE, into);
+    f.drop = { x: plan.impact.x + sh.x + A.vx * go, y: plan.impact.y + sh.y + A.vy * go, r: r * lerp(0.5, 1, left), sx: lerp(1, A.sx, left), sy: lerp(1, A.sy, left), ang: 0 };
+    f.join = r * 0.9;
+  }
+  // The glass flattens as it spreads: a drop's dome at first, the card's bevel, then its hairline.
+  const u = smooth(plan.land, plan.hand, t);
+  f.light = 1 - u;
+  f.lens = lerp(r, 1, smooth(0, 0.8, (t - plan.land) / (plan.hand - plan.land)));
   if (spec.kind === 'row') f.alpha = 1 - smooth(plan.hand, plan.hand + HAND * 1.5, t);
+  else if (t > plan.hand) f.alpha = handAlpha((t - plan.hand) / HAND);
   return f;
+}
+
+/**
+ * The sheet's share while the card's own surface fades in over it (linearly over HAND, flight.ts):
+ * together the two always cover as much as the card alone, so nothing behind them dims or shows.
+ */
+export function handAlpha(u: number): number {
+  const v = clamp(u, 0, 1);
+  if (v >= 1) return 0;
+  return clamp((1 - (1 - INK.a) / (1 - INK.a * v)) / INK.a, 0, 1);
 }
 
 /**
@@ -366,27 +559,42 @@ export function revealAt(plan: LiquidPlan, t: number): { x: number; y: number; s
 export function liquidBounds(plan: LiquidPlan, room = 90): { left: number; top: number; width: number; height: number } {
   const { from, to } = plan.spec;
   const r = plan.r * 2;
-  const left = Math.min(from.x - r * 2, plan.leave.x - r, to.left - 24) - 8;
-  const right = Math.max(from.x + r * 2, plan.leave.x + r, to.left + to.width + 12) + 8;
-  // A hop's arc tops out about its height (plus the drop) over the higher of its two ends.
-  const top = Math.min(plan.leave.y - r * 2, to.top - 24, from.y - r * 2, Math.min(plan.leave.y, plan.impact.y) - (plan.arc ?? 0) - r * 2) - room;
-  const bottom = Math.max(from.y + 4, to.top + to.height + SHADOW.reach) + room;
+  // The edge is drawn until a moment after the thread has parted: as far as the bar has gone by then.
+  const foot = footAt(plan.spec, plan.snap + edgeRest(plan.spec));
+  const xs = [from.x, foot.x, plan.start.x, plan.impact.x];
+  const left = Math.min(...xs.map((x) => x - r * 2), to.left - 24) - 8;
+  const right = Math.max(...xs.map((x) => x + r * 2), to.left + to.width + 12) + 8;
+  // Where the path tops out (a hop's arc, or the landing itself).
+  const { start: S, via: C, impact: I } = plan;
+  const den = S.y - 2 * C.y + I.y;
+  const q = Math.abs(den) > 1e-6 ? clamp((S.y - C.y) / den, 0, 1) : 1;
+  const apex = Math.min(I.y, bez(S.y, C.y, I.y, q));
+  const top = Math.min(to.top - 24, from.y - r * 2, apex - r * 2) - room;
+  const bottom = Math.max(from.y + 4, foot.y + 4, to.top + to.height + SHADOW.reach) + room;
   return { left: Math.floor(left), top: Math.floor(top), width: Math.ceil(right - left), height: Math.ceil(bottom - top) };
 }
 
 /**
- * The look of the ink: the message card's fill (`.user-card::before`) and its inner hairline, the
- * hairline lit from above while the ink is a drop (`lit`), and one soft shadow under it.
+ * The look of the liquid: the message card's fill (`.user-card::before`) and its inner hairline;
+ * in the air a drop of dark glass (`GLASS`), and one soft shadow under it.
  */
 export const INK = {
   fill: [20, 20, 23] as [number, number, number],
-  a: 0.88,
+  a: 0.84,
   /** The drop's ink is a step lighter than the card's: it reads on the dark stage, and settles. */
-  lift: [27, 27, 31] as [number, number, number],
+  lift: [26, 26, 30] as [number, number, number],
   /** The hairline: the card's, and its top while lit. */
   rim: 0.08,
-  lit: 0.3,
+  lit: 0.34,
 };
+
+/**
+ * The glass: where its light comes from (the top and slightly left, as on the app's other glass,
+ * tokens.css `--rim-light`; toward the reader), how sharp and strong its highlight is, the light
+ * on its rim and the glow that comes through to the far side, and how far it bends what is behind
+ * it (the backdrop's field), in shares of its depth.
+ */
+export const GLASS = { light: [-0.32, -0.78, 0.54] as [number, number, number], gloss: 64, spec: 0.82, sheen: 0.1, rim: 0.42, glow: 0.2, bend: 0.85, pass: 0.92 };
 
 export const SHADOW = { y: 7, blur: 16, a: 0.5, reach: 26 };
 
@@ -407,13 +615,23 @@ export function frameBounds(f: LiquidFrame): { x0: number; y0: number; x1: numbe
   if (d) {
     const reach = d.r * Math.max(d.sx, d.sy) + 2;
     add(d.x - reach, d.y - reach, d.x + reach, d.y + reach);
-    if (f.edge) add(d.x - d.r - f.edge.k * 1.5, d.y - reach, d.x + d.r + f.edge.k * 1.5, f.edge.y);
+  }
+  for (const p of [f.foot, f.tail]) {
+    if (!p) continue;
+    const m = Math.max(p.ra, p.rb) + 2;
+    add(Math.min(p.ax, p.bx) - m, Math.min(p.ay, p.by) - m, Math.max(p.ax, p.bx) + m, Math.max(p.ay, p.by) + m);
+  }
+  if (f.edge) {
+    const e = f.edge;
+    const w = (d ? d.r : 0) + e.k * 1.5 + 14;
+    add(e.x - w, e.y - 6, e.x + w, e.y);
+    if (d) add(d.x - d.r - e.k * 1.5, d.y, d.x + d.r + e.k * 1.5, e.y);
   }
   if (f.sheet) add(f.sheet.left, f.sheet.top, f.sheet.right, f.sheet.bottom);
   if (x0 === Infinity) return null;
   const pad = SHADOW.blur;
   const b = { x0: x0 - pad, y0: y0 - pad * 0.6, x1: x1 + pad, y1: y1 + SHADOW.reach };
-  // Nothing under a bar the bead is joined to.
+  // Nothing under a bar the drop is tied to.
   if (f.edge) b.y1 = Math.min(b.y1, f.edge.y + 2);
   return b;
 }

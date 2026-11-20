@@ -1,5 +1,5 @@
 import { reducedMotion, uiZoom } from '@/lib/motion';
-import { makeRenderer } from './liquid-gl';
+import { makeRenderer, type Backdrop } from './liquid-gl';
 import { liquidAt, liquidBounds, planLiquid, type Box, type LiquidPlan, type LiquidSpec, type Shift } from './liquid-shape';
 import type { LiquidMessage, LiquidReply } from './liquid.worker';
 
@@ -46,12 +46,14 @@ let preparing = false;
  */
 const SHAPES = [
   { w: 700, h: 300 },
-  { w: 700, h: 620 },
+  { w: 700, h: 900 },
   { w: 820, h: 180 },
 ];
 /** Room kept around a flight inside its canvas, above (late corrections) and below the bar's edge. */
 const ROOM_ABOVE = 60;
 const ROOM_BELOW = 8;
+
+export type { Backdrop };
 
 const canHandOver = () =>
   !broken && typeof Worker === 'function' && typeof OffscreenCanvas !== 'undefined' && typeof HTMLCanvasElement !== 'undefined' && 'transferControlToOffscreen' in HTMLCanvasElement.prototype;
@@ -190,6 +192,12 @@ export interface Pour {
   start(t0: number): void;
   /** A better landing before the drop has left (a new shape and place). */
   retarget(to: Box): void;
+  /** The start was a little off (the compositor's own report came in): time zero moves, while nothing shows yet. */
+  retime(t0: number): void;
+  /** Before the start: the bar it leaves will glide away under it (liquid-shape.ts `spec.bar`). */
+  leaving(by: { dx: number; dy: number }): void;
+  /** A still of the field behind it, for the glass to bend (the bitmap is handed over). */
+  backdrop(b: Backdrop): void;
   /** A late correction after it has left: everything still to come moves by it. */
   shift(s: Shift): void;
   /** Fades out what is drawn (a refused message, a send given up). */
@@ -202,16 +210,18 @@ export interface Pour {
 let frozenAt: number | null = null;
 const local = new Set<() => void>();
 
-/** A free canvas that holds the flight (the smaller first), placed for it. */
-function claimSlot(plan: LiquidPlan): Slot | null {
-  const region = regionOf(plan);
+type Region = { left: number; top: number; width: number; height: number };
+
+const inside = (r: Region, s: Slot) => r.left >= s.at.x && r.top >= s.at.y && r.left + r.width <= s.at.x + s.css.w && r.top + r.height <= s.at.y + s.css.h;
+
+/** A free canvas that holds the region (the smaller first), placed for it. */
+function claimSlot(region: Region): Slot | null {
   const z = uiZoom();
   const win = { w: window.innerWidth / z, h: window.innerHeight / z };
   for (const s of slots) {
     if (s.users) {
       // Already in use: it can take another message only if that one fits where it stands.
-      const inside = region.left >= s.at.x && region.top >= s.at.y && region.left + region.width <= s.at.x + s.css.w && region.top + region.height <= s.at.y + s.css.h;
-      if (inside) return s;
+      if (inside(region, s)) return s;
       continue;
     }
     const at = placeFor(region, s.css, win);
@@ -224,15 +234,20 @@ function claimSlot(plan: LiquidPlan): Slot | null {
   return null;
 }
 
-/** Prepares `spec` to be drawn. Nothing is drawn until `start`, so the caller can start it on the frame its other layers start on. */
-export function pour(spec: LiquidSpec): Pour {
+/**
+ * Prepares `spec` to be drawn (`below`: px of room to keep under the edge it leaves, for a bar
+ * that will leave with it). Nothing is drawn until `start`, so the caller can start it on the
+ * frame its other layers start on.
+ */
+export function pour(spec: LiquidSpec, below = 0): Pour {
   const plan = planLiquid(spec);
   const id = ++nextId;
   let resolve!: () => void;
   const finished = new Promise<void>((r) => (resolve = r));
   let over = false;
   let started = false;
-  const slot = acquire() ? claimSlot(plan) : null;
+  const region = regionOf(plan);
+  const slot = acquire() ? claimSlot({ ...region, height: region.height + below }) : null;
   const gone = () => {
     if (over) return;
     over = true;
@@ -266,6 +281,16 @@ export function pour(spec: LiquidSpec): Pour {
         this.plan = planLiquid({ ...this.plan.spec, to }, this.plan.shifts);
         if (started) post({ type: 'retarget', id, spec: this.plan.spec });
       },
+      retime(t0) {
+        if (started && !over) post({ type: 'retime', id, at: performance.timeOrigin + t0 });
+      },
+      leaving(by) {
+        if (!started) this.plan = planLiquid({ ...this.plan.spec, bar: by }, this.plan.shifts);
+      },
+      backdrop(b) {
+        if (over) return b.bitmap.close();
+        post({ type: 'backdrop', id, layer: slot.id, back: b }, [b.bitmap]);
+      },
       shift(s) {
         this.plan.shifts.push(s);
         if (started) post({ type: 'shift', id, shift: s });
@@ -296,6 +321,7 @@ function drawHere(plan: LiquidPlan, finished: Promise<void>, gone: () => void): 
   let t0 = 0;
   let fade = -1;
   let r: ReturnType<typeof makeRenderer> = null;
+  let back = 0;
   const handle: Pour = {
     plan,
     start(at) {
@@ -316,6 +342,16 @@ function drawHere(plan: LiquidPlan, finished: Promise<void>, gone: () => void): 
     retarget(to) {
       this.plan = planLiquid({ ...this.plan.spec, to }, this.plan.shifts);
     },
+    retime(at) {
+      if (started) t0 = at;
+    },
+    leaving(by) {
+      if (!started) this.plan = planLiquid({ ...this.plan.spec, bar: by }, this.plan.shifts);
+    },
+    backdrop(b) {
+      if (!r) return b.bitmap.close();
+      back = r.backdrop(b);
+    },
     shift(s) {
       this.plan.shifts.push(s);
     },
@@ -329,12 +365,12 @@ function drawHere(plan: LiquidPlan, finished: Promise<void>, gone: () => void): 
     if (!r) return;
     const t = frozenAt ?? performance.now() - t0;
     const f = liquidAt(handle.plan, t);
-    if (fade >= 0) f.alpha *= Math.max(0, 1 - (t - fade) / 120);
+    if (fade >= 0) f.alpha *= Math.min(1, Math.max(0, 1 - (t - fade) / 120));
     if ((f.done || (fade >= 0 && t - fade > 120)) && frozenAt == null) {
       r.clear();
       return gone();
     }
-    r.draw([f], { x: b.left, y: b.top });
+    r.draw([{ f, back: back || undefined }], { x: b.left, y: b.top });
     if (frozenAt == null) requestAnimationFrame(draw);
   };
   return handle;

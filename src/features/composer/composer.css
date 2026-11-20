@@ -1,8 +1,12 @@
-/* The composer: frosted dark glass over the stage, the same on home and in a session. A translucent
-   ink fill with a backdrop blur, so the field's light under it shows through softly, the floating
-   glass's static grain, an inner hairline at low strength and one soft shadow. Focus draws no ring
-   and no jump: the fill gains a few percent of opacity and the hairline rises a little (its own
-   layer, opacity only), and the backdrop's light under the composer brightens. Monochrome. */
+/* The composer: the main pane of liquid glass (styles/ui.css "material: liquid glass"), the same
+   on home and in a session. A translucent ink pane with a backdrop blur that is thinner toward its
+   edges, so the field's light gathers there as in thick glass; the specular rim (::before: bright
+   along the top edge and left of centre, falling off around the corners), the inner edge and the
+   sheen under the top edge; a contact line and two shadows for depth. Focus draws no ring: the
+   pane lifts (one layer under the content, faded in: the fill a step lighter, a brighter top edge
+   and a deeper shadow), and the backdrop's light under it brightens. Monochrome: the only colour
+   is the field's, through the glass. Everything here is static paint; only that one layer's
+   opacity ever moves. */
 
 .composer {
   position: relative;
@@ -10,38 +14,77 @@
 }
 
 .cmp-card {
-  --cmp-fill: rgb(16 16 19 / 0.78);
-  --cmp-lift: rgb(16 16 19 / 0.84);
+  --cmp-fill: var(--glass-pane);
+  /* What long text fades into at the field's lower edge: about the pane's tone at its centre. */
+  --cmp-fade: rgb(15 15 18 / 0.8);
+  /* The pane's body: two crossed plates over the thin fill, so the centre is densest, the edges
+     thinner and the corners thinnest. */
+  --cmp-body: rgb(14 14 17 / 0.28);
   position: relative;
   z-index: 1;
   container: cmp / inline-size;
   padding: 10px 11px 10px;
   border-radius: 20px;
   background-color: var(--cmp-fill);
-  background-image: var(--grain);
-  background-size: var(--grain-size);
-  -webkit-backdrop-filter: blur(22px);
-  backdrop-filter: blur(22px);
-  box-shadow:
-    inset 0 0 0 1px rgb(255 255 255 / 0.065),
-    var(--shadow-composer);
-  transition: background-color 200ms var(--ease-out);
+  background-image:
+    var(--glass-sheen),
+    var(--grain),
+    linear-gradient(90deg, transparent, var(--cmp-body) 26px, var(--cmp-body) calc(100% - 26px), transparent),
+    linear-gradient(180deg, transparent, var(--cmp-body) 20px, var(--cmp-body) calc(100% - 20px), transparent);
+  background-size:
+    auto,
+    var(--grain-size),
+    auto,
+    auto;
+  -webkit-backdrop-filter: var(--blur-pane);
+  backdrop-filter: var(--blur-pane);
+  box-shadow: var(--rim-inner), var(--shadow-glass);
 }
 
-.cmp-card:has(> .cmp-field > textarea.cmp-input:focus) {
-  background-color: var(--cmp-lift);
+/* The specular rim (the same ring as .pop's). */
+.cmp-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 1px;
+  border-radius: inherit;
+  background:
+    var(--rim-spec) top / 100% 1px no-repeat,
+    var(--rim-bounce) bottom / 100% 1px no-repeat,
+    var(--rim-light);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  pointer-events: none;
 }
 
-/* The hairline's rise on focus: a second faint ring on its own layer, faded in (never an animated shadow). */
+.cmp-card > .spot-ring {
+  --spot: var(--spot-glass);
+  --spot-r: var(--spot-glass-r);
+}
+
+/* The lift on focus, all of it on one layer under the content that only fades in: the fill a step
+   lighter, a brighter top edge and a deeper shadow. The pane itself is never repainted for it (no
+   animated fill, no animated shadow). */
 .cmp-card::after {
   content: '';
   position: absolute;
   inset: 0;
+  z-index: -1;
   border-radius: inherit;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
+  background-color: var(--glass-pane-lift);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.035),
+    inset 0 1px 0 0 rgb(255 255 255 / 0.1),
+    var(--shadow-glass-lift);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 200ms var(--ease-out);
+  transition: opacity 240ms var(--ease-out);
 }
 
 .cmp-card:has(> .cmp-field > textarea.cmp-input:focus)::after {
@@ -53,7 +96,8 @@
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   --cmp-fill: var(--glass-solid);
-  --cmp-lift: var(--glass-solid);
+  --cmp-fade: var(--glass-solid);
+  --cmp-body: transparent;
 }
 
 /* The field's light under the composer brightens while it holds focus: the band's own opacity,
@@ -77,7 +121,7 @@
   right: 12px;
   bottom: 0;
   height: 14px;
-  background: linear-gradient(to bottom, transparent, var(--cmp-fill));
+  background: linear-gradient(to bottom, transparent, var(--cmp-fade));
   pointer-events: none;
 }
 
@@ -110,10 +154,6 @@
 /* With focus the placeholder steps back, so the caret leads. */
 .cmp-input:focus::placeholder {
   color: rgb(122 121 117 / 0.72);
-}
-
-.cmp-card:has(> .cmp-field > textarea.cmp-input:focus) .cmp-field[data-scrolls]::after {
-  background: linear-gradient(to bottom, transparent, var(--cmp-lift));
 }
 
 .cmp-input:focus,
@@ -195,8 +235,9 @@
 
 /* ── a sent message as liquid (flight.ts, liquid.ts, liquid-shape.ts, liquid-gl.ts) ──
    Three layers over everything, transform and opacity only: the words gathering out of the field
-   (under the ink), the ink itself (a canvas a worker draws), and the card or row the message lands
-   as (over the ink: its words revealed in place by the spreading sheet, its surface forms last). */
+   (under the liquid), the liquid itself (a canvas a worker draws: the drop of glass, its thread,
+   the sheet it spreads into), and the card or row the message lands as (over the liquid: its
+   words revealed in place by the spreading sheet, its surface forms last). */
 
 .send-liquid {
   position: fixed;
@@ -388,10 +429,12 @@
     scale var(--d-2) var(--spring);
 }
 
+/* Tactile (ui.css): raised a hair at rest, set in while pressed or open. */
 .cmp-attach {
   margin-right: 2px;
   color: var(--text-2);
   background-color: var(--fill-2);
+  box-shadow: var(--press-up);
 }
 
 .cmp-attach:hover {
@@ -400,14 +443,16 @@
 }
 
 .cmp-attach:active {
-  background-color: var(--fill-4);
+  background-color: var(--fill-3);
+  box-shadow: var(--press-down);
   scale: var(--press-icon);
   transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
 .cmp-attach[aria-expanded='true'] {
   color: var(--text);
-  background-color: var(--fill-3);
+  background-color: var(--fill-2);
+  box-shadow: var(--press-down);
 }
 
 /* Drawn on whole pixels from the button's centre, so it never sits half a pixel off. */
@@ -464,6 +509,11 @@
   transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
+/* Tactile: a bare chip is flat until it is held or its menu is open, then it sits pressed in. */
+.tb-chip:not(.th-chip):is(:active, [aria-expanded='true']) {
+  box-shadow: var(--press-down);
+}
+
 .tb-chip svg {
   flex-shrink: 0;
   color: var(--text-3);
@@ -485,15 +535,16 @@
   color: var(--text);
   font-weight: var(--w-medium);
   background-color: var(--fill-2);
+  box-shadow: var(--press-up);
 }
 
-.cm-mode:hover,
-.cm-mode[aria-expanded='true'] {
+.cm-mode:hover {
   background-color: var(--fill-3);
 }
 
-.cm-mode:active {
-  background-color: var(--fill-4);
+.cm-mode:active,
+.cm-mode[aria-expanded='true'] {
+  background-color: var(--fill-2);
 }
 
 .cm-mode svg,
@@ -661,10 +712,12 @@
 
 .th-chip:active .th-pill {
   background-color: var(--fill-3);
+  box-shadow: var(--press-down);
 }
 
 .th-chip[aria-expanded='true'] .th-pill {
   background-color: var(--fill-2);
+  box-shadow: var(--press-down);
 }
 
 .th-chip:focus-visible .th-pill {
@@ -695,6 +748,11 @@
 /* "Ultra" at rest (ultracode on, or the Ultra level): one fill step, like an engaged control, and the mark. */
 .th-chip[data-ultra] .th-pill {
   background-color: var(--fill-2);
+  box-shadow: var(--press-up);
+}
+
+.th-chip[data-ultra]:is(:active, [aria-expanded='true']) .th-pill {
+  box-shadow: var(--press-down);
 }
 
 .th-chip[data-ultra]:is(:hover, [aria-expanded='true']) .th-pill {
@@ -1049,8 +1107,11 @@
   grid-area: 1 / 1;
 }
 
-/* Send: a solid ivory disc with a dark glyph. With nothing to send it is a dim glyph on one fill
-   step, the same disc as the attach button at the other end of the bar. */
+/* Send: a tactile ivory key with a dark glyph (styles/tokens.css --key-*): a soft light on its
+   upper half, a lit top lip, a shaded lower lip and a short drop, so it reads as a domed disc
+   standing on the glass. Pressed, it sinks: the light leaves the face, the lip turns to an inner
+   shade and the drop shortens, in the same frame as the give in scale. With nothing to send it
+   is a dim glyph on one fill step, the same raised disc as the attach button at the other end. */
 .cmp-send,
 .cmp-stop {
   display: grid;
@@ -1062,6 +1123,8 @@
   border-radius: 50%;
   color: var(--text-inverse);
   background-color: var(--text);
+  background-image: var(--key-face);
+  box-shadow: var(--key-up);
   transition:
     background-color var(--d-1) var(--ease),
     color var(--d-1) var(--ease),
@@ -1072,6 +1135,13 @@
   background-color: #fff;
 }
 
+.cmp-send:active,
+.cmp-stop:active {
+  background-color: #e6e4df;
+  background-image: var(--key-face-down);
+  box-shadow: var(--key-down);
+}
+
 .cmp-send:active {
   scale: 0.94;
 }
@@ -1079,10 +1149,13 @@
 .cmp-send[data-on]:not([data-ready]) {
   color: var(--text-3);
   background-color: var(--fill-2);
+  background-image: none;
+  box-shadow: var(--press-up);
   pointer-events: none;
 }
 
-/* The two keys swap in one frame. The stop key never moves, pulses or changes on hover. */
+/* The two keys swap in one frame. The stop key never moves, pulses or changes on hover; held, it
+   sinks like the send key (no scale). */
 .cmp-send:not([data-on]),
 .cmp-stop:not([data-on]) {
   visibility: hidden;

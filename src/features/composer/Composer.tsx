@@ -7,7 +7,7 @@ import { Icon } from '@/icons';
 import { pathForFile } from '@/lib/desktop';
 import { isUltraEffort, toggledSpeed } from '@/lib/models';
 import { EASE_OUT, play, reducedMotion } from '@/lib/motion';
-import { launchFlight, RELEASE } from './flight';
+import { launchFlight } from './flight';
 import { launchKey } from './launch';
 import { fieldBeat } from '@/art/events';
 import { searchFiles, type FileHit } from '@/lib/workspace';
@@ -558,10 +558,9 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
    * the next placeholder rises from 8px below (100 ms, two frames later). The backdrop gets a pulse.
    */
   const rollOut = (sent: string, next: string | null, flew: boolean, queued = false) => {
-    // One beat: the wave leaves the key as the words and the arrow do (RELEASE after the press).
-    const key = card.current?.querySelector('.cmp-send') ?? card.current;
-    if (flew) window.setTimeout(() => fieldBeat('send', key?.isConnected ? key : document.querySelector('.cmp-send'), 1), RELEASE);
-    else fieldBeat('send', key, 1);
+    // The backdrop's wave: a message that leaves as liquid sends its own, from where its drop
+    // parts from the bar (flight.ts); any other leaves the key with one.
+    if (!flew) fieldBeat('send', card.current?.querySelector('.cmp-send') ?? card.current, 1);
     const field = ref.current?.parentElement;
     if (!field || !sent) return;
     const layer = document.createElement('div');

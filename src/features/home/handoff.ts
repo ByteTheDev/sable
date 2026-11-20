@@ -1,5 +1,5 @@
-import { HOLD_MS, RELEASE } from '@/features/composer/flight';
-import { COLLAPSE, collapseEase, linearEasing, SNAP } from '@/features/composer/liquid-shape';
+import { barLeaving, HOLD_MS, launchRead, RELEASE } from '@/features/composer/flight';
+import { BAR_LEAVES, COLLAPSE, collapseEase, GLIDE, linearEasing } from '@/features/composer/liquid-shape';
 import { holdSend } from '@/features/composer/settle';
 import { reducedMotion, uiZoom } from '@/lib/motion';
 
@@ -10,8 +10,9 @@ import { reducedMotion, uiZoom } from '@/lib/motion';
  * the real card hides. The ghost glides on a spring (about 350 ms) from the centre of the home
  * screen to where the session's docked composer will sit, predicted from the stage's geometry, so
  * it moves without waiting for the session to exist. While the sent words gather into its corner
- * and a bead rises out of its top edge (composer/flight.ts) it holds still, its field closing to one
- * line with the words; it leaves as the drop parts from it, so the two part in one motion, the drop
+ * and the drop comes out of its top edge (composer/flight.ts) it holds still, its field closing to
+ * one line with the words; it leaves as the drop flies, a thread of liquid still between them
+ * (drawn on the card's edge as the glide moves it), so the two push off from each other, the drop
  * up to the top of the column and the bar down to the dock. When the
  * session view mounts, its composer claims the flight: the spring is re-aimed at the real card
  * (keeping its velocity), the real card stays hidden until the ghost lands on it, and then the two
@@ -81,24 +82,33 @@ export const subscribeHandoff = (fn: () => void) => {
 /** True from the send until the docked composer has taken over (App picks its view transitions by it). */
 export const handoffActive = () => phase === 'flying';
 
-/** Critically damped, near the top of the app's range: the card is docked in about 350 ms. */
-const STIFF = 440;
-const DAMP = 40;
+/**
+ * Critically damped, near the top of the app's range: the card is docked in about 350 ms. The
+ * numbers and the stepping are liquid-shape.ts's `GLIDE`: the sent message's liquid draws the
+ * card's edge on the same samples while its thread still holds.
+ */
+const STIFF = GLIDE.stiff;
+const DAMP = GLIDE.damp;
 const LINE = 32;
 /** No session after this long (the bridge is very slow or the send failed silently): give up quietly. As long as a sent bubble holds for its row. */
 const GIVE_UP = HOLD_MS;
 
-/** Where the docked composer will be, from the stage's geometry (see session.css `.dock`). */
-function predictDock(height: number): { left: number; top: number; width: number } | null {
-  const sb = document.querySelector('.stage-body');
-  if (!sb) return null;
-  const z = uiZoom();
-  const r = sb.getBoundingClientRect();
-  const left0 = r.left / z;
-  const w0 = r.width / z;
-  const col = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--column')) || 760;
-  const width = Math.min(col, w0 - 48);
-  return { left: left0 + (w0 - width) / 2, top: r.bottom / z - 18 - height, width };
+/**
+ * Where the docked composer will be, from the stage's geometry (see session.css `.dock`): as the
+ * sent message's launch read it (`known`), or read here.
+ */
+function predictDock(height: number, known: { stage: { left: number; width: number; bottom: number } | null; column: number } | null): { left: number; top: number; width: number } | null {
+  let stage = known?.stage ?? null;
+  if (!stage) {
+    const sb = document.querySelector('.stage-body');
+    if (!sb) return null;
+    const z = uiZoom();
+    const r = sb.getBoundingClientRect();
+    stage = { left: r.left / z, width: r.width / z, bottom: r.bottom / z };
+  }
+  const col = known?.column ?? (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--column')) || 760);
+  const width = Math.min(col, stage.width - 48);
+  return { left: stage.left + (stage.width - width) / 2, top: stage.bottom - 18 - height, width };
 }
 
 function strip(el: Element) {
@@ -125,9 +135,9 @@ function glideFrom(from: Sample, tx: number, ty: number, tw: number, hold: numbe
 function glide(from: Sample, tx: number, ty: number, tw: number): Sample[] {
   const out = [from];
   let { t, x, y, w, vx, vy, vw } = from;
-  const h = 0.004;
+  const h = GLIDE.step / 1000;
   for (let i = 1; i < 600; i++) {
-    t += 4;
+    t += GLIDE.step;
     vx += (STIFF * (tx - x) - DAMP * vx) * h;
     vy += (STIFF * (ty - y) - DAMP * vy) * h;
     vw += (STIFF * (tw - w) - DAMP * vw) * h;
@@ -139,7 +149,7 @@ function glide(from: Sample, tx: number, ty: number, tw: number): Sample[] {
       out.push({ t, x: tx, y: ty, w: tw, vx: 0, vy: 0, vw: 0 });
       break;
     }
-    if (i % 4 === 0) out.push({ t, x, y, w, vx, vy, vw });
+    if (i % GLIDE.every === 0) out.push({ t, x, y, w, vx, vy, vw });
   }
   return out;
 }
@@ -216,13 +226,23 @@ export function beginHandoff(card: HTMLElement | null) {
     set('flying');
     return;
   }
-  const z = uiZoom();
-  const b = card.getBoundingClientRect();
-  const start = { left: b.left / z, top: b.top / z, width: b.width / z, height: b.height / z };
-  const ta = card.querySelector<HTMLTextAreaElement>('textarea.cmp-input:not(.cmp-mirror)');
-  const taH = ta ? ta.offsetHeight : LINE;
+  // A message leaving this card has just read the page and written to it (composer/flight.ts):
+  // its numbers are used, so the page is not laid out a second time in the key's handler.
+  const known = launchRead(card);
+  let start: { left: number; top: number; width: number; height: number };
+  let taH = LINE;
+  if (known) {
+    start = known.card;
+    taH = known.fieldHeight;
+  } else {
+    const z = uiZoom();
+    const b = card.getBoundingClientRect();
+    start = { left: b.left / z, top: b.top / z, width: b.width / z, height: b.height / z };
+    const ta = card.querySelector<HTMLTextAreaElement>('textarea.cmp-input:not(.cmp-mirror)');
+    taH = ta ? ta.offsetHeight : LINE;
+  }
   const landH = start.height - Math.max(0, taH - LINE);
-  const target = predictDock(landH) ?? { left: start.left, top: start.top, width: start.width };
+  const target = predictDock(landH, known) ?? { left: start.left, top: start.top, width: start.width };
 
   const ghost = document.createElement('div');
   ghost.className = 'composer handoff-ghost';
@@ -273,12 +293,18 @@ export function beginHandoff(card: HTMLElement | null) {
     clear.push(el.animate([{ opacity: 1, transform: 'translateY(0px)' }, { opacity: 0, transform: 'translateY(-6px)' }], { duration: 80, easing: 'linear', fill: 'forwards' }));
   }
 
-  // A message pouring out of this card (composer/flight.ts marks it): the card waits for the break.
-  const hold = card.hasAttribute('data-pouring') ? SNAP : 0;
+  // A message is leaving this card as liquid (composer/flight.ts): the card holds while the drop
+  // comes out of its edge and leaves as it flies, the thread between them still holding, so the
+  // two push off from each other. The liquid draws the edge where the glide has it, and the glide
+  // runs on the message's clock.
+  const onClock = barLeaving(card, { dx: target.left - start.left, dy: target.top - start.top });
+  const hold = onClock ? BAR_LEAVES : 0;
   const f: Flight = { ghost, source: card, start, dock: null, path: [], move: null, size: null, clear, fixes: 0, hold, timer: 0, ending: false, done: holdSend() };
   flight = f;
   set('flying');
   run(f, glideFrom({ t: 0, x: 0, y: 0, w: start.width, vx: 0, vy: 0, vw: 0 }, target.left - start.left, target.top - start.top, target.width, hold), () => arrived(f));
+  if (onClock && f.move) onClock(f.move);
+  if (onClock && f.size) onClock(f.size);
   f.timer = window.setTimeout(() => flight === f && !f.dock && cancelHandoff(), GIVE_UP);
 }
 
