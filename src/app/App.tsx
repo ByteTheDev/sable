@@ -302,7 +302,7 @@ export function App() {
               </AnimatePresence>
             </div>
             {ready && conn !== 'open' && (
-              <div className="offline" role="status">
+              <div className="offline glass-rim" role="status">
                 <span className="spinner" />
                 Reconnecting to the bridge
               </div>
