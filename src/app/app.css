@@ -225,6 +225,14 @@
   margin-left: auto;
 }
 
+/* The bar's contents arrive a moment after a session opens (Topbar's lag): they fade in, never
+   appear in one frame. The title block stays mounted from one session to the next, so this plays
+   only when coming from home. */
+.topbar-title,
+.topbar-actions > * {
+  animation: fade-in 280ms var(--ease) backwards;
+}
+
 /* A toggle in the top row (the panel) shows its state as a brighter glyph, not a block of fill:
    the panel itself is the evidence, and a filled square beside quiet icons reads as a stray button. */
 .topbar .icon-btn[data-active='true'] {

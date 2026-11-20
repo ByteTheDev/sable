@@ -137,8 +137,10 @@ const VIEW: Variants = {
       : m === 'swap'
       ? { opacity: 0, transition: { duration: 0.001, delay: SWAP_AT } }
       : m === 'handoff'
-        ? // Holds while the wave from the send key crosses the field, then lets go.
-          { opacity: 0, transition: { duration: 0.64, ease: [0.45, 0, 0.7, 0.45] } }
+        ? // Holds while the wave from the send key crosses the field, then lets go: long enough
+          // that its last light is still going down as the session's horizon starts to come up
+          // (the stage is never plain black between the two).
+          { opacity: 0, transition: { duration: 0.9, ease: [0.45, 0, 0.6, 0.6] } }
         : { opacity: 0, transition: { duration: 0.16 } },
 };
 

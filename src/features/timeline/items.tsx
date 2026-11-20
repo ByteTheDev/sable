@@ -123,7 +123,7 @@ export function estimate(item: TimelineItem | undefined): number {
       return item.text ? 20 + Math.ceil(item.text.length / 95) * 27 + (item.text.match(/\n\n/g)?.length ?? 0) * 12 : 0;
     case 'tool':
       if (item.kind === 'widget') return (cachedHeight(item.id) ?? 340) + 24;
-      if (item.kind === 'share') return 20 + (item.detail.files?.length || 1) * 76 + (item.detail.caption ? 34 : 0);
+      if (item.kind === 'share') return 20 + Math.ceil((item.detail.files?.length || 1) / 3) * 200 + (item.detail.caption ? 36 : 0);
       return item.kind === 'agent' || item.kind === 'plan' ? 72 : 28;
     case undefined:
       return 0;

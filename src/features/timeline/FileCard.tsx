@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import type { SharedFile, ToolItem } from '@shared/protocol';
 import { CopyButton } from '@/components/CopyButton';
 import { Markdown } from '@/components/Markdown';
@@ -7,8 +7,9 @@ import { Icon } from '@/icons';
 import { bridge } from '@/lib/bridge';
 import { formatBytes, relPath } from '@/lib/format';
 import { useStore } from '@/state/store';
-import { IconButton, PathLabel } from '@/ui';
+import { IconButton } from '@/ui';
 import { useTimeline } from './ctx';
+import { coverWord, sheetOf, wantsText, type Sheet } from './file-sheet';
 import { isActive } from './util';
 import './files.css';
 
@@ -30,8 +31,7 @@ export function folderOf(file: string, cwd: string, home: string): string {
 
 /**
  * Files the agent hands over (Claude Code's SendUserFile), always in view like a widget: its caption
- * as a quiet line, then one card per file. The card is the button that opens the file with its app;
- * Show in folder and Copy path sit at its end.
+ * as a quiet line, then one card per file, side by side.
  */
 export const FileShare = memo(function FileShare({ item }: { item: ToolItem }) {
   const files = item.detail.files ?? [];
@@ -41,11 +41,25 @@ export const FileShare = memo(function FileShare({ item }: { item: ToolItem }) {
     // The call is still arriving: one card's room, so nothing jumps when the files are named.
     return isActive(item) ? (
       <div className="fshare">
-        <div className="fcard fcard-wait" aria-busy>
-          <span className="fcard-tile skel" />
-          <span className="fcard-text">
-            <span className="fcard-name shimmer">Sharing files</span>
-          </span>
+        <div className="fshare-list">
+          <div className="fcard fcard-wait" aria-busy>
+            <span className="fcard-stage" aria-hidden>
+              <span className="fcard-sheet">
+                <span className="fcard-cover">
+                  <span className="fcard-wait-line skel" style={{ width: '46%' }} />
+                  <span className="fcard-wait-line skel" style={{ width: '78%' }} />
+                  <span className="fcard-wait-line skel" style={{ width: '62%' }} />
+                </span>
+                <i className="fcard-fold" />
+              </span>
+            </span>
+            <span className="fcard-foot">
+              <span className="fcard-open">
+                <span className="fcard-name shimmer">Sharing files</span>
+              </span>
+              <span className="fcard-meta">&nbsp;</span>
+            </span>
+          </div>
         </div>
       </div>
     ) : null;
@@ -62,44 +76,117 @@ export const FileShare = memo(function FileShare({ item }: { item: ToolItem }) {
   );
 });
 
+// ── the sheet: what the file's first page looks like ──
+
+/** Sheets read so far, by path and size (a file handed over again with the same size is the same page). */
+const sheets = new Map<string, Sheet>();
+const SHEETS_MAX = 120;
+
 /**
- * One file as a large button: its kind, its name, where it lies and its size. A click anywhere on
- * it opens the file with its app (Open is the same for the keyboard); Show in folder and Copy path
- * come forward on hover or focus, beside Open.
+ * The page a card shows: for a text file its real first lines (read once, a couple of kilobytes),
+ * a table for CSV, the drawing itself for an SVG; for anything else a cover with its kind.
+ * The cover shows at once and the page fades in over it, so the card never changes size.
+ */
+function useSheet(file: SharedFile, skip: boolean): Sheet | null {
+  const key = `${file.path}\n${file.size ?? ''}`;
+  const want = !skip && wantsText(file.name, file.size);
+  const [sheet, setSheet] = useState<Sheet | null>(() => sheets.get(key) ?? null);
+  useEffect(() => {
+    if (!want || sheets.has(key)) return;
+    let live = true;
+    bridge
+      .call('fs.read', { path: file.path, maxBytes: want })
+      .then((r) => {
+        const s = sheetOf(file.name, r.binary ? '' : r.content, r.truncated);
+        if (sheets.size >= SHEETS_MAX) sheets.delete(sheets.keys().next().value!);
+        sheets.set(key, s);
+        if (live) setSheet(s);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [key, want]); // eslint-disable-line react-hooks/exhaustive-deps
+  return want ? sheet : null;
+}
+
+const Page = memo(function Page({ sheet }: { sheet: Sheet }) {
+  if (sheet.kind === 'table') {
+    return (
+      <span className="fcard-page fcard-table">
+        {sheet.rows.map((row, r) => (
+          <span key={r} className="fcard-tr">
+            {row.map((cell, c) => (
+              <span key={c} className="fcard-td">
+                {cell}
+              </span>
+            ))}
+          </span>
+        ))}
+      </span>
+    );
+  }
+  if (sheet.kind === 'image') return <img className="fcard-page fcard-img" src={sheet.src} alt="" draggable={false} decoding="async" />;
+  if (sheet.kind === 'text') {
+    return (
+      <span className="fcard-page fcard-lines">
+        {sheet.lines.map((l, i) => (
+          <span key={i} className="fcard-line" data-head={l.head || undefined}>
+            {l.text || ' '}
+          </span>
+        ))}
+      </span>
+    );
+  }
+  return null;
+});
+
+/**
+ * One file as a card: a sheet of it in a small well (its first lines where it is text, a cover
+ * with its kind otherwise), its name, its size and where it lies. The whole card opens the file
+ * with its app; Show in folder and Copy path come forward on hover or focus.
  */
 const FileCard = memo(function FileCard({ file, failed }: { file: SharedFile; failed: boolean }) {
   const { cwd, home } = useTimeline();
-  const folder = folderOf(file.path, cwd, home);
+  const where = folderOf(file.path, cwd, home);
+  // The folder by its own name (the whole path is the card's tooltip, and Show in folder goes there).
+  const folder = where.slice(where.replace(/\/+$/, '').lastIndexOf('/') + 1);
   const size = formatBytes(file.size);
+  const sheet = useSheet(file, failed);
+  const page = sheet && sheet.kind !== 'cover' ? sheet : null;
   return (
-    <div
-      className="fcard"
-      role="listitem"
-      data-spot
-      data-failed={failed || undefined}
-      // The whole card opens the file for the pointer; its buttons do their own thing.
-      onClick={(e) => !(e.target as HTMLElement).closest('button') && openFile(file.path)}
-    >
-      <span className="fcard-tile" aria-hidden>
-        <Icon name={fileIcon(file.name)} size={20} />
-      </span>
-      <span className="fcard-text">
-        <span className="fcard-name truncate" title={file.path}>
-          {file.name}
+    <div className="fcard" role="listitem" data-spot data-failed={failed || undefined}>
+      <span className="fcard-stage" aria-hidden>
+        <span className="fcard-sheet">
+          {page ? (
+            <Page sheet={page} />
+          ) : (
+            <span className="fcard-cover">
+              <span className="fcard-ext">{coverWord(file.name)}</span>
+              <span className="fcard-rule" />
+              <span className="fcard-rule" />
+              <span className="fcard-rule" />
+            </span>
+          )}
+          <i className="fcard-fold" />
         </span>
+      </span>
+      <span className="fcard-foot">
+        {/* The one button that opens the file: it covers the card, so a click anywhere on it opens. */}
+        <button type="button" className="fcard-open" onClick={() => openFile(file.path)} aria-label={`Open ${file.name}`} title={file.path}>
+          <Icon name={fileIcon(file.name)} size={15} className="fcard-kind" />
+          <span className="fcard-name truncate">{file.name}</span>
+        </button>
         <span className="fcard-meta">
-          {folder && <PathLabel path={folder} className="fcard-folder" />}
           {size && <span className="fcard-size num">{size}</span>}
+          {folder && <span className="fcard-folder truncate">{folder}</span>}
           {failed && <span className="fcard-fail">Not shared</span>}
         </span>
       </span>
       <span className="fcard-acts">
-        <IconButton icon="folder-open" label="Show in folder" size={15} tipSide="top" className="fcard-act" onClick={() => openFile(file.path, true)} />
-        <CopyButton text={file.path} label="Copy path" size={15} className="fcard-act" />
+        <IconButton icon="folder-open" label="Show in folder" size={14} tipSide="top" className="fcard-act" onClick={() => openFile(file.path, true)} />
+        <CopyButton text={file.path} label="Copy path" size={14} className="fcard-act" />
       </span>
-      <button type="button" className="fcard-open" onClick={() => openFile(file.path)} aria-label={`Open ${file.name}`}>
-        Open
-      </button>
     </div>
   );
 });

@@ -42,7 +42,7 @@ export function SessionLight({ sessionId }: { sessionId: string }) {
     let id = 0;
     const off = afterSend(() => {
       if (typeof requestIdleCallback !== 'function') t = window.setTimeout(() => setLight(true), 120);
-      else id = requestIdleCallback(() => setLight(true), { timeout: 700 });
+      else id = requestIdleCallback(() => setLight(true), { timeout: 180 });
     });
     return () => {
       off();

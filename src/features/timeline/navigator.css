@@ -1,8 +1,8 @@
 /*
  * The conversation's map (Navigator.tsx): a slim strip along the right edge of the conversation,
- * left of the scrollbar's gutter and clear of the reading column. A short tick per message the
- * person sent, the view as a quiet band, find results as brighter ticks. Barely there at rest,
- * clearer under the pointer.
+ * left of the scrollbar's gutter and clear of the reading column. A hairline per message the
+ * person sent, find results as brighter ticks. Nearly invisible at rest; under the pointer the
+ * hairlines reach out, the view shows as a soft band and the message under the pointer is named.
  *
  * The band: `.nav-travel` is as tall as the band's travel (the track less the band); the script
  * moves it by transform when a scroll comes to rest, so the band's top is
@@ -50,19 +50,20 @@
   transform: translateY(100%);
 }
 
-/* The view: a quiet band behind the ticks. */
+/* The view: a soft band behind the ticks, only while the pointer is on the map (or holds it). At
+   rest the scrollbar already says where the view is; a second box beside it was noise. */
 .nav-band {
   position: absolute;
   inset: 0 0 auto;
-  border-radius: 5px;
-  background-color: rgb(255 255 255 / 0.04);
-  box-shadow: inset 0 0 0 1px var(--line);
-  transition: background-color var(--d-2) var(--ease);
+  border-radius: 4px;
+  background-color: var(--fill-2);
+  opacity: 0;
+  transition: opacity var(--d-2) var(--ease);
 }
 
 .nav:hover .nav-band,
 .nav[data-held] .nav-band {
-  background-color: var(--fill-2);
+  opacity: 1;
 }
 
 /* Ticks: placed by transform from the top of the track, drawn centred on their place. */
@@ -74,74 +75,79 @@
   pointer-events: none;
 }
 
+/* At rest a column of hairlines one can just make out: the instrument is there, it does not ask
+   to be looked at. Under the pointer they reach out toward the reader and come up to reading
+   strength, as one layer (opacity and scale only). */
 .nav-ticks {
-  opacity: 0.24;
-  transition: opacity var(--d-2) var(--ease);
+  opacity: 0.2;
+  transform-origin: calc(100% - 3px) 50%;
+  transition:
+    opacity var(--d-2) var(--ease),
+    scale var(--d-3) var(--ease-out);
 }
 
-.nav:hover .nav-ticks {
-  opacity: 0.6;
-}
-
+.nav:hover .nav-ticks,
 .nav[data-held] .nav-ticks {
-  opacity: 0.8;
+  opacity: 0.62;
+  scale: 1.7 1;
 }
 
 /* While find has results, the messages step back for them. */
 .nav[data-find] .nav-ticks {
-  opacity: 0.16;
+  opacity: 0.14;
 }
 
 .nav-tick,
 .nav-hit,
 .nav-lit {
   position: absolute;
-  top: -1px;
+  top: -0.5px;
   right: 3px;
-  width: 8px;
-  height: 2px;
-  border-radius: 1px;
+  width: 5px;
+  height: 1px;
   background-color: var(--text);
 }
 
 /* A message steered into a running turn: a shorter tick. */
 .nav-tick[data-steered] {
-  width: 5px;
+  width: 3px;
 }
 
-/* A turn that changed files: a dot before its tick. */
-.nav-tick[data-files]::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: calc(100% + 2px);
-  width: 2px;
-  height: 2px;
-  border-radius: 1px;
-  background-color: inherit;
+/* A turn that changed files: a longer one. */
+.nav-tick[data-files] {
+  width: 7px;
 }
 
 /* Waiting on you: amber, at full strength. */
 .nav-waits .nav-tick {
-  width: 10px;
+  top: -1px;
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
   background-color: var(--amber);
 }
 
 .nav-hit {
-  width: 10px;
-  opacity: 0.7;
+  top: -1px;
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  opacity: 0.6;
 }
 
 .nav-hit[data-at] {
   right: 2px;
-  width: 14px;
+  width: 12px;
   opacity: 1;
 }
 
-/* The tick under the pointer. */
+/* The tick under the pointer: full strength, the longest. */
 .nav-lit {
-  right: 2px;
+  top: -1px;
+  right: 3px;
   width: 12px;
+  height: 2px;
+  border-radius: 1px;
   transition: transform 80ms var(--ease-out);
 }
 
@@ -197,5 +203,12 @@
   .nav-peek {
     transition: none;
     animation: none;
+  }
+  .nav-ticks {
+    transition: opacity var(--d-2) var(--ease);
+  }
+  .nav:hover .nav-ticks,
+  .nav[data-held] .nav-ticks {
+    scale: none;
   }
 }

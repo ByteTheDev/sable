@@ -37,6 +37,13 @@
   pointer-events: none;
 }
 
+/* The first message from home: the conversation fades in over the home screen while its field is
+   still leaving, and this fade would draw a dark band across the field under the top bar. It
+   waits until the home view has gone (by then it lies on its own colour: nothing to see). */
+.stage-body:has(> .stage-view > .home) .tl::before {
+  opacity: 0;
+}
+
 .tl-scroll:focus-visible {
   outline: none;
 }
@@ -244,6 +251,21 @@ button:hover > .row-caret {
 
 .tl .row-btn > .tool-meta {
   order: 1;
+}
+
+/* In the conversation a line that opens draws no pill, at rest, under the pointer or open: its
+   words and icon step up a tone and the caret shows (below); held, it gives a little. A filled
+   bar around "Thought" or a step read as a button in the middle of the text. */
+.tl .row-btn:not([data-static]):is(:hover, :active) {
+  background-color: transparent;
+}
+
+.tl .row-btn:not([data-static]) {
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.tl .row-btn:not([data-static]):active {
+  opacity: 0.7;
 }
 
 .row-btn:hover > .row-caret,
@@ -2007,7 +2029,7 @@ button:hover > .row-caret {
   font-size: 12.5px;
   color: var(--text-3);
   transition:
-    background-color var(--d-1) var(--ease),
+    opacity var(--d-1) var(--ease),
     color var(--d-1) var(--ease);
 }
 
@@ -2016,12 +2038,9 @@ button:hover > .row-caret {
   color: var(--text-2);
 }
 
-.work-line:not([data-static]):hover {
-  background-color: var(--fill-1);
-}
-
+/* No pill under the pointer or when open: the words step up a tone, the caret with them. */
 .work-line:not([data-static]):active {
-  background-color: var(--fill-2);
+  opacity: 0.7;
 }
 
 .work-line:focus-visible {
@@ -2106,7 +2125,6 @@ button:hover > .row-caret {
 
 .work-changes:hover {
   color: var(--text-2);
-  background-color: var(--fill-1);
 }
 
 .work-changes:hover > svg {
@@ -2114,7 +2132,7 @@ button:hover > .row-caret {
 }
 
 .work-changes:active {
-  background-color: var(--fill-2);
+  opacity: 0.7;
 }
 
 .work-changes:focus-visible {

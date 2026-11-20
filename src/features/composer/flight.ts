@@ -491,7 +491,13 @@ function unfoldAnims(f: Flight) {
   words[n] = { offset: 1, transform: 'scale(1, 1) translate(0px, 0px)', opacity: 1 };
   const a = fromKey(f, f.clip, win, { duration: span, delay: p.land });
   const b = fromKey(f, f.unfold, words, { duration: span, delay: p.land });
-  for (const x of [a, b]) if (x) f.anims.push(x);
+  // Until the drop lands the window shows nothing. (Both animations above hold their first frame
+  // through the delay, and for a short message the sheet at the landing is most of the card
+  // already: its words stood there, dim and cut at the window's edge, while the drop was still
+  // on its way.) One step at the landing, held both ways: the compositor makes it on time by
+  // itself, with the main thread busy mounting the conversation.
+  const c = p.land > 0 ? fromKey(f, f.clip, [{ opacity: 0, easing: 'steps(1, end)' }, { opacity: 1 }], { duration: p.land }) : null;
+  for (const x of [a, b, c]) if (x) f.anims.push(x);
   if (f.surface) {
     // Linearly: the sheet under it lets go on the matching curve (liquid-shape.ts `handAlpha`).
     const s = fromKey(f, f.surface, [{ opacity: 0 }, { opacity: 1 }], { duration: HAND, delay: p.hand });

@@ -1,116 +1,310 @@
 /* ───────────── files the agent hands over ─────────────
    Always in view, in their place, like a widget: the agent's caption as a quiet line, then one card
-   per file in the composer's own material (ink with its grain, a faint inner hairline, the soft
-   shadow), so a file reads as something put in the person's hands. The card is the button: it
-   lifts one step under the pointer; Show in folder and Copy path come forward beside Open. */
+   per file, side by side. A card is a small well with a sheet of the file standing in it (its real
+   first lines where it is text, a table for CSV, the drawing for an SVG, a cover with its kind
+   otherwise), and under it the name, the size and where it lies. The whole card opens the file;
+   under the pointer the sheet rises a little out of the well and Show in folder and Copy path come
+   forward on it. Flat ink like everything in flow: its depth is the well and the sheet, both
+   static paint; only the sheet's transform and the card's fill ever change. */
 
 .tl-item[data-k='share'] {
   padding-top: 10px;
   padding-bottom: 10px;
-  contain-intrinsic-size: auto 96px;
+  contain-intrinsic-size: auto 232px;
 }
 
 .fshare {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .fshare-caption.md {
   --md-fg: var(--text-2);
 }
 
+/* Up to three across the reading column, each as wide as one card: a single file stays a card,
+   never a bar across the column. */
 .fshare-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(208px, 100%), 240px));
+  gap: 10px;
 }
 
 .fcard {
+  /* The well's ground: opaque, the sheet's folded corner is cut out of the sheet in this colour. */
+  --fc-well: #09090b;
+  --fc-sheet: var(--panel-3);
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 68px;
-  padding: 12px 12px 12px 13px;
+  flex-direction: column;
+  min-width: 0;
+  padding: 6px;
   border-radius: var(--r-xl);
-  background-color: rgb(18 18 21 / 0.9);
-  background-image: var(--grain);
-  background-size: var(--grain-size);
-  box-shadow:
-    inset 0 0 0 1px rgb(255 255 255 / 0.07),
-    var(--shadow-composer);
-  cursor: pointer;
+  /* The card's fill, one step lighter under the pointer or the keyboard (its action bar lies on it). */
+  --fc-bg: var(--panel);
+  background-color: var(--fc-bg);
+  box-shadow: inset 0 0 0 1px var(--line);
   transition:
     background-color var(--d-1) var(--ease),
     scale var(--d-2) var(--spring);
 }
 
-.fcard:hover {
-  background-color: rgb(26 26 30 / 0.92);
+.fcard:not(.fcard-wait):is(:hover, :focus-within) {
+  --fc-bg: var(--panel-2);
 }
 
-.fcard:active:not(:has(button:active)) {
-  scale: 0.995;
+.fcard:has(.fcard-open:active) {
+  scale: 0.985;
   transition-duration: var(--d-1), 70ms;
 }
 
-/* Its kind, in a small well. The icon answers the card with one nudge, like an icon in a button. */
-.fcard-tile {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 42px;
-  height: 42px;
-  border-radius: var(--r-md);
+/* The keyboard's ring goes around the card: its one button covers it. */
+.fcard:has(.fcard-open:focus-visible) {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ── the well and the sheet ── */
+
+.fcard-stage {
+  position: relative;
+  display: block;
+  height: 118px;
+  overflow: hidden;
+  border-radius: 9px;
+  background-color: var(--fc-well);
+  /* A shallow well: a shade under its top edge, a faint line around it. */
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.03),
+    inset 0 2px 5px -1px rgb(0 0 0 / 0.6);
+}
+
+/* The sheet stands in the well, its lower part out of sight: what shows is the top of the page. */
+.fcard-sheet {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  width: 156px;
+  height: 140px;
+  margin-left: -78px;
+  border-radius: 5px 0 0 0;
+  background-color: var(--fc-sheet);
+  /* Lit from the top, slightly left, like everything else: a light top edge, a hairline, and the
+     shadow it casts into the well. Static. */
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.055),
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 10px 22px -8px rgb(0 0 0 / 0.75),
+    0 1px 2px rgb(0 0 0 / 0.4);
+  transition: transform 180ms var(--ease-out);
+}
+
+.fcard:not(.fcard-wait):hover .fcard-sheet,
+.fcard:has(.fcard-open:focus-visible) .fcard-sheet {
+  transform: translateY(-7px);
+}
+
+/* The folded corner: the sheet's own corner painted away in the well's colour, the flap one step
+   lighter than the page, with the small shadow it lays on it. */
+.fcard-fold {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 17px;
+  height: 17px;
+  border-bottom-left-radius: 3px;
+  background: linear-gradient(to bottom left, var(--fc-well) 50%, var(--panel-4) 50%);
+  box-shadow: -2px 2px 3px -1px rgb(0 0 0 / 0.4);
+}
+
+/* A cover: the file's kind in the corner, its extension set large, and a few ruled lines. */
+.fcard-cover {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 14px 16px;
+  color: var(--text-3);
+}
+
+.fcard-ext {
+  margin-top: 2px;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
   color: var(--text-2);
-  background-color: var(--fill-1);
-  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.fcard-rule {
+  align-self: stretch;
+  height: 2px;
+  margin-top: 7px;
+  border-radius: 1px;
+  background-color: var(--fill-2);
+}
+
+.fcard-ext + .fcard-rule {
+  margin-top: 13px;
+}
+
+.fcard-rule:last-of-type {
+  width: 58%;
+  align-self: flex-start;
+}
+
+/* A page of the file itself, set at a readable size and shown at half of it: the lines are real,
+   small as on a thumbnail. It fades in over the bare sheet when it has been read. */
+.fcard-page {
+  position: absolute;
+  top: 13px;
+  left: 14px;
+  /* Clear of the folded corner on the right. */
+  width: calc((100% - 36px) * 2);
+  transform: scale(0.5);
+  transform-origin: 0 0;
+  animation: fade-in 220ms var(--ease) backwards;
+}
+
+.fcard-lines {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 15px;
+  color: var(--text-3);
+}
+
+.fcard-line {
+  overflow: hidden;
+  white-space: pre;
+}
+
+.fcard-line[data-head] {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-2);
+}
+
+.fcard-table {
+  display: flex;
+  flex-direction: column;
+  font-size: 10.5px;
+  line-height: 15px;
+  color: var(--text-3);
+}
+
+.fcard-tr {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0 2px;
+  border-bottom: 2px solid var(--line);
+}
+
+.fcard-tr:first-child {
+  font-weight: 600;
+  color: var(--text-2);
+  border-bottom-color: var(--line-3);
+}
+
+.fcard-td {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.fcard-td:first-child {
+  flex-grow: 1.9;
+}
+
+.fcard-td:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.fcard-img {
+  top: 16px;
+  left: 16px;
+  width: calc(100% - 32px);
+  height: 72px;
+  object-fit: contain;
+  object-position: center;
+  transform: none;
+}
+
+/* ── name, size, place ── */
+
+.fcard-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 6px 5px;
+}
+
+.fcard-open {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  text-align: left;
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  line-height: 18px;
+  letter-spacing: -0.004em;
+  color: var(--text);
+}
+
+/* The button is the card. */
+button.fcard-open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-xl);
+}
+
+.fcard-open:focus-visible {
+  outline: none;
+}
+
+.fcard-kind {
+  flex-shrink: 0;
+  color: var(--text-3);
   transition: color var(--d-1) var(--ease);
 }
 
-.fcard:hover .fcard-tile {
-  color: var(--text);
+.fcard:hover .fcard-kind {
+  color: var(--text-2);
 }
 
-.fcard:hover .fcard-tile svg[data-icon] {
+.fcard:hover .fcard-kind[data-icon] {
   animation: icon-nudge var(--ai-d1) var(--ai-out);
 }
 
-.fcard-text {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  flex: 1;
+.fcard-name {
   min-width: 0;
 }
 
-.fcard-name {
-  font-size: var(--t-body);
-  font-weight: var(--w-medium);
-  line-height: 1.3;
-  letter-spacing: -0.006em;
-  color: var(--text);
-}
-
+/* Under the name, past the icon. */
 .fcard-meta {
   display: flex;
   align-items: baseline;
   min-width: 0;
+  padding-left: 22px;
   font-size: var(--t-small);
-  line-height: 1.35;
+  line-height: 16px;
   color: var(--text-3);
 }
 
-/* Folder and size apart by a quiet dot. */
 .fcard-meta > * + *::before {
   content: '·';
-  margin: 0 7px;
+  margin: 0 6px;
   color: var(--text-4);
-}
-
-.fcard-folder {
-  flex: 0 1 auto;
-  color: var(--text-2);
 }
 
 .fcard-size {
@@ -118,18 +312,43 @@
   white-space: nowrap;
 }
 
+.fcard-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
 .fcard-fail {
   flex-shrink: 0;
   color: var(--red);
 }
 
+.fcard[data-failed] .fcard-sheet {
+  opacity: 0.45;
+}
+
+/* ── Show in folder, Copy path: at the end of the name's row, on hover or focus. They lie over
+   the end of a long name on the card's own colour, eased in from the left, so nothing in the card
+   moves or is cut again when they come. ── */
+
 .fcard-acts {
+  position: absolute;
+  right: 8px;
+  bottom: 11px;
+  z-index: 1;
   display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
+  gap: 1px;
+  background-color: var(--fc-bg);
   opacity: 0;
   transition: opacity var(--d-1) var(--ease);
+}
+
+.fcard-acts::before {
+  content: '';
+  position: absolute;
+  inset: 0 100% 0 auto;
+  width: 18px;
+  background: linear-gradient(to right, transparent, var(--fc-bg));
+  pointer-events: none;
 }
 
 .fcard:hover .fcard-acts,
@@ -139,53 +358,34 @@
 }
 
 .fcard-act {
-  width: 30px;
-  height: 30px;
-  border-radius: var(--r-sm);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-ctl-sm);
 }
 
-.fcard-open {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  height: 30px;
-  padding: 0 15px;
-  border-radius: var(--r-pill);
-  font-size: var(--t-ui);
-  font-weight: var(--w-medium);
-  color: var(--text-2);
-  background-color: var(--fill-2);
-  transition:
-    background-color var(--d-1) var(--ease),
-    color var(--d-1) var(--ease),
-    scale var(--d-2) var(--spring);
+/* ── still arriving ── */
+
+.fcard-wait-line {
+  display: block;
+  height: 6px;
+  margin-top: 9px;
 }
 
-.fcard:hover .fcard-open {
-  color: var(--text);
-  background-color: var(--fill-3);
-}
-
-.fcard-open:hover {
-  background-color: var(--fill-4);
-}
-
-.fcard-open:active {
-  scale: var(--press);
-  transition-duration: var(--d-1), var(--d-1), 70ms;
-}
-
-.fcard-wait {
-  cursor: default;
-}
-
-.fcard-wait .fcard-tile {
-  box-shadow: none;
+.fcard-wait .fcard-cover {
+  align-items: stretch;
+  padding-top: 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .fcard,
-  .fcard-open {
-    transition-property: background-color, color;
+  .fcard-sheet {
+    transition-property: background-color;
+  }
+  .fcard:hover .fcard-sheet,
+  .fcard:has(.fcard-open:focus-visible) .fcard-sheet {
+    transform: none;
+  }
+  .fcard-page {
+    animation: none;
   }
 }

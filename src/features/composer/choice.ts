@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { STANDARD_SPEED, type Capabilities, type Effort, type ModeInfo, type ModelInfo, type ProviderId, type SpeedInfo } from '@shared/protocol';
+import { DEFAULT_ACCOUNT, STANDARD_SPEED, type Capabilities, type Effort, type ModeInfo, type ModelInfo, type ProviderId, type SpeedInfo } from '@shared/protocol';
 import { defaultableSpeeds, isPaidSpeed, modelNameById, modelSpeeds, offeredSpeeds, speedFor, visibleModels } from '@/lib/models';
 import { useLimitsReport } from '@/state/hooks';
 import { homeAccountId, setEffort as setSessionEffort, setMode as setSessionMode, setModel as setSessionModel, setSettings, setSpeed as setSessionSpeed } from '@/state/actions';
@@ -71,13 +71,24 @@ export interface Choice {
 
 const NO_MODELS: ModelInfo[] = [];
 
+/** What this agent offers under this account in some folder already asked about (the first found; undefined when none). */
+export function capsFromAnywhere(all: Record<string, Capabilities>, provider: ProviderId, accountId: string | undefined): Capabilities | undefined {
+  const head = `${provider}:`;
+  const extra = accountId && accountId !== DEFAULT_ACCOUNT ? `@${accountId}` : '';
+  for (const key in all) {
+    if (!key.startsWith(head)) continue;
+    // Keys read `provider:folder` or `provider:folder@account` (state/store.ts `capsKey`).
+    if (extra ? key.endsWith(extra) : !/@[\w-]+$/.test(key)) return all[key];
+  }
+  return undefined;
+}
+
 /**
  * What the composer would use: the session's current model/effort/mode, or on the
  * home screen the choices for the next session (same rules as `homeChoice()`).
  */
 export function useChoice(sessionId: string | null): Choice {
-  const { caps, failed: capsFailed } = useCapsState(sessionId);
-  const capsPending = !caps && !capsFailed;
+  const { caps: ownCaps, failed: capsFailed } = useCapsState(sessionId);
   // The fields a choice reads, compared shallowly: usage ticks while streaming change the session, not these.
   const meta = useStore(
     useShallow((s) => {
@@ -88,6 +99,13 @@ export function useChoice(sessionId: string | null): Choice {
   const homeProvider = useStore((s) => s.ui.homeProvider);
   const provider = meta?.provider ?? homeProvider;
   const accountId = useStore((s) => (meta ? meta.accountId : homeAccountId(provider, s)));
+  // A chat's own folder is new to the agent, and asking what it offers there takes as long as an
+  // agent start: until that answers, the same agent and account's answer from any other folder
+  // (the same models, modes and efforts) fills the controls. They never fall back to skeletons
+  // under a card that showed them a moment ago on the home screen.
+  const lentCaps = useStore((s) => (ownCaps ? undefined : capsFromAnywhere(s.providerCaps, provider, accountId)));
+  const caps = ownCaps ?? lentCaps;
+  const capsPending = !caps && !capsFailed;
   const homeModel = useStore((s) => s.ui.homeModel[provider] ?? s.settings.defaultModels[provider]);
   const homeMode = useStore((s) => s.ui.homeMode[provider] ?? s.settings.defaultModes[provider]);
   const homeEffort = useStore((s) => s.ui.homeEffort[provider] ?? s.settings.defaultEfforts[provider]);
