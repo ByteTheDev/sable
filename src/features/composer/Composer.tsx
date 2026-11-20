@@ -261,6 +261,8 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
   const searchSeq = useRef(0);
 
   const opening = useStore((s) => variant === 'session' && !!sessionId && !s.data[sessionId]?.loaded);
+  // A chat with nothing said yet asks for the first task, as home does; later the field is a reply.
+  const fresh = useStore((s) => variant === 'session' && !!sessionId && !!s.data[sessionId]?.loaded && !s.data[sessionId]!.roots.length);
   const busy = status === 'running' || status === 'awaiting' || status === 'starting';
   const shell = variant === 'session' && text.startsWith('!');
   const trimmed = text.trim();
@@ -838,7 +840,7 @@ ${cur}` : draft.text, attachments: draft.attachments });
   // A session switched to whose conversation is still loading: no placeholder and no agent
   // controls yet, so the dock never shows a default ("Reply", skeleton chips) for a frame before
   // the session's own state arrives.
-  const placeholder = opening ? '' : ghost || (shell && text === '!') ? '' : variant === 'home' ? (signedOut ? `Sign in to ${PROVIDER_NAME[homeAgent]} to start` : 'Describe a task or ask a question') : queueing ? 'Queue a follow-up' : 'Reply';
+  const placeholder = opening ? '' : ghost || (shell && text === '!') ? '' : variant === 'home' ? (signedOut ? `Sign in to ${PROVIDER_NAME[homeAgent]} to start` : 'Describe a task or ask a question') : queueing ? 'Queue a follow-up' : fresh ? 'Describe a task or ask a question' : 'Reply';
 
   return (
     <div className="composer" data-variant={variant}>
