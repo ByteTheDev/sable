@@ -645,6 +645,23 @@
   animation: bw-rise var(--d-3) var(--ease-out);
 }
 
+/* The folder's last dev server: one quiet line above the lists, what printed it dim at its end. */
+.bw-last {
+  animation: bw-rise var(--d-3) var(--ease-out);
+}
+
+.bw-last + .bw-sec {
+  margin-top: 14px;
+}
+
+.bw-last-from {
+  max-width: 55%;
+}
+
+.bw-last-from + .bw-row-go {
+  margin-left: 0;
+}
+
 .bw-sec + .bw-sec {
   margin-top: 18px;
 }

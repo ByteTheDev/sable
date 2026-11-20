@@ -149,7 +149,13 @@ const PS_WRAPPER =
 
 function shellFor(command: string): { cmd: string; args: string[]; env?: Record<string, string> } {
   if (process.platform === 'win32') {
-    return { cmd: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', PS_WRAPPER], env: { SABLE_COMMAND: command } };
+    // npm, pnpm and yarn resolve to .ps1 shims in PowerShell, which Windows' default policy
+    // (Restricted) refuses to load: this process may run them (a machine's group policy still wins).
+    return {
+      cmd: 'powershell.exe',
+      args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', PS_WRAPPER],
+      env: { SABLE_COMMAND: command },
+    };
   }
   const sh = process.env.SHELL;
   if (sh) return { cmd: sh, args: ['-lc', command] };

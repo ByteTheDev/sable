@@ -373,6 +373,48 @@ button:hover > .row-caret {
   color: var(--text);
 }
 
+/* A command that started a dev server: its address and "Open" over the row's end (the result steps
+   aside), only while the row is hovered or holds focus. Opaque, so the command under it never shows. */
+.tool[data-server] {
+  position: relative;
+}
+
+.dev-chip.tool-server {
+  position: absolute;
+  top: 1.5px;
+  right: 16px;
+  max-width: calc(100% - 120px);
+  background-color: var(--panel-2);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--d-1) var(--ease),
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
+}
+
+.dev-chip.tool-server:hover {
+  background-color: var(--panel-3);
+}
+
+.dev-chip.tool-server:active {
+  background-color: var(--panel-4);
+}
+
+.tool[data-server]:is(:hover, :focus-within) > .tool-server {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.tool[data-server] > .tool-row .tool-meta {
+  transition: opacity var(--d-1) var(--ease);
+}
+
+.tool[data-server]:is(:hover, :focus-within) > .tool-row .tool-meta {
+  opacity: 0;
+}
+
 .tool-exit {
   font-family: var(--font-sans);
   font-size: 11.5px;

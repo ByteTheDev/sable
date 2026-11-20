@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { DropdownMenu as RM } from 'radix-ui';
 import type { Attachment, BrowserConsoleLine } from '@shared/protocol';
 import { Icon, type IconName } from '@/icons';
+import { devUrlLabel } from '@/lib/dev-url';
 import { addressParts, isLocalUrl, normalizeAddress, willSearch } from '@/lib/links';
 import * as actions from '@/state/actions';
 import { focusComposer } from '@/state/hooks';
@@ -45,6 +46,7 @@ import {
   type Device,
   type FeedEntry,
 } from './browser-store';
+import { useRememberedUrl } from './dev-urls';
 import './browser.css';
 
 /**
@@ -1606,15 +1608,22 @@ function AddressField({
   );
 }
 
-/** Before the first page: local pages this session mentioned, then recently visited pages. */
+/**
+ * Before the first page: the folder's last dev server (one quiet line), local pages this session
+ * mentioned, then recently visited pages.
+ */
 function StartView({ sessionId, onGo }: { sessionId: string; onGo: (raw: string) => boolean }) {
   const previews = usePreviews(sessionId);
   const recent = useRecent();
+  const cwd = useStore((s) => s.sessions[sessionId]?.cwd ?? '');
+  const remembered = useRememberedUrl(cwd);
   const shownHosts = new Set(previews.map((p) => p.label));
+  // The folder's last server, unless this session already lists it.
+  const last = remembered && !previews.some((p) => devUrlLabel(p.url) === devUrlLabel(remembered.url)) ? remembered : undefined;
   // A local page listed above is not repeated under Recent.
-  const visits = recent.filter((v) => !(isLocalUrl(v.url) && shownHosts.has(addressParts(v.url).host)));
+  const visits = recent.filter((v) => !(isLocalUrl(v.url) && (shownHosts.has(addressParts(v.url).host) || (last && devUrlLabel(v.url) === devUrlLabel(last.url)))));
 
-  if (!previews.length && !visits.length) {
+  if (!previews.length && !visits.length && !last) {
     return (
       <div className="bw-start">
         <p className="rail-empty">No pages opened yet.</p>
@@ -1624,6 +1633,18 @@ function StartView({ sessionId, onGo }: { sessionId: string; onGo: (raw: string)
 
   return (
     <div className="bw-start scroll">
+      {last && (
+        <div className="bw-last">
+          <button type="button" className="bw-row" onClick={() => onGo(last.url)} aria-label={`Open ${devUrlLabel(last.url)}${last.from ? `, last printed by ${last.from}` : ''}`}>
+            <span className="bw-row-lead">
+              <Icon name="laptop" size={15} />
+            </span>
+            <span className="bw-row-title num">{devUrlLabel(last.url)}</span>
+            {last.from && <span className="bw-row-sub bw-last-from">{last.from}</span>}
+            <Icon name="arrow-right" size={13} className="bw-row-go" />
+          </button>
+        </div>
+      )}
       {previews.length > 0 && (
         <section className="bw-sec" aria-label="In this session">
           <h3 className="rail-h bw-h">In this session</h3>

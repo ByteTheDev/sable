@@ -1676,6 +1676,33 @@ export interface PhoneReset {
   total?: number;
 }
 
+// ───────────────────────────── project scripts ─────────────────────────────
+
+/** Which package manager runs a folder's package.json scripts (from its lockfile). */
+export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
+
+/** One script a folder declares, and how the Terminal tab runs it. */
+export interface ProjectScript {
+  /** As its file spells it ("dev", "build", "test"). */
+  name: string;
+  /** What the file says it does ("vite --port 5173", a Makefile recipe's first line). */
+  command: string;
+  /** What the terminal runs ("pnpm run dev", "make test", "poetry run serve"). */
+  run: string;
+  source: 'package' | 'make' | 'python';
+}
+
+export interface ProjectScripts {
+  cwd: string;
+  /** The package manager for package.json scripts; null without a package.json. */
+  manager: PackageManager | null;
+  scripts: ProjectScript[];
+  /** Files with scripts that were left out, each with why ("Makefile: make is not installed"). */
+  skipped: string[];
+  /** Changes when any file it was read from changes. */
+  sig: string;
+}
+
 // ──────────────────────────────────── RPC ───────────────────────────────────
 
 export interface SessionSnapshot {
@@ -1953,6 +1980,8 @@ export interface RpcMethods {
 
   'term.run': { params: { cwd: string; command: string }; result: { termId: string } };
   'term.kill': { params: { termId: string }; result: { ok: boolean } };
+  /** The folder's scripts (package.json, a simple Makefile, pyproject.toml), read fresh when their files changed (server/services/scripts.ts). */
+  'project.scripts': { params: { cwd: string }; result: ProjectScripts };
 
   'memory.list': { params: { cwd: string; provider: ProviderId }; result: MemoryFile[] };
 

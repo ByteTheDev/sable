@@ -1116,7 +1116,54 @@ textarea.field.ch-commit-field {
   word-break: break-word;
 }
 
-.tm-stop {
+/* A script's terminal: its name in the interface face, then what it runs, dim and on one line. */
+.tm-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  line-height: 20px;
+}
+
+.tm-name {
+  flex-shrink: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-ui);
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.tm-cmd-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+}
+
+/* The server's address sits with the header's actions, at their height. */
+.tm-url {
+  margin-top: -1px;
+}
+
+/* In a narrow panel the address keeps its room: the script's command gives way whole, never as a
+   stub of two letters. */
+.tm-run {
+  container-type: inline-size;
+}
+
+@container (max-width: 360px) {
+  .tm-cmd:has(.tm-url) .tm-cmd-sub {
+    display: none;
+  }
+}
+
+.tm-act {
   display: grid;
   place-items: center;
   width: 22px;
@@ -1132,20 +1179,95 @@ textarea.field.ch-commit-field {
     scale var(--d-2) var(--spring);
 }
 
-.tm-stop:hover {
-  color: var(--red);
+.tm-act:hover {
+  color: var(--text);
   background-color: var(--fill-3);
 }
 
-.tm-stop:active {
+.tm-stop:hover {
+  color: var(--red);
+}
+
+.tm-act:active {
   background-color: var(--fill-4);
   scale: var(--press-icon);
   transition-duration: var(--d-1), var(--d-1), 70ms;
 }
 
-.tm-stop:disabled {
+.tm-act:disabled {
   opacity: var(--ctl-disabled);
   pointer-events: none;
+}
+
+.tm-act:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* A finished script's "Run again" steps back with the rest of its block. */
+.tm-run:not([data-tone='live']) .tm-restart {
+  background-color: transparent;
+  color: var(--text-3);
+}
+
+.tm-run:not([data-tone='live']) .tm-restart:hover {
+  background-color: var(--fill-2);
+  color: var(--text);
+}
+
+/* A script chosen again while it runs: its block lights once where it stands (a layer over it, so
+   the block's own entrance is not replayed when the light goes). */
+.tm-run[data-flash] {
+  position: relative;
+}
+
+.tm-run[data-flash]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--fill-3);
+  pointer-events: none;
+  opacity: 0;
+  animation: tm-flash 900ms var(--ease-out);
+}
+
+@keyframes tm-flash {
+  0%,
+  20% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tm-run[data-flash]::after {
+    animation: none;
+  }
+}
+
+/* The bar's "Run": a quiet text control among the icon actions. */
+.tm-run-btn {
+  gap: 5px;
+  padding: 0 7px 0 8px;
+  margin-right: 2px;
+}
+
+.tm-run-btn > svg:first-child {
+  color: var(--text-3);
+  transition: color var(--d-1) var(--ease);
+}
+
+.tm-run-btn:hover > svg:first-child,
+.tm-run-btn[data-state='open'] > svg:first-child {
+  color: var(--text-2);
+}
+
+.tm-run-caret {
+  color: var(--text-3);
+}
+
+.tm-run-menu .hint {
+  font-size: var(--t-micro);
 }
 
 .tm-trim {

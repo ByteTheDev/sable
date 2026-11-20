@@ -1,0 +1,65 @@
+/* A dev server's address and "Open": one quiet control that reads as part of the header it sits in.
+   The address is dim, "Open" one step brighter after a hairline; hover lifts both by one tone. */
+.dev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  height: 22px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-ctl-xs);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: var(--t-micro);
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--text-3);
+  background-color: var(--fill-1);
+  flex-shrink: 0;
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease),
+    scale var(--d-2) var(--spring);
+}
+
+.dev-chip-host {
+  min-width: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--d-1) var(--ease);
+}
+
+.dev-chip-open {
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  box-shadow: inset 1px 0 0 var(--line);
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+  transition: color var(--d-1) var(--ease);
+}
+
+.dev-chip:hover {
+  background-color: var(--fill-2);
+}
+
+.dev-chip:hover .dev-chip-host {
+  color: var(--text-2);
+}
+
+.dev-chip:hover .dev-chip-open {
+  color: var(--text);
+}
+
+.dev-chip:active {
+  background-color: var(--fill-3);
+  scale: var(--press);
+  transition-duration: var(--d-1), var(--d-1), 70ms;
+}
+
+.dev-chip:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-offset);
+}

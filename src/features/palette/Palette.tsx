@@ -3,6 +3,7 @@ import { Dialog as RD } from 'radix-ui';
 import { DEFAULT_ACCOUNT, type ProviderId, type SessionMeta } from '@shared/protocol';
 import { accountName as nameOfAccount } from '@/state/hooks';
 import { StatusMark, statusLabel, statusTone } from '@/features/sidebar/SessionRow';
+import { refreshScripts, useScriptsVersion } from '@/features/rail/scripts-store';
 import { Icon } from '@/icons';
 import { timeAgo } from '@/lib/format';
 import { fuzzy, wordPrefix } from '@/lib/fuzzy';
@@ -78,6 +79,12 @@ function PaletteBody({ onRun }: { onRun: (item: PaletteItem) => void }) {
   const homeProvider = useStore((s) => s.ui.homeProvider);
   const providers = useStore((s) => s.providers);
   const caps = useStore((s) => (activeId ? s.data[activeId]?.caps : undefined));
+  // The open folder's scripts ("Run dev"): read again as the palette opens, listed once they arrive.
+  const activeCwd = activeId ? sessionsMap[activeId]?.cwd : undefined;
+  const scriptsV = useScriptsVersion();
+  useEffect(() => {
+    if (activeCwd) void refreshScripts(activeCwd);
+  }, [activeCwd]);
 
   const items = useMemo(() => {
     const sessions = Object.values(sessionsMap).sort((a, b) => Number(!!a.archived) - Number(!!b.archived) || b.updatedAt - a.updatedAt);
@@ -90,7 +97,9 @@ function PaletteBody({ onRun }: { onRun: (item: PaletteItem) => void }) {
       return accounts && accounts.length > 1 ? nameOfAccount(accounts.find((a) => a.id === (s.accountId ?? DEFAULT_ACCOUNT))) : undefined;
     };
     return buildItems({ sessions, projects: projs, activeId, active: activeId ? sessionsMap[activeId] : undefined, installed, homeProvider, caps, accountName });
-  }, [sessionsMap, projects, activeId, homeProvider, providers, caps]);
+    // scriptsV: the folder's scripts arrived or changed (they live outside the store).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionsMap, projects, activeId, homeProvider, providers, caps, scriptsV]);
 
   // Scope prefixes: ">" actions only, "@" sessions only.
   const scope = query.startsWith('>') ? 'actions' : query.startsWith('@') ? 'sessions' : null;

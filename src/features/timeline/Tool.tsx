@@ -1,10 +1,12 @@
-import { memo, useState, type ReactNode } from 'react';
+import { memo, useMemo, useState, type ReactNode } from 'react';
 import type { ToolItem } from '@shared/protocol';
 import { Collapse } from '@/components/Collapse';
 import { Markdown } from '@/components/Markdown';
 import { Icon, TOOL_ICON } from '@/icons';
+import { lastDevUrl } from '@/lib/dev-url';
 import { formatDuration, plural, relPath } from '@/lib/format';
 import { PathLabel } from '@/ui';
+import { DevUrlChip } from '@/features/rail/DevUrlChip';
 import { stepOf, useJumpOpen } from '@/features/review/jump';
 import { AgentBlock } from './Agent';
 import { useTimeline } from './ctx';
@@ -150,6 +152,18 @@ function Peek({ text }: { text: string }) {
 /** A running command shows its last lines once it has run this long (ms), as its seconds do. */
 const PEEK_AFTER_MS = 2000;
 
+/**
+ * The dev server a command step announced (lib/dev-url.ts): in what it printed so far, or in its
+ * result. Read again only when that text changes, and only text naming a loopback address is scanned.
+ */
+function useDevServer(item: ToolItem) {
+  const bash = item.kind === 'bash';
+  const output = bash ? item.output : undefined;
+  const result = bash ? item.result?.text : undefined;
+  const command = bash ? item.detail.command : undefined;
+  return useMemo(() => (bash ? (lastDevUrl(output, command) ?? lastDevUrl(result, command)) : null), [bash, output, result, command]);
+}
+
 function ToolRow({ item }: { item: ToolItem }) {
   const { cwd, home } = useTimeline();
   const [choice, setChoice] = useState<boolean | null>(null);
@@ -165,9 +179,10 @@ function ToolRow({ item }: { item: ToolItem }) {
   // never flashes it open and shut under the reader.
   const now = useTick(item.kind === 'bash' && active);
   const peek = item.kind === 'bash' && active && !open && !!item.output?.trim() && now - item.ts >= PEEK_AFTER_MS;
+  const server = useDevServer(item);
 
   return (
-    <div className="tool" data-status={item.status} data-open={open || undefined}>
+    <div className="tool" data-status={item.status} data-open={open || undefined} data-server={server ? '' : undefined}>
       <button type="button" className="row-btn tool-row" aria-expanded={expandable ? open : undefined} data-static={!expandable || undefined} tabIndex={expandable ? undefined : -1} onClick={() => expandable && setChoice(!open)}>
         <span className="tool-icon">
           <Icon name={icon.icon} size={14} />
@@ -180,6 +195,8 @@ function ToolRow({ item }: { item: ToolItem }) {
         </span>
         {expandable && <Icon name="caret-right" size={10} className="row-caret" />}
       </button>
+      {/* A command that started a dev server: its address and "Open" answer on hover or focus, over the row's end. */}
+      {server && <DevUrlChip url={server.url} label={server.label} cwd={cwd} from={item.detail.command?.split('\n')[0]} className="tool-server" />}
       {error && !open && <pre className="tool-error">{error}</pre>}
       {item.kind === 'bash' && (
         <Collapse open={peek}>

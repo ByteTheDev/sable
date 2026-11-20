@@ -1,8 +1,8 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import type { BrowserConsoleLine, BrowserFailedRequest, BrowserLogEntry, TimelineItem } from '@shared/protocol';
-import { findDevUrls, previewTargets } from '@/lib/links';
+import { previewTargets } from '@/lib/links';
 import { useStore } from '@/state/store';
-import { getRuns, useTermVersion, type TermRun } from './term-store';
+import { getRuns, useTermVersion } from './term-store';
 
 /**
  * The panel browser's tabs and pages per session, kept outside React like the terminal transcript
@@ -502,7 +502,7 @@ export function usePreviews(sessionId: string, limit = 4): Target[] {
     const found: { t: Target; ts: number; order: number }[] = [];
     let order = 0;
     for (const item of Object.values(items ?? {})) for (const t of itemTargets(item)) found.push({ t, ts: item.ts, order: order++ });
-    for (const run of getRuns(sessionId)) for (const url of runUrls(run)) found.push({ t: { url, label: new URL(url).host }, ts: run.startedAt, order: order++ });
+    for (const run of getRuns(sessionId)) for (const u of [...run.urls].reverse()) found.push({ t: { url: u.url, label: u.label }, ts: run.startedAt, order: order++ });
     found.sort((a, b) => b.ts - a.ts || a.order - b.order);
     const out: Target[] = [];
     const seen = new Set<string>();
@@ -517,14 +517,3 @@ export function usePreviews(sessionId: string, limit = 4): Target[] {
   }, [rev, sessionId, termV]);
 }
 
-/* ── dev servers the panel terminal printed ── */
-
-const runCache = new Map<number, { v: number; urls: string[] }>();
-
-function runUrls(run: TermRun): string[] {
-  const c = runCache.get(run.id);
-  if (c && c.v === run.v) return c.urls;
-  const urls = findDevUrls(run.chunks.map((ch) => ch.t).join(''));
-  runCache.set(run.id, { v: run.v, urls });
-  return urls;
-}
