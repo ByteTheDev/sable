@@ -10,7 +10,7 @@ Sable is a desktop app for working with coding agents. It runs the Claude Code a
 
 ![A live turn and the Changes panel](docs/live.png)
 
-**Two agents that work together.** Each agent can hand a task to the other as a sub-agent: a Claude Code session can ask Codex, and the other way round, and the sub-agent's steps show under the step that started it. Under a finished turn that changed files, "Check with Codex" (or Claude Code) lets the other agent review the changes read-only and puts its findings in your composer.
+**Two agents that work together.** Each agent can hand a task to the other as a sub-agent: a Claude Code session can ask Codex, and the other way round, and the sub-agent's steps show under the step that started it. Under a finished turn that changed files, "Check with Codex" (or Claude Code) lets the other agent review the changes read-only and puts its findings in your composer. Switch a chat from one agent to the other in place: each keeps its own conversation, and the one coming in gets a short handover. And `/race <task>` gives the same task to both at once, each in its own copy of the repository, side by side; keep the better result with one click.
 
 **The agent can answer with an interface.** Both agents get a `show_widget` tool. When a chart, a diagram, a small form or a simulation explains something better than prose, the agent draws it and it appears inline in the answer. Widgets run in a sandboxed frame with no network access and no access to Sable or your files. Answers also draw `mermaid` diagrams, preview `html` and `svg` code blocks, and lay out wide tables properly. Files the agent hands you show up as cards you can open.
 
@@ -29,6 +29,9 @@ Sable is a desktop app for working with coding agents. It runs the Claude Code a
 ## Everything else
 
 - Claude Code (through the Claude Agent SDK) and Codex (through `codex app-server`) in one timeline: messages, thinking, commands, file edits with diffs, searches, sub-agents and workflows, MCP tools, plans and todos.
+- Review comments on diffs: comment on lines in the Changes tab or an edit step, then send all of them to the agent as one review.
+- A map of long conversations along the right edge: a tick per message you sent, a preview on hover, Alt+Up/Down to step through them.
+- Project scripts in the Terminal tab ("Run dev"), and a local address a dev server prints opens in the Browser tab with one click.
 - A triage deck (Ctrl+I) with every permission and question waiting across all chats, answered by keyboard.
 - `/until <check>`: the agent keeps going until your check passes (tests, a build, a linter), within a number of rounds and a usage budget.
 - Before and after: a local page in the Browser tab is captured before and after a turn that edits files, with the changed regions marked and a compare slider.
@@ -41,7 +44,8 @@ Sable is a desktop app for working with coding agents. It runs the Claude Code a
 - A profile of you (`~/.sable/profile.md`) that both agents read and can add short facts to.
 - Long chats stay fast: chats of hundreds of megabytes open in seconds and stream without slowing the app.
 - The computer does not go to sleep while an agent works, or while a paired phone may need it and it is plugged in.
-- A dithered backdrop that reacts when you send, when a turn ends and when something fails, and goes still when you stop. Presets, your own image and a live editor in Settings › Appearance.
+- Background tasks, agents and slash commands Claude Code writes into a chat show as quiet lines with their result, not as raw text.
+- Liquid glass on what floats (the composer, menus, dialogs) over a dithered backdrop that reacts when you send, when a turn ends and when something fails, and goes still when you stop. Presets, your own image and a live editor in Settings › Appearance.
 
 ![Settings, Appearance](docs/appearance.png)
 
