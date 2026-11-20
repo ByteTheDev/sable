@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type DragEvent, type FocusEvent, type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref } from 'react';
-import { AnimatePresence, MotionConfig, motion } from 'motion/react';
+import { memo, useCallback, useEffect, useMemo, useState, type ComponentType, type CSSProperties, type DragEvent, type FocusEvent, type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'motion/react';
 import { ContextMenu as RC, DropdownMenu as RM } from 'radix-ui';
 import type { SessionMeta } from '@shared/protocol';
 import { LogoMark, PROVIDER_NAME, ProviderMark, StatusGlyph, Wordmark } from '@/art/Logo';
@@ -17,8 +17,10 @@ import { IconButton, Modal, Tip } from '@/ui';
 import { Flip } from './flip';
 import { nudgeFolder, pressFolder, releaseFolderDrag, type FolderDrop } from './folder-drag';
 import { SideResize } from './Resize';
-import { createGroupsSelector, idsOf, loadCollapsed, pathKey, saveCollapsed, type ChatsGroup, type Mix, type ProjectGroup, type SetGroup, type TopEntry } from './groups';
-import { RowContextMenu, SessionRow, SidebarRowContext, holdFocus, onCloseAutoFocus, setRenaming, type RowCtx } from './SessionRow';
+import { createGroupsSelector, idsOf, loadCollapsed, pathKey, saveCollapsed, toggleCollapsed, unfoldKeys, type ChatsGroup, type Mix, type ProjectGroup, type SetGroup, type TopEntry } from './groups';
+import { NameField } from './NameField';
+import { holdFocus, onCloseAutoFocus } from './rename';
+import { RowContextMenu, SessionRow, SidebarRowContext, setRenaming, type RowCtx } from './SessionRow';
 import { SidebarFooter } from './SidebarFooter';
 import './sidebar.css';
 
@@ -133,16 +135,9 @@ function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDiv
   const setUi = useStore((s) => s.setUi);
   const [collapsed, setCollapsed] = useState(loadCollapsed);
 
-  const toggle = useCallback((key: string, open?: boolean) => {
-    setCollapsed((prev) => {
-      if (open !== undefined && prev.has(key) !== open) return prev;
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      saveCollapsed(next);
-      return next;
-    });
-  }, []);
+  // Every click flips it, also while the last fold still runs (the fold turns back from where it is).
+  const toggle = useCallback((key: string) => setCollapsed((prev) => toggleCollapsed(prev, key)), []);
+  useEffect(() => saveCollapsed(collapsed), [collapsed]);
 
   // Opening a session that sits in a collapsed folder (or project) unfolds it (also when it was
   // collapsed after an earlier session in it was opened, hence the subscription to the id).
@@ -150,13 +145,7 @@ function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDiv
     const unfold = (key: string | null) => {
       if (!key) return;
       const keys = [key, ...selectGroups(useStore.getState()).top.flatMap((e) => (e.kind === 'group' && e.folders.some((f) => f.key === key) ? [e.key] : []))];
-      setCollapsed((prev) => {
-        if (!keys.some((k) => prev.has(k))) return prev;
-        const next = new Set(prev);
-        for (const k of keys) next.delete(k);
-        saveCollapsed(next);
-        return next;
-      });
+      setCollapsed((prev) => unfoldKeys(prev, keys));
     };
     unfold(selectActiveKey(useStore.getState()));
     let stopReveal = () => {};
@@ -181,7 +170,7 @@ function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDiv
   const order = `pinned:${idsOf(groups.pinned)}` + groups.top.map(entryOrder).join('');
 
   return (
-    <div {...props} className="side-list scroll" tabIndex={0} aria-label="Sessions list" onKeyDown={onListKey} onFocus={onListFocus} onBlur={onListBlur} onScroll={onListScroll}>
+    <div {...props} className="side-list scroll" tabIndex={0} aria-label="Sessions list" onKeyDown={onListKey} onFocus={onListFocus} onBlur={onListBlur} onScroll={onListScroll} onWheel={onListWheel}>
       {!ready ? (
         <SkeletonRows />
       ) : empty ? (
@@ -311,22 +300,25 @@ const SessionList = memo(function SessionList({ ids, mix }: { ids: string; mix: 
   );
 });
 
-const FOLD = { height: { duration: 0.26, ease: EASE }, opacity: { duration: 0.18, ease: EASE } };
+/**
+ * A folder's rows fold open and shut on a spring: a click that comes while the last fold still runs
+ * turns it back from where it is, with the speed it had (AnimatePresence brings an exiting body back).
+ * Under reduced motion the rows are simply there or not.
+ */
+const FOLD = { height: { type: 'spring', stiffness: 500, damping: 40 }, opacity: { duration: 0.16, ease: EASE } } as const;
+const STILL = { duration: 0 } as const;
+const useFold = () => (useReducedMotion() ? STILL : FOLD);
+const FOLD_SHUT = { height: 0, opacity: 0, overflow: 'hidden' } as const;
+const FOLD_OPEN = { height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } } as const;
 
 /** A section's rows and its archived ones, folding open and shut. */
 function GroupBody({ open, sessions, archived, mix, children }: { open: boolean; sessions: SessionMeta[]; archived: SessionMeta[]; mix: Mix; children?: ReactNode }) {
   const [showArchived, setShowArchived] = useState(false);
+  const fold = useFold();
   return (
     <AnimatePresence initial={false}>
       {open && (
-        <motion.div
-          key="body"
-          className="sgroup-body"
-          initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
-          animate={{ height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } }}
-          exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
-          transition={FOLD}
-        >
+        <motion.div key="body" className="sgroup-body" initial={FOLD_SHUT} animate={FOLD_OPEN} exit={FOLD_SHUT} transition={fold}>
           {children}
           {sessions.length > 0 && <SessionList ids={idsOf(sessions)} mix={mix} />}
           {archived.length > 0 && (
@@ -340,14 +332,7 @@ function GroupBody({ open, sessions, archived, mix, children }: { open: boolean;
               </button>
               <AnimatePresence initial={false}>
                 {showArchived && (
-                  <motion.div
-                    key="archived"
-                    className="sgroup-body"
-                    initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
-                    animate={{ height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } }}
-                    exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
-                    transition={{ duration: 0.24, ease: EASE }}
-                  >
+                  <motion.div key="archived" className="sgroup-body" initial={FOLD_SHUT} animate={FOLD_OPEN} exit={FOLD_SHUT} transition={fold}>
                     <SessionList ids={idsOf(archived)} mix={undefined} />
                   </motion.div>
                 )}
@@ -363,7 +348,7 @@ function GroupBody({ open, sessions, archived, mix, children }: { open: boolean;
 interface SectionProps {
   group: ProjectGroup;
   collapsed: boolean;
-  onToggle: (key: string, open?: boolean) => void;
+  onToggle: (key: string) => void;
   /** Holds the open session. */
   current: boolean;
   /** The project this folder sits in. */
@@ -421,16 +406,11 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
                 aria-expanded={hasSessions ? open : undefined}
                 aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown F2"
                 title={group.path}
+                // Every click counts, however quick the last one was (a double-click is two toggles).
                 onClick={(e) => {
-                  // The second click of a double-click on the name renames: it takes back the first one's toggle.
-                  if (e.detail === 2 && (e.target as HTMLElement).closest('.sgroup-name')) {
-                    if (hasSessions) onToggle(group.key);
-                    rename();
-                    return;
-                  }
-                  if (e.detail > 2) return;
-                  if (hasSessions) onToggle(group.key);
-                  else goHome(group.path);
+                  if (!hasSessions) return goHome(group.path);
+                  holdListEnd(e.currentTarget);
+                  onToggle(group.key);
                 }}
                 onPointerDown={(e) => pressFolder(e, group.key, inSet ? innerDrop(inSet) : TOP_DROP)}
                 onKeyDown={(e) => {
@@ -559,10 +539,13 @@ function ProjectItems({ group, inSet, onRename, M }: { group: ProjectGroup; inSe
   );
 }
 
+/** Ended from the keyboard: back to the header, so the keys carry on from where they were. */
+const backToHeader = (key: string) => requestAnimationFrame(() => document.querySelector<HTMLElement>(`.sgroup-toggle[data-folder="${CSS.escape(key)}"]`)?.focus());
+
 /**
- * The folder's name in place, as a field: Enter or leaving it keeps the name, Escape keeps the old
- * one, and an empty field gives the folder its own name back (the placeholder shows it). Only
- * Sable's name for the folder changes; the folder on disk keeps its own.
+ * The folder's name in place, as a field (NameField: what ends the edit). An empty field gives the
+ * folder its own name back (the placeholder shows it). Only Sable's name for the folder changes;
+ * the folder on disk keeps its own.
  */
 function FolderRename({ group, onDone }: { group: ProjectGroup; onDone: () => void }) {
   const own = baseName(group.path) || group.path;
@@ -571,55 +554,12 @@ function FolderRename({ group, onDone }: { group: ProjectGroup; onDone: () => vo
       value={group.name}
       placeholder={own}
       label="Folder name"
-      onDone={(name) => {
-        if (name !== undefined && name !== group.name && (name || group.name !== own)) void renameProject(group.path, name);
-        // Back to the folder, so the keys carry on from where they were.
-        requestAnimationFrame(() => document.querySelector<HTMLElement>(`.sgroup-toggle[data-folder="${CSS.escape(group.key)}"]`)?.focus());
-        onDone();
-      }}
-    />
-  );
-}
-
-/** A name edited in place: Enter or leaving keeps it (`onDone(name)`), Escape keeps the old one (`onDone(undefined)`). */
-function NameField({ value: initial, placeholder, label, onDone }: { value: string; placeholder?: string; label: string; onDone: (name: string | undefined) => void }) {
-  const ref = useRef<HTMLInputElement>(null);
-  const [value, setValue] = useState(initial);
-  const done = useRef(false);
-
-  useEffect(() => {
-    // After a menu has finished closing, so focus lands here and stays.
-    const t = window.setTimeout(() => {
-      ref.current?.focus();
-      ref.current?.select();
-    }, 20);
-    return () => window.clearTimeout(t);
-  }, []);
-
-  const commit = (save: boolean) => {
-    if (done.current) return;
-    done.current = true;
-    onDone(save ? value.replace(/\s+/g, ' ').trim() : undefined);
-  };
-
-  return (
-    <input
-      ref={ref}
       className="sgroup-rename"
-      value={value}
-      placeholder={placeholder}
-      aria-label={label}
-      spellCheck={false}
-      onChange={(e) => setValue(e.target.value)}
-      // The header's own menu and drag stay out of the way: the field keeps the native menu (paste).
-      onContextMenu={(e) => e.stopPropagation()}
-      onPointerDown={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        e.stopPropagation();
-        if (e.key === 'Enter') commit(true);
-        else if (e.key === 'Escape') commit(false);
+      onDone={(name, back) => {
+        if (name !== undefined && name !== group.name && (name || group.name !== own)) void renameProject(group.path, name);
+        onDone();
+        if (back) backToHeader(group.key);
       }}
-      onBlur={() => commit(true)}
     />
   );
 }
@@ -649,7 +589,7 @@ async function newProject(paths: string[]) {
 interface SetProps {
   set: SetGroup;
   collapsed: Set<string>;
-  onToggle: (key: string, open?: boolean) => void;
+  onToggle: (key: string) => void;
   activeKey: string | null;
 }
 
@@ -673,6 +613,7 @@ const SetSection = memo(function SetSection({ set, collapsed, onToggle, activeKe
   }, [set.id]);
   const rename = useCallback(() => setRenamingSet(true), []);
   const open = !collapsed.has(set.key);
+  const fold = useFold();
   const current = set.folders.some((f) => f.key === activeKey);
   const inner = set.folders.map(folderOrder).join('\n');
   const one = set.folders.length === 1 ? set.folders[0] : undefined;
@@ -690,10 +631,11 @@ const SetSection = memo(function SetSection({ set, collapsed, onToggle, activeKe
                 <NameField
                   value={set.name}
                   label="Project name"
-                  onDone={(name) => {
+                  className="sgroup-rename"
+                  onDone={(name, back) => {
                     setRenamingSet(false);
                     if (name && name !== set.name) void renameGroup(set.id, name);
-                    requestAnimationFrame(() => document.querySelector<HTMLElement>(`.sgroup-toggle[data-folder="${CSS.escape(set.key)}"]`)?.focus());
+                    if (back) backToHeader(set.key);
                   }}
                 />
               </div>
@@ -708,12 +650,7 @@ const SetSection = memo(function SetSection({ set, collapsed, onToggle, activeKe
                 aria-label={`${set.name}, project${set.count ? `, ${set.count} ${set.count === 1 ? 'session' : 'sessions'}` : ''}`}
                 aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown F2"
                 onClick={(e) => {
-                  if (e.detail === 2 && (e.target as HTMLElement).closest('.sgroup-name')) {
-                    onToggle(set.key);
-                    rename();
-                    return;
-                  }
-                  if (e.detail > 2) return;
+                  holdListEnd(e.currentTarget);
                   onToggle(set.key);
                 }}
                 onPointerDown={(e) => pressFolder(e, set.key, TOP_DROP)}
@@ -796,14 +733,7 @@ const SetSection = memo(function SetSection({ set, collapsed, onToggle, activeKe
 
       <AnimatePresence initial={false}>
         {open && (
-          <motion.div
-            key="body"
-            className="sgroup-body sset-body"
-            initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
-            animate={{ height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } }}
-            exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
-            transition={FOLD}
-          >
+          <motion.div key="body" className="sgroup-body sset-body" initial={FOLD_SHUT} animate={FOLD_OPEN} exit={FOLD_SHUT} transition={fold}>
             {set.folders.length ? (
               <Flip order={inner} className="sset-folders" beforeMeasure={releaseFolderDrag}>
                 {set.folders.map((f) => (
@@ -880,7 +810,7 @@ function ListItems() {
 
 // ── chats started without a folder ──
 
-const ChatsSection = memo(function ChatsSection({ chats, collapsed, onToggle, current }: { chats: ChatsGroup; collapsed: boolean; onToggle: (key: string, open?: boolean) => void; current: boolean }) {
+const ChatsSection = memo(function ChatsSection({ chats, collapsed, onToggle, current }: { chats: ChatsGroup; collapsed: boolean; onToggle: (key: string) => void; current: boolean }) {
   const [enter] = useState(lateMount);
   const open = !collapsed;
   return (
@@ -896,7 +826,10 @@ const ChatsSection = memo(function ChatsSection({ chats, collapsed, onToggle, cu
               tabIndex={-1}
               aria-expanded={open}
               aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-              onClick={(e) => e.detail < 2 && onToggle('chats')}
+              onClick={(e) => {
+                holdListEnd(e.currentTarget);
+                onToggle('chats');
+              }}
               onPointerDown={(e) => pressFolder(e, 'chats', TOP_DROP)}
               onKeyDown={(e) => {
                 if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
@@ -1023,11 +956,19 @@ function nudge(key: string, by: -1 | 1, inSet?: string) {
 /**
  * While the list scrolls, rows stop answering the pointer: otherwise every row that slides under
  * it restyles (and builds its tools), which was nine tenths of a scroll's cost with many rows.
+ * Only a scroll the wheel (or a touchpad) drives raises the shield: the list also scrolls when a
+ * folder near its end folds shut (its end comes up) or a row is brought into view, and a shield
+ * then would take the clicks meant for the header under the pointer.
  */
 let scrollIdle = 0;
-function onListScroll(e: { currentTarget: HTMLElement }) {
+let wheelAt = -Infinity;
+function onListWheel(e: { timeStamp: number }) {
+  wheelAt = e.timeStamp;
+}
+function onListScroll(e: { currentTarget: HTMLElement; timeStamp: number }) {
   const list = e.currentTarget;
   if (!scrollIdle) {
+    if (e.timeStamp - wheelAt > 250) return;
     list.style.setProperty('--shield-h', `${list.clientHeight}px`);
     list.dataset.scrolling = '';
   }
@@ -1036,6 +977,30 @@ function onListScroll(e: { currentTarget: HTMLElement }) {
     scrollIdle = 0;
     delete list.dataset.scrolling;
   }, 140);
+}
+
+/**
+ * A folder folding shut near the end of a scrolled list would bring the list's end up: everything
+ * slides down, the header under the pointer with it, and the next quick click lands on the folder
+ * above. While the pointer stays in the list its rows keep the height they had (empty ground at the
+ * end, if it is scrolled to); they let go when the pointer leaves the list.
+ */
+function holdListEnd(from: Element) {
+  const rows = from.closest<HTMLElement>('.side-rows');
+  const list = rows?.closest<HTMLElement>('.side-list');
+  if (!rows || !list || list.scrollHeight <= list.clientHeight || !list.matches(':hover')) return;
+  const h = rows.offsetHeight;
+  if ((parseFloat(rows.style.minHeight) || 0) < h) rows.style.minHeight = `${h}px`;
+  if (list.dataset.holdEnd !== undefined) return;
+  list.dataset.holdEnd = '';
+  list.addEventListener(
+    'pointerleave',
+    () => {
+      rows.style.minHeight = '';
+      delete list.dataset.holdEnd;
+    },
+    { once: true },
+  );
 }
 
 // ── keyboard: one tab stop for the whole list, arrows inside it ──

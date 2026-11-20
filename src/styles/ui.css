@@ -747,6 +747,11 @@ textarea.field {
     pop-fade 70ms linear backwards;
 }
 
+/* A menu on its way out takes no pointer: its rows cannot take focus back from what the person picked (a rename field). */
+.pop[data-state='closed'] {
+  pointer-events: none;
+}
+
 /* The drop shadow is its own layer: it would be cut by the clip, so it fades in once the box is open. */
 .pop::after {
   content: '';

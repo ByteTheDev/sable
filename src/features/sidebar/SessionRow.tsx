@@ -11,6 +11,8 @@ import { accountName } from '@/state/hooks';
 import { useStore } from '@/state/store';
 import { cx } from '@/ui';
 import type { Mix } from './groups';
+import { NameField } from './NameField';
+import { holdFocus, onCloseAutoFocus } from './rename';
 
 // ── shared row state (rename / delete confirm) ──
 
@@ -258,19 +260,6 @@ function rowActions(s: SessionMeta, ctx: RowCtx): MenuAction[] {
   return list;
 }
 
-/** Keeps focus where the action wants it (the rename field) instead of the trigger. */
-let keepFocus = false;
-export const holdFocus = (fn: () => void) => () => {
-  keepFocus = true;
-  fn();
-};
-export const onCloseAutoFocus = (e: Event) => {
-  if (keepFocus) {
-    e.preventDefault();
-    keepFocus = false;
-  }
-};
-
 function DropdownItems({ actions }: { actions: MenuAction[] }) {
   return (
     <>
@@ -307,49 +296,19 @@ const Frag = ({ children }: { children: ReactNode }) => <>{children}</>;
 
 // ── rename field ──
 
+/** The chat's title in place (NameField: what ends the edit). An empty field keeps the old title. */
 function RenameField({ session, onDone }: { session: SessionMeta; onDone: () => void }) {
-  const ref = useRef<HTMLInputElement>(null);
-  const [value, setValue] = useState(session.title);
-  const done = useRef(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    // After the menu has finished closing, so focus lands here and stays.
-    const t = window.setTimeout(() => {
-      el.focus();
-      el.select();
-    }, 20);
-    return () => window.clearTimeout(t);
-  }, []);
-
-  const commit = (save: boolean) => {
-    if (done.current) return;
-    done.current = true;
-    const title = value.trim();
-    if (save && title && title !== session.title) void renameSession(session.id, title);
-    onDone();
-    // Back to the row, so the keys carry on from where they were.
-    if (ref.current === document.activeElement)
-      requestAnimationFrame(() => document.querySelector<HTMLElement>(`.srow[data-row="${CSS.escape(session.id)}"] .srow-main`)?.focus());
-  };
-
   return (
-    <input
-      ref={ref}
+    <NameField
+      value={session.title}
+      label="Session title"
       className="srow-rename"
-      value={value}
-      aria-label="Session title"
-      spellCheck={false}
-      onChange={(e) => setValue(e.target.value)}
-      // The list's shared context menu stays out of the way: the field keeps the native one (paste).
-      onContextMenu={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        e.stopPropagation();
-        if (e.key === 'Enter') commit(true);
-        else if (e.key === 'Escape') commit(false);
+      onDone={(title, back) => {
+        if (title && title !== session.title) void renameSession(session.id, title);
+        onDone();
+        // Ended from the keyboard: back to the row, so the keys carry on from where they were.
+        if (back) requestAnimationFrame(() => document.querySelector<HTMLElement>(`.srow[data-row="${CSS.escape(session.id)}"] .srow-main`)?.focus());
       }}
-      onBlur={() => commit(true)}
     />
   );
 }
@@ -456,43 +415,42 @@ export const SessionRow = memo(function SessionRow({ id, enter, mix }: { id: str
             <span className="sr-only">{[who ?? PROVIDER_NAME[session.provider], label].filter(Boolean).join(', ')}</span>
           </button>
         )}
-        {!renaming && (
-          <span className="srow-end">
-            {waits ? (
-              <span className="srow-state" data-tone="spare">
-                <SpareClock size={12} />
-              </span>
-            ) : tone === 'idle' ? (
-              <RowTime ts={session.updatedAt} />
-            ) : (
-              <span className="srow-state" data-tone={tone}>
-                <StatusGlyph tone={tone} />
-              </span>
-            )}
-            {armed && (
-              <span className="srow-acts">
-                <button type="button" className="srow-act" tabIndex={-1} aria-label={session.pinned ? 'Unpin' : 'Pin'} onClick={() => togglePin(session)}>
-                  <Icon name={session.pinned ? 'pin-off' : 'pin'} size={14} />
-                </button>
-                <button type="button" className="srow-act" tabIndex={-1} aria-label={session.archived ? 'Unarchive' : 'Archive'} onClick={() => toggleArchive(session)}>
-                  <Icon name="archive" size={14} />
-                </button>
-                {menuArmed ? (
-                  <RM.Root modal={false} open={menuOpen} onOpenChange={setMenuOpen}>
-                    <RM.Trigger asChild>{more}</RM.Trigger>
-                    <RM.Portal>
-                      <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 188 }} onCloseAutoFocus={onCloseAutoFocus}>
-                        <DropdownItems actions={rowActions(session, ctx)} />
-                      </RM.Content>
-                    </RM.Portal>
-                  </RM.Root>
-                ) : (
-                  more
-                )}
-              </span>
-            )}
-          </span>
-        )}
+        {/* Kept while the title is edited, only hidden: the menu Rename came from closes as any menu does. */}
+        <span className="srow-end" hidden={renaming}>
+          {waits ? (
+            <span className="srow-state" data-tone="spare">
+              <SpareClock size={12} />
+            </span>
+          ) : tone === 'idle' ? (
+            <RowTime ts={session.updatedAt} />
+          ) : (
+            <span className="srow-state" data-tone={tone}>
+              <StatusGlyph tone={tone} />
+            </span>
+          )}
+          {armed && (
+            <span className="srow-acts">
+              <button type="button" className="srow-act" tabIndex={-1} aria-label={session.pinned ? 'Unpin' : 'Pin'} onClick={() => togglePin(session)}>
+                <Icon name={session.pinned ? 'pin-off' : 'pin'} size={14} />
+              </button>
+              <button type="button" className="srow-act" tabIndex={-1} aria-label={session.archived ? 'Unarchive' : 'Archive'} onClick={() => toggleArchive(session)}>
+                <Icon name="archive" size={14} />
+              </button>
+              {menuArmed ? (
+                <RM.Root modal={false} open={menuOpen} onOpenChange={setMenuOpen}>
+                  <RM.Trigger asChild>{more}</RM.Trigger>
+                  <RM.Portal>
+                    <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 188 }} onCloseAutoFocus={onCloseAutoFocus}>
+                      <DropdownItems actions={rowActions(session, ctx)} />
+                    </RM.Content>
+                  </RM.Portal>
+                </RM.Root>
+              ) : (
+                more
+              )}
+            </span>
+          )}
+        </span>
       </div>
     </div>
   );

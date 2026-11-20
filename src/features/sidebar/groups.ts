@@ -280,6 +280,22 @@ export function createGroupsSelector() {
 
 // ── collapsed folders, remembered per machine ──
 
+/** A header clicked: its folder (project, chats group) flips between open and collapsed. Every call flips it. */
+export function toggleCollapsed(prev: ReadonlySet<string>, key: string): Set<string> {
+  const next = new Set(prev);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
+}
+
+/** These open (a session opened inside them); the same set when all of them already are. */
+export function unfoldKeys(prev: Set<string>, keys: string[]): Set<string> {
+  if (!keys.some((k) => prev.has(k))) return prev;
+  const next = new Set(prev);
+  for (const k of keys) next.delete(k);
+  return next;
+}
+
 const COLLAPSED_KEY = 'sable.sidebar.collapsed.v1';
 
 export function loadCollapsed(): Set<string> {

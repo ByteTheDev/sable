@@ -377,7 +377,10 @@ export const Composer = memo(function Composer({ sessionId, variant, autoFocus }
   useEffect(() => {
     if (!autoFocus) return;
     const t = window.setTimeout(() => {
-      if (!document.querySelector('[role="dialog"]')) focus();
+      // Never take focus from a dialog or from another field the person is typing in (a rename).
+      const el = document.activeElement as HTMLElement | null;
+      const typing = !!el && el !== ref.current && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+      if (!document.querySelector('[role="dialog"]') && !typing) focus();
     }, 30);
     return () => window.clearTimeout(t);
   }, [autoFocus, sessionId, focus]);

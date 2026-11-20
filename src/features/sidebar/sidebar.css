@@ -337,13 +337,13 @@
 }
 
 .sgroup-head:hover .sgroup-name,
-.sgroup-head:focus-within .sgroup-name,
+.sgroup-head:has(:focus-visible) .sgroup-name,
 .sgroup-head[data-current] .sgroup-name {
   color: var(--text-2);
 }
 
 .sgroup-head:hover .sgroup-icon,
-.sgroup-head:focus-within .sgroup-icon,
+.sgroup-head:has(:focus-visible) .sgroup-icon,
 .sgroup-head[data-current] .sgroup-icon {
   color: var(--text-3);
 }
@@ -363,7 +363,7 @@
 }
 
 .sgroup-head:hover .sgroup-end,
-.sgroup-head:focus-within .sgroup-end,
+.sgroup-head:has(:focus-visible) .sgroup-end,
 .sgroup-head[data-menu] .sgroup-end {
   opacity: 0;
 }
@@ -382,8 +382,10 @@
   transition: opacity var(--d-1) var(--ease);
 }
 
+/* Pointed at, its menu open, or reached with the keys. Not on any focus inside: a header (or a
+   row) a click or a closing menu left focused would keep its tools up after the pointer left. */
 .sgroup-head:hover .sgroup-tools,
-.sgroup-head:focus-within .sgroup-tools,
+.sgroup-head:has(:focus-visible) .sgroup-tools,
 .sgroup-head[data-menu] .sgroup-tools {
   opacity: 1;
 }
@@ -464,7 +466,7 @@
 }
 
 .srow:hover,
-.srow:focus-within,
+.srow:has(:focus-visible),
 .srow[data-menu],
 .srow[data-state='open'] {
   --row-bg: var(--row-hover);
@@ -545,7 +547,7 @@
 }
 
 .srow:hover .srow-agent,
-.srow:focus-within .srow-agent,
+.srow:has(:focus-visible) .srow-agent,
 .srow[data-active] .srow-agent {
   opacity: 1;
 }
@@ -613,6 +615,11 @@
   pointer-events: none;
 }
 
+/* While the title is edited: kept (its menu closes as any menu does), not shown. */
+.srow-end[hidden] {
+  display: none;
+}
+
 .srow-time {
   padding-right: 10px;
   font-size: var(--t-micro);
@@ -670,14 +677,14 @@
 }
 
 .srow:hover .srow-acts,
-.srow:focus-within .srow-acts,
+.srow:has(:focus-visible) .srow-acts,
 .srow[data-menu] .srow-acts {
   opacity: 1;
   pointer-events: auto;
 }
 
 .srow:hover :is(.srow-time, .srow-state),
-.srow:focus-within :is(.srow-time, .srow-state),
+.srow:has(:focus-visible) :is(.srow-time, .srow-state),
 .srow[data-menu] :is(.srow-time, .srow-state) {
   opacity: 0;
 }
@@ -878,11 +885,11 @@
   color: var(--text-3);
 }
 
-.sset > .sgroup-head:is(:hover, :focus-within, [data-current]) .sset-name {
+.sset > .sgroup-head:is(:hover, :has(:focus-visible), [data-current]) .sset-name {
   color: var(--text);
 }
 
-.sset > .sgroup-head:is(:hover, :focus-within, [data-current]) .sgroup-icon {
+.sset > .sgroup-head:is(:hover, :has(:focus-visible), [data-current]) .sgroup-icon {
   color: var(--text-2);
 }
 
@@ -907,7 +914,7 @@
 }
 
 .sgroup-head:hover .sset-end,
-.sgroup-head:focus-within .sset-end,
+.sgroup-head:has(:focus-visible) .sset-end,
 .sgroup-head[data-menu] .sset-end {
   opacity: 0;
 }
