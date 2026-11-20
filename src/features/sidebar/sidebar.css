@@ -502,7 +502,7 @@
   }
 }
 
-/* The selected row: one flat step of light with a hairline edge at the strength of the composer's.
+/* The selected row: one step of light, raised a hair (a top light and a contact shadow).
    It slides between rows (ActivePill). */
 .srow-pill {
   position: absolute;
@@ -510,7 +510,8 @@
   z-index: -1;
   border-radius: inherit;
   background-color: var(--fill-3);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
+  /* Tactile (ui.css): raised a hair above the list. */
+  box-shadow: var(--press-up);
 }
 
 /* The row's contents skip style, layout and paint while scrolled out of view: 500 rows cost what 30 do.

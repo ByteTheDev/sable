@@ -173,6 +173,44 @@ function MenuRows({ highlight }: { highlight?: number }) {
   );
 }
 
+/** The composer's surface with its toolbar, static: the glass, the chips and the keys together. */
+function GlassComposer({ focus }: { focus?: boolean }) {
+  return (
+    <div className="cmp-card" data-spot="">
+      <div className="cmp-field">
+        <textarea className="cmp-input" data-f={focus ? 'focus' : undefined} rows={2} readOnly placeholder="Describe a task or ask a question" defaultValue={focus ? 'Refactor the session module' : ''} />
+      </div>
+      <div className="cmp-bar">
+        <div className="cmp-side">
+          <button className="cmp-attach" aria-label="Attach">
+            <Icon name="plus" size={14} />
+          </button>
+          <button className="tb-chip cm-mode">
+            <Icon name="hand" size={14} />
+            <span className="cm-mode-label">Ask first</span>
+          </button>
+        </div>
+        <div className="cmp-side cmp-right">
+          <button className="tb-chip cm-model">
+            <span className="cm-model-name">Opus 4.5</span>
+            <Icon name="caret-down" size={11} className="caret" />
+          </button>
+          <button className="tb-chip th-chip">
+            <span className="th-pill">
+              <span className="th-nm">High</span>
+            </span>
+          </button>
+          <div className="cmp-keys">
+            <button className="cmp-send" data-on="" data-ready={focus ? '' : undefined} aria-label="Send">
+              <Icon name="arrow-up" size={14} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Gallery() {
   useForcedStates();
   const [sw, setSw] = useState(true);
@@ -193,7 +231,7 @@ export default function Gallery() {
         <header className="gal-top">
           <h1 className="h2">Controls</h1>
           <nav className="gal-nav">
-            {['icons', 'buttons', 'toolbar', 'fields', 'toggles', 'menus', 'details', 'family', 'live'].map((id) => (
+            {['icons', 'buttons', 'toolbar', 'fields', 'toggles', 'menus', 'material', 'details', 'family', 'live'].map((id) => (
               <a key={id} href={`#${id}`} className="btn btn-ghost btn-sm">
                 {id[0].toUpperCase() + id.slice(1)}
               </a>
@@ -345,6 +383,46 @@ export default function Gallery() {
               </button>
             )}
           />
+          <States
+            label="Stop"
+            only={['rest', 'press', 'focus']}
+            render={() => (
+              <button className="cmp-stop" data-on="" aria-label="Stop">
+                <span className="cmp-stop-sq" />
+              </button>
+            )}
+          />
+          <States
+            label="Effort"
+            render={(s) => (
+              <button className="tb-chip th-chip" disabled={dis(s)}>
+                <span className="th-pill">
+                  <span className="th-nm">High</span>
+                </span>
+              </button>
+            )}
+          />
+          <div className="gal-row">
+            <div className="gal-label">Open (menu showing)</div>
+            <div className="gal-cell gal-wide" style={{ gap: 8 }}>
+              <button className="cmp-attach" aria-label="Attach" aria-expanded="true">
+                <Icon name="plus" size={14} />
+              </button>
+              <button className="tb-chip cm-mode" aria-expanded="true">
+                <Icon name="hand" size={14} />
+                <span className="cm-mode-label">Ask</span>
+              </button>
+              <button className="tb-chip cm-model" aria-expanded="true">
+                <span className="cm-model-name">Opus 4.5</span>
+                <Icon name="caret-down" size={11} className="caret" />
+              </button>
+              <button className="tb-chip th-chip" aria-expanded="true">
+                <span className="th-pill">
+                  <span className="th-nm">High</span>
+                </span>
+              </button>
+            </div>
+          </div>
         </Section>
 
         <Section title="Fields" id="fields">
@@ -460,6 +538,78 @@ export default function Gallery() {
                   <Icon name="error" size={16} />
                   <span>Could not reach the bridge</span>
                 </button>
+              </div>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Material: liquid glass and tactile" id="material">
+          <div className="gal-stage">
+            <div className="gal-glass-col" style={{ flex: 1.6 }}>
+              <div className="gal-caption">Composer, rest</div>
+              <GlassComposer />
+              <div className="gal-caption" style={{ marginTop: 18 }}>
+                Composer, focused
+              </div>
+              <GlassComposer focus />
+            </div>
+            <div className="gal-glass-col">
+              <div className="gal-caption">Menu (.pop)</div>
+              <MenuRows highlight={1} />
+            </div>
+            <div className="gal-glass-col">
+              <div className="gal-caption">Frosted (.glass)</div>
+              <div className="glass gal-pane" data-spot="">
+                Find in conversation
+              </div>
+              <div className="gal-caption" style={{ marginTop: 18 }}>
+                Opaque (.glass-liquid)
+              </div>
+              <div className="glass-liquid gal-pane" data-spot="">
+                A floating layer
+              </div>
+              <div className="gal-caption" style={{ marginTop: 18 }}>
+                Toast
+              </div>
+              <button className="toast" data-level="success">
+                <Icon name="check-circle" size={16} />
+                <span>Account added</span>
+              </button>
+            </div>
+          </div>
+          <Head />
+          <States
+            label="Tactile (.tactile)"
+            only={['rest', 'hover', 'press', 'focus']}
+            render={() => (
+              <button className="chip tactile gal-tactile">
+                <Icon name="hand" size={14} />
+                Raised
+              </button>
+            )}
+          />
+          <div className="gal-row">
+            <div className="gal-label">Tactile, on</div>
+            <div className="gal-cell">
+              <button className="chip tactile gal-tactile" aria-pressed="true">
+                <Icon name="hand" size={14} />
+                Set in
+              </button>
+            </div>
+          </div>
+          <div className="gal-row">
+            <div className="gal-label">Selected pill</div>
+            <div className="gal-cell gal-wide">
+              <div className="gal-list" style={{ width: 260 }}>
+                <div className="gal-lrow">
+                  <span className="gal-pill dither-sel" />
+                  <Icon name="chat" size={15} />
+                  <span className="truncate">Selected row</span>
+                </div>
+                <div className="gal-lrow">
+                  <Icon name="chat" size={15} />
+                  <span className="truncate">Plain row</span>
+                </div>
               </div>
             </div>
           </div>

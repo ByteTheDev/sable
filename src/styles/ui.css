@@ -506,6 +506,8 @@ textarea.field {
   height: 18px;
   border-radius: 99px;
   background-color: var(--fill-4);
+  /* Tactile: the track is a shallow well the thumb travels in. */
+  box-shadow: var(--press-well);
   transition: background-color var(--d-2) var(--ease);
   flex-shrink: 0;
 }
@@ -516,6 +518,7 @@ textarea.field {
 
 .switch[data-state='checked'] {
   background-color: var(--text);
+  box-shadow: inset 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 1px 0 0 rgb(255 255 255 / 0.045);
 }
 
 .switch[data-state='checked']:hover {
@@ -538,6 +541,8 @@ textarea.field {
   margin: 2px;
   border-radius: 99px;
   background-color: #d6d5d1;
+  /* The thumb stands a hair above the track: a lit top lip and a short drop. */
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.75), inset 0 -1px 0 0 rgb(0 0 0 / 0.1), 0 1px 2px 0 rgb(0 0 0 / 0.5);
   transform-origin: left center;
   transition:
     transform 220ms var(--spring),
@@ -549,6 +554,7 @@ textarea.field {
   transform: translateX(12px);
   transform-origin: right center;
   background-color: var(--panel);
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.13), 0 1px 2px 0 rgb(0 0 0 / 0.35);
 }
 
 .switch:active .switch-thumb {
@@ -610,6 +616,7 @@ textarea.field {
   height: 12px;
   border-radius: 50%;
   background-color: var(--text);
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.9), inset 0 -1px 0 0 rgb(0 0 0 / 0.12), 0 1px 2px 0 rgb(0 0 0 / 0.5);
   transition:
     scale var(--d-2) var(--spring),
     background-color var(--d-1) var(--ease);
@@ -640,9 +647,11 @@ textarea.field {
   display: inline-flex;
   padding: 2px;
   gap: 2px;
-  border: 1px solid var(--line);
+  /* Tactile: a shallow well; the picked option is a pill standing a hair above its floor. */
+  border: 1px solid transparent;
   border-radius: var(--r-sm);
-  background-color: rgb(0 0 0 / 0.22);
+  background-color: rgb(0 0 0 / 0.26);
+  box-shadow: var(--press-well);
 }
 
 .seg-item {
@@ -701,7 +710,7 @@ textarea.field {
   z-index: -1;
   border-radius: 6px;
   background-color: var(--fill-3);
-  box-shadow: inset 0 0 0 1px var(--line);
+  box-shadow: var(--press-up);
 }
 
 /* ───────────── floating surfaces (menus, popovers, tooltips) ───────────── */
@@ -722,10 +731,11 @@ textarea.field {
   min-width: 200px;
   padding: 4px;
   border-radius: 16px;
-  background: var(--grain) 0 0 / var(--grain-size), var(--glass-menu);
+  /* Liquid glass (see "material: liquid glass" below): the rim is ::before, the shadow ::after. */
+  background: var(--glass-sheen), var(--grain) 0 0 / var(--grain-size), var(--glass-menu);
   -webkit-backdrop-filter: var(--blur);
   backdrop-filter: var(--blur);
-  box-shadow: var(--glass-edge);
+  box-shadow: var(--rim-inner);
   color: var(--text);
   font-size: var(--t-ui);
   /* Grows out of its trigger and shrinks back into it: a clip, so the content is never scaled.
@@ -743,7 +753,7 @@ textarea.field {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--shadow-glass);
   pointer-events: none;
   opacity: 0;
   animation: pop-shadow 160ms var(--ease) 100ms forwards;
@@ -996,10 +1006,9 @@ textarea.field {
   max-height: calc(100 * var(--vh) - 48px);
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line-2);
   border-radius: var(--r-xl);
-  background: var(--grain) 0 0 / var(--grain-size), var(--panel);
-  box-shadow: var(--shadow-pop);
+  background: var(--glass-sheen), var(--grain) 0 0 / var(--grain-size), var(--panel);
+  box-shadow: var(--rim-inner), var(--shadow-glass);
   animation: dialog-in 140ms var(--ease-out);
   overflow: hidden;
 }
@@ -1064,11 +1073,10 @@ textarea.field {
 
 /* Frosted panel: for small layers floating above the backdrop. Solid enough to read. */
 .glass {
-  border: 1px solid var(--line-2);
-  background: var(--grain) 0 0 / var(--grain-size), var(--glass);
+  background: var(--glass-sheen), var(--grain) 0 0 / var(--grain-size), var(--glass);
   -webkit-backdrop-filter: var(--blur);
   backdrop-filter: var(--blur);
-  box-shadow: var(--shadow-float);
+  box-shadow: var(--rim-inner), var(--shadow-glass);
 }
 
 /* Well: code, terminal output, inputs. A flat darker fill, one hairline. */
@@ -1256,6 +1264,72 @@ textarea.field {
   }
 }
 
+/* ───────────── material: liquid glass ─────────────
+   For the few layers that float: the composer, menus and popovers (.pop), dialogs, .glass and
+   toasts. One light from the top, slightly left. The parts, all static paint:
+   - the rim (::before): a 1px ring, brightest along the top edge and left of centre, falling off
+     around the corners and down the sides, with a little bounce at the far bottom corner;
+   - the inner edge (--rim-inner, an inset shadow) and a short sheen under the top edge
+     (--glass-sheen, a background layer): the thickness of the pane;
+   - depth (--shadow-glass): a dark contact line that sharpens the rim, a near and a wide shadow.
+   The reactive hairline is the rim's specular answer to the pointer (--spot-glass). What sits on
+   glass (rows, text) stays flat. Any other floating layer can wear `.glass-liquid` (an opaque
+   pane with the rim, the inner edge and the depth; add `.glass` instead for the frosted fill).
+   The rim is a masked ring like .spot-ring: it never changes, so it is rastered once. Do not
+   animate it, and never put it on a scroller or on in-flow content. */
+:where(.glass-liquid, .glass, .toast) {
+  position: relative;
+}
+
+.glass-liquid {
+  background: var(--glass-sheen), var(--grain) 0 0 / var(--grain-size), var(--glass-solid);
+  box-shadow: var(--rim-inner), var(--shadow-glass);
+}
+
+.glass-liquid::before,
+.glass::before,
+.pop::before,
+.dialog::before,
+.toast::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 1px;
+  border-radius: inherit;
+  background:
+    var(--rim-spec) top / 100% 1px no-repeat,
+    var(--rim-bounce) bottom / 100% 1px no-repeat,
+    var(--rim-light);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+
+/* The pointer's light on glass lands on the rim itself, a little stronger and wider. */
+:is(.glass-liquid, .glass, .pop, .dialog, .toast) > .spot-ring {
+  --spot: var(--spot-glass);
+  --spot-r: var(--spot-glass-r);
+}
+
+/* ───────────── material: tactile ─────────────
+   For a few small controls only: the composer's toolbar chips and keys, switches, segmented
+   controls and the selected row's pill. Raised a hair at rest (--press-up: a top light and a
+   contact shadow), set in when pressed or on (--press-down). The shadows swap in one frame with
+   the press; nothing transitions them. Plain buttons, fields and cards stay flat. */
+.tactile {
+  box-shadow: var(--press-up);
+}
+
+.tactile:is(:active, [data-active='true'], [aria-pressed='true'], [aria-expanded='true'], [data-state='open']) {
+  box-shadow: var(--press-down);
+}
+
 /* ───────────── material: dither accents ─────────────
    Monochrome ordered dither is the house texture for small accents, never a gradient. */
 
@@ -1263,6 +1337,8 @@ textarea.field {
    One fill step, plus dithered light falling off from its leading edge. */
 .dither-sel {
   background-color: var(--fill-3);
+  /* Tactile: the pill stands a hair above its list. */
+  box-shadow: var(--press-up);
 }
 
 .dither-sel::after {

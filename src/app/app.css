@@ -630,14 +630,14 @@ body:has(.stage-dock) .toasts {
   align-items: center;
   gap: 9px;
   max-width: 400px;
-  padding: 9px 13px 9px 11px;
-  border: 1px solid var(--line-2);
+  padding: 10px 14px 10px 12px;
   border-radius: var(--r-md);
   text-align: left;
   font-size: var(--t-ui);
   color: var(--text);
-  background: var(--grain) 0 0 / var(--grain-size), var(--panel-2);
-  box-shadow: var(--shadow-pop);
+  /* Liquid glass (ui.css): the rim is its ::before. */
+  background: var(--glass-sheen), var(--grain) 0 0 / var(--grain-size), var(--panel-2);
+  box-shadow: var(--rim-inner), var(--shadow-glass);
   transition: background-color var(--d-1) var(--ease);
 }
 

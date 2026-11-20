@@ -281,3 +281,38 @@ html[data-gallery] body {
   width: 76px;
   height: 76px;
 }
+
+/* Material: glass over a sample of the field (dev only: the dither stands in for the backdrop). */
+.gal-stage {
+  display: flex;
+  gap: 28px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+  padding: 28px;
+  border-radius: var(--r-xl);
+  background:
+    repeating-conic-gradient(var(--bg) 0 25%, transparent 0 50%) 0 0 / 8px 8px,
+    linear-gradient(118deg, transparent 12%, oklch(0.55 0.16 40 / 0.7) 44%, transparent 60%, oklch(0.5 0.15 35 / 0.55) 90%),
+    var(--bg);
+}
+
+.gal-glass-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.gal-stage .gal-caption {
+  color: var(--text-2);
+}
+
+.gal-pane {
+  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  color: var(--text-2);
+}
+
+.gal-tactile {
+  border-radius: var(--r-pill);
+  color: var(--text);
+  background-color: var(--fill-2);
+}
