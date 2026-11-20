@@ -8,6 +8,7 @@ import { conn } from '@m/lib/conn';
 import { diffLines, renderMarkdown } from '@m/lib/md';
 import { haptic, openExternal } from '@m/lib/native';
 import { putDraft } from '@m/lib/put-draft';
+import { readReview, type PhoneReview } from '@m/lib/review';
 import { applyChildren, applyFull, fetchItem, getState, sessionData, setState, useStore, type State } from '@m/lib/store';
 import { claimFlight } from '@m/lib/flight';
 import { LINE, type FlowChunk, type Segment, type TurnGroup } from '@m/lib/turns';
@@ -399,12 +400,19 @@ const UserBubble = memo(function UserBubble({ sid, id, steered, queued }: { sid:
   const [long, setLong] = useState(false);
   const [open, setOpen] = useState(false);
 
+  // A review sent from the desktop's review bar: what was typed, then the comments as a short list
+  // (file and lines over the words), as the desktop's timeline shows it; not the quoted lines the agent gets.
+  const text = it?.text ?? '';
+  const cut = !!(it as PhoneItem | undefined)?.cut;
+  const review = useMemo(() => readReview(text, cut), [text, cut]);
+
   // A message just sent arrives as liquid (lib/flight.ts): the bubble stays hidden while the drop
   // rises from the prompt bar and spreads into its shape, then takes over in one frame.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !it) return;
-    setLong(el.scrollHeight > 260);
+    // Long: the words run past about ten lines (photos and a review's comments do not count).
+    setLong((el.querySelector('.user-text')?.scrollHeight ?? 0) > 240);
     claimFlight(it.text, el);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!it]);
@@ -415,6 +423,7 @@ const UserBubble = memo(function UserBubble({ sid, id, steered, queued }: { sid:
   const images = it.attachments?.filter((a) => a.dataUrl && a.kind === 'image') ?? [];
   const files = it.attachments?.filter((a) => !(a.dataUrl && a.kind === 'image')) ?? [];
   const waitingSteer = steered && it.state === 'queued';
+  const words = review ? review.lead : it.text;
   return (
     <div className="user-row" data-steered={steered || undefined} data-queued={queued || waitingSteer || undefined}>
       <div ref={ref} className="user-bubble" data-long={long && !open ? true : undefined} onClick={() => long && (haptic('select'), setOpen((v) => !v))}>
@@ -434,8 +443,9 @@ const UserBubble = memo(function UserBubble({ sid, id, steered, queued }: { sid:
             ))}
           </div>
         )}
-        {it.text && <div className="user-text">{it.text}</div>}
+        {words && <div className="user-text">{words}</div>}
         {long && !open && <div className="user-more">Show more</div>}
+        {review && <ReviewList sid={sid} id={id} review={review} />}
       </div>
       {(steered || queued) && (
         <span className="user-note">
@@ -445,6 +455,51 @@ const UserBubble = memo(function UserBubble({ sid, id, steered, queued }: { sid:
     </div>
   );
 });
+
+const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** A review's comments in the bubble: per comment its file (the folder dim, the name whole) and lines, then the words. */
+function ReviewList({ sid, id, review }: { sid: string; id: string; review: PhoneReview }) {
+  const [busy, setBusy] = useState(false);
+  const n = review.comments.length;
+  return (
+    <>
+      <ul className="rv-list" aria-label={`Review, ${n} ${n === 1 ? 'comment' : 'comments'}`}>
+        {review.comments.map((c, i) => {
+          const at = Math.max(c.path.lastIndexOf('/'), c.path.lastIndexOf('\\'));
+          return (
+            <li key={i} className="rv-item">
+              <div className="rv-where">
+                <Icon name="comment" size={14} />
+                {at >= 0 && <span className="rv-dir">{c.path.slice(0, at + 1)}</span>}
+                <span className="rv-name">{c.path.slice(at + 1)}</span>
+                {c.range && <span className="rv-lines num">{upperFirst(c.range)}</span>}
+              </div>
+              {c.text && <div className="rv-text">{c.text}</div>}
+            </li>
+          );
+        })}
+      </ul>
+      {review.more && (
+        <button
+          type="button"
+          className="user-more rv-more"
+          disabled={busy}
+          onClick={(e) => {
+            e.stopPropagation();
+            setBusy(true);
+            haptic('select');
+            void fetchItem(sid, id)
+              .then((r) => applyFull(sid, r.item))
+              .catch(() => setBusy(false));
+          }}
+        >
+          {busy ? <span className="dots" /> : 'Show all'}
+        </button>
+      )}
+    </>
+  );
+}
 
 const Step = memo(function Step({ sid, id, quiet }: { sid: string; id: string; quiet?: boolean }) {
   const it = useItem<TimelineItem>(sid, id);

@@ -77,6 +77,22 @@ export function ProviderMark({ provider, size = 16, className }: { provider: Pro
   );
 }
 
+/**
+ * The race glyph, as the desktop's (src/features/race/RaceMark.tsx): one start and two lanes that
+ * leave it side by side, each with its node at the end. Plain line art on a 16 px grid.
+ */
+export function RaceGlyph({ size = 13 }: { size?: number }) {
+  return (
+    <svg className="race-glyph" viewBox="0 0 16 16" width={size} height={size} aria-hidden fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="13" r="1.5" />
+      <path className="race-glyph-l" d="M7.1 11.8 4.75 8.6V5.6" />
+      <path className="race-glyph-r" d="M8.9 11.8 11.25 8.6V5.6" />
+      <circle cx="4.75" cy="3.9" r="1.5" />
+      <circle cx="11.25" cy="3.9" r="1.5" />
+    </svg>
+  );
+}
+
 /** The working indicator: the mark's cells lit one after another in dither order. */
 export function Tiles({ size = 14 }: { size?: number }) {
   return (

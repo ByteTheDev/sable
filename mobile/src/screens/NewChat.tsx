@@ -7,6 +7,7 @@ import { modelName, visibleModels } from '@desk/lib/models';
 import { pushBack } from '@m/lib/back';
 import { conn } from '@m/lib/conn';
 import { haptic } from '@m/lib/native';
+import { homeFolder } from '@m/lib/race';
 import { getState, setState, useStore } from '@m/lib/store';
 import { Icon } from '@m/ui/icons';
 import { PROVIDER_NAME, ProviderMark } from '@m/ui/marks';
@@ -83,9 +84,11 @@ export function useNewChat(active: boolean): NewChoice {
     for (const p of projects) if (!p.hidden) seen.set(p.path.toLowerCase(), { path: p.path, at: p.lastOpened });
     for (const s of Object.values(sessions)) {
       if (s.chat) continue;
-      const k = s.cwd.toLowerCase();
+      // A chat in a lane counts for the folder it came from, never for its worktree.
+      const dir = homeFolder(s);
+      const k = dir.toLowerCase();
       const cur = seen.get(k);
-      if (!cur || cur.at < s.updatedAt) seen.set(k, { path: s.cwd, at: Math.max(cur?.at ?? 0, s.updatedAt) });
+      if (!cur || cur.at < s.updatedAt) seen.set(k, { path: dir, at: Math.max(cur?.at ?? 0, s.updatedAt) });
     }
     return [...seen.values()].sort((a, b) => b.at - a.at).slice(0, 6);
   }, [projects, sessions]);

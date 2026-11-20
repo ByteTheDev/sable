@@ -1,6 +1,7 @@
 /*
- * Sheets: frosted ink with grain rising over a dimmed screen (the screen itself steps back). They
- * follow the finger, rubber-band upward, and ride up with the keyboard.
+ * Sheets: liquid glass, opaque (as the desktop's dialogs: a sheet never blurs), rising over a dimmed
+ * screen (the screen itself steps back). They follow the finger, rubber-band upward, and ride up with
+ * the keyboard. What sits on a sheet (cards, rows, wells) stays flat; its few small controls are tactile.
  */
 .sheet-layer {
   position: fixed;
@@ -28,33 +29,15 @@
   max-height: calc(100% - var(--sat) - 26px - var(--kb));
   border-radius: 30px 30px 0 0;
   padding-bottom: calc(var(--sab) + 14px);
-  background: rgb(21 21 24);
-  box-shadow: var(--edge), 0 -26px 60px -24px rgb(0 0 0 / 0.95);
+  /* the pane: its sheen under the top edge, the grain, the ink; the rim is its ::before (base.css) */
+  background: var(--glass-sheen), var(--grain-bg), var(--sheet-ink);
+  /* the inner edge, the contact line and the depth; and the same ink below the sheet when it is
+     pulled up past its foot (an outer shadow is drawn only outside the sheet, so only that part shows) */
+  box-shadow: var(--rim-inner), var(--shadow-glass), 0 72px 0 0 var(--sheet-ink);
   isolation: isolate;
   will-change: transform;
   translate: 0 calc(-1 * var(--kb));
   transition: translate var(--kb-ms) var(--ease-ime);
-}
-
-/* the grain, and the same ink below the sheet when it is pulled up past its foot */
-.sheet::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--grain-bg);
-  pointer-events: none;
-  z-index: -1;
-}
-
-.sheet::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(100% - 1px);
-  height: 140px;
-  background: rgb(21 21 24);
 }
 
 .sheet[data-tall] {
@@ -100,12 +83,31 @@
   padding: 0 12px 8px;
 }
 
+/* what scrolls up under the grip fades out instead of being cut: a short overlay in the sheet's ink
+   (its sheen included), shown once the list has moved (scroll-driven, on the compositor); it stops
+   a pixel short of the sides, so the rim runs on */
+.sheet-body::before {
+  content: '';
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: block;
+  height: 16px;
+  margin: 0 -11px -16px;
+  background: linear-gradient(rgb(24 24 27), rgb(24 24 27 / 0));
+  pointer-events: none;
+  opacity: 0;
+  animation: fade-in linear both;
+  animation-timeline: scroll(nearest block);
+  animation-range: 0 24px;
+}
+
 .sheet-foot {
   position: sticky;
   bottom: -8px;
   margin: 12px -12px -8px;
   padding: 14px 12px 8px;
-  background: linear-gradient(rgb(21 21 24 / 0), rgb(21 21 24) 18px);
+  background: linear-gradient(rgb(21 21 24 / 0), var(--sheet-ink) 18px);
 }
 
 /* ── choices ── */
@@ -277,15 +279,15 @@
   color: var(--text-3);
 }
 
-/* ── segmented: the chosen pill slides to what you pick ── */
+/* ── segmented: a shallow well; the chosen pill stands a hair above its floor and slides to what you pick ── */
 .seg {
   position: relative;
   display: grid;
   grid-template-columns: repeat(var(--n), 1fr);
   padding: 4px;
   border-radius: 18px;
-  background: rgb(255 255 255 / 0.03);
-  box-shadow: inset 0 0 0 1px var(--line);
+  background: rgb(0 0 0 / 0.26);
+  box-shadow: var(--press-well);
 }
 
 .seg-thumb {
@@ -295,8 +297,8 @@
   left: 4px;
   width: calc((100% - 8px) / var(--n));
   border-radius: 14px;
-  background: rgb(255 255 255 / 0.11);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08), 0 6px 14px -8px rgb(0 0 0 / 0.9);
+  background: var(--fill-3);
+  box-shadow: var(--press-up);
   transform: translateX(calc(var(--i) * 100%));
   transition: transform 340ms var(--ease-spring);
 }
@@ -493,11 +495,13 @@
   touch-action: none;
 }
 
+/* the track is a shallow well the knob travels in */
 .dial-track {
   position: relative;
   height: 6px;
   border-radius: 3px;
-  background: rgb(255 255 255 / 0.08);
+  background: rgb(255 255 255 / 0.06);
+  box-shadow: var(--press-well);
 }
 
 .dial-fill {
@@ -533,8 +537,10 @@
   height: 26px;
   margin: -13px 0 0 -13px;
   border-radius: 50%;
-  background: var(--text);
-  box-shadow: 0 0 0 4px rgb(21 21 24), 0 6px 16px -4px rgb(0 0 0 / 0.8);
+  /* a small ivory key: a lit top lip, a shaded lower lip, a short drop; a ring of the sheet's ink parts it from the track */
+  background-color: var(--text);
+  background-image: var(--key-face);
+  box-shadow: var(--thumb-up), 0 0 0 4px var(--sheet-ink), 0 4px 10px -3px rgb(0 0 0 / 0.6);
   transition: left 300ms var(--ease-spring), transform 160ms var(--ease-out);
 }
 
@@ -548,7 +554,7 @@
 }
 
 .dial:focus-visible .dial-knob {
-  box-shadow: 0 0 0 4px rgb(21 21 24), 0 0 0 6px rgb(242 241 238 / 0.5);
+  box-shadow: var(--thumb-up), 0 0 0 4px var(--sheet-ink), 0 0 0 6px rgb(242 241 238 / 0.5);
 }
 
 .dial-ends {
@@ -596,10 +602,15 @@
   transform: scale(0.96);
 }
 
+/* the chosen one stands a hair above the others (tactile); held, any tile sets in */
 .mode-tile[data-on] {
-  background: rgb(255 255 255 / 0.1);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16);
+  background: var(--fill-3);
+  box-shadow: var(--press-up);
   color: var(--text);
+}
+
+.mode-tile:active {
+  box-shadow: var(--press-down);
 }
 
 .mode-tile[data-on] span {
@@ -1059,6 +1070,47 @@
   margin-top: 10px;
 }
 
+/* the permission's keys, or its note: the box follows the height between the two (AutoHeight) */
+.ask-actions-wrap {
+  margin: 10px -4px 0;
+  padding: 0 4px;
+}
+
+.ask-actions-wrap .ask-actions {
+  margin-top: 0;
+}
+
+/* deny with a note: a field (a darker well; its hairline turns soft ivory on focus) over Back and Deny */
+.ask-note {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ask-note-input {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  max-height: 132px;
+  padding: 15px 16px 14px;
+  border: 0;
+  border-radius: 17px;
+  outline: none;
+  resize: none;
+  background: rgb(0 0 0 / 0.4);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  font-size: var(--t-body);
+  line-height: 1.45;
+}
+
+.ask-note-input:focus {
+  box-shadow: inset 0 0 0 1px rgb(242 241 238 / 0.28);
+}
+
+.ask-note-input::placeholder {
+  color: var(--text-4);
+}
+
 .ask-btn {
   height: 52px;
   border-radius: 17px;
@@ -1127,10 +1179,15 @@
   transform: scale(0.96);
 }
 
+/* the question on show: its tab stands a hair above the others (tactile) */
 .q-step[data-on] {
-  background: rgb(255 255 255 / 0.1);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+  background: var(--fill-3);
+  box-shadow: var(--press-up);
   color: var(--text);
+}
+
+.q-step:active {
+  box-shadow: var(--press-down);
 }
 
 .q-step[data-done] {
@@ -1224,7 +1281,7 @@
   bottom: -8px;
   margin: 0 -20px;
   padding: 22px 20px 4px;
-  background: linear-gradient(rgb(21 21 24 / 0), rgb(21 21 24) 24px);
+  background: linear-gradient(rgb(21 21 24 / 0), var(--sheet-ink) 24px);
 }
 
 /* ── remote control ── */

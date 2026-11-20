@@ -83,6 +83,65 @@
   color: var(--text);
 }
 
+/* a chat racing another: a quiet key with the rival's mark; a tap goes to the rival */
+.race-key {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  height: 44px;
+  padding: 0 2px;
+}
+
+.race-key-in {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--r-pill);
+  background-color: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: var(--t-xs);
+  font-weight: 560;
+  color: var(--text-2);
+  transition: background-color 100ms, color 100ms, scale 120ms var(--ease-out);
+}
+
+.race-key:active .race-key-in {
+  background-color: var(--fill-3);
+  color: var(--text);
+  scale: 0.96;
+  transition-duration: 100ms, 100ms, 70ms;
+}
+
+.race-key-rival {
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin-left: 1px;
+}
+
+.race-key-rival .smark {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+}
+
+/* the glyph answers its control with one small move: the two lanes lean apart and come back */
+.race-glyph-l,
+.race-glyph-r {
+  transition: transform 200ms var(--ease-out);
+  transform-box: fill-box;
+}
+
+:is(.race-key:active, .race-key:focus-visible) .race-glyph-l {
+  transform: translateX(-0.6px);
+}
+
+:is(.race-key:active, .race-key:focus-visible) .race-glyph-r {
+  transform: translateX(0.6px);
+}
+
 .remote-btn[data-tone='ok'] {
   color: var(--text);
 }
@@ -256,6 +315,72 @@
 .user-row[data-steered] .user-bubble {
   border-radius: 22px 7px 22px 22px;
   background: rgb(27 27 31);
+}
+
+/* a review sent from the desktop's review bar: the comments as a short list under the words */
+.rv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.user-text + .rv-list,
+.user-more + .rv-list {
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line-2);
+}
+
+.rv-where {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  font-size: var(--t-xs);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.rv-where > svg {
+  flex-shrink: 0;
+  margin-right: 7px;
+}
+
+/* the folder gives way first; the file's name stays whole */
+.rv-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rv-name {
+  flex-shrink: 0;
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.rv-lines {
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.rv-text {
+  margin-top: 3px;
+  padding-left: 21px;
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rv-more {
+  display: block;
 }
 
 .user-note {
@@ -1194,8 +1319,6 @@
   height: 44px;
   margin: -58px auto 14px;
   border-radius: var(--r-pill);
-  background: rgb(28 28 32 / 0.98);
-  box-shadow: var(--edge-2), var(--lift-2);
   color: var(--text);
 }
 
@@ -1222,6 +1345,7 @@
   pointer-events: none;
 }
 
+/* floats over the conversation: opaque glass (.glass-liquid) */
 .waiting-line {
   display: flex;
   align-items: center;
@@ -1231,8 +1355,6 @@
   margin-bottom: 8px;
   padding: 0 9px 0 18px;
   border-radius: 22px;
-  background: rgb(26 26 30 / 0.97);
-  box-shadow: var(--edge-2), var(--lift-2);
   font-size: 14.5px;
   font-weight: 500;
   text-align: left;
@@ -1251,30 +1373,11 @@
   flex-direction: column;
 }
 
+/* the prompt bar: the main pane of glass (base.css "the panes") */
 .composer {
   position: relative;
   padding: 2px 6px 6px;
   border-radius: 26px;
-  background: var(--glass);
-  -webkit-backdrop-filter: var(--blur);
-  backdrop-filter: var(--blur);
-  box-shadow: var(--edge-2), var(--lift-2);
-  isolation: isolate;
-  transition: background-color 260ms var(--ease-out), transform 260ms var(--ease-out);
-}
-
-.composer::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--grain-bg);
-  pointer-events: none;
-  z-index: -1;
-}
-
-.composer[data-focus] {
-  background-color: var(--glass-up);
 }
 
 .composer-input {
@@ -1319,6 +1422,8 @@
   min-width: 0;
 }
 
+/* Tactile (base.css): the tool key and the setup chip stand a hair above the glass and set in while
+   held or while their sheet is open; the shadow swaps in the same frame as the give in scale. */
 .tool-key {
   display: grid;
   place-items: center;
@@ -1326,15 +1431,18 @@
   width: 40px;
   height: 40px;
   border-radius: var(--r-pill);
-  background: var(--fill-2);
-  box-shadow: inset 0 0 0 1px var(--line);
-  color: var(--text);
-  transition: background-color 100ms, transform 100ms;
+  background-color: var(--fill-2);
+  box-shadow: var(--press-up);
+  color: var(--text-2);
+  transition: background-color 100ms, color 100ms, scale 120ms var(--ease-out);
 }
 
 .tool-key:active {
-  background: var(--fill-4);
-  transform: scale(0.93);
+  background-color: var(--fill-3);
+  box-shadow: var(--press-down);
+  color: var(--text);
+  scale: 0.94;
+  transition-duration: 100ms, 100ms, 70ms;
 }
 
 .setup-chip {
@@ -1345,18 +1453,24 @@
   height: 40px;
   padding: 0 12px;
   border-radius: var(--r-pill);
-  background: var(--fill-1);
-  box-shadow: inset 0 0 0 1px var(--line);
+  background-color: var(--fill-2);
+  box-shadow: var(--press-up);
   font-size: var(--t-sm);
   font-weight: 560;
   color: var(--text);
   white-space: nowrap;
-  transition: background-color 100ms, transform 100ms;
+  transition: background-color 100ms, scale 120ms var(--ease-out);
 }
 
 .setup-chip:active {
-  background: var(--fill-3);
-  transform: scale(0.96);
+  background-color: var(--fill-3);
+  box-shadow: var(--press-down);
+  scale: 0.97;
+  transition-duration: 100ms, 70ms;
+}
+
+.setup-chip[aria-expanded='true'] {
+  box-shadow: var(--press-down);
 }
 
 .setup-chip-mode {
@@ -1382,26 +1496,53 @@
   color: var(--text-4);
 }
 
+/* Send: a tactile ivory key with a dark glyph (base.css --key-*): a soft light on its upper half, a lit
+   top lip, a shaded lower lip and a short drop, a domed disc standing on the glass. Pressed, it sinks
+   (the light leaves the face, the lip turns to an inner shade, the drop shortens) in the same frame as
+   its give in scale. With nothing to send it is a dim glyph on one fill step, the same raised disc as
+   the tool key at the other end. Stop is the same key with a dark square; it never moves. */
 .send {
   display: grid;
   place-items: center;
   width: 40px;
   height: 40px;
   border-radius: var(--r-pill);
-  background: var(--text);
+  background-color: var(--text);
+  background-image: var(--key-face);
+  box-shadow: var(--key-up);
   color: var(--ink);
   flex-shrink: 0;
-  transition: background-color 160ms, color 160ms;
+  transition: background-color 120ms, color 120ms, scale 120ms var(--ease-out);
+}
+
+.send:active {
+  background-color: #e6e4df;
+  background-image: var(--key-face-down);
+  box-shadow: var(--key-down);
+}
+
+.send:not([data-stop]):active {
+  scale: 0.94;
+  transition-duration: 120ms, 120ms, 70ms;
 }
 
 .send:disabled {
-  background: var(--fill-2);
-  box-shadow: inset 0 0 0 1px var(--line);
+  background-color: var(--fill-2);
+  background-image: none;
+  box-shadow: var(--press-up);
   color: var(--text-4);
+  scale: 1;
 }
 
 .send[data-busy] {
-  background: var(--text);
+  background-color: var(--text);
+  background-image: var(--key-face);
+  box-shadow: var(--key-up);
+}
+
+/* the glyphs share one cell: the old one leaves while the new one comes, the key stays put */
+.send > span {
+  grid-area: 1 / 1;
 }
 
 .send-wait {
@@ -1474,8 +1615,6 @@
   min-height: 50px;
   padding: 3px 4px 3px 18px;
   border-radius: 22px;
-  background: rgb(24 24 28 / 0.96);
-  box-shadow: var(--edge), var(--lift);
 }
 
 .queued-text {
@@ -1489,10 +1628,12 @@
 }
 
 
+/* while the conversation moves the pane stops blurring and goes opaque (drawn again every frame otherwise) */
 .chat[data-moving] .composer {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  background-color: rgb(22 22 25 / 0.95);
+  --pane-fill: var(--glass-solid);
+  --pane-body: transparent;
 }
 
 /* ── the send as liquid (lib/flight.ts): the ink on a canvas of its own, the words pouring out of the field ── */
@@ -1777,4 +1918,9 @@
 
 .switch-back[data-going] {
   opacity: 0.5;
+}
+
+/* the race key as the header's last control: its edge lines up with the conversation's margin */
+.race-key:last-child {
+  padding-right: 10px;
 }

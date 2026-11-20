@@ -77,6 +77,7 @@ export const ICON_NAMES = {
   retry: 'ArrowClockwise',
   scan: 'Scan',
   pencilLine: 'PencilSimpleLine',
+  comment: 'ChatTeardropText',
 } as const;
 
 

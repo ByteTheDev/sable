@@ -4,6 +4,7 @@ import type { SessionMeta } from '@shared/protocol';
 import { baseName } from '@desk/lib/format';
 import { conn } from '@m/lib/conn';
 import { appVersion, askNotifications, haptic, hapticsEnabled, isNative, loadPref, notificationsAllowed, savePref, setHaptics } from '@m/lib/native';
+import { homeFolder } from '@m/lib/race';
 import { nav } from '@m/lib/nav';
 import { setState, useStore } from '@m/lib/store';
 import { AutoHeight } from '@m/ui/AutoHeight';
@@ -260,7 +261,7 @@ function ArchiveSheet({ open, onClose }: { open: boolean; onClose: () => void })
                   <ProviderMark provider={s.provider} size={16} />
                   <span className="arch-text">
                     <span className="arch-title">{s.title || 'Untitled'}</span>
-                    {!s.chat && <span className="arch-dir">{baseName(s.cwd)}</span>}
+                    {!s.chat && <span className="arch-dir">{baseName(homeFolder(s))}</span>}
                   </span>
                   <button type="button" className="arch-go" disabled={!online || going.has(s.id)} onClick={() => restore(s)}>
                     Restore

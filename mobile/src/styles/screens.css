@@ -339,12 +339,15 @@ button.set-row:active {
   cursor: pointer;
 }
 
+/* tactile, as the desktop's: the track a shallow well, the thumb standing a hair above it (a lit top
+   lip, a short drop); on, the track turns ivory and the thumb is ink */
 .switch {
   position: relative;
   width: 50px;
   height: 30px;
   border-radius: 15px;
   background: var(--fill-4);
+  box-shadow: var(--press-well);
   flex-shrink: 0;
   transition: background-color 180ms var(--ease-out);
 }
@@ -356,18 +359,25 @@ button.set-row:active {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: var(--text-2);
-  box-shadow: 0 2px 6px rgb(0 0 0 / 0.4);
+  background: #d6d5d1;
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.75), inset 0 -1px 0 0 rgb(0 0 0 / 0.1), 0 1px 2px 0 rgb(0 0 0 / 0.5);
   transition: transform 300ms var(--ease-spring), background-color 180ms;
 }
 
 .switch[data-on] {
   background: var(--text);
+  box-shadow: inset 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 1px 0 0 rgb(255 255 255 / 0.045);
 }
 
 .switch[data-on] i {
   transform: translateX(20px);
-  background: var(--ink);
+  background: var(--ink-2);
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.13), 0 1px 2px 0 rgb(0 0 0 / 0.35);
+}
+
+/* held: the thumb gives a little, toward where it will go */
+.switch-row:active .switch i {
+  scale: 1.12 1;
 }
 
 /* ── pairing ── */
@@ -492,8 +502,9 @@ button.set-row:active {
   height: 36px;
   padding: 0 15px;
   border-radius: 18px;
-  background: rgb(22 22 25 / 0.8);
-  box-shadow: var(--edge-2);
+  /* a small tactile key on the field: raised a hair, set in when pressed */
+  background: rgb(30 30 34 / 0.86);
+  box-shadow: var(--press-up);
   font-size: var(--t-sm);
   font-weight: 560;
   color: var(--text);
@@ -502,7 +513,8 @@ button.set-row:active {
 
 .pair-retry:active {
   transform: scale(0.96);
-  background: rgb(34 34 38 / 0.9);
+  background: rgb(38 38 42 / 0.92);
+  box-shadow: var(--press-down);
 }
 
 .pair-actions {
@@ -523,12 +535,18 @@ button.set-row:active {
   gap: 10px;
 }
 
-/* the second way in: frosted ink like the prompt bar, quiet beside the ivory key */
+/* the second way in: a pane of glass like the prompt bar (frosted, the rim is its ::before), quiet beside the ivory key */
 .pair-alt {
-  background: rgb(22 22 25 / 0.8);
-  -webkit-backdrop-filter: var(--blur);
-  backdrop-filter: var(--blur);
-  box-shadow: var(--edge-2);
+  position: relative;
+  isolation: isolate;
+  background: var(--glass-sheen), var(--grain-bg), rgb(22 22 25 / 0.72);
+  -webkit-backdrop-filter: var(--blur-pane);
+  backdrop-filter: var(--blur-pane);
+  box-shadow: var(--rim-inner), 0 0 0 1px rgb(0 0 0 / 0.42), 0 2px 5px -1px rgb(0 0 0 / 0.38);
+}
+
+.pair-alt:active {
+  background: var(--glass-sheen), var(--grain-bg), rgb(34 34 38 / 0.8);
 }
 
 .pair-cancel {
@@ -588,19 +606,29 @@ button.set-row:active {
   width: 42px;
   height: 42px;
   border-radius: 50%;
-  background: var(--text);
+  /* the ivory key, as the prompt bar's send (base.css --key-*) */
+  background-color: var(--text);
+  background-image: var(--key-face);
+  box-shadow: var(--key-up);
   color: var(--ink);
   flex-shrink: 0;
-  transition: transform 100ms, opacity 120ms, background-color 120ms;
+  transition: scale 120ms var(--ease-out), opacity 120ms, background-color 120ms;
 }
 
 .pair-go:active {
-  transform: scale(0.92);
+  background-color: #e6e4df;
+  background-image: var(--key-face-down);
+  box-shadow: var(--key-down);
+  scale: 0.94;
+  transition-duration: 70ms, 120ms, 120ms;
 }
 
 .pair-go:disabled {
-  background: var(--fill-3);
+  background-color: var(--fill-3);
+  background-image: none;
+  box-shadow: var(--press-up);
   color: var(--text-4);
+  scale: 1;
 }
 
 /* ── scanner: the picture dims around a clear window ── */
@@ -696,12 +724,15 @@ button.set-row:active {
   text-shadow: 0 1px 12px rgb(0 0 0 / 0.6);
 }
 
+/* a pane of glass over the picture, as the pairing screen's second key (the rim is its ::before, base.css) */
 .scanner-paste {
+  position: relative;
+  isolation: isolate;
   width: 100%;
-  background: rgb(22 22 25 / 0.72);
-  -webkit-backdrop-filter: var(--blur);
-  backdrop-filter: var(--blur);
-  box-shadow: var(--edge-2);
+  background: var(--glass-sheen), var(--grain-bg), rgb(22 22 25 / 0.72);
+  -webkit-backdrop-filter: var(--blur-pane);
+  backdrop-filter: var(--blur-pane);
+  box-shadow: var(--rim-inner), 0 0 0 1px rgb(0 0 0 / 0.42), 0 2px 5px -1px rgb(0 0 0 / 0.38);
 }
 
 /* no camera: one calm card */
@@ -715,8 +746,10 @@ button.set-row:active {
   max-width: 360px;
   padding: 26px 18px 14px;
   border-radius: 28px;
-  background: rgb(21 21 24);
-  box-shadow: var(--edge), var(--lift-2);
+  /* liquid glass, opaque (the rim is its ::before, base.css) */
+  isolation: isolate;
+  background: var(--glass-sheen), var(--grain-bg), var(--sheet-ink);
+  box-shadow: var(--rim-inner), var(--shadow-glass);
 }
 
 .scanner-card-glyph {

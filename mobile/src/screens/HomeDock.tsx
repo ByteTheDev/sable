@@ -156,6 +156,7 @@ export function HomeDock({ covered }: { covered: boolean }) {
               type="button"
               className="dock-agent"
               aria-label={`Agent: ${PROVIDER_NAME[c.agent]}`}
+              aria-expanded={sheet === 'agent'}
               tabIndex={open ? 0 : -1}
               onPointerDown={(e) => open && e.preventDefault()}
               onClick={(e) => {
@@ -192,7 +193,7 @@ export function HomeDock({ covered }: { covered: boolean }) {
           {open && c.agent && (
             <motion.div className="dock-bar-wrap" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={SNAP}>
               <div className="dock-bar no-drag">
-                <button type="button" className="where-chip" onPointerDown={(e) => e.preventDefault()} onClick={(e) => (e.stopPropagation(), haptic('tap'), setSheet('folder'))}>
+                <button type="button" className="where-chip" aria-expanded={sheet === 'folder'} onPointerDown={(e) => e.preventDefault()} onClick={(e) => (e.stopPropagation(), haptic('tap'), setSheet('folder'))}>
                   <Icon name={c.folder === null ? 'chat' : 'folder'} size={15} />
                   <span>{folderLabel}</span>
                 </button>
@@ -200,6 +201,7 @@ export function HomeDock({ covered }: { covered: boolean }) {
                   <button
                     type="button"
                     className="setup-chip"
+                    aria-expanded={sheet === 'setup'}
                     aria-label={`${modelLabel ?? ''}${c.effort && c.efforts.length > 1 ? `, ${effortName(c.effort)}` : ''}${mode ? `, ${mode.name}` : ''}`}
                     onPointerDown={(e) => e.preventDefault()}
                     onClick={(e) => (e.stopPropagation(), haptic('tap'), setSheet('setup'))}
@@ -214,7 +216,7 @@ export function HomeDock({ covered }: { covered: boolean }) {
             </motion.div>
           )}
         </AnimatePresence>
-        <motion.button
+        <button
           ref={sendKey}
           type="button"
           className="send dock-send"
@@ -228,8 +230,6 @@ export function HomeDock({ covered }: { covered: boolean }) {
             if (!open) return area.current?.focus();
             void send();
           }}
-          whileTap={{ scale: 0.9 }}
-          transition={SNAP}
         >
           {busy ? (
             <span className="send-wait" />
@@ -238,7 +238,7 @@ export function HomeDock({ covered }: { covered: boolean }) {
               <Icon name={open ? 'up' : 'plus'} size={18} weight="bold" />
             </motion.span>
           )}
-        </motion.button>
+        </button>
       </div>
       <AgentSheet open={sheet === 'agent'} onClose={() => setSheet(null)} c={c} />
       <FolderSheet open={sheet === 'folder'} onClose={() => setSheet(null)} c={c} />

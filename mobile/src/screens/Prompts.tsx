@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PermissionOption, PermissionRequest, Question, QuestionRequest } from '@shared/protocol';
+import { pushBack } from '@m/lib/back';
 import { conn } from '@m/lib/conn';
 import { diffLines, renderMarkdown } from '@m/lib/md';
 import { haptic } from '@m/lib/native';
@@ -39,7 +40,7 @@ export function Prompts({ sid }: { sid: string }) {
           <motion.button
             key="later"
             type="button"
-            className="waiting-line"
+            className="waiting-line glass-liquid"
             initial={{ opacity: 0, y: 14, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.97 }}
@@ -78,16 +79,27 @@ function PathLabel({ path }: { path: string }) {
 function PermissionBody({ sid, req, more, onLater }: { sid: string; req: PermissionRequest; more: number; onLater: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [showDiff, setShowDiff] = useState(false);
-  const answer = async (o: PermissionOption) => {
+  // Deny with a note, as on the desktop: when the agent takes one, Deny turns the keys into a field
+  // ("what to do instead") with Back and Deny; an empty note denies plainly.
+  const [note, setNote] = useState<PermissionOption | null>(null);
+  const [message, setMessage] = useState('');
+  useEffect(() => (note ? pushBack(() => (setNote(null), true)) : undefined), [note]);
+  const answer = async (o: PermissionOption, msg?: string) => {
     if (busy) return;
     setBusy(o.id);
     haptic(o.tone === 'deny' ? 'deny' : 'success');
     try {
-      await conn.call('permission.respond', { sessionId: sid, requestId: req.id, optionId: o.id });
+      await conn.call('permission.respond', { sessionId: sid, requestId: req.id, optionId: o.id, ...(msg ? { message: msg } : {}) });
     } catch (err) {
       setBusy(null);
       fail(err);
     }
+  };
+  const choose = (o: PermissionOption) => {
+    if (o.tone === 'deny' && req.allowFeedback) {
+      haptic('tap');
+      setNote(o);
+    } else void answer(o);
   };
   const d = req.detail;
   const add = req.diff?.reduce((n, f) => n + f.additions, 0) ?? 0;
@@ -150,23 +162,70 @@ function PermissionBody({ sid, req, more, onLater }: { sid: string; req: Permiss
       {d.plan && <div className="md ask-plan no-drag" dangerouslySetInnerHTML={{ __html: renderMarkdown(d.plan) }} />}
       {req.reason && <p className="ask-reason">{req.reason}</p>}
 
-      <div className="ask-actions">
-        {grants.map((o, i) => (
-          <button key={o.id} type="button" className={`btn btn-block ask-btn ${i === 0 ? 'btn-primary' : ''}`} disabled={!!busy && busy !== o.id} data-busy={busy === o.id || undefined} onClick={() => void answer(o)}>
-            {busy === o.id ? <span className="dots" /> : o.label}
-          </button>
-        ))}
-        <div className="ask-split">
-          {denials.map((o) => (
-            <button key={o.id} type="button" className="btn ask-btn ask-deny" disabled={!!busy && busy !== o.id} data-busy={busy === o.id || undefined} onClick={() => void answer(o)}>
-              {busy === o.id ? <span className="dots" /> : o.label}
-            </button>
-          ))}
-          <button type="button" className="btn ask-btn btn-ghost ask-later" disabled={!!busy} onClick={() => (haptic('tap'), onLater())}>
-            Later
-          </button>
-        </div>
-      </div>
+      <AutoHeight className="ask-actions-wrap">
+        <AnimatePresence mode="popLayout" initial={false}>
+          {note ? (
+            <motion.div key="note" className="ask-actions" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} transition={SNAP}>
+              <form
+                className="ask-note"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void answer(note, message.trim() || undefined);
+                }}
+              >
+                <textarea
+                  className="ask-note-input no-drag"
+                  rows={1}
+                  autoFocus
+                  value={message}
+                  placeholder="Tell the agent what to do instead"
+                  aria-label="Tell the agent what to do instead"
+                  enterKeyHint="send"
+                  disabled={!!busy}
+                  onChange={(e) => {
+                    setMessage(e.target.value);
+                    const el = e.target;
+                    el.style.height = 'auto';
+                    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      void answer(note, message.trim() || undefined);
+                    }
+                  }}
+                />
+                <div className="ask-split">
+                  <button type="button" className="btn ask-btn btn-ghost ask-later" disabled={!!busy} onClick={() => (haptic('tap'), setNote(null))}>
+                    Back
+                  </button>
+                  <button type="submit" className="btn ask-btn ask-deny" disabled={!!busy && busy !== note.id} data-busy={busy === note.id || undefined}>
+                    {busy === note.id ? <span className="dots" /> : note.label}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          ) : (
+            <motion.div key="keys" className="ask-actions" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={SNAP}>
+              {grants.map((o, i) => (
+                <button key={o.id} type="button" className={`btn btn-block ask-btn ${i === 0 ? 'btn-primary' : ''}`} disabled={!!busy && busy !== o.id} data-busy={busy === o.id || undefined} onClick={() => choose(o)}>
+                  {busy === o.id ? <span className="dots" /> : o.label}
+                </button>
+              ))}
+              <div className="ask-split">
+                {denials.map((o) => (
+                  <button key={o.id} type="button" className="btn ask-btn ask-deny" disabled={!!busy && busy !== o.id} data-busy={busy === o.id || undefined} onClick={() => choose(o)}>
+                    {busy === o.id ? <span className="dots" /> : o.label}
+                  </button>
+                ))}
+                <button type="button" className="btn ask-btn btn-ghost ask-later" disabled={!!busy} onClick={() => (haptic('tap'), onLater())}>
+                  Later
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </AutoHeight>
     </div>
   );
 }

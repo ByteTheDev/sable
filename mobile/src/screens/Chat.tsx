@@ -1,16 +1,17 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ToolItem } from '@shared/protocol';
+import type { SessionMeta, ToolItem } from '@shared/protocol';
 import { baseName } from '@desk/lib/format';
 import { conn } from '@m/lib/conn';
 import { onKeyboard } from '@m/lib/keyboard';
 import { haptic, openExternal } from '@m/lib/native';
 import { nav } from '@m/lib/nav';
+import { homeFolder, openRace, swapTo } from '@m/lib/race';
 import { applyOlder, fetchOlder, getState, openSession, sessionData, showCached, useStore } from '@m/lib/store';
 import { groupTurns, shapeString, stabilize } from '@m/lib/turns';
 import { Field, paletteFor } from '@m/ui/Field';
 import { Icon } from '@m/ui/icons';
-import { ProviderMark, Ring } from '@m/ui/marks';
+import { PROVIDER_NAME, ProviderMark, RaceGlyph, Ring, StatusMark } from '@m/ui/marks';
 import { IME_EASE, SNAP } from '@m/ui/motion';
 import { Sheet } from '@m/ui/Sheet';
 import { Composer } from './Composer';
@@ -27,6 +28,12 @@ export function Chat({ id }: { id: string }) {
   const listed = useStore((st) => !!st.fresh);
   const connState = useStore((st) => st.conn);
   const desktop = useStore((st) => st.desktop);
+  // Racing another chat that is still there: its header carries the race key.
+  const racing = useStore((st) => {
+    const r = openRace(st.sessions[id]);
+    const rival = r ? st.sessions[r.rival] : undefined;
+    return !!rival && !rival.archived;
+  });
   const [error, setError] = useState<string>();
   const [remote, setRemote] = useState(false);
 
@@ -55,10 +62,11 @@ export function Chat({ id }: { id: string }) {
       <Field palette={paletteFor(s.provider)} amount={0.95} focusY={1.1} spread={0.56} active={live} waiting={waiting} />
       <ChatHead
         title={s.title}
-        sub={connState === 'open' ? (s.chat ? undefined : baseName(s.cwd)) : undefined}
+        sub={connState === 'open' ? (s.chat ? undefined : baseName(homeFolder(s))) : undefined}
         status={connState === 'open' ? undefined : connState === 'denied' ? 'Not paired' : listed ? 'Reconnecting' : 'Connecting'}
         mark={<ProviderMark provider={s.provider} size={16} />}
         onBack={() => nav.pop()}
+        race={racing ? <RaceKey s={s} /> : undefined}
         right={
           s.provider === 'claude' || s.provider === 'demo' || remoteOn ? (
             <button type="button" className="icon-btn remote-btn" data-tone={s.remote?.tone ?? (remoteOn ? 'waiting' : 'off')} aria-label="Remote control" onClick={() => (haptic('tap'), setRemote(true))}>
@@ -84,7 +92,7 @@ export function Chat({ id }: { id: string }) {
   );
 }
 
-function ChatHead({ title, sub, status, mark, onBack, right }: { title: string; sub?: string; status?: string; mark?: React.ReactNode; onBack: () => void; right?: React.ReactNode }) {
+function ChatHead({ title, sub, status, mark, onBack, race, right }: { title: string; sub?: string; status?: string; mark?: React.ReactNode; onBack: () => void; race?: React.ReactNode; right?: React.ReactNode }) {
   return (
     <header className="chat-head">
       <button type="button" className="icon-btn back-btn" aria-label="Back" onClick={() => (haptic('tap'), onBack())}>
@@ -107,8 +115,42 @@ function ChatHead({ title, sub, status, mark, onBack, right }: { title: string; 
           ) : null}
         </AnimatePresence>
       </div>
-      {right ?? <span className="icon-btn-spacer" />}
+      {race}
+      {right ?? (race ? null : <span className="icon-btn-spacer" />)}
     </header>
+  );
+}
+
+/**
+ * A chat racing another (the desktop's `/race`): a quiet "Race" key in its header with the rival's
+ * mark (amber dot when the rival waits on you). A tap puts the rival in its place, the two sliding
+ * as the race's columns do. Gone once the race is decided.
+ */
+function RaceKey({ s }: { s: SessionMeta }) {
+  const race = openRace(s);
+  const rival = useStore((st) => (race ? st.sessions[race.rival] : undefined));
+  if (!race || !rival || rival.archived) return null;
+  const waits = rival.status === 'awaiting';
+  return (
+    <button
+      type="button"
+      className="race-key"
+      aria-label={`Race. Go to the other chat, ${PROVIDER_NAME[rival.provider]}${waits ? ', waiting for you' : ''}`}
+      onClick={() => {
+        haptic('select');
+        swapTo(s.id, rival.id, rival.race?.side ?? (race.side === 0 ? 1 : 0));
+        nav.chat(rival.id);
+      }}
+    >
+      <span className="race-key-in">
+        <RaceGlyph size={14} />
+        <span>Race</span>
+        <span className="race-key-rival">
+          <ProviderMark provider={rival.provider} size={13} />
+          {waits && <StatusMark tone="awaiting" size={8} />}
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -297,7 +339,7 @@ function Thread({ id }: { id: string }) {
         {showJump && (
           <motion.button
             type="button"
-            className="jump"
+            className="jump glass-liquid"
             aria-label="Jump to the newest"
             initial={{ opacity: 0, y: 10, scale: 0.85 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}

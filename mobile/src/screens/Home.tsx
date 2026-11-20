@@ -9,11 +9,12 @@ import { conn } from '@m/lib/conn';
 import { haptic } from '@m/lib/native';
 import { nav } from '@m/lib/nav';
 import { openFrom } from '@m/lib/open';
+import { homeFolder, openRace } from '@m/lib/race';
 import { getState, refresh, setState, useStore } from '@m/lib/store';
 import { useNow } from '@m/lib/useNow';
 import { Field, fieldBeat, paletteFor } from '@m/ui/Field';
 import { Icon } from '@m/ui/icons';
-import { LogoMark, ProviderMark, Ring, StatusMark, Tiles, type Tone } from '@m/ui/marks';
+import { LogoMark, ProviderMark, RaceGlyph, Ring, StatusMark, Tiles, type Tone } from '@m/ui/marks';
 import { nowOf, REVEAL, SNAP, SPRING } from '@m/ui/motion';
 import { Pull } from '@m/ui/Pull';
 import { ditherStrip } from '@m/ui/strip';
@@ -42,11 +43,11 @@ function groupSessions(sessions: SessionMeta[], projects: Project[], order: stri
   for (const s of sessions) {
     if (s.archived || skip.has(s.id)) continue;
     if (words.length) {
-      const hay = `${s.title} ${baseName(s.cwd)}`.toLowerCase();
+      const hay = `${s.title} ${baseName(homeFolder(s))}`.toLowerCase();
       if (!words.every((w) => hay.includes(w))) continue;
     }
-    // Chats without a folder of their own go together.
-    const k = s.chat ? '::chats' : norm(s.cwd);
+    // Chats without a folder of their own go together; a chat in a lane belongs to the folder it came from.
+    const k = s.chat ? '::chats' : norm(homeFolder(s));
     let list = byDir.get(k);
     if (!list) byDir.set(k, (list = []));
     list.push(s);
@@ -57,7 +58,7 @@ function groupSessions(sessions: SessionMeta[], projects: Project[], order: stri
     const p = proj.get(k);
     if (p?.hidden) continue;
     list.sort((a, b) => (a.pinned !== b.pinned ? (a.pinned ? -1 : 1) : b.updatedAt - a.updatedAt));
-    groups.push({ key: k, name: k === '::chats' ? 'Chats' : (p?.name ?? baseName(list[0].cwd)), sessions: list, order: p?.order ?? Number.MAX_SAFE_INTEGER, last: list.reduce((m, s) => Math.max(m, s.updatedAt), 0) });
+    groups.push({ key: k, name: k === '::chats' ? 'Chats' : (p?.name ?? baseName(homeFolder(list[0]))), sessions: list, order: p?.order ?? Number.MAX_SAFE_INTEGER, last: list.reduce((m, s) => Math.max(m, s.updatedAt), 0) });
   }
   if (order === 'name') groups.sort((a, b) => a.name.localeCompare(b.name));
   else if (order === 'recent') groups.sort((a, b) => b.last - a.last);
@@ -285,7 +286,7 @@ export function Home({ under }: { under: boolean }) {
           <motion.button
             key="attn"
             type="button"
-            className="attn"
+            className="attn glass-liquid"
             initial={{ opacity: 0, y: 18, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 18, scale: 0.97 }}
@@ -386,6 +387,16 @@ function useLongPress(onLong: (el: HTMLElement) => void) {
   };
 }
 
+/** A chat racing another (the desktop's `/race`): the race glyph and the word, quiet, beside the time. */
+function RaceMark() {
+  return (
+    <span className="race-mark" role="img" aria-label="Racing another chat">
+      <RaceGlyph size={13} />
+      <span aria-hidden>Race</span>
+    </span>
+  );
+}
+
 /** A chat at work or waiting: a card with what it does now, its agent's light at its foot. */
 const LiveCard = memo(function LiveCard({ s, onMenu }: { s: SessionMeta; onMenu: (rect: DOMRect) => void }) {
   const tone = toneOf(s);
@@ -417,6 +428,7 @@ const LiveCard = memo(function LiveCard({ s, onMenu }: { s: SessionMeta; onMenu:
       <span className="live-line">
         <ProviderMark provider={s.provider} size={18} />
         <span className="live-title">{s.title}</span>
+        {openRace(s) && <RaceMark />}
         <span className="live-end">{waiting ? <StatusMark tone="awaiting" size={13} /> : <Tiles size={14} />}</span>
       </span>
       <span className={waiting ? 'live-sub' : 'live-sub shimmer'}>{waiting ? 'Waiting for you' : (s.activity ?? 'Working')}</span>
@@ -484,6 +496,7 @@ const Row = memo(function Row({ s, leaving, onLeft, onMenu }: { s: SessionMeta; 
         <span className="row-title">{s.title}</span>
         <span className="row-end">
           {tone === 'error' ? <StatusMark tone="error" /> : tone === 'unread' ? <StatusMark tone="unread" size={10} /> : null}
+          {openRace(s) && <RaceMark />}
           {s.pinned && <Icon name="pin" size={13} className="row-pin" />}
           <span className="row-time num">{timeAgo(s.updatedAt, now)}</span>
         </span>

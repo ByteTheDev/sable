@@ -1,12 +1,15 @@
 /**
  * The phone's copy of the turn grouping (mobile/src/lib/turns.ts) reads a conversation as the
  * desktop does (src/features/timeline/turns.ts): the same cases, run against the phone's module.
+ * And a review message (src/features/review/model.ts) reads back on the phone as on the desktop,
+ * also when the phone got it cut short (mobile/src/lib/review.ts).
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { TimelineItem } from '@shared/protocol';
 
 // The phone imports the desktop's lead-in rules through its own alias.
 vi.mock('@desk/features/timeline/lead-in', async () => await import('../src/features/timeline/lead-in'));
+vi.mock('@desk/features/review/model', async () => await import('../src/features/review/model'));
 
 // Loaded by a path the root type check does not follow: the phone's module resolves `@desk` through its own config.
 type FlowChunk = { kind: 'text' | 'show'; id: string } | { kind: 'steps'; key: string; ids: string[] } | { kind: 'line' };
@@ -83,5 +86,46 @@ describe('phone turns', () => {
     expect(shapeOf({ ...base, text: 'I should note the key is read from .env.' } as TimelineItem)).toBe('t');
     expect(shapeOf({ ...base, text: 'Looking at the logs, the guard throws before the handler runs.' } as TimelineItem)).toBe('t');
     expect(shapeOf({ ...base, text: 'Looking good, let me run the tests.' } as TimelineItem)).toBe('l');
+  });
+});
+
+describe('a review message on the phone', async () => {
+  const { reviewMessage } = await import('../src/features/review/model');
+  const REVIEW = '../mobile/src/lib/review';
+  const { readReview } = (await import(/* @vite-ignore */ REVIEW)) as {
+    readReview: (text: string, cut?: boolean) => { lead: string; comments: { path: string; range?: string; text: string }[]; more?: boolean } | null;
+  };
+  const comment = (i: number, text = `Comment ${i}`) => ({
+    id: `c${i}`,
+    scope: 'git:a.ts',
+    path: `src/f${i}.ts`,
+    at: i,
+    text,
+    lines: [{ t: '+' as const, text: `line ${i}`, neu: 10 + i }],
+  });
+
+  it('shows what was typed and each comment by its file and lines, as the desktop does', () => {
+    const r = readReview(reviewMessage([comment(1), comment(2, 'Two\n\nparagraphs')], 'Please fix these'));
+    expect(r?.lead).toBe('Please fix these');
+    expect(r?.comments.map((c) => [c.path, c.range, c.text])).toEqual([
+      ['src/f1.ts', 'line 11', 'Comment 1'],
+      ['src/f2.ts', 'line 12', 'Two\n\nparagraphs'],
+    ]);
+    expect(r?.more).toBeUndefined();
+  });
+
+  it('leaves every other message alone', () => {
+    expect(readReview('Review of your changes, please')).toBeNull();
+    expect(readReview('refactor the session module')).toBeNull();
+  });
+
+  it('keeps the whole comments of a review the phone got cut short, and says there is more', () => {
+    const text = reviewMessage([comment(1), comment(2), comment(3)]);
+    // Cut inside the third comment's quoted lines (its fence never closes).
+    const cut = text.slice(0, text.indexOf('+line 3') + 4);
+    expect(readReview(cut, false)).toBeNull();
+    const r = readReview(cut, true);
+    expect(r?.comments.map((c) => c.path)).toEqual(['src/f1.ts', 'src/f2.ts']);
+    expect(r?.more).toBe(true);
   });
 });

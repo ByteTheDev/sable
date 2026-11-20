@@ -11,7 +11,7 @@ import { haptic } from '@m/lib/native';
 import { ensureFolderCaps, getState, sessionData, setState, useStore } from '@m/lib/store';
 import { Icon } from '@m/ui/icons';
 import { PROVIDER_NAME } from '@m/ui/marks';
-import { SNAP } from '@m/ui/motion';
+import { reduced, SNAP } from '@m/ui/motion';
 import { MODE_ICON, SetupSheet, type SetupState } from './Setup';
 
 /** Unsent words per chat, kept across restarts (Android may close the app in the background). */
@@ -53,6 +53,8 @@ const signedIn = (p: ProviderInfo | undefined) => !!p?.installed && (p.accounts?
 /** `/model <name>` typed as a message: picks the model (or switches the agent), never sent. */
 const MODEL_CMD = /^\/model(?:\s+([\s\S]*))?$/i;
 const toast = (text: string, level: 'info' | 'success' | 'error' = 'info') => setState({ toast: { text, level, at: Date.now() } });
+/** The key's glyph changing (send to stop and back): quick, settled, the key itself never moves. */
+const GLYPH = { type: 'spring', stiffness: 620, damping: 40 } as const;
 
 /**
  * The composer: the desktop's frosted prompt bar at hand size. Send (an ivory disc), stop while a
@@ -151,6 +153,7 @@ export function Composer({ sid }: { sid: string }) {
 
   const running = s.status === 'running' || s.status === 'starting' || s.status === 'awaiting';
   const empty = !text.trim() && !files.length;
+  const stopping = running && empty;
   const model = caps?.models.find((m) => m.id === s.model);
   const models = caps ? visibleModels(s.provider, caps.models, visibility, s.model) : [];
   const mode = caps?.modes.find((m) => m.id === s.mode);
@@ -336,6 +339,8 @@ export function Composer({ sid }: { sid: string }) {
             <button
               type="button"
               className="setup-chip"
+              aria-expanded={sheet}
+              aria-haspopup="dialog"
               aria-label={`${modelLabel}${effort && efforts.length ? `, ${effortName(effort)}` : ''}${mode ? `, ${mode.name}` : ''}`}
               onPointerDown={(e) => e.preventDefault()}
               onClick={() => (haptic('tap'), setSheet(true))}
@@ -347,31 +352,27 @@ export function Composer({ sid }: { sid: string }) {
             </button>
           )}
           <span className="bar-gap" />
-          <AnimatePresence mode="popLayout" initial={false}>
-            {running && empty ? (
-              <motion.button key="stop" type="button" className="send" aria-label="Stop" onClick={stop} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.5, opacity: 0 }} whileTap={{ scale: 0.9 }} transition={SNAP}>
-                <span className="stop-square" />
-              </motion.button>
-            ) : (
-              <motion.button
-                key="send"
-                ref={sendKey}
-                type="button"
-                className="send"
-                aria-label={running ? 'Queue' : 'Send'}
-                disabled={empty || !online}
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => void send()}
-                whileTap={{ scale: 0.9 }}
-                initial={{ scale: 0.5, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.5, opacity: 0 }}
-                transition={SNAP}
-              >
-                <Icon name="up" size={18} weight="bold" />
-              </motion.button>
-            )}
-          </AnimatePresence>
+          {/* One key that stays where it is: send, or stop while a turn runs and the field is empty. Only its glyph changes. */}
+          <button
+            ref={sendKey}
+            type="button"
+            className="send"
+            data-stop={stopping || undefined}
+            aria-label={stopping ? 'Stop' : running ? 'Queue' : 'Send'}
+            disabled={!stopping && (empty || !online)}
+            onPointerDown={(e) => !stopping && e.preventDefault()}
+            onClick={stopping ? stop : () => void send()}
+          >
+            <AnimatePresence initial={false}>
+              {stopping ? (
+                <motion.span key="stop" className="stop-square" initial={{ scale: 0.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.4, opacity: 0 }} transition={reduced() ? { duration: 0 } : GLYPH} />
+              ) : (
+                <motion.span key="send" className="send-glyph" initial={{ scale: 0.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.4, opacity: 0 }} transition={reduced() ? { duration: 0 } : GLYPH}>
+                  <Icon name="up" size={18} weight="bold" />
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </button>
         </div>
       </div>
 
@@ -404,7 +405,7 @@ function QueueRow({ sid, q }: { sid: string; q: QueuedMessage }) {
   return (
           <motion.div
             ref={ref}
-            className="queued"
+            className="queued glass-liquid"
             layout
             initial={liquid ? false : { opacity: 0, y: 16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}

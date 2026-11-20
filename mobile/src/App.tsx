@@ -7,6 +7,7 @@ import { conn } from '@m/lib/conn';
 import { haptic, inForeground, keepAlive, notify, onAppState, onBackButton, onNotificationTap, onPairLink } from '@m/lib/native';
 import { nav, useNav, type Route } from '@m/lib/nav';
 import { rowOf, takeOrigin, type Origin } from '@m/lib/open';
+import { takeSwap } from '@m/lib/race';
 import { closeSessionData, getState, hasCachedHome, loadCachedHome, refresh, setState, subscribeStore, useStore } from '@m/lib/store';
 import '@m/lib/keyboard';
 import { fieldBeat } from '@m/ui/Field';
@@ -200,6 +201,9 @@ function Layer({ route, index, covered, children }: { route: Route; index: numbe
   // Taken once (a development double run of the effect must not lose it).
   const origin = useRef<Origin | null | undefined>(undefined);
   if (origin.current === undefined) origin.current = route.name === 'chat' ? takeOrigin(route.id) : null;
+  // A race's rival taking this chat's place: the two slide together, as columns side by side.
+  const swapIn = useRef<1 | -1 | null | undefined>(undefined);
+  if (swapIn.current === undefined) swapIn.current = route.name === 'chat' ? takeSwap(route.id, 'in') : null;
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -236,7 +240,8 @@ function Layer({ route, index, covered, children }: { route: Route; index: numbe
       requestAnimationFrame(() => fieldBeat('open'));
       return;
     }
-    animate(el, { transform: ['translateX(100%)', 'translateX(0%)'] }, SPRING);
+    const dir = swapIn.current ?? 1;
+    animate(el, { transform: [`translateX(${dir * 100}%)`, 'translateX(0%)'] }, SPRING);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -259,6 +264,12 @@ function Layer({ route, index, covered, children }: { route: Route; index: numbe
     el.style.pointerEvents = 'none';
     if (reduced()) {
       void animate(el, { opacity: 0 }, { duration: 0.12 }).finished.then(safeToRemove);
+      return;
+    }
+    // Replaced by its race rival: it leaves toward its own side while the rival comes in from the other.
+    const swapOut = route.name === 'chat' ? takeSwap(route.id, 'out') : null;
+    if (swapOut) {
+      void animate(el, { transform: ['translateX(0%)', `translateX(${-swapOut * 100}%)`] }, SPRING).finished.then(safeToRemove);
       return;
     }
     const row = route.name === 'chat' ? rowOf(route.id) : null;
@@ -317,7 +328,7 @@ function Attention({ top }: { top?: { name: string; id?: string } }) {
         <motion.button
           key={attention!.at}
           type="button"
-          className="attn-top"
+          className="attn-top glass-liquid"
           initial={{ opacity: 0, y: -24, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -24, scale: 0.96 }}

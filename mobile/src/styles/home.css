@@ -433,6 +433,21 @@
   color: var(--text-4);
 }
 
+/* a chat racing another: the race glyph and the word, quiet (rows and live cards) */
+.race-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.live-line .race-mark {
+  margin-left: -2px;
+}
+
 .more-row {
   display: block;
   height: 44px;
@@ -510,8 +525,6 @@
   height: 62px;
   padding: 0 9px 0 18px;
   border-radius: 22px;
-  background: rgb(26 26 30);
-  box-shadow: var(--edge-2), var(--lift-2);
   text-align: left;
 }
 
@@ -524,28 +537,10 @@
   bottom: calc(var(--sab) + 12px);
   padding: 6px 6px 6px 8px;
   border-radius: 26px;
-  background: var(--glass);
-  -webkit-backdrop-filter: var(--blur);
-  backdrop-filter: var(--blur);
-  box-shadow: var(--edge-2), var(--lift-2);
-  isolation: isolate;
+  /* the main pane of glass, as the chat's prompt bar (base.css "the panes"); focused, it lifts */
   translate: 0 calc(-1 * var(--kb));
-  transition: translate var(--kb-ms) var(--ease-ime), background-color 260ms var(--ease-out);
+  transition: translate var(--kb-ms) var(--ease-ime);
   cursor: text;
-}
-
-.home-dock::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--grain-bg);
-  pointer-events: none;
-  z-index: -1;
-}
-
-.home-dock[data-open] {
-  background-color: var(--glass-up);
 }
 
 .home-dock[data-covered] {
@@ -574,12 +569,20 @@
   width: 36px;
   height: 46px;
   border-radius: 14px;
-  transition: background-color 100ms, transform 100ms;
+  transition: background-color 100ms, scale 120ms var(--ease-out);
 }
 
+/* a bare control on the glass: flat until held or its sheet is open, then set in */
 .home-dock[data-open] .dock-agent:active {
-  background: var(--fill-2);
-  transform: scale(0.94);
+  background-color: var(--fill-2);
+  box-shadow: var(--press-down);
+  scale: 0.94;
+  transition-duration: 100ms, 70ms;
+}
+
+.home-dock[data-open] .dock-agent[aria-expanded='true'] {
+  background-color: var(--fill-2);
+  box-shadow: var(--press-down);
 }
 
 .dock-input {
@@ -630,13 +633,14 @@
   height: 40px;
   padding: 0 12px 0 11px;
   border-radius: var(--r-pill);
-  background: var(--fill-1);
-  box-shadow: inset 0 0 0 1px var(--line);
+  /* tactile, as the setup chip beside it (chat.css) */
+  background-color: var(--fill-2);
+  box-shadow: var(--press-up);
   font-size: var(--t-sm);
   font-weight: 540;
   white-space: nowrap;
   color: var(--text);
-  transition: background-color 100ms, transform 100ms;
+  transition: background-color 100ms, scale 120ms var(--ease-out);
 }
 
 .where-chip span {
@@ -650,8 +654,14 @@
 }
 
 .where-chip:active {
-  background: var(--fill-3);
-  transform: scale(0.96);
+  background-color: var(--fill-3);
+  box-shadow: var(--press-down);
+  scale: 0.97;
+  transition-duration: 100ms, 70ms;
+}
+
+.where-chip[aria-expanded='true'] {
+  box-shadow: var(--press-down);
 }
 
 .dock-bar .setup-chip {
@@ -678,6 +688,7 @@
   background: rgb(0 0 0 / 0.62);
 }
 
+/* the row lifted out of its card: a step lighter, the same depth as glass (it floats), no rim (it is still the row) */
 .peek-row {
   position: fixed;
   display: flex;
@@ -685,17 +696,19 @@
   gap: 13px;
   padding: 0 18px;
   border-radius: 18px;
-  background: rgb(32 32 36);
-  box-shadow: var(--edge-2), 0 30px 60px -18px rgb(0 0 0 / 0.95);
+  background: var(--grain-bg), rgb(32 32 36);
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.06), var(--shadow-glass);
   pointer-events: none;
 }
 
+/* the menu: liquid glass, opaque (the rim is its ::before, base.css) */
 .peek-menu {
   position: fixed;
+  isolation: isolate;
   padding: 6px;
   border-radius: 24px;
-  background: rgb(27 27 31);
-  box-shadow: var(--edge-2), var(--lift-2);
+  background: var(--glass-sheen), var(--grain-bg), var(--float-ink);
+  box-shadow: var(--rim-inner), var(--shadow-glass);
   transform-origin: 50% 0;
 }
 
@@ -746,10 +759,17 @@
   place-items: center;
 }
 
-/* at rest the key is a quiet plus (a tap opens the field); open, the ivory send */
+/* at rest the key is a quiet plus on a raised ink disc (a tap opens the field); open, the ivory send key */
 .home-dock .send[data-rest] {
-  background: var(--fill-3);
+  background-color: var(--fill-3);
+  background-image: none;
+  box-shadow: var(--press-up);
   color: var(--text);
+}
+
+.home-dock .send[data-rest]:active {
+  background-color: var(--fill-4);
+  box-shadow: var(--press-down);
 }
 
 /* covered by a chat or settings: nothing on home keeps moving (the loops pause where they are) */
@@ -766,10 +786,12 @@
   width: 100%;
 }
 
+/* while the list moves the bar stops blurring and goes opaque (it would be drawn again every frame) */
 .home[data-moving] .home-dock {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  background-color: rgb(22 22 25 / 0.95);
+  --pane-fill: var(--glass-solid);
+  --pane-body: transparent;
 }
 
 /* the new-chat bar open (its chips over the words): the waiting line stays above it */
