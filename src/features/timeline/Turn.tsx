@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import type { TimelineItem, TurnItem, UserItem } from '@shared/protocol';
 import { CopyButton } from '@/components/CopyButton';
 import { BeforeAfter } from '@/features/compare/BeforeAfter';
@@ -25,6 +25,31 @@ function responseText(items: Record<string, TimelineItem>, turn: TurnGroup): str
     .map((id) => textOf(items[id]))
     .filter(Boolean)
     .join('\n\n');
+}
+
+/**
+ * Whether a plan limit refused this turn and its window has not reset yet. Its notice then offers
+ * what can work (another account, a reset, waiting for it); trying again on the same account would
+ * only be refused again. Once the window resets, "Try again" comes back (one timer, set to the reset).
+ */
+function useLimitHolds(sessionId: string, ids: string[], failed: boolean): boolean {
+  const until = useStore((s) => {
+    if (!failed) return 0;
+    const items = s.data[sessionId]?.items;
+    for (const id of ids) {
+      const it = items?.[id];
+      if (it?.type === 'notice' && it.limit) return it.limit.resetsAt ?? 0;
+    }
+    return 0;
+  });
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const left = until - Date.now();
+    if (left <= 0) return;
+    const t = window.setTimeout(() => tick((n) => n + 1), Math.min(left + 250, 2 ** 31 - 1));
+    return () => window.clearTimeout(t);
+  }, [until]);
+  return until > Date.now();
 }
 
 /** Local pages the turn mentions: in its answers first, then in what its commands printed. */
@@ -57,6 +82,7 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
     return changesOf(d?.items ?? {}, d?.children ?? {}, turn.ids).files > 0;
   }, [settled, sessionId, turn]);
   const [checking, setChecking] = useState(false);
+  const limitHolds = useLimitHolds(sessionId, turn.ids, turn.state === 'failed');
   if (!settled) return null;
   const canCheck = !!checker && checkerReady && changed && !checked;
 
@@ -92,11 +118,13 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
   if (end?.type === 'turn' && end.costUsd) parts.push(formatCost(end.costUsd));
   const breakdown = end?.type === 'turn' && (end.inputTokens || end.outputTokens) ? `${formatTokens(end.inputTokens)} tokens read, ${formatTokens(end.outputTokens)} written` : undefined;
 
-  if (!previews.length && !failed && !hasAnswer && !parts.length && turn.state !== 'interrupted') return null;
+  const retryShown = failed && !limitHolds;
+  const errorShownHere = failed && end?.type === 'turn' && !!end.error && !errorShown;
+  if (!previews.length && !retryShown && !errorShownHere && !hasAnswer && !parts.length && turn.state !== 'interrupted') return null;
 
   return (
     <div className="tl-item turn" data-state={turn.state}>
-      {failed && end?.type === 'turn' && end.error && !errorShown && (
+      {errorShownHere && end?.type === 'turn' && (
         <div className="notice-error" role="alert">
           <Icon name="error" size={16} />
           <div className="notice-error-body">
@@ -118,7 +146,7 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
         ))}
         {/* A turn that edited a local page: its before and after, beside Preview. */}
         <BeforeAfter sessionId={sessionId} turnId={turn.key} />
-        {failed && (
+        {retryShown && (
           <button type="button" className="btn btn-sm" onClick={retry}>
             <Icon name="refresh" size={13} />
             Try again

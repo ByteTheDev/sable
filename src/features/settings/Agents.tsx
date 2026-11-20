@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { PROVIDER_NAME } from '@/art/Logo';
 import { Icon } from '@/icons';
+import { modelNameById } from '@/lib/models';
 import { useStore } from '@/state/store';
 import { Card, Empty, SearchField, Skeleton, useContextTarget, useProviderCaps, Scope } from './parts';
 import { rank, UseList, type UseItem } from './UseList';
@@ -18,7 +19,8 @@ export function Agents() {
         key: a.name,
         title: a.name,
         description: a.description,
-        meta: a.model && a.model !== 'inherit' ? a.model : undefined,
+        // An alias ("sonnet") or an id reads as the model's name, as everywhere else.
+        meta: a.model && a.model !== 'inherit' ? modelNameById(a.model, caps?.models) : undefined,
         // Sub-agents are not slash commands: ask for one by name.
         insert: `Use the ${a.name} agent to `,
       })),

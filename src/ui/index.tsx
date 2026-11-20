@@ -154,7 +154,9 @@ function TipAnchor(props: AnchorProps) {
       return () => el.removeEventListener(type, fn);
     });
     // A frame on, once Radix's own effects have mounted (its timers are cleared when they remount).
+    // Not when a click in that frame already opened the control's menu: the tip would lie over it.
     const wake = requestAnimationFrame(() => {
+      if (el.getAttribute('aria-expanded') === 'true' || el.dataset.state === 'open') return;
       if (by === 'pointer' && el.matches(':hover')) latest.current.onPointerMove?.(new window.PointerEvent('pointermove', { pointerType: 'mouse' }));
       else if (by === 'focus' && el.contains(document.activeElement)) latest.current.onFocus?.(new window.FocusEvent('focusin'));
     });

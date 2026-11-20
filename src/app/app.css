@@ -180,24 +180,42 @@
   outline: none;
 }
 
+/* One line of crumbs. What does not fit wraps onto a second line that is cut away, so a crumb
+   leaves whole (the account first, then the branch) instead of being sliced through its icon; the
+   one left shrinks to its icon and an ellipsis. The padding (taken back by the margin) keeps the
+   focus ring of the account inside the cut. */
 .topbar-crumb {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 5px;
-  min-width: 34px;
+  column-gap: 5px;
+  row-gap: 12px;
+  height: 28px;
+  min-width: 40px;
+  margin: 0 -3px;
+  padding: 3px;
   overflow: hidden;
   color: var(--text-3);
   font-size: var(--t-small);
   flex-shrink: 1000;
 }
 
+/* As tall as the account and lane chips, so the line keeps its middle when they have wrapped away. */
+.topbar-crumb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  min-width: 0;
+}
+
+.topbar-crumb-item + .topbar-crumb-item {
+  margin-left: 6px;
+}
+
 .topbar-crumb svg {
   flex-shrink: 0;
   opacity: 0.8;
-}
-
-.topbar-crumb svg:not(:first-child) {
-  margin-left: 6px;
 }
 
 .topbar-actions {
@@ -598,6 +616,12 @@ html[data-desktop='darwin'] .app[data-sidebar='false'] .topbar {
   align-items: flex-end;
   gap: 8px;
   pointer-events: none;
+}
+
+/* In a session they rise above the composer (its rest height and the stage's gap), so a toast never
+   covers the send key, the model or the mode while it is up. */
+body:has(.stage-dock) .toasts {
+  bottom: calc(var(--gap) + 124px);
 }
 
 .toast {

@@ -619,17 +619,17 @@ function Topbar({ panelShown }: { panelShown: boolean }) {
           <span className="topbar-crumb">
             {/* A chat without a folder: its own folder is named after its first message, so the title already says it. */}
             {!session.chat && (
-              <>
+              <span className="topbar-crumb-item">
                 <Icon name="folder" size={13} />
                 {/* A chat in a lane names its folder, and its lane in place of the branch. */}
                 <span className="truncate">{baseName(session.laneFolder ?? session.cwd)}</span>
-              </>
+              </span>
             )}
             {!session.chat && !session.laneFolder && session.branch && (
-              <>
+              <span className="topbar-crumb-item">
                 <Icon name="branch" size={13} />
                 <span className="truncate">{session.branch}</span>
-              </>
+              </span>
             )}
             {/* The account, when its agent has several: opens "Continue with another account". */}
             <LaneMark key={session.id} sessionId={session.id} />

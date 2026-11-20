@@ -15,6 +15,8 @@ function Ring({ done, total }: { done: number; total: number }) {
     <svg className="ts-ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden>
       <circle cx="9" cy="9" r={r} className="ts-ring-track" />
       <circle cx="9" cy="9" r={r} className="ts-ring-fill" strokeDasharray={c} strokeDashoffset={c * (1 - p)} transform="rotate(-90 9 9)" />
+      {/* Closed, a ring alone reads like an empty one: every task done carries a check. */}
+      {total > 0 && done === total && <path d="M6.1 9.3l1.9 1.9 3.9-4" className="ts-ring-check" />}
     </svg>
   );
 }

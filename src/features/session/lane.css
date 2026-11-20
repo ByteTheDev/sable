@@ -45,8 +45,15 @@
 
 /* While the lane's name can give way, the folder's name and the account beside it keep theirs (a
    shrink shared by weight would cut "repo" to "re…" to save a few pixels of a long lane name). */
-.topbar-crumb:has(> .lane-mark) > :is(.truncate, .sa-trigger) {
+.topbar-crumb:has(> .lane-mark) > :is(.topbar-crumb-item, .sa-trigger) {
   flex-shrink: 0;
+}
+
+/* The crumbs wrap what does not fit onto a hidden line: the mark asks for its glyph only and takes
+   room for its name from what is left, so it narrows before it would leave. */
+.topbar-crumb > .lane-mark {
+  flex: 1 1 calc(13px + 12px);
+  max-width: max-content;
 }
 
 .lane-ab {

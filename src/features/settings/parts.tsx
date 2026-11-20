@@ -53,11 +53,12 @@ const looksLikePath = (t: string) =>
  * A path, command or config key in a small chip, with a copy button. Paths read as labels (the UI
  * font, the directory dim); commands and keys stay code (mono).
  */
-export function CodeChip({ text, copy = true, label }: { text: string; copy?: boolean; label?: string }) {
+/** `shown` is what it reads (a path with the home folder as "~"); the copy button copies `text`. */
+export function CodeChip({ text, shown = text, copy = true, label }: { text: string; shown?: string; copy?: boolean; label?: string }) {
   const path = looksLikePath(text);
   return (
     <span className="code-chip" data-path={path || undefined}>
-      {path ? <PathLabel path={text} className="code-chip-path" /> : <code className="truncate">{text}</code>}
+      {path ? <PathLabel path={shown} title={shown !== text ? text : undefined} className="code-chip-path" /> : <code className="truncate">{shown}</code>}
       {copy && <CopyButton text={text} label={label ?? `Copy ${text}`} size={13} className="code-chip-copy" />}
     </span>
   );

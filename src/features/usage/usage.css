@@ -842,8 +842,10 @@
   text-align: right;
 }
 
+/* The meter takes the ranks' column (same share of the card, same columns after it), so the meters
+   of the models, projects and sessions above one another start and end on one edge. */
 .ua-session {
-  grid-template-columns: 14px minmax(0, 1fr) minmax(56px, 20%) 56px 44px;
+  grid-template-columns: 14px minmax(0, 1fr) minmax(64px, 26%) 56px 44px;
   min-height: 44px;
   width: 100%;
 }

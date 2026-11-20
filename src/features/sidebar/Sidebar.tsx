@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type Component
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { ContextMenu as RC, DropdownMenu as RM } from 'radix-ui';
 import type { SessionMeta } from '@shared/protocol';
-import { LogoMark, ProviderMark, StatusGlyph, Wordmark } from '@/art/Logo';
+import { LogoMark, PROVIDER_NAME, ProviderMark, StatusGlyph, Wordmark } from '@/art/Logo';
 import { Icon } from '@/icons';
 import { QuickSwitch } from '@/features/session/QuickSwitch';
 import { pathForFile } from '@/lib/desktop';
@@ -159,9 +159,17 @@ function SidebarList(props: HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDiv
       });
     };
     unfold(selectActiveKey(useStore.getState()));
-    return useStore.subscribe((s, p) => {
-      if (s.ui.activeSessionId !== p.ui.activeSessionId) unfold(selectActiveKey(s));
+    let stopReveal = () => {};
+    const off = useStore.subscribe((s, p) => {
+      if (s.ui.activeSessionId === p.ui.activeSessionId) return;
+      unfold(selectActiveKey(s));
+      stopReveal();
+      if (s.ui.activeSessionId) stopReveal = revealRow(s.ui.activeSessionId);
     });
+    return () => {
+      off();
+      stopReveal();
+    };
   }, []);
 
   useEffect(() => {
@@ -233,6 +241,7 @@ function SkeletonRows() {
 
 function DeleteDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
   const title = useStore((s) => (id ? s.sessions[id]?.title : undefined));
+  const provider = useStore((s) => (id ? s.sessions[id]?.provider : undefined));
   return (
     <Modal
       open={!!id}
@@ -241,7 +250,7 @@ function DeleteDialog({ id, onClose }: { id: string | null; onClose: () => void 
       width={400}
       description={
         <>
-          <span className="del-title">{title}</span> will be removed from Sable. The provider keeps its own transcript.
+          <span className="del-title">{title}</span> will be removed from Sable. {provider ? PROVIDER_NAME[provider] : 'The agent'} keeps its own transcript.
         </>
       }
       footer={
@@ -1030,6 +1039,30 @@ function onListScroll(e: { currentTarget: HTMLElement }) {
 }
 
 // ── keyboard: one tab stop for the whole list, arrows inside it ──
+
+/**
+ * A session opened from elsewhere (the palette, home, a notice) brings its row into view when it is
+ * scrolled out of the list, centred so its folder shows. The row may arrive late (an unfolded folder, a new session drawn after
+ * the send's frames), so look a few times; a row already in view is left where it is.
+ */
+function revealRow(id: string): () => void {
+  let timer = 0;
+  let tries = 0;
+  const look = () => {
+    const row = document.querySelector<HTMLElement>(`.side-list .srow-main[data-id="${CSS.escape(id)}"]`);
+    const list = row?.closest<HTMLElement>('.side-list');
+    if (row && list) {
+      const r = row.getBoundingClientRect();
+      const l = list.getBoundingClientRect();
+      // The list only: scrollIntoView would also move clipped ancestors.
+      if (r.top < l.top || r.bottom > l.bottom) list.scrollTop += r.top - l.top - (l.height - r.height) / 2;
+      return;
+    }
+    if (++tries < 6) timer = window.setTimeout(look, 250);
+  };
+  timer = window.setTimeout(look, 60);
+  return () => window.clearTimeout(timer);
+}
 
 // Collapsed folders unmount their rows, so every match is a visible item (no layout read per key).
 const navItems = (list: HTMLElement) => [...list.querySelectorAll<HTMLElement>('[data-nav]')];

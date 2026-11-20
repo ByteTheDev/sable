@@ -136,9 +136,9 @@ export function PermissionSubject({ req, input }: { req: PermissionRequest; inpu
       return <Field label="File" value={rel(d.path)} path />;
     case 'plan':
       return d.plan ? (
-        <div className="pc-plan scroll">
+        <FadeScroll className="pc-plan scroll">
           <Markdown text={d.plan} />
-        </div>
+        </FadeScroll>
       ) : null;
     case 'fetch':
     case 'websearch': {

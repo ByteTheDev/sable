@@ -154,6 +154,14 @@
   background-color: rgb(0 0 0 / 0.22);
 }
 
+/* The plan fades out at its lower edge while more is below, as the diffs do: across the padding
+   and down over it to the well's edge (sticky insets count from inside the padding). */
+.pc-plan > .pc-fade {
+  bottom: -12px;
+  margin: -28px -16px 0;
+  border-radius: 0 0 calc(var(--r-md) - 1px) calc(var(--r-md) - 1px);
+}
+
 
 .pc-target {
   display: flex;
@@ -491,6 +499,15 @@ button.qc-opt:active {
   stroke: var(--text-2);
   stroke-linecap: round;
   transition: stroke-dashoffset var(--d-4) var(--ease-out);
+}
+
+.ts-ring-check {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: fade-in var(--d-3) var(--ease-out) var(--d-3) backwards;
 }
 
 .ts-count {

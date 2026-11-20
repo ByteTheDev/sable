@@ -3,6 +3,7 @@ import type { ProfileEntry, UserProfile } from '@shared/protocol';
 import { AnimatePresence, motion } from 'motion/react';
 import { Icon } from '@/icons';
 import { bridge } from '@/lib/bridge';
+import { tildePath } from '@/lib/format';
 import { setSettings } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { IconButton, Switch } from '@/ui';
@@ -33,6 +34,7 @@ function dayText(day: string, now = new Date()): string {
 export function Profile() {
   const on = useStore((s) => s.settings.userProfile !== false);
   const toast = useStore((s) => s.toast);
+  const home = useStore((s) => s.home);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [text, setText] = useState('');
   const [state, setState] = useState<'saved' | 'dirty' | 'saving'>('saved');
@@ -121,7 +123,7 @@ export function Profile() {
           <h3 className="set-group-title">About you</h3>
           {profile && (
             <div className="set-group-aside">
-              <CodeChip text={profile.path} label="Copy path" />
+              <CodeChip text={profile.path} shown={tildePath(profile.path, home)} label="Copy path" />
             </div>
           )}
         </header>

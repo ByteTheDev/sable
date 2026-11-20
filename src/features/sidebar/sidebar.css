@@ -278,12 +278,20 @@
   height: 30px;
   border-radius: var(--r-sm);
   transition: background-color var(--d-1) var(--ease);
+  /* What its hover tools fade over (as a row's do): the ground, and the header's fill on it. */
+  --head-ground: var(--side-bg);
+  --head-bg: var(--head-ground);
 }
 
 .sgroup-head:hover,
 .sgroup-head[data-menu],
 .sgroup-head[data-state='open'] {
   background-color: var(--fill-1);
+  --head-bg: color-mix(in srgb, var(--head-ground) 96.5%, white);
+}
+
+.sgroup[data-dragging] > .sgroup-head {
+  --head-ground: var(--row-hover);
 }
 
 .sgroup-head-static:hover {
@@ -360,6 +368,7 @@
   opacity: 0;
 }
 
+/* Over a long name's end, never through it: a short fade in the header's own fill backs them. */
 .sgroup-tools {
   position: absolute;
   right: 3px;
@@ -367,6 +376,8 @@
   translate: 0 -50%;
   display: flex;
   gap: 0;
+  padding-left: 18px;
+  background: linear-gradient(to right, transparent, var(--head-bg) 16px);
   opacity: 0;
   transition: opacity var(--d-1) var(--ease);
 }
