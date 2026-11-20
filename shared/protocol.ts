@@ -1412,6 +1412,8 @@ export interface AppState {
   version: string;
   platform: string;
   home: string;
+  /** Where Sable keeps its data (`~/.sable`, or `SABLE_HOME`); absent in older bridges. */
+  dataDir?: string;
   providers: ProviderInfo[];
   projects: Project[];
   sessions: SessionMeta[];

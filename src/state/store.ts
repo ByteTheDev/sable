@@ -126,6 +126,8 @@ export interface Store {
   version: string;
   platform: string;
   home: string;
+  /** Where the bridge keeps its data (Settings › About); empty until hello, or from an older bridge. */
+  dataDir: string;
   providers: Partial<Record<ProviderId, ProviderInfo>>;
   projects: Project[];
   /** Projects grouping folders in the sidebar. */
@@ -208,6 +210,7 @@ export const useStore = create<Store>((set, get) => ({
   version: '',
   platform: '',
   home: '',
+  dataDir: '',
   providers: {},
   projects: [],
   groups: [],
@@ -639,6 +642,7 @@ async function hello() {
       version: app.version,
       platform: app.platform,
       home: app.home,
+      dataDir: app.dataDir ?? '',
       providers: Object.fromEntries(app.providers.map((p) => [p.id, p])),
       limits: withAccountLimits(s.limits, app.providers),
       projects: app.projects,

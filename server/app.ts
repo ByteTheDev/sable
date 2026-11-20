@@ -1526,6 +1526,7 @@ export class App {
       version: VERSION,
       platform: process.platform,
       home: homedir(),
+      dataDir: this.store.dir,
       providers,
       projects: this.store.state.projects,
       sessions: [...this.sessions.values()].map((r) => r.meta),

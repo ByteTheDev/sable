@@ -5,6 +5,7 @@ import { connectableAgents, planLabel, signedInAccount } from '@/features/connec
 import { checkForUpdate, installUpdate, setSettings } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { Spinner } from '@/ui';
+import { tildePath } from '@/lib/format';
 import { Card, CodeChip, Row } from './parts';
 
 const PLATFORM: Record<string, string> = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' };
@@ -12,6 +13,8 @@ const PLATFORM: Record<string, string> = { win32: 'Windows', darwin: 'macOS', li
 export function About() {
   const version = useStore((s) => s.version);
   const platform = useStore((s) => s.platform);
+  const home = useStore((s) => s.home);
+  const dataDir = useStore((s) => s.dataDir);
   const providers = useStore((s) => s.providers);
   const conn = useStore((s) => s.conn);
   const setUi = useStore((s) => s.setUi);
@@ -55,7 +58,8 @@ export function About() {
 
       <Card title="This computer">
         <Row label="Data" help="Sessions, projects and settings are stored here, on this computer only.">
-          <CodeChip text="~/.sable" />
+          {/* The real folder (SABLE_HOME moves it), shown with ~ for the home folder; copy gives the full path. */}
+          <CodeChip text={dataDir || '~/.sable'} shown={dataDir ? tildePath(dataDir, home) : '~/.sable'} />
         </Row>
         <Row label="Platform">
           <span className="about-val">{PLATFORM[platform] ?? (platform || 'Unknown')}</span>
