@@ -1,6 +1,20 @@
 /* What the agent's harness wrote in the person's place (Synthetic.tsx): quiet lines in the flow,
    step-sized, where a message bubble would have stood. */
 
+/* What a command printed (Notice.tsx, CommandOutput): a quiet line under the message that asked
+   for it, where a turn's work line would stand, with the printout open under it. */
+.tl-item[data-t='notice'][data-k='command'] {
+  padding-top: 4px;
+  padding-bottom: 10px;
+  contain-intrinsic-size: auto 120px;
+}
+
+/* The printout is what the person asked to read: the answer's strength, in the details' size. */
+.syn-print .md {
+  font-size: 13px;
+  line-height: 1.58;
+}
+
 /* A turn's air above it, as a message has, then the line itself. */
 .tl-item[data-t='user'][data-k='synthetic'] {
   padding-top: 18px;

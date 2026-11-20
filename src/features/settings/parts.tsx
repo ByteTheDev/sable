@@ -190,10 +190,7 @@ export function ModeList({ modes, value, onChange, label }: { modes: ModeInfo[];
       {modes.map((m) => (
         <button key={m.id} type="button" role="radio" aria-checked={m.id === value} className="pick pick-plain" onClick={() => onChange(m.id)}>
           <Icon name={MODE_ICON[m.tone] ?? 'shield'} size={17} className="pick-icon" />
-          <span className="pick-text">
-            <span className="pick-name">{m.name}</span>
-            {m.description && <span className="pick-desc truncate">{m.description}</span>}
-          </span>
+          <span className="pick-name truncate">{m.name}</span>
           <Check on={m.id === value} />
         </button>
       ))}

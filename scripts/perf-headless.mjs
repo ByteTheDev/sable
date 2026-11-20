@@ -220,6 +220,9 @@ function analyse(events) {
     }
     if (e.name === 'RasterTask' && e.ph === 'X') (out.rasterN++, (out.rasterMs += dur));
     if (e.name === 'GPUTask' && e.ph === 'X') out.gpuTaskMs += dur;
+    // Headless presents with a swap that can block for seconds at random (no display to pace it):
+    // a wait, not work. Kept apart so the GPU's busy time below means drawing.
+    if (k === 'gpu' && e.ph === 'X' && e.name === 'SkiaOutputSurfaceImplOnGpu::SwapBuffers') out.swapMs = (out.swapMs ?? 0) + dur;
   }
   const busy = {};
   for (const [k, list] of intervals) {
@@ -237,6 +240,7 @@ function analyse(events) {
     if (end > s) total += end - s;
     busy[k] = total / 1000;
   }
+  if (busy.gpu !== undefined && out.swapMs) busy.gpu = Math.max(0, busy.gpu - out.swapMs);
   out.busy = busy;
   return out;
 }
@@ -841,6 +845,19 @@ const SCENARIOS = {
     await finishedSession();
     return measure('idle-session', () => sleep(10_000));
   },
+  // At rest: the same, after the field has eased to its still frame (20 s without input or a turn).
+  'rest-home': async () => {
+    await home();
+    await page.mouse.move(size[0] / 2, size[1] - 4);
+    await sleep(22_000);
+    return measure('rest-home', () => sleep(10_000));
+  },
+  'rest-session': async () => {
+    await finishedSession();
+    await page.mouse.move(size[0] / 2, size[1] - 4);
+    await sleep(22_000);
+    return measure('rest-session', () => sleep(10_000));
+  },
   'sweep-side': async () => {
     await home();
     const b = await box('.side-list');
@@ -902,6 +919,20 @@ const SCENARIOS = {
         await sleep(700);
         await page.keyboard.press('Escape');
         await sleep(600);
+      }
+    });
+  },
+  // The command palette (mod+k) opened and closed twice in a finished session.
+  palette: async () => {
+    await finishedSession();
+    await page.click('.composer[data-variant=session]:not(.handoff-ghost) textarea.cmp-input:not(.cmp-mirror)');
+    await sleep(300);
+    return measure('palette', async () => {
+      for (let i = 0; i < 2; i++) {
+        await page.keyboard.press('Control+K');
+        await sleep(500);
+        await page.keyboard.press('Escape');
+        await sleep(500);
       }
     });
   },

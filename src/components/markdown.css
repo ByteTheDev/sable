@@ -107,6 +107,9 @@
 
 /* ── inline ── */
 
+/* A chip that breaks across lines is cut at the break (slice), not closed on each line: the line
+   breaker does not reserve a cloned end padding, so a closed piece at a line's end reached past
+   the column's edge. */
 .md-code {
   font-family: var(--font-mono);
   font-size: 0.857em;
@@ -116,8 +119,6 @@
   color: var(--text);
   background-color: var(--fill-2);
   overflow-wrap: anywhere;
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
 }
 
 .md :is(h1, h2, h3, h4) .md-code {
@@ -185,8 +186,6 @@ a.md-file:focus-visible,
   background-color: var(--fill-2);
   cursor: pointer;
   overflow-wrap: anywhere;
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
   transition: background-color var(--d-1) var(--ease);
 }
 

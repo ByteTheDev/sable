@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react';
-import type { UserItem } from '@shared/protocol';
+import type { NoticeItem, UserItem } from '@shared/protocol';
 import { taskLabel, taskName, type Synthetic, type SyntheticPart, type TaskNote, type TaskOutcome } from '@shared/synthetic';
 import { Collapse } from '@/components/Collapse';
 import { Markdown } from '@/components/Markdown';
@@ -211,6 +211,47 @@ function CommandLine({ name, args, ts }: { name: string; args: string; ts: numbe
     </div>
   );
 }
+
+/** What a command's printout is called (the notice's text), and its mark: the command's own where known. */
+const OUTPUT_ICON: Record<string, IconName> = {
+  'Context usage': 'context',
+  'Session cost': 'coins',
+  'Available commands': 'question',
+};
+
+/**
+ * What a command printed in the conversation (Sable's own `/context`, `/cost`, `/help`; Claude
+ * Code's local command output), as one of the quiet lines: its name, its time and, open from the
+ * start because it was asked for, the printout under it at reading strength.
+ */
+export const CommandOutput = memo(function CommandOutput({ item }: { item: NoticeItem }) {
+  const [open, setOpen] = useState(true);
+  const text = item.detail?.trim() ?? '';
+  const more = !!text;
+  return (
+    <div className="tool syn-line" data-status="done" data-open={(open && more) || undefined}>
+      <button type="button" className="row-btn tool-row" aria-expanded={more ? open : undefined} data-static={!more || undefined} tabIndex={more ? undefined : -1} onClick={() => more && setOpen(!open)}>
+        <span className="tool-icon">
+          <Icon name={OUTPUT_ICON[item.text] ?? 'prompt'} size={14} />
+        </span>
+        <span className="tool-title">{item.text}</span>
+        <span className="tool-meta">
+          <When ts={item.ts} />
+        </span>
+        {more ? <Icon name="caret-right" size={10} className="row-caret" /> : <CaretSlot />}
+      </button>
+      {more && (
+        <Collapse open={open}>
+          <div className="syn-details">
+            <div className="syn-print">
+              <Markdown text={text} />
+            </div>
+          </div>
+        </Collapse>
+      )}
+    </div>
+  );
+});
 
 /** A `!` command typed in the agent's own terminal. */
 function BashLine({ command, ts }: { command: string; ts: number }) {

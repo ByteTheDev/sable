@@ -231,7 +231,7 @@ export const ItemRow = memo(function ItemRow({ id, nested = false, answer = fals
       className={nested ? 'tl-sub' : 'tl-item'}
       data-item-id={item.id}
       data-t={item.type}
-      data-k={item.type === 'tool' ? item.kind : item.type === 'user' && item.until ? 'check' : syn ? 'synthetic' : undefined}
+      data-k={item.type === 'tool' ? item.kind : item.type === 'user' && item.until ? 'check' : syn ? 'synthetic' : item.type === 'notice' && item.variant === 'command' ? 'command' : undefined}
       data-role={syn?.role}
       data-answer={answer || undefined}
       data-mid={mid || undefined}

@@ -663,17 +663,20 @@ function LiveLine({ seg, open, onToggle }: { seg: Segment; open: boolean; onTogg
       {onToggle && <Icon name="caret-right" size={10} className="row-caret" />}
     </>
   );
+  // One element whether or not there is anything to open yet: the line must not be made again when
+  // its first step arrives, or its entrance (the words fading in last) would play a second time.
   return (
     <div className="work-head" data-live role="status" aria-live="off">
-      {onToggle ? (
-        <button type="button" className="work-line work-live" aria-expanded={open} onClick={onToggle}>
-          {body}
-        </button>
-      ) : (
-        <div className="work-line work-live" data-static>
-          {body}
-        </div>
-      )}
+      <button
+        type="button"
+        className="work-line work-live"
+        aria-expanded={onToggle ? open : undefined}
+        data-static={!onToggle || undefined}
+        tabIndex={onToggle ? undefined : -1}
+        onClick={onToggle}
+      >
+        {body}
+      </button>
       <span className="work-band" aria-hidden />
       <span className="work-fade" aria-hidden />
     </div>

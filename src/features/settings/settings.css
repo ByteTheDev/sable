@@ -536,7 +536,7 @@
 
 /* Name first: a quiet monochrome icon instead of a tile. */
 .pick-plain {
-  min-height: 48px;
+  min-height: 40px;
   padding-left: 13px;
   gap: 13px;
 }
@@ -565,24 +565,13 @@
   outline-offset: var(--focus-inset);
 }
 
-.pick-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+/* A picker row is its name alone: people know what the modes do (no description under it). */
+.pick-name {
   flex: 1;
   min-width: 0;
-}
-
-.pick-name {
   font-size: var(--t-ui);
   font-weight: var(--w-medium);
   color: var(--text);
-}
-
-.pick-desc {
-  font-size: var(--t-small);
-  line-height: 1.45;
-  color: var(--text-3);
 }
 
 .pick-check {
@@ -1115,6 +1104,7 @@ button.xrow-head:disabled:hover {
   color: var(--text-3);
 }
 
+/* An instruction file is prose for the agent: written in the interface face, as Profile's editor. */
 .mem-editor {
   flex: 1;
   min-height: 220px;
@@ -1122,10 +1112,9 @@ button.xrow-head:disabled:hover {
   padding: 14px 16px;
   border: 0;
   resize: none;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 20px;
-  font-variant-ligatures: none;
+  font-family: var(--font-sans);
+  font-size: var(--t-ui);
+  line-height: 21px;
   tab-size: 2;
   color: var(--text);
 }

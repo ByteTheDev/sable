@@ -1879,49 +1879,6 @@ button:hover > .row-caret {
   max-width: none;
 }
 
-.notice-cmd {
-  border-radius: var(--r-md);
-  border: 1px solid var(--line);
-  background-color: var(--panel);
-}
-
-.notice-cmd-head {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  height: 36px;
-  padding: 0 12px;
-  border-radius: var(--r-md);
-  text-align: left;
-  font-size: 12.5px;
-  font-weight: var(--w-medium);
-  color: var(--text);
-  transition: background-color var(--d-1) var(--ease);
-}
-
-.notice-cmd-head > svg:first-child {
-  color: var(--text-3);
-  flex-shrink: 0;
-}
-
-.notice-cmd-head:not([data-static]):hover {
-  background-color: var(--fill-1);
-}
-
-.notice-cmd-head:focus-visible {
-  outline-offset: var(--focus-inset);
-  border-radius: var(--r-md);
-}
-
-.notice-cmd-body {
-  padding: 2px 14px 14px;
-}
-
-.notice-cmd-body .md {
-  font-size: 14px;
-}
-
 /* ───────────── a turn: message, work, answer ───────────── */
 
 .tg {
@@ -2508,7 +2465,9 @@ button:hover > .row-caret {
   animation-delay: calc(var(--d) * 105ms), calc(var(--d) * 42ms + 240ms);
 }
 
-.tl-work[data-enter][data-live] > .work-head .work-label {
+/* The figures come with the words: a line that arrives already counting (the segment a steer opens
+   has its time and steps at once) never shows them beside an empty title. */
+.tl-work[data-enter][data-live] > .work-head :is(.work-label, .work-time) {
   animation: fade-in 220ms var(--ease) 380ms backwards;
 }
 
@@ -2523,7 +2482,7 @@ button:hover > .row-caret {
     animation: fade-in var(--d-3) var(--ease);
   }
   .tail .tail-label,
-  .tl-work[data-enter][data-live] > .work-head .work-label {
+  .tl-work[data-enter][data-live] > .work-head :is(.work-label, .work-time) {
     animation: none;
   }
   .tl-work[data-enter][data-live] > .work-head {

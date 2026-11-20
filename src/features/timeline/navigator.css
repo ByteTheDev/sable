@@ -15,10 +15,13 @@
   z-index: 2;
   /* Clear of the top fade and of the find bar when it opens. */
   top: 52px;
-  right: 10px;
+  /* Beside the scrollbar's gutter (10px) with a pixel over it, clear of its thumb (3 to 7px from the
+     edge): at the narrowest gutter (24px, the side panel open) the track stands 9px from the
+     reading column. The ticks and hits (at most 14px from its right) fit its 16px. */
+  right: 9px;
   /* Ends a little above the composer, which covers the conversation's last (dock - 30) px. */
   bottom: calc(var(--dock-h, 150px) - 14px);
-  width: 18px;
+  width: 16px;
   contain: strict;
   touch-action: none;
   opacity: 0;
@@ -152,7 +155,8 @@
   position: absolute;
   z-index: 3;
   top: 52px;
-  right: 36px;
+  /* 8px left of the track (right 9px, 16px wide). */
+  right: 33px;
   width: max-content;
   max-width: min(320px, calc(100% - 96px));
   padding: 7px 12px 8px;
