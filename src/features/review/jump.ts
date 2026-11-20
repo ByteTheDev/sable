@@ -70,7 +70,21 @@ function seek(req: JumpRequest) {
   cancelAnimationFrame(seeking);
   const until = performance.now() + 2500;
   let nearDone = false;
+  let placed: HTMLElement | null = null;
+  let holdUntil = 0;
   const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // A comment already on screen is found while the list's menu is still closing; the menu takes the
+  // keyboard back as it goes (then it falls to the page). For a moment, put it back on the comment,
+  // unless the person has moved it somewhere else meanwhile.
+  const holdFocus = () => {
+    if (!placed?.isConnected || performance.now() > holdUntil) return;
+    const a = document.activeElement;
+    if (a !== placed) {
+      if (a && a !== document.body && !a.closest('.rv-pop')) return;
+      placed.focus({ preventScroll: true });
+    }
+    seeking = requestAnimationFrame(holdFocus);
+  };
   const tick = () => {
     if (pending !== req) return;
     const card = document.querySelector<HTMLElement>(`[data-rv-id="${CSS.escape(req.id)}"]`);
@@ -78,12 +92,15 @@ function seek(req: JumpRequest) {
     const opening = card?.closest('.collapse:not([data-settled]), .rv-grow:not([data-settled])');
     if (card && (!opening || performance.now() > until - 1500)) {
       pending = null;
+      placed = card;
       card.focus({ preventScroll: true });
       card.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' });
       card.removeAttribute('data-flash');
       void card.offsetWidth;
       card.setAttribute('data-flash', '');
       window.setTimeout(() => card.removeAttribute('data-flash'), 1400);
+      holdUntil = performance.now() + 800;
+      seeking = requestAnimationFrame(holdFocus);
       return;
     }
     if (!nearDone) {

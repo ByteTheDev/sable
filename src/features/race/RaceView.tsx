@@ -242,9 +242,12 @@ function RaceColumn({ id, rival, side, name, rivalName, onReply }: { id: string;
       <div className="race-col-body">
         <Timeline sessionId={id} />
       </div>
-      <div className="race-col-prompts">
-        <PromptDock sessionId={id} />
-      </div>
+      {/* A side whose lane was removed is stopped and archived: its task list or prompts would read as work still to come. */}
+      {outcome !== 'dropped' && (
+        <div className="race-col-prompts">
+          <PromptDock sessionId={id} />
+        </div>
+      )}
       <RaceFoot id={id} rival={rival} label={name.label} rivalLabel={rivalName} />
     </section>
   );
