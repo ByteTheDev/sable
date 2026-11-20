@@ -49,6 +49,7 @@ import { orderAccounts } from './accounts/order';
 import { withBrowserLine } from './providers/browser-tool';
 import { profileOf } from './services/profile';
 import { parseUntil, runCheck, UntilLoops } from './core/until';
+import { ChatTitles, type TitleModel, type TitlePrompt } from './core/titles';
 import { Lanes } from './core/lanes';
 import { isAllModelsWeekly } from './core/limit-policy';
 import { effectiveModel, planWeight, SpareWaits, type SpareAccount, type SpareRun } from './core/spare';
@@ -198,6 +199,14 @@ export class App {
       }
     },
     persist: () => this.persistSessions(),
+    log: (...args) => this.log(...args),
+  });
+
+  /** Chat titles by a small model, once after a chat's first turn (server/core/titles.ts). */
+  private titles = new ChatTitles({
+    settings: () => this.store.state.settings,
+    model: (rt) => this.titleModel(rt),
+    open: (rt) => this.sessions.get(rt.id) === rt,
     log: (...args) => this.log(...args),
   });
 
@@ -362,6 +371,23 @@ export class App {
       const info = this.cache.get<ProviderInfo>(`info:${id}`);
       return !!info?.installed && !!info.auth?.loggedIn;
     });
+  }
+
+  /**
+   * The model that names a chat: its own agent's smallest, on the chat's own account (Claude Code's
+   * Haiku). An agent without one (Codex) borrows Claude Code's Haiku on Claude's default account
+   * while Claude Code is signed in; otherwise none, and the chat keeps its title.
+   */
+  private titleModel(rt: SessionRuntime): TitleModel | undefined {
+    const ask = (p: Provider) => (p.quickTitle ? (prompt: TitlePrompt, signal: AbortSignal) => p.quickTitle!(prompt, signal) : undefined);
+    try {
+      const own = ask(this.provider(rt.meta.provider, rt.meta.accountId ?? DEFAULT_ACCOUNT));
+      if (own) return own;
+      if (rt.meta.provider === 'claude' || !this.otherAgents().includes('claude')) return undefined;
+      return ask(this.provider('claude', this.defaultAccountId('claude')));
+    } catch {
+      return undefined;
+    }
   }
 
   /** Whether `agent` can check a turn now: the Demo always, Claude Code and Codex where installed and signed in (last known). */
@@ -839,13 +865,39 @@ export class App {
   /** A model chosen since the agent started goes to it now (never into a running turn: a steer leaves it for the next message). */
   private async applyDue(rt: SessionRuntime, handle: ProviderSession) {
     const due = this.modelDue.get(rt.id);
-    if (!due || rt.turnActive) return;
+    if (!due || rt.turnActive) {
+      // An effort the running agent did not take when it was chosen goes with this message.
+      if (this.effortDue.has(rt.id)) await this.applyEffort(rt, handle);
+      return;
+    }
     this.modelDue.delete(rt.id);
     try {
       await handle.setModel(rt.meta.model);
       if (due.speed) await handle.setSpeed?.(rt.meta.speed ?? STANDARD_SPEED);
     } catch (err) {
       this.log('model change failed', (err as Error).message);
+    }
+    // A model change can reset the agent's effort to the model's own: the session's goes again.
+    if (rt.meta.effort) await this.applyEffort(rt, handle);
+  }
+
+  /** Sessions whose running agent has not taken the effort they hold (it refused, or failed to answer). */
+  private effortDue = new Set<string>();
+
+  /**
+   * The session's effort to its running agent (none running: the next start reads it from the session).
+   * Never throws: a refusal leaves it due, and it goes again right before the next message.
+   */
+  private async applyEffort(rt: SessionRuntime, handle: ProviderSession | undefined) {
+    const effort = rt.meta.effort;
+    if (!handle || !effort) return void this.effortDue.delete(rt.id);
+    this.effortDue.add(rt.id);
+    try {
+      await handle.setEffort(effort);
+      // A later pick went out meanwhile: it settles what is due.
+      if (rt.meta.effort === effort) this.effortDue.delete(rt.id);
+    } catch (err) {
+      this.log('effort change failed; it goes with the next message', (err as Error).message);
     }
   }
 
@@ -1371,6 +1423,8 @@ export class App {
       this.until.turnHeld(rt);
       return;
     }
+    // The chat's first turn settled: a small model names it, in the background.
+    this.titles.turnEnded(rt);
     // Let the adapter finish its own bookkeeping (it may start a turn of its own first, with a
     // steered message the turn ended before taking).
     setTimeout(() => {
@@ -2138,8 +2192,11 @@ export class App {
     });
     this.register('session.setEffort', async ({ sessionId, effort }) => {
       const rt = this.runtime(sessionId);
-      await rt.handle?.setEffort(effort);
+      // The choice is the session's at once, in the order it was made: the chip, the popover, the phone and
+      // the next message all read it, whatever the agent takes to answer (Claude Code's answer can take
+      // seconds while its process starts, and two quick picks must not land in the order they finish).
       rt.update({ effort });
+      await this.applyEffort(rt, rt.handle);
       return { ok: true };
     });
     this.register('session.setMode', async ({ sessionId, mode }) => {
@@ -2387,6 +2444,7 @@ export class App {
     this.updates?.dispose();
     this.until.dispose();
     this.spare.dispose();
+    this.titles.dispose();
     await this.checks.dispose();
     for (const fn of this.disposers.splice(0)) await Promise.resolve(fn()).catch(() => {});
     for (const rt of this.sessions.values()) {

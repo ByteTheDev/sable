@@ -63,6 +63,9 @@ export function General() {
         <Row label="Generative UI">
           <Switch label="Generative UI" checked={settings.generativeUi !== false} onChange={(generativeUi) => setSettings({ generativeUi })} />
         </Row>
+        <Row label="Name chats with a small model">
+          <Switch label="Name chats with a small model" checked={settings.chatTitles !== false} onChange={(chatTitles) => setSettings({ chatTitles })} />
+        </Row>
         <Row label="Lanes" help="A chat in a busy git folder gets a worktree of its own.">
           <Switch label="Lanes" checked={settings.autoLanes === true} onChange={(autoLanes) => setSettings({ autoLanes })} />
         </Row>

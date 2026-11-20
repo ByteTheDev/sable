@@ -30,6 +30,7 @@ import type {
 } from '../../shared/protocol';
 import type { SessionRuntime } from '../core/runtime';
 import type { Provider, ProviderContext, ProviderSession } from './types';
+import type { TitlePrompt } from '../core/titles';
 import {
   DEFAULT_MODEL,
   MCP_SERVERS,
@@ -267,9 +268,31 @@ export class DemoProvider implements Provider {
     return true;
   }
 
+  /** A pretend small model names the chat: a few of the message's own words, after a short pause. No model is asked. */
+  async quickTitle(prompt: TitlePrompt, signal: AbortSignal): Promise<string | null> {
+    await new Promise((r) => setTimeout(r, 600 * this.speed));
+    if (signal.aborted) return null;
+    return demoTitle(prompt.user);
+  }
+
   async dispose() {
     await this.cancelLogin();
   }
+}
+
+/** The Demo's title: the message's words without a greeting or a request's lead-in, five at most, sentence case. */
+export function demoTitle(prompt: string): string | null {
+  const message = /<message>\n?([\s\S]*?)\n?<\/message>/.exec(prompt)?.[1] ?? prompt;
+  const words = message
+    .replace(/[`*_#>]/g, ' ')
+    .replace(/^\s*(hi|hey|hello)\b[\s,!.]*/i, '')
+    .replace(/^\s*(please|can you|could you|would you|i want you to|i'd like you to)\s+/i, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 5);
+  if (!words.length) return null;
+  const t = words.join(' ').replace(/[.,:;!?…]+$/, '');
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 /** A short finished exchange for a resumed session. */

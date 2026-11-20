@@ -86,16 +86,20 @@ describe('sidebar rename focus after a menu', () => {
     expect(focus).toHaveBeenCalledTimes(1);
   });
 
-  it('waits for the menu that asked for it to close, and keeps Radix from focusing the trigger', () => {
+  it('a field from a menu focuses at once, in the frame it appears (no dead field while the menu fades)', () => {
     const rename = vi.fn();
     holdFocus(rename)();
     expect(rename).toHaveBeenCalledTimes(1);
     const focus = vi.fn();
-    focusAfterMenu(focus);
-    expect(focus).not.toHaveBeenCalled();
+    const keep = vi.fn();
+    focusAfterMenu(focus, keep);
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(keep).not.toHaveBeenCalled();
+    // The menu's close: Radix must not focus the trigger; the field keeps (or gets back) its focus.
     const e = { preventDefault: vi.fn() };
     onCloseAutoFocus(e);
     expect(e.preventDefault).toHaveBeenCalled();
+    expect(keep).toHaveBeenCalledTimes(1);
     expect(focus).toHaveBeenCalledTimes(1);
     // The next menu that closes on its own hands focus back to its trigger as usual.
     const next = { preventDefault: vi.fn() };
@@ -103,24 +107,50 @@ describe('sidebar rename focus after a menu', () => {
     expect(next.preventDefault).not.toHaveBeenCalled();
   });
 
-  it('a field that went away meanwhile is not focused; one never told of the close focuses anyway', () => {
+  it('a field that went away before the close is left alone; a close that never comes is forgotten', () => {
     vi.useFakeTimers();
     holdFocus(() => {})();
-    const gone = vi.fn();
-    focusAfterMenu(gone)();
+    const keepGone = vi.fn();
+    focusAfterMenu(() => {}, keepGone)();
     onCloseAutoFocus({ preventDefault() {} });
-    expect(gone).not.toHaveBeenCalled();
+    expect(keepGone).not.toHaveBeenCalled();
 
     holdFocus(() => {})();
-    const late = vi.fn();
-    focusAfterMenu(late, 600);
-    vi.advanceTimersByTime(599);
-    expect(late).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
-    expect(late).toHaveBeenCalledTimes(1);
-    // Nothing left waiting: the next field focuses at once.
-    const after = vi.fn();
-    focusAfterMenu(after);
-    expect(after).toHaveBeenCalledTimes(1);
+    const keep = vi.fn();
+    focusAfterMenu(() => {}, keep, 600);
+    vi.advanceTimersByTime(600);
+    // Nothing left waiting: the next menu's close returns focus to its own trigger.
+    const next = { preventDefault: vi.fn() };
+    onCloseAutoFocus(next);
+    expect(next.preventDefault).not.toHaveBeenCalled();
+    expect(keep).not.toHaveBeenCalled();
+  });
+});
+
+describe('sidebar rename: the switch from name to field is one step', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('the menu Rename came from is made inert as it closes, so nothing in it can take the field\'s focus', () => {
+    const menus = [{ inert: false }, { inert: false }];
+    vi.stubGlobal('document', { querySelectorAll: (sel: string) => (sel === '.side-pop' ? menus : []) });
+    const rename = vi.fn(() => expect(menus.every((m) => m.inert)).toBe(true));
+    holdFocus(rename)();
+    expect(rename).toHaveBeenCalledTimes(1);
+    onCloseAutoFocus({ preventDefault() {} });
+  });
+
+  it("a renamed row keeps its menu's trigger in place (hidden, not removed), so the closing menu never jumps", async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync(new URL('../src/features/sidebar/sidebar.css', import.meta.url), 'utf8');
+    const rule = (sel: string) => {
+      const at = css.indexOf(`${sel} {`);
+      expect(at, sel).toBeGreaterThanOrEqual(0);
+      return css.slice(at, css.indexOf('}', at));
+    };
+    // display: none took the "…" out of layout: the menu fading out followed it to the window's corner.
+    for (const sel of ['.sgroup-head[data-renaming] .sgroup-tools', '.srow-end[hidden]']) {
+      expect(rule(sel)).not.toMatch(/display:\s*none/);
+      expect(rule(sel)).toMatch(/visibility:\s*hidden/);
+    }
   });
 });

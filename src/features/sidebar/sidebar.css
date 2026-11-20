@@ -615,9 +615,10 @@
   pointer-events: none;
 }
 
-/* While the title is edited: kept (its menu closes as any menu does), not shown. */
+/* While the title is edited: kept in place, not shown. Its "…" stays where it was, so the menu that
+   Rename came from fades out where it stood (with no box to follow, it jumped to the window's corner). */
 .srow-end[hidden] {
-  display: none;
+  visibility: hidden;
 }
 
 .srow-time {
@@ -725,10 +726,10 @@
   background: none;
 }
 
+/* Not shown, but kept in place: the menu Rename came from fades out beside its "…", not in a corner. */
 .sgroup-head[data-renaming] .sgroup-tools {
-  display: none;
+  visibility: hidden;
 }
-
 /* ── archived toggle ── */
 
 .sarchived {

@@ -16,6 +16,7 @@ import type {
 import type { SessionRuntime } from '../core/runtime';
 import type { AgentCall } from './agent-tool';
 import type { ProfileAccess } from '../services/profile';
+import type { TitlePrompt } from '../core/titles';
 
 /** The account a provider instance serves. One instance exists per (provider, account) in use. */
 export interface AccountContext {
@@ -112,6 +113,11 @@ export interface Provider {
   prewarm?(choice: WarmChoice): Promise<void>;
   /** Stops the warm process, if any. */
   discardWarm?(): Promise<void>;
+  /**
+   * A chat's title from the agent's smallest model, on this provider's account: one prompt, no
+   * tools, nothing kept (core/titles.ts). Resolves to the model's raw answer, or null.
+   */
+  quickTitle?(prompt: TitlePrompt, signal: AbortSignal): Promise<string | null>;
   /** The config folder this account's agent reads and writes (its transcripts live there). */
   configHome?(): string;
   /**

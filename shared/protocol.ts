@@ -386,6 +386,8 @@ export interface SessionMeta {
   cwd: string;
   title: string;
   titleSource: 'auto' | 'user';
+  /** A small model was asked for this chat's title after its first turn (once per chat, whatever came of it; `server/core/titles.ts`). */
+  titleAsked?: boolean;
   model: string;
   effort?: Effort;
   mode: string;
@@ -1336,6 +1338,8 @@ export interface AppSettings {
   generativeUi?: boolean;
   /** Lanes: a session starting in a git folder where another session works gets a worktree of its own. Absent means off. */
   autoLanes?: boolean;
+  /** After a chat's first turn a small, cheap model names it (`server/core/titles.ts`); a title the person set is never changed. Absent means on. */
+  chatTitles?: boolean;
   /** With the phone on and a phone paired, the computer does not sleep while on mains power, so the phone can reach it (`server/core/awake.ts`). Absent means on. */
   phoneAwake?: boolean;
   /** At a plan limit, a session carries on with the next signed-in account of its agent that has room. Absent means off. */

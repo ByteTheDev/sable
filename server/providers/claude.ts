@@ -47,6 +47,7 @@ import type {
   UserItem,
 } from '../../shared/protocol';
 import type { SessionRuntime } from '../core/runtime';
+import type { TitlePrompt } from '../core/titles';
 import { dropRemote, holdRemote, type RemoteHolder } from '../core/remote-keep';
 import { claudeForkPoint, cutAt } from '../core/fork';
 import { killTree, runCli, spawnCli } from '../util/proc';
@@ -435,6 +436,9 @@ export class ClaudeProvider implements Provider {
         : undefined;
     return {
       ...base,
+      // The CLI's own word on when the session is idle or runs (session_state_changed): the SDK
+      // swallows it unless the host asks for it, and it is what ends a turn that no result closes.
+      env: { ...base.env, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1' },
       // Appended to Claude Code's own prompt: CLAUDE.md, output styles and settings still apply.
       systemPrompt: appendix ? { type: 'preset', preset: 'claude_code', append: appendix } : base.systemPrompt,
       // Flag-tier settings for this process (what applyFlagSettings changes later on).
@@ -464,6 +468,40 @@ export class ClaudeProvider implements Provider {
         if (/error|fatal/i.test(d)) this.ctx.log('claude stderr:', d.trim().slice(0, 400));
       },
     };
+  }
+
+  /**
+   * A chat's title from Claude Code's Haiku, on this account (`this.env()`: its own config folder):
+   * one prompt, no tools, no settings, MCP servers or CLAUDE.md, no thinking, a small output cap,
+   * one turn, and nothing saved to the account's history.
+   */
+  async quickTitle(prompt: TitlePrompt, signal: AbortSignal): Promise<string | null> {
+    const ctrl = new AbortController();
+    const stop = () => ctrl.abort();
+    if (signal.aborted) return null;
+    signal.addEventListener('abort', stop, { once: true });
+    const q = query({ prompt: prompt.user, options: titleOptions(prompt, this.env(), ctrl) });
+    let text = '';
+    try {
+      for await (const m of q) {
+        const any = m as Obj;
+        if (m.type === 'assistant' && !any.parent_tool_use_id) {
+          for (const b of (any.message?.content as Obj[] | undefined) ?? []) if (b.type === 'text' && b.text) text += String(b.text);
+        } else if (m.type === 'result') {
+          if (any.subtype === 'success' && typeof any.result === 'string' && any.result.trim()) text = any.result;
+          else if (any.subtype !== 'success') this.ctx.log('claude: no title:', any.subtype, (any.errors as string[] | undefined)?.join('; ') ?? '');
+          break;
+        }
+      }
+    } finally {
+      signal.removeEventListener('abort', stop);
+      try {
+        q.close();
+      } catch {
+        /* already closed */
+      }
+    }
+    return text.trim() || null;
   }
 
   // ── prewarm: one agent process started ahead of the first send ──
@@ -991,6 +1029,37 @@ interface WarmOwner {
 }
 
 /** Everything a process is started with: a warm process is only reused for the same choice. */
+/** The output cap for a title: a few words, with room to spare. */
+const TITLE_MAX_TOKENS = '96';
+
+/**
+ * Options for the one-shot title query (`ClaudeProvider.quickTitle`): Haiku, its own short system
+ * prompt instead of Claude Code's, no tools at all (any call is refused), no settings, hooks, MCP
+ * servers or CLAUDE.md, no thinking, one turn, a small output cap, nothing written to the history.
+ * `env` is the account's: the title is asked of the chat's own account and no other.
+ */
+export function titleOptions(prompt: TitlePrompt, env: NodeJS.ProcessEnv, abortController: AbortController): Options {
+  return {
+    cwd: existsSync(prompt.cwd) ? prompt.cwd : homedir(),
+    model: 'haiku',
+    systemPrompt: prompt.system,
+    tools: [],
+    allowedTools: [],
+    canUseTool: async () => ({ behavior: 'deny', message: 'No tools here.' }),
+    settingSources: [],
+    mcpServers: {},
+    strictMcpConfig: true,
+    thinking: { type: 'disabled' },
+    effort: 'low',
+    maxTurns: 1,
+    persistSession: false,
+    env: { ...env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: TITLE_MAX_TOKENS, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
+    pathToClaudeCodeExecutable: claudeBinary(),
+    abortController,
+    stderr: () => {},
+  };
+}
+
 function warmKey(c: { cwd: string; model?: string; mode?: string; effort?: Effort; options?: SessionOptions; ultracode?: boolean }, concise: boolean, widgets = true, profile = '') {
   const o = c.options ?? {};
   return JSON.stringify([path.resolve(c.cwd).toLowerCase(), c.model && c.model !== 'default' ? c.model : '', c.mode || 'default', sdkEffort(c.effort) ?? '', o.browser ?? null, !!c.ultracode, concise, widgets, o.browserTab !== false, deviceEnabled(c), profile]);
@@ -1025,7 +1094,18 @@ class ClaudeSession implements ProviderSession {
   private streams = new Map<string, StreamState>();
   private streamedMessages = new Set<string>();
   private pendingUsers = new Map<string, string>(); // sdk uuid → UserItem id
+  /** Messages from people (ours, or from the Claude app) whose turn has not ended yet. */
   private outstanding = 0;
+  /**
+   * Claude Code's own messages (a background task's notification, a teammate's message) taken since
+   * the last result. They wake the model with a turn whose result names no message of anyone's, or
+   * are folded into the running turn: never counted with `outstanding`, which only people's messages close.
+   */
+  private wakes = 0;
+  /** This CLI names the messages a result answers (`user_message_uuids`); older ones do not. */
+  private namesMessages = false;
+  /** The CLI's own state (session_state_changed), as last reported. */
+  private cliState?: 'idle' | 'running' | 'requires_action';
   private interrupted = false;
   /** A new agent process has not said hello yet (system/init): the live line says "Starting", not "Thinking". */
   private booting = false;
@@ -1275,6 +1355,8 @@ class ClaudeSession implements ProviderSession {
     this.input = undefined;
     this.streams.clear();
     this.liveTasks.clear();
+    this.wakes = 0;
+    this.cliState = undefined;
     this.clearLiveState();
     // Background sub-agents and workflows lived in this process: they ended with it.
     this.rt.stopBackground();
@@ -1314,6 +1396,7 @@ class ClaudeSession implements ProviderSession {
     const q = this.q;
     if (q) this.clearLiveState();
     this.q = undefined;
+    this.cliState = undefined;
     this.input?.end();
     this.input = undefined;
     this.costBase = this.rt.meta.usage.costUsd ?? this.costBase;
@@ -1807,16 +1890,23 @@ class ClaudeSession implements ProviderSession {
           return;
         }
       }
+      if (m.uuid) this.chain.push(m.uuid);
+      // Claude Code's own (a background task ended, a teammate wrote): it wakes the model with a turn of
+      // its own, whose result names no message, or is folded into the running turn and has none.
+      if (syn || m.isSynthetic === true) {
+        rt.add<UserItem>({ type: 'user', text, state: 'sent', providerId: m.uuid, ...(syn ? {} : { remote: true }) });
+        // Output, summaries and wrappers belong to the turn they came in; a notification or a command opens one.
+        if (syn?.role === 'output' || syn?.role === 'summary' || syn?.role === 'hidden') return;
+        this.wakes++;
+        if (!rt.turnActive) rt.beginTurn('Thinking');
+        return;
+      }
       // A message sent from elsewhere (Remote Control in the Claude app or on claude.ai): it belongs
       // in this conversation, and the turn it starts runs here too.
-      if (m.uuid) this.chain.push(m.uuid);
-      rt.add<UserItem>({ type: 'user', text, state: 'sent', providerId: m.uuid, ...(syn ? {} : { remote: true }) });
+      rt.add<UserItem>({ type: 'user', text, state: 'sent', providerId: m.uuid, remote: true });
       // It gets a result of its own (or is folded into the running turn's): either way the turn waits for it.
-      if (rt.turnActive) this.outstanding++;
-      else {
-        this.outstanding++;
-        rt.beginTurn('Thinking');
-      }
+      this.outstanding++;
+      if (!rt.turnActive) rt.beginTurn('Thinking');
       return;
     }
     if (m.uuid && !m.parent_tool_use_id) this.chain.push(m.uuid);
@@ -1876,8 +1966,14 @@ class ClaudeSession implements ProviderSession {
     const rt = this.rt;
     // The messages this result answers for (a steer folded into the turn is one of them).
     if (Array.isArray(m.user_message_uuids)) this.takeUsers(m.user_message_uuids);
-    const merged = Array.isArray(m.user_message_uuids) ? m.user_message_uuids.length : 1;
-    this.outstanding = Math.max(0, this.outstanding - Math.max(1, merged));
+    const listed = Array.isArray(m.user_message_uuids) ? m.user_message_uuids.length : 0;
+    if (listed) this.namesMessages = true;
+    // A result that names no message ends a turn Claude Code started on its own (a wake) when this CLI
+    // names the messages its turns answer; an older one names none, and each result answers one.
+    const answered = listed || (this.wakes > 0 && this.namesMessages ? 0 : 1);
+    this.outstanding = Math.max(0, this.outstanding - answered);
+    // Its own messages are taken when they are replayed: whatever woke the model is answered by now.
+    this.wakes = 0;
     const total = Number(m.total_cost_usd ?? 0);
     const usage: SessionUsage = { ...rt.meta.usage };
     // total_cost_usd counts from the start of this CLI process (reset in ensure()).
@@ -1929,6 +2025,7 @@ class ClaudeSession implements ProviderSession {
     if (!rt.turnActive) return;
     this.interrupted = false;
     this.outstanding = 0;
+    this.wakes = 0;
     this.limitHit = undefined;
     this.limitNoticeId = undefined;
     rt.settle(interrupted ? 'cancelled' : error ? 'error' : 'cancelled');
@@ -2035,11 +2132,22 @@ class ClaudeSession implements ProviderSession {
           rt.setCaps({ ...rt.caps, commands, skills: commands.filter((c) => c.kind === 'skill').map((c) => ({ name: c.name, description: c.description })) });
         }
         break;
-      case 'session_state_changed':
-        // Idle with nothing of Sable's still on its way: a message from the Claude app that was folded into
-        // the turn (no result of its own) must not keep the turn open.
+      case 'session_state_changed': {
+        // Claude Code's own word on its turns (asked for with CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS).
+        const prev = this.cliState;
+        this.cliState = m.state;
+        // Idle with nothing of Sable's still on its way: whatever no result closed (a message from the Claude
+        // app folded into the turn, a background task's notification that woke no model turn) is over.
+        // A message of ours it has not read yet keeps the turn: its own turn is still to come.
         if (m.state === 'idle' && rt.turnActive && (this.outstanding <= 0 || this.pendingUsers.size === 0)) this.finishTurn(undefined, this.interrupted);
+        // Work it started on its own, with no message to replay (a scheduled wake-up): a turn like any other,
+        // which its result or the next idle ends. Only from idle: after a prompt it is the same work going on.
+        else if (m.state === 'running' && prev === 'idle' && !rt.turnActive && this.q && !this.closed) {
+          this.wakes++;
+          rt.beginTurn('Thinking');
+        }
         break;
+      }
       default:
         break;
     }

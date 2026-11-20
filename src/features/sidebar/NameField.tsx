@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { TAKE_BACKS, blurTo, cleanName, editStep, focusAfterMenu, movesFocus, pressAt, type EditStep } from './rename';
 
 interface Props {
@@ -17,9 +17,10 @@ interface Props {
 const KEY_WINDOW = 800;
 
 /**
- * A name edited in place (a folder, a project, a chat). It takes focus once the menu it came from
- * has gone and keeps it until the edit is meant to end (rename.ts): its own listeners, not React's
- * blur, since a row the list moves while it is edited loses focus inside React's commit.
+ * A name edited in place (a folder, a project, a chat). It takes focus, its words selected, before
+ * the frame it first shows in (a layout effect: the name becomes a live field in one step), and
+ * keeps it until the edit is meant to end (rename.ts): its own listeners, not React's blur, since a
+ * row the list moves while it is edited loses focus inside React's commit.
  */
 export function NameField({ value, placeholder, label, className, onDone }: Props) {
   const ref = useRef<HTMLInputElement>(null);
@@ -31,7 +32,7 @@ export function NameField({ value, placeholder, label, className, onDone }: Prop
   const ended = useRef(false);
   const run = useRef<(step: EditStep, e?: Event) => void>(() => {});
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     ended.current = false;
@@ -85,11 +86,16 @@ export function NameField({ value, placeholder, label, className, onDone }: Prop
     document.addEventListener('keydown', onKey, true);
     document.addEventListener('keyup', onKey, true);
     el.addEventListener('focusout', onOut);
-    const cancelFocus = focusAfterMenu(() => {
-      if (ended.current || !el.isConnected) return;
-      el.focus({ preventScroll: true });
-      el.select();
-    });
+    const cancelFocus = focusAfterMenu(
+      () => {
+        el.focus({ preventScroll: true });
+        el.select();
+      },
+      // The menu it came from has closed: focus back here if anything took it, what was typed untouched.
+      () => {
+        if (!ended.current && el.isConnected && document.activeElement !== el) el.focus({ preventScroll: true });
+      },
+    );
     return () => {
       cancelFocus();
       cancelAnimationFrame(raf);

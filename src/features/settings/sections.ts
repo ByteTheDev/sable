@@ -16,7 +16,7 @@ export const SECTIONS: SectionMeta[] = [
     id: 'general',
     label: 'General',
     icon: 'sliders',
-    keywords: 'default agent provider send with enter new line show thinking reasoning notifications notify turn finishes alerts',
+    keywords: 'default agent provider send with enter new line show thinking reasoning notifications notify turn finishes alerts chat titles name chats small model haiku rename',
   },
   {
     id: 'appearance',

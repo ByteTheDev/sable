@@ -442,7 +442,7 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
                   <Icon name="dots" size={15} />
                 </RM.Trigger>
                 <RM.Portal>
-                  <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 220 }} onCloseAutoFocus={onCloseAutoFocus}>
+                  <RM.Content className="pop side-pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 220 }} onCloseAutoFocus={onCloseAutoFocus}>
                     <ProjectItems group={group} inSet={inSet} onRename={rename} M={RM as unknown as MenuParts} />
                   </RM.Content>
                 </RM.Portal>
@@ -456,7 +456,7 @@ const ProjectSection = memo(function ProjectSection({ group, collapsed, onToggle
           </div>
         </RC.Trigger>
         <RC.Portal>
-          <RC.Content className="pop" collisionPadding={10} style={{ minWidth: 220 }} onCloseAutoFocus={onCloseAutoFocus}>
+          <RC.Content className="pop side-pop" collisionPadding={10} style={{ minWidth: 220 }} onCloseAutoFocus={onCloseAutoFocus}>
             <ProjectItems group={group} inSet={inSet} onRename={rename} M={RC as unknown as MenuParts} />
           </RC.Content>
         </RC.Portal>
@@ -504,7 +504,7 @@ function ProjectItems({ group, inSet, onRename, M }: { group: ProjectGroup; inSe
           <Icon name="caret-right" size={11} />
         </M.SubTrigger>
         <M.Portal>
-          <M.SubContent className="pop" sideOffset={6} alignOffset={-4} collisionPadding={10} style={{ minWidth: 200 }}>
+          <M.SubContent className="pop side-pop" sideOffset={6} alignOffset={-4} collisionPadding={10} style={{ minWidth: 200 }}>
             {others.map((g) => (
               <M.Item key={g.id} className="menu-item" onSelect={() => void addToGroup(group.path, g.id)}>
                 <Icon name="stack" size={16} />
@@ -692,7 +692,7 @@ const SetSection = memo(function SetSection({ set, collapsed, onToggle, activeKe
                   <Icon name="dots" size={15} />
                 </RM.Trigger>
                 <RM.Portal>
-                  <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 200 }} onCloseAutoFocus={onCloseAutoFocus}>
+                  <RM.Content className="pop side-pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 200 }} onCloseAutoFocus={onCloseAutoFocus}>
                     <SetItems set={set} onRename={rename} M={RM as unknown as MenuParts} />
                   </RM.Content>
                 </RM.Portal>
@@ -709,7 +709,7 @@ const SetSection = memo(function SetSection({ set, collapsed, onToggle, activeKe
                     <Icon name="plus" size={14} />
                   </RM.Trigger>
                   <RM.Portal>
-                    <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 200 }}>
+                    <RM.Content className="pop side-pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 200 }}>
                       <RM.Label className="menu-label">New session in</RM.Label>
                       {set.folders.map((f) => (
                         <RM.Item key={f.key} className="menu-item" onSelect={() => goHome(f.path)}>
@@ -725,7 +725,7 @@ const SetSection = memo(function SetSection({ set, collapsed, onToggle, activeKe
           </div>
         </RC.Trigger>
         <RC.Portal>
-          <RC.Content className="pop" collisionPadding={10} style={{ minWidth: 200 }} onCloseAutoFocus={onCloseAutoFocus}>
+          <RC.Content className="pop side-pop" collisionPadding={10} style={{ minWidth: 200 }} onCloseAutoFocus={onCloseAutoFocus}>
             <SetItems set={set} onRename={rename} M={RC as unknown as MenuParts} />
           </RC.Content>
         </RC.Portal>
@@ -762,7 +762,7 @@ function SetItems({ set, onRename, M }: { set: SetGroup; onRename: () => void; M
             <Icon name="caret-right" size={11} />
           </M.SubTrigger>
           <M.Portal>
-            <M.SubContent className="pop" sideOffset={6} alignOffset={-4} collisionPadding={10} style={{ minWidth: 180 }}>
+            <M.SubContent className="pop side-pop" sideOffset={6} alignOffset={-4} collisionPadding={10} style={{ minWidth: 180 }}>
               {set.folders.map((f) => (
                 <M.Item key={f.key} className="menu-item" onSelect={() => goHome(f.path)}>
                   <Icon name="folder" size={16} />
@@ -858,7 +858,7 @@ const ChatsSection = memo(function ChatsSection({ chats, collapsed, onToggle, cu
           </div>
         </RC.Trigger>
         <RC.Portal>
-          <RC.Content className="pop" collisionPadding={10} style={{ minWidth: 200 }} onCloseAutoFocus={onCloseAutoFocus}>
+          <RC.Content className="pop side-pop" collisionPadding={10} style={{ minWidth: 200 }} onCloseAutoFocus={onCloseAutoFocus}>
             <RC.Item className="menu-item" onSelect={() => void goHomeChat()}>
               <Icon name="compose" size={16} />
               <span className="grow">New chat</span>

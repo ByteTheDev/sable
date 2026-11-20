@@ -7,20 +7,31 @@
  * not the app focusing something of its own (a chat's composer as the chat opens).
  */
 
-// ── focus once the menu has gone ──
+// ── focus, in the same frame the field appears ──
 
 /**
- * A rename picked from a menu: the menu is still closing for a moment, and Radix highlights a
- * menu's rows by focusing them, so a pointer passing over it on its way to the field would take
- * the field's focus. The field takes focus from the menu's own close instead (`onCloseAutoFocus`,
- * called once the menu is gone), which also keeps Radix from handing focus back to the trigger.
+ * A rename picked from a menu: the field takes focus, with its words selected, in the frame it
+ * replaces the name, so the switch is one step (waiting for the menu to finish closing showed a
+ * dead field for a few frames, then the selection popped in). The menu still closes for a moment,
+ * and Radix moves focus inside it: to a row the pointer highlights, to the menu as the pointer
+ * leaves a row, and a context menu keeps focus inside until it has closed (the item's action runs
+ * before the menu closes). So the closing menu is made inert first: nothing in it can take focus.
+ * Its close (`onCloseAutoFocus`) must not hand focus back to its trigger either: it hands it back
+ * to the field instead, should anything have taken it meanwhile.
  */
 let fromMenu = false;
 let pending: (() => void) | null = null;
 
+/** The sidebar's menus (`.side-pop`) about to close for a field: inert while they fade. */
+function quietMenus() {
+  if (typeof document === 'undefined') return;
+  for (const m of document.querySelectorAll<HTMLElement>('.side-pop')) m.inert = true;
+}
+
 /** Wraps a menu action that puts focus somewhere of its own (a name field) instead of the trigger. */
 export const holdFocus = (fn: () => void) => () => {
   fromMenu = true;
+  quietMenus();
   fn();
 };
 
@@ -29,28 +40,28 @@ export function onCloseAutoFocus(e: { preventDefault(): void }) {
   if (!fromMenu) return;
   e.preventDefault();
   fromMenu = false;
-  const focus = pending;
+  const keep = pending;
   pending = null;
-  focus?.();
+  keep?.();
 }
 
-/** Focuses now, or once the menu that asked for the field has closed. Returns a cancel. */
-export function focusAfterMenu(focus: () => void, wait = 600): () => void {
-  if (!fromMenu) {
-    focus();
-    return () => {};
-  }
-  pending = focus;
-  // Should the menu never report its close, the field still gets focus.
+/**
+ * Focuses now. When a menu asked for the field, `keep` runs as that menu closes (it puts focus
+ * back on the field if something took it, without touching what was typed). Returns a cancel.
+ */
+export function focusAfterMenu(focus: () => void, keep: () => void = focus, wait = 600): () => void {
+  focus();
+  if (!fromMenu) return () => {};
+  pending = keep;
+  // Should the menu never report its close, the next menu that closes still returns focus as usual.
   const t = setTimeout(() => {
-    if (pending !== focus) return;
+    if (pending !== keep) return;
     pending = null;
     fromMenu = false;
-    focus();
   }, wait);
   return () => {
     clearTimeout(t);
-    if (pending === focus) pending = null;
+    if (pending === keep) pending = null;
   };
 }
 

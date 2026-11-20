@@ -807,6 +807,9 @@ interface Queued {
   input: UserInput[];
 }
 
+/** How long an idle thread waits for its turn's own turn/completed before the turn is ended without it. */
+const THREAD_IDLE_GRACE_MS = 1_500;
+
 
 class CodexSession implements ProviderSession {
   threadId = '';
@@ -819,6 +822,8 @@ class CodexSession implements ProviderSession {
   private policyDirty = false;
   private interruptTimer?: NodeJS.Timeout;
   private commandTimer?: NodeJS.Timeout;
+  /** The thread reported idle while a turn was open: the turn ends unless turn/completed comes first. */
+  private idleTimer?: NodeJS.Timeout;
   private prompts = new Map<string, AbortController>();
   private reasoningSource = new Map<string, 'summary' | 'content'>();
   private compactSeen = false;
@@ -971,6 +976,7 @@ class CodexSession implements ProviderSession {
     this.abortPrompts();
     clearTimeout(this.interruptTimer);
     clearTimeout(this.commandTimer);
+    clearTimeout(this.idleTimer);
     this.queue = [];
     if (this.provider.sessions.get(this.threadId) === this) this.provider.sessions.delete(this.threadId);
     if (this.loaded) {
@@ -1232,6 +1238,7 @@ class CodexSession implements ProviderSession {
     const rt = this.rt;
     clearTimeout(this.interruptTimer);
     clearTimeout(this.commandTimer);
+    clearTimeout(this.idleTimer);
     if (!rt.turnActive) return;
     this.abortPrompts();
     if (t.status === 'interrupted') {
@@ -1276,6 +1283,18 @@ class CodexSession implements ProviderSession {
         const turn = (p as TurnNotification).turn;
         if (this.turnId && turn?.id && turn.id !== this.turnId) return; // stale turn
         return this.completeTurn({ status: turn?.status ?? 'completed', error: turn?.error?.message, durationMs: turn?.durationMs });
+      }
+      case 'thread/status/changed': {
+        // The thread's own word that nothing runs: a turn whose turn/completed never came (or was
+        // dropped as another turn's) must not keep the chat busy. turn/completed normally lands with
+        // it and carries the real outcome, so it gets a moment first.
+        clearTimeout(this.idleTimer);
+        const turnId = this.turnId;
+        if (p?.status?.type !== 'idle' || !rt.turnActive || !turnId || this.turnStarting) return;
+        this.idleTimer = setTimeout(() => {
+          if (rt.turnActive && this.turnId === turnId && !this.turnStarting) this.completeTurn({ status: 'completed' });
+        }, THREAD_IDLE_GRACE_MS);
+        return;
       }
       case 'item/started':
         return this.onItem(p as ItemNotification, false);

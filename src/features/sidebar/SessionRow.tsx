@@ -440,7 +440,7 @@ export const SessionRow = memo(function SessionRow({ id, enter, mix }: { id: str
                 <RM.Root modal={false} open={menuOpen} onOpenChange={setMenuOpen}>
                   <RM.Trigger asChild>{more}</RM.Trigger>
                   <RM.Portal>
-                    <RM.Content className="pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 188 }} onCloseAutoFocus={onCloseAutoFocus}>
+                    <RM.Content className="pop side-pop" align="start" side="right" sideOffset={6} collisionPadding={10} style={{ minWidth: 188 }} onCloseAutoFocus={onCloseAutoFocus}>
                       <DropdownItems actions={rowActions(session, ctx)} />
                     </RM.Content>
                   </RM.Portal>
@@ -492,7 +492,7 @@ export function RowContextMenu({ children, background }: { children: ReactNode; 
         {children}
       </RC.Trigger>
       <RC.Portal>
-        <RC.Content className="pop" collisionPadding={10} style={{ minWidth: 188 }} onCloseAutoFocus={onCloseAutoFocus}>
+        <RC.Content className="pop side-pop" collisionPadding={10} style={{ minWidth: 188 }} onCloseAutoFocus={onCloseAutoFocus}>
           {target === LIST ? background : session && <ContextItems actions={rowActions(session, ctx)} />}
         </RC.Content>
       </RC.Portal>
