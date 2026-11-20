@@ -186,7 +186,7 @@
 .group-card {
   position: relative;
   border-radius: 22px;
-  background: var(--grain-bg), var(--card);
+  background: var(--card);
   box-shadow: var(--edge), var(--lift);
   overflow: hidden;
 }
@@ -535,18 +535,18 @@ button.set-row:active {
   gap: 10px;
 }
 
-/* the second way in: a pane of glass like the prompt bar (frosted, the rim is its ::before), quiet beside the ivory key */
+/* the second way in: a pane of glass like the prompt bar (frosted, the rim a shadow), quiet beside the ivory key */
 .pair-alt {
   position: relative;
   isolation: isolate;
-  background: var(--glass-sheen), var(--grain-bg), rgb(22 22 25 / 0.72);
+  background: rgb(22 22 25 / 0.72);
   -webkit-backdrop-filter: var(--blur-pane);
   backdrop-filter: var(--blur-pane);
-  box-shadow: var(--rim-inner), 0 0 0 1px rgb(0 0 0 / 0.42), 0 2px 5px -1px rgb(0 0 0 / 0.38);
+  box-shadow: var(--rim-ring), var(--rim-inner), 0 0 0 1px rgb(0 0 0 / 0.42), 0 2px 5px -1px rgb(0 0 0 / 0.38);
 }
 
 .pair-alt:active {
-  background: var(--glass-sheen), var(--grain-bg), rgb(34 34 38 / 0.8);
+  background: rgb(34 34 38 / 0.8);
 }
 
 .pair-cancel {
@@ -724,15 +724,15 @@ button.set-row:active {
   text-shadow: 0 1px 12px rgb(0 0 0 / 0.6);
 }
 
-/* a pane of glass over the picture, as the pairing screen's second key (the rim is its ::before, base.css) */
+/* a pane of glass over the picture, as the pairing screen's second key (the rim is a shadow, base.css) */
 .scanner-paste {
   position: relative;
   isolation: isolate;
   width: 100%;
-  background: var(--glass-sheen), var(--grain-bg), rgb(22 22 25 / 0.72);
+  background: rgb(22 22 25 / 0.72);
   -webkit-backdrop-filter: var(--blur-pane);
   backdrop-filter: var(--blur-pane);
-  box-shadow: var(--rim-inner), 0 0 0 1px rgb(0 0 0 / 0.42), 0 2px 5px -1px rgb(0 0 0 / 0.38);
+  box-shadow: var(--rim-ring), var(--rim-inner), 0 0 0 1px rgb(0 0 0 / 0.42), 0 2px 5px -1px rgb(0 0 0 / 0.38);
 }
 
 /* no camera: one calm card */
@@ -746,10 +746,10 @@ button.set-row:active {
   max-width: 360px;
   padding: 26px 18px 14px;
   border-radius: 28px;
-  /* liquid glass, opaque (the rim is its ::before, base.css) */
+  /* liquid glass, opaque (the rim is a shadow, base.css) */
   isolation: isolate;
-  background: var(--glass-sheen), var(--grain-bg), var(--sheet-ink);
-  box-shadow: var(--rim-inner), var(--shadow-glass);
+  background: var(--sheet-ink);
+  box-shadow: var(--rim-ring), var(--rim-inner), var(--shadow-glass);
 }
 
 .scanner-card-glyph {

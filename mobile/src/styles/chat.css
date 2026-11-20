@@ -481,7 +481,7 @@
   max-width: none;
   margin: 0 -6px;
   padding: 0 15px 0 13px;
-  background: var(--grain-bg), rgb(21 21 24 / 0.95);
+  background: rgb(21 21 24 / 0.95);
   box-shadow: var(--edge), 0 14px 30px -16px rgb(0 0 0 / 0.95);
 }
 
@@ -544,7 +544,7 @@
 .run-card {
   padding: 4px 6px;
   border-radius: var(--r-lg);
-  background: var(--grain-bg), var(--card);
+  background: var(--card);
   box-shadow: var(--edge);
 }
 
@@ -688,7 +688,7 @@
   gap: 6px;
   padding: 14px 16px;
   border-radius: 20px;
-  background: var(--grain-bg), var(--card);
+  background: var(--card);
   box-shadow: var(--edge), var(--lift);
 }
 
@@ -867,7 +867,7 @@
   gap: 10px;
   padding: 16px;
   border-radius: 20px;
-  background: var(--grain-bg), var(--card);
+  background: var(--card);
   box-shadow: var(--edge), var(--lift);
 }
 
@@ -1554,6 +1554,8 @@
 
 .composer-input {
   display: block;
+  /* grows with its words (no measuring on every key, lib/fit.ts) */
+  field-sizing: content;
   width: 100%;
   min-height: 50px;
   max-height: 168px;
@@ -1805,7 +1807,6 @@
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   --pane-fill: var(--glass-solid);
-  --pane-body: transparent;
 }
 
 /* ── the send as liquid (lib/flight.ts): the ink on a canvas of its own, the words pouring out of the field ── */
@@ -1830,40 +1831,73 @@
   overflow-wrap: break-word;
 }
 
-/* ── files the agent handed over: a card each, with Download ── */
+/* ── files the agent handed over: one card, a row per file, downloaded in the app ── */
 .share {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .share-caption {
-  margin: 0 0 2px;
+  margin: 0;
   font-size: 15px;
   line-height: 1.55;
   color: var(--text-2);
 }
 
+/* flat ink one step up, as every card in the conversation */
 .share-card {
   display: flex;
+  flex-direction: column;
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: var(--edge);
+  overflow: hidden;
+}
+
+.share-row {
+  position: relative;
+  display: flex;
   align-items: center;
-  gap: 14px;
-  min-height: 76px;
-  padding: 14px 12px 14px 14px;
-  border-radius: var(--r-lg);
-  background: var(--grain-bg), var(--card);
-  box-shadow: var(--edge), var(--lift);
+  gap: 13px;
+  min-height: 72px;
+  padding: 11px 12px 11px 14px;
+}
+
+/* the hairline starts at the words, after the page */
+.share-row + .share-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 62px;
+  right: 0;
+  height: 1px;
+  background: var(--line);
 }
 
 .share-glyph {
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  background: var(--fill-2);
-  box-shadow: inset 0 0 0 1px var(--line);
+  width: 36px;
+  color: var(--text-2);
+}
+
+/* the page: ink a step lighter than the card, a hairline of light, a brighter fold */
+.file-page {
+  fill: rgb(255 255 255 / 0.055);
+  stroke: rgb(255 255 255 / 0.26);
+  stroke-width: 1.25;
+}
+
+.file-fold {
+  fill: rgb(255 255 255 / 0.15);
+  stroke: rgb(255 255 255 / 0.26);
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+}
+
+.share-row[data-state='done'] .share-glyph {
   color: var(--text);
 }
 
@@ -1877,7 +1911,7 @@
 
 .share-name {
   font-size: var(--t-ui);
-  font-weight: 580;
+  font-weight: 560;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -1885,31 +1919,98 @@
 }
 
 .share-meta {
-  font-size: var(--t-xs);
+  font-size: 13px;
   color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.share-get {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
+.share-meta[data-tone='error'] {
+  color: var(--red);
+}
+
+/* the key: a raised ink disc (tactile) with the arrow; while it downloads, a ring fills around a stop square */
+.share-key {
+  position: relative;
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
-  height: 40px;
-  padding: 0 15px 0 12px;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background-color: var(--fill-3);
+  box-shadow: var(--press-up);
+  color: var(--text);
+  transition: background-color 100ms, scale 120ms var(--ease-out);
+}
+
+.share-key:active {
+  background-color: var(--fill-4);
+  box-shadow: var(--press-down);
+  scale: 0.94;
+  transition-duration: 100ms, 70ms;
+}
+
+.share-key[data-busy] {
+  background-color: var(--fill-1);
+  box-shadow: none;
+}
+
+.share-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  rotate: -90deg;
+}
+
+.share-ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.share-ring-track {
+  stroke: rgb(255 255 255 / 0.1);
+}
+
+.share-ring-fill {
+  stroke: var(--text);
+  stroke-linecap: round;
+  transition: stroke-dasharray 240ms var(--ease-out);
+}
+
+/* waiting for the desktop's link or the first bytes: a short arc that turns */
+.share-ring[data-wait] .share-ring-fill {
+  stroke-dasharray: 22 100;
+  transition: none;
+  transform-origin: 50% 50%;
+  animation: spin 900ms linear infinite;
+}
+
+.share-stop {
+  width: 11px;
+  height: 11px;
+  border-radius: 2.5px;
+  background: var(--text);
+}
+
+/* done: the file opens from here (an APK: Install); the one ivory key of the row */
+.share-open {
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 17px;
   border-radius: var(--r-pill);
   background: var(--text);
   color: var(--ink);
   font-size: var(--t-sm);
-  font-weight: 600;
-  transition: transform 100ms, opacity 100ms;
+  font-weight: 620;
+  transition: transform 100ms var(--ease-out), background-color 100ms;
 }
 
-.share-get:active {
+.share-open:active {
+  background: #dddcd8;
   transform: scale(0.95);
-}
-
-.share-get:disabled {
-  opacity: 0.7;
 }
 
 /* ── a turn checked by the other agent ── */
@@ -1919,7 +2020,7 @@
   gap: 12px;
   padding: 6px 6px 12px;
   border-radius: var(--r-lg);
-  background: var(--grain-bg), var(--card);
+  background: var(--card);
   box-shadow: var(--edge);
 }
 

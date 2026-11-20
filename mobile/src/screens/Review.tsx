@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { orderComments, quoteLines, rangeLabel, type ReviewComment } from '@desk/features/review/model';
+import { fit } from '@m/lib/fit';
 import { discardComments, dropComment, leadOf, sendReview, setLead, useComments } from '@m/lib/comments';
 import { haptic } from '@m/lib/native';
 import { nav } from '@m/lib/nav';
@@ -112,10 +113,7 @@ export function ReviewSheet({ sid, open, onClose, back }: { sid: string; open: b
     return () => clearTimeout(t);
   }, [confirm]);
   useLayoutEffect(() => {
-    const el = area.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, MAX_LEAD)}px`;
+    fit(area.current, MAX_LEAD);
   }, [lead, open]);
 
   const send = async () => {

@@ -504,7 +504,7 @@ button.chg-row:active {
   margin: 6px 14px 10px calc(var(--gut) + 16px);
   padding: 10px 14px 11px;
   border-radius: 14px;
-  background: var(--grain-bg), var(--ink-3);
+  background: var(--ink-3);
   box-shadow: var(--edge), 0 10px 24px -16px rgb(0 0 0 / 0.85);
   font-family: var(--font);
   font-size: 14.5px;
@@ -685,8 +685,11 @@ button.chg-row:active {
 /* ── the review sheet ── */
 .rvs-lead {
   display: block;
+  /* grows with its words (no measuring on every key, lib/fit.ts) */
+  field-sizing: content;
   width: 100%;
   min-height: 52px;
+  max-height: 132px;
   margin: 0 0 14px;
   padding: 14px 16px;
   border: 0;

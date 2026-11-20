@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PermissionOption, PermissionRequest, Question, QuestionRequest } from '@shared/protocol';
+import { fit } from '@m/lib/fit';
 import { pushBack } from '@m/lib/back';
 import { conn } from '@m/lib/conn';
 import { diffLines, renderMarkdown } from '@m/lib/md';
@@ -184,9 +185,7 @@ function PermissionBody({ sid, req, more, onLater }: { sid: string; req: Permiss
                   disabled={!!busy}
                   onChange={(e) => {
                     setMessage(e.target.value);
-                    const el = e.target;
-                    el.style.height = 'auto';
-                    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+                    fit(e.target, 132);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {

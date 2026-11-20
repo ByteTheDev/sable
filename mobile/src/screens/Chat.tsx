@@ -8,7 +8,7 @@ import { onKeyboard } from '@m/lib/keyboard';
 import { haptic, openExternal } from '@m/lib/native';
 import { nav } from '@m/lib/nav';
 import { homeFolder, openRace, swapTo } from '@m/lib/race';
-import { applyOlder, fetchOlder, getState, openSession, sessionData, showCached, useStore } from '@m/lib/store';
+import { applyOlder, fetchOlder, getState, openSession, sessionData, setState, showCached, useStore } from '@m/lib/store';
 import { groupTurns, shapeString, stabilize } from '@m/lib/turns';
 import { Field, paletteFor } from '@m/ui/Field';
 import { Icon } from '@m/ui/icons';
@@ -38,6 +38,14 @@ export function Chat({ id }: { id: string }) {
   });
   const [error, setError] = useState<string>();
   const [remote, setRemote] = useState(false);
+  // The conversation mounts a frame after the screen: the tap answers at once and the screen's opening
+  // (on the compositor) is under way while the turns are built (they took the tap's own task, 140 ms
+  // on the emulator, before anything moved). The screen is still transparent then, so nothing flashes.
+  const [later, setLater] = useState(true);
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setLater(false));
+    return () => cancelAnimationFrame(r);
+  }, []);
 
   // The newest page as the phone last had it shows at once; the desktop's follows.
   useLayoutEffect(() => {
@@ -81,7 +89,9 @@ export function Chat({ id }: { id: string }) {
           </>
         }
       />
-      {loaded ? (
+      {later ? (
+        <div className="thread-skel" />
+      ) : loaded ? (
         <Thread id={id} />
       ) : (
         <div className="thread-skel">
@@ -390,10 +400,30 @@ function ThreadSkeleton() {
   );
 }
 
-/** Claude's Remote Control for this chat: the link to continue on claude.ai/code, and the switch. */
+/** A link as a person reads it: the host bright, the rest quiet (and cut, never wrapped). */
+function linkParts(url: string) {
+  try {
+    const u = new URL(url);
+    return { host: u.host.replace(/^www\./, ''), rest: `${u.pathname === '/' ? '' : u.pathname}${u.search}` };
+  } catch {
+    return { host: url, rest: '' };
+  }
+}
+
+/**
+ * Claude's Remote Control for this chat: the agent's mark in its well, the switch, where it stands
+ * (a dot in the state's tone), and once there is a link: the link as one row (a tap copies it) and the
+ * ivory key that opens it in Claude.
+ */
 function RemoteSheet({ id, open, onClose }: { id: string; open: boolean; onClose: () => void }) {
   const s = useStore((st) => st.sessions[id]);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(t);
+  }, [copied]);
   if (!s) return null;
   const on = !!s.options?.remoteControl;
   const r = s.remote;
@@ -402,42 +432,67 @@ function RemoteSheet({ id, open, onClose }: { id: string; open: boolean; onClose
     haptic('select');
     try {
       await conn.call('session.setOptions', { sessionId: id, options: { remoteControl: !on } });
+    } catch (err) {
+      haptic('deny');
+      setState({ toast: { text: (err as Error).message, level: 'error', at: Date.now() } });
     } finally {
       setBusy(false);
     }
   };
+  const tone = !on ? 'off' : (r?.tone ?? 'waiting');
+  const status = !on ? 'Off' : (r?.status ?? 'Starting');
+  const link = r?.url ? linkParts(r.url) : null;
   return (
     <Sheet open={open} onClose={onClose} label="Remote control">
-      <div className="remote">
-        <div className="group-card">
-          <button type="button" className="set-row switch-row" onClick={() => void toggle()} disabled={busy} role="switch" aria-checked={on}>
-            <Icon name="link" size={19} />
-            <span className="set-label">Remote control</span>
+      <div className="rc">
+        <div className="rc-head">
+          <span className="rc-mark" data-on={on || undefined}>
+            <ProviderMark provider={s.provider} size={24} />
+          </span>
+          <div className="rc-titles">
+            <h2 className="rc-title">Remote control</h2>
+            <p className="rc-status" data-tone={tone}>
+              {on && !r ? <Ring size={11} /> : <i className="rc-dot" />}
+              <span>{status}</span>
+            </p>
+          </div>
+          <button type="button" className="rc-switch switch-row" onClick={() => void toggle()} disabled={busy} role="switch" aria-checked={on} aria-label="Remote control">
             <span className="switch" data-on={on || undefined}>
               <i />
             </span>
           </button>
-          {r && (
-            <div className="set-row remote-state" data-tone={r.tone ?? 'waiting'}>
-              <span className="remote-state-dot" />
-              <span className="set-label">{r.status}</span>
-            </div>
-          )}
         </div>
-        {r?.url && (
-          <>
-            <div className="remote-link">{r.url}</div>
-            <div className="remote-actions">
-              <button type="button" className="btn btn-lg" onClick={() => void navigator.clipboard?.writeText(r.url!).then(() => haptic('success'))}>
-                <Icon name="copy" size={18} /> Copy link
+        <AnimatePresence initial={false}>
+          {on && link && (
+            <motion.div key="link" className="rc-body" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={SNAP}>
+              <button
+                type="button"
+                className="rc-link"
+                aria-label={copied ? 'Link copied' : 'Copy the link'}
+                onClick={() =>
+                  void navigator.clipboard?.writeText(r!.url!).then(() => {
+                    haptic('success');
+                    setCopied(true);
+                  })
+                }
+              >
+                <Icon name="link" size={18} className="rc-link-glyph" />
+                <span className="rc-url">
+                  <span className="rc-host">{link.host}</span>
+                  <span className="rc-rest">{link.rest}</span>
+                </span>
+                <span className="rc-copy" data-done={copied || undefined}>
+                  {copied ? <Icon name="check" size={16} weight="bold" /> : <Icon name="copy" size={17} />}
+                  <span>{copied ? 'Copied' : 'Copy'}</span>
+                </span>
               </button>
-              <button type="button" className="btn btn-primary btn-lg" onClick={() => openExternal(r.url!)}>
-                <Icon name="external" size={18} /> Open
+              {r?.code && <div className="rc-code num">{r.code}</div>}
+              <button type="button" className="btn btn-primary btn-lg btn-block" onClick={() => (haptic('tap'), openExternal(r!.url!))}>
+                <Icon name="external" size={18} /> {s.provider === 'claude' ? 'Open in Claude' : 'Open link'}
               </button>
-            </div>
-          </>
-        )}
-        {r?.code && <div className="remote-code num">{r.code}</div>}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </Sheet>
   );

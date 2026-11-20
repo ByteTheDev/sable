@@ -242,13 +242,13 @@
   text-align: left;
   overflow: hidden;
   isolation: isolate;
-  background: var(--grain-bg), rgb(19 19 22 / 0.92);
+  background: rgb(19 19 22 / 0.92);
   box-shadow: var(--edge), var(--lift);
   transition: background-color 120ms;
 }
 
 .live:active {
-  background: var(--grain-bg), rgb(25 25 29 / 0.95);
+  background: rgb(25 25 29 / 0.95);
 }
 
 .live-glow {
@@ -331,14 +331,15 @@
   contain-intrinsic-size: auto 340px;
 }
 
+/* a folder's name: a quiet label over its card (the chats are what is read) */
 .group-name {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 0 8px 10px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-2);
+  padding: 0 10px 9px;
+  font-size: 13.5px;
+  font-weight: 560;
+  color: var(--text-3);
   letter-spacing: -0.003em;
 }
 
@@ -360,7 +361,7 @@
   margin: 0;
   padding: 5px;
   border-radius: 22px;
-  background: var(--grain-bg), var(--card);
+  background: var(--card);
   box-shadow: var(--edge), var(--lift);
 }
 
@@ -463,11 +464,11 @@
 }
 
 .home-pad {
-  height: calc(var(--sab) + 120px);
+  height: 22px;
 }
 
 .home:has(.attn) .home-pad {
-  height: calc(var(--sab) + 200px);
+  height: 84px;
 }
 
 .home-skel {
@@ -529,12 +530,14 @@
 }
 
 /* ── new chat: the prompt bar at the foot of home ── */
+/* In the column, under the list (not over it): the list ends above the bar under a short fade into
+   the page, and nothing scrolls beneath it or in the gap under it (rows used to show through the
+   glass and under its foot). The keyboard lifts it by a transform; the list never moves. */
 .home-dock {
-  position: absolute;
+  position: relative;
   z-index: 6;
-  left: 12px;
-  right: 12px;
-  bottom: calc(var(--sab) + 12px);
+  flex-shrink: 0;
+  margin: 6px 12px calc(var(--sab) + 12px);
   padding: 6px 6px 6px 8px;
   border-radius: 26px;
   /* the main pane of glass, as the chat's prompt bar (base.css "the panes"); focused, it lifts */
@@ -545,6 +548,24 @@
 
 .home-dock[data-covered] {
   visibility: hidden;
+}
+
+/* the list's last rows leave under a short fade into the page, above the bar */
+.home-dock::before {
+  content: '';
+  position: absolute;
+  z-index: -2;
+  left: -12px;
+  right: -12px;
+  bottom: calc(100% + 6px);
+  height: 30px;
+  background: linear-gradient(rgb(7 7 8 / 0), rgb(7 7 8 / 0.9));
+  pointer-events: none;
+  transition: opacity 200ms var(--ease-out);
+}
+
+.home-dock[data-focus]::before {
+  opacity: 0;
 }
 
 .dock-scrim {
@@ -587,6 +608,8 @@
 
 .dock-input {
   flex: 1;
+  /* grows with its words (no measuring on every key, lib/fit.ts) */
+  field-sizing: content;
   display: block;
   min-width: 0;
   min-height: 46px;
@@ -696,19 +719,19 @@
   gap: 13px;
   padding: 0 18px;
   border-radius: 18px;
-  background: var(--grain-bg), rgb(32 32 36);
+  background: rgb(32 32 36);
   box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.06), var(--shadow-glass);
   pointer-events: none;
 }
 
-/* the menu: liquid glass, opaque (the rim is its ::before, base.css) */
+/* the menu: liquid glass, opaque (the rim is a shadow, base.css) */
 .peek-menu {
   position: fixed;
   isolation: isolate;
   padding: 6px;
   border-radius: 24px;
-  background: var(--glass-sheen), var(--grain-bg), var(--float-ink);
-  box-shadow: var(--rim-inner), var(--shadow-glass);
+  background: var(--float-ink);
+  box-shadow: var(--rim-ring), var(--rim-inner), var(--shadow-glass);
   transform-origin: 50% 0;
 }
 
@@ -791,7 +814,6 @@
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   --pane-fill: var(--glass-solid);
-  --pane-body: transparent;
 }
 
 /* the new-chat bar open (its chips over the words): the waiting line stays above it */

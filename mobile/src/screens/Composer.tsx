@@ -1,14 +1,15 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { STANDARD_SPEED, type Attachment, type ProviderId, type ProviderInfo, type QueuedMessage } from '@shared/protocol';
+import { STANDARD_SPEED, type Attachment, type ProviderId, type ProviderInfo, type QueuedMessage, type SessionMeta } from '@shared/protocol';
 import { offeredSpeeds, speedFor } from '@shared/speed';
 import { effortName, modelName, modelNameById, visibleModels } from '@desk/lib/models';
 import { conn } from '@m/lib/conn';
 import { claimFlight, dropFlight, inFlight, launchFlight } from '@m/lib/flight';
+import { autoSized, fit } from '@m/lib/fit';
 import { onKeyboard } from '@m/lib/keyboard';
 import { onPutDraft } from '@m/lib/put-draft';
 import { haptic } from '@m/lib/native';
-import { ensureFolderCaps, getState, sessionData, setState, useStore } from '@m/lib/store';
+import { ensureFolderCaps, getState, intend, sessionData, setState, undoIntent, useStore } from '@m/lib/store';
 import { Icon } from '@m/ui/icons';
 import { PROVIDER_NAME } from '@m/ui/marks';
 import { reduced, SNAP } from '@m/ui/motion';
@@ -103,7 +104,8 @@ export function Composer({ sid }: { sid: string }) {
         setText('');
         drafts.set(sid, '');
         saveDrafts();
-        area.current.style.height = 'auto';
+        area.current.style.height = '';
+        fit(area.current, 168);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -133,8 +135,7 @@ export function Composer({ sid }: { sid: string }) {
         const el = area.current;
         if (!el) return;
         el.value = t;
-        el.style.height = 'auto';
-        el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+        fit(el, 168);
         el.focus();
       }),
     [sid],
@@ -142,11 +143,7 @@ export function Composer({ sid }: { sid: string }) {
 
   // The field takes the height of a draft that came back from storage.
   useEffect(() => {
-    const el = area.current;
-    if (el && el.value) {
-      el.style.height = 'auto';
-      el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
-    }
+    if (area.current?.value) fit(area.current, 168);
   }, []);
 
   if (!s) return null;
@@ -163,19 +160,30 @@ export function Composer({ sid }: { sid: string }) {
   const speed = speedFor(model, s.speed);
   const modelLabel = modelName(model) ?? modelNameById(s.model, caps?.models) ?? 'Model';
   const away = AGENTS.filter((p) => p !== s.provider && signedIn(providers[p]));
+  // Every choice shows at once (the store holds it against older answers) and goes back if the desktop refuses it.
+  const choose = <K extends 'model' | 'effort' | 'speed' | 'mode'>(key: K, value: SessionMeta[K], call: () => Promise<unknown>) => {
+    const was = { [key]: s[key] } as Partial<SessionMeta>;
+    intend(sid, { [key]: value } as Partial<SessionMeta>);
+    void call().catch((err) => {
+      undoIntent(sid, was);
+      haptic('deny');
+      toast((err as Error).message, 'error');
+    });
+  };
   const setup: SetupState = {
+    agent: s.provider,
     models: models.map((m) => ({ id: m.id, name: modelName(m) ?? m.name })),
     model: s.model,
-    onModel: (id) => void conn.call('session.setModel', { sessionId: sid, model: id }).catch(() => {}),
+    onModel: (id) => choose('model', id, () => conn.call('session.setModel', { sessionId: sid, model: id })),
     efforts,
     effort,
-    onEffort: (e) => void conn.call('session.setEffort', { sessionId: sid, effort: e }).catch(() => {}),
+    onEffort: (e) => choose('effort', e, () => conn.call('session.setEffort', { sessionId: sid, effort: e })),
     speeds: speeds.length ? [{ id: STANDARD_SPEED, name: 'Standard' }, ...speeds.map((x) => ({ id: x.id, name: x.name }))] : [],
     speed,
-    onSpeed: (v) => void conn.call('session.setSpeed', { sessionId: sid, speed: v }).catch(() => {}),
+    onSpeed: (v) => choose('speed', v, () => conn.call('session.setSpeed', { sessionId: sid, speed: v })),
     modes: caps?.modes ?? [],
     mode: s.mode,
-    onMode: (id) => void conn.call('session.setMode', { sessionId: sid, mode: id }).catch(() => {}),
+    onMode: (id) => choose('mode', id, () => conn.call('session.setMode', { sessionId: sid, mode: id })),
     // The other agents' models: picking one switches this chat to that agent, in place.
     others: away.map((p) => {
       const c = allCaps[`${p}:${s.cwd}`];
@@ -202,20 +210,23 @@ export function Composer({ sid }: { sid: string }) {
       const h = el.offsetHeight;
       el.style.height = `${h}px`;
       window.setTimeout(() => {
-        if (el.value) return;
-        el.style.height = 'auto';
-        const to = Math.min(el.scrollHeight, 168);
-        if (Math.abs(to - h) < 2) return void (el.style.height = `${to}px`);
+        if (el.value) return void ((el.style.height = ''), fit(el, 168));
+        // Its height with nothing in it (measured once, here), then it glides there.
+        el.style.height = autoSized ? '' : 'auto';
+        const to = autoSized ? el.offsetHeight : Math.min(el.scrollHeight, 168);
+        if (Math.abs(to - h) < 2) return void (el.style.height = autoSized ? '' : `${to}px`);
         el.style.height = `${h}px`;
         void el.offsetHeight;
         el.style.transition = 'height 240ms cubic-bezier(0.2, 0.8, 0.2, 1)';
         el.style.height = `${to}px`;
-        window.setTimeout(() => (el.style.transition = ''), 260);
+        window.setTimeout(() => {
+          el.style.transition = '';
+          if (autoSized) el.style.height = '';
+        }, 260);
       }, 290);
       return;
     }
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+    fit(el, 168);
   };
 
   /** `/model <name>`: the bridge picks the model, or switches the chat to the agent that has it; nothing is sent. Bare `/model` opens the sheet. */

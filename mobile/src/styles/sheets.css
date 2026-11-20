@@ -1,7 +1,9 @@
 /*
  * Sheets: liquid glass, opaque (as the desktop's dialogs: a sheet never blurs), rising over a dimmed
- * screen (the screen itself steps back). They follow the finger, rubber-band upward, and ride up with
- * the keyboard. What sits on a sheet (cards, rows, wells) stays flat; its few small controls are tactile.
+ * screen. They follow the finger, rubber-band upward, and ride up with the keyboard while a field in
+ * them has the focus. What sits on a sheet (cards, rows, wells) stays flat; its few small controls are
+ * tactile. Nothing on a sheet paints a gradient over its whole face (it would be painted again on every
+ * frame the sheet moves).
  */
 .sheet-layer {
   position: fixed;
@@ -16,28 +18,36 @@
   pointer-events: none;
 }
 
+/* its own layer: its opacity follows the sheet without painting anything again */
 .sheet-scrim {
   position: absolute;
   inset: 0;
-  background: rgb(0 0 0 / 0.5);
+  background: rgb(0 0 0 / 0.56);
+  will-change: opacity;
 }
 
 .sheet {
   position: relative;
   display: flex;
   flex-direction: column;
-  max-height: calc(100% - var(--sat) - 26px - var(--kb));
+  max-height: calc(100% - var(--sat) - 26px);
   border-radius: 30px 30px 0 0;
   padding-bottom: calc(var(--sab) + 14px);
-  /* the pane: its sheen under the top edge, the grain, the ink; the rim is its ::before (base.css) */
-  background: var(--glass-sheen), var(--grain-bg), var(--sheet-ink);
+  /* the pane: the ink; the rim, the inner edge and the depth are shadows (base.css) */
+  background: var(--sheet-ink);
   /* the inner edge, the contact line and the depth; and the same ink below the sheet when it is
      pulled up past its foot (an outer shadow is drawn only outside the sheet, so only that part shows) */
-  box-shadow: var(--rim-inner), var(--shadow-glass), 0 72px 0 0 var(--sheet-ink);
+  box-shadow: var(--rim-ring), var(--rim-inner), var(--shadow-glass), 0 72px 0 0 var(--sheet-ink);
   isolation: isolate;
   will-change: transform;
-  translate: 0 calc(-1 * var(--kb));
   transition: translate var(--kb-ms) var(--ease-ime);
+}
+
+/* the keyboard lifts a sheet only for a field of its own (a sheet opened from a focused prompt bar
+   rises while that keyboard goes away, and never rides it) */
+.sheet:focus-within {
+  max-height: calc(100% - var(--sat) - 26px - var(--kb));
+  translate: 0 calc(-1 * var(--kb));
 }
 
 .sheet[data-tall] {
@@ -339,12 +349,17 @@
 
 .setup-head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
   margin: 0 6px;
+  min-height: 18px;
   font-size: var(--t-sm);
   font-weight: 560;
   color: var(--text-3);
+}
+
+.setup-head > span:first-of-type {
+  flex: 1;
 }
 
 .setup-value {
@@ -371,8 +386,8 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 54px;
+  gap: 13px;
+  min-height: 52px;
   padding: 0 16px 0 18px;
   font-size: var(--t-body);
   font-weight: 500;
@@ -398,6 +413,23 @@
 .setup-row[data-on] {
   color: var(--text);
   font-weight: 560;
+}
+
+/* a permission's glyph: quiet, bright when chosen; Bypass keeps a hint of its weight when chosen */
+.setup-row-icon {
+  flex-shrink: 0;
+  margin-left: -2px;
+  color: var(--text-3);
+  transition: color 160ms;
+}
+
+.setup-row[data-on] .setup-row-icon {
+  color: var(--text);
+}
+
+/* rows with a glyph: the hairline starts at the words, as in every list with a glyph column */
+.setup-row:has(.setup-row-icon) + .setup-row::before {
+  left: 50px;
 }
 
 .setup-row-name {
@@ -539,7 +571,6 @@
   border-radius: 50%;
   /* a small ivory key: a lit top lip, a shaded lower lip, a short drop; a ring of the sheet's ink parts it from the track */
   background-color: var(--text);
-  background-image: var(--key-face);
   box-shadow: var(--thumb-up), 0 0 0 4px var(--sheet-ink), 0 4px 10px -3px rgb(0 0 0 / 0.6);
   transition: left 300ms var(--ease-spring), transform 160ms var(--ease-out);
 }
@@ -566,65 +597,27 @@
   color: var(--text-4);
 }
 
-/* permissions: a tile each, the chosen one lifted */
-.mode-grid {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 8px;
+/* each level named under its stop; the one under the finger (or chosen) bright */
+.dial-names {
+  position: relative;
+  height: 18px;
+  margin-top: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-4);
 }
 
-.mode-tile {
-  grid-column: span 2;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 86px;
-  padding: 14px 14px 13px;
-  border-radius: 18px;
-  background: rgb(255 255 255 / 0.03);
-  box-shadow: inset 0 0 0 1px var(--line);
-  font-size: 14px;
-  font-weight: 540;
-  line-height: 1.25;
-  text-align: left;
-  color: var(--text-3);
-  transition: background-color 140ms, color 140ms, transform 120ms var(--ease-out);
-}
-
-.mode-tile span {
-  color: var(--text-2);
+.dial-names span {
+  position: absolute;
+  top: 0;
+  translate: -50% 0;
+  white-space: nowrap;
   transition: color 140ms;
 }
 
-.mode-tile:active {
-  transform: scale(0.96);
-}
-
-/* the chosen one stands a hair above the others (tactile); held, any tile sets in */
-.mode-tile[data-on] {
-  background: var(--fill-3);
-  box-shadow: var(--press-up);
+.dial-names span[data-on] {
   color: var(--text);
-}
-
-.mode-tile:active {
-  box-shadow: var(--press-down);
-}
-
-.mode-tile[data-on] span {
-  color: var(--text);
-}
-
-.mode-grid[data-n='5'] .mode-tile:nth-child(n + 4),
-.mode-grid[data-n='4'] .mode-tile,
-.mode-grid[data-n='2'] .mode-tile {
-  grid-column: span 3;
-}
-
-.mode-grid[data-n='1'] .mode-tile {
-  grid-column: span 6;
+  font-weight: 580;
 }
 
 .form-error {
@@ -1088,6 +1081,8 @@
 }
 
 .ask-note-input {
+  /* grows with its words (no measuring on every key, lib/fit.ts) */
+  field-sizing: content;
   display: block;
   width: 100%;
   min-height: 52px;
@@ -1285,60 +1280,180 @@
 }
 
 /* ── remote control ── */
-.remote {
+/* ── Remote control: the agent's mark in its well, the switch, the state; the link as one row ── */
+.rc {
   display: flex;
   flex-direction: column;
+  padding: 6px 2px 4px;
+}
+
+.rc-head {
+  display: flex;
+  align-items: center;
   gap: 14px;
-  padding: 2px 0 6px;
+  padding: 0 4px 0 6px;
 }
 
-.remote-state-dot {
-  width: 8px;
-  height: 8px;
-  margin: 0 5px;
-  border-radius: 50%;
-  background: var(--text-2);
+/* the mark in a shallow well of ink; on, a hair of light rises in it */
+.rc-mark {
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
+  width: 50px;
+  height: 50px;
+  border-radius: 16px;
+  background: rgb(0 0 0 / 0.3);
+  box-shadow: var(--press-well);
+  transition: background-color 200ms var(--ease-out);
 }
 
-.remote-state .set-label {
-  font-size: 14px;
+.rc-mark[data-on] {
+  background: rgb(255 255 255 / 0.05);
+  box-shadow: var(--press-up);
+}
+
+.rc-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.rc-title {
+  font-size: 18px;
+  font-weight: 620;
+  letter-spacing: -0.012em;
+}
+
+.rc-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  line-height: 1.35;
   color: var(--text-2);
 }
 
-.remote-state[data-tone='waiting'] .remote-state-dot {
+.rc-status span {
+  min-width: 0;
+}
+
+.rc-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.rc-status[data-tone='ok'] .rc-dot {
+  background: var(--text);
+  box-shadow: 0 0 0 3px rgb(242 241 238 / 0.12);
+}
+
+.rc-status[data-tone='waiting'] .rc-dot {
   background: var(--amber);
 }
 
-.remote-state[data-tone='error'] .remote-state-dot {
+.rc-status[data-tone='error'] .rc-dot {
   background: var(--red);
 }
 
-.remote-state[data-tone='ok'] .remote-state-dot {
-  background: var(--text);
+.rc-status[data-tone='off'] {
+  color: var(--text-3);
 }
 
-.remote-link {
-  padding: 14px 16px;
-  border-radius: 18px;
-  background: rgb(0 0 0 / 0.42);
-  box-shadow: inset 0 0 0 1px var(--line);
-  font-size: var(--t-sm);
-  color: var(--text-2);
-  word-break: break-all;
-  user-select: text;
-}
-
-.remote-actions {
+.rc-switch {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  place-items: center;
+  flex-shrink: 0;
+  height: 44px;
+  padding: 0 2px;
 }
 
-.remote-code {
-  font-size: 28px;
-  letter-spacing: 0.08em;
+.rc-switch:disabled {
+  opacity: 0.6;
+}
+
+.rc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+/* the link: one row in a well, the host bright, the rest quiet and cut; a tap copies it */
+.rc-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 22px;
+  height: 56px;
+  padding: 0 8px 0 16px;
+  border-radius: 18px;
+  background: rgb(0 0 0 / 0.3);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  text-align: left;
+  transition: background-color 100ms;
+}
+
+.rc-link:active {
+  background: rgb(255 255 255 / 0.04);
+}
+
+.rc-link-glyph {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.rc-url {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14.5px;
+}
+
+.rc-host {
+  color: var(--text);
+  font-weight: 560;
+}
+
+.rc-rest {
+  color: var(--text-3);
+}
+
+.rc-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0 13px 0 11px;
+  border-radius: var(--r-pill);
+  background: var(--fill-3);
+  box-shadow: var(--press-up);
+  font-size: var(--t-sm);
+  font-weight: 560;
+  color: var(--text);
+}
+
+.rc-link:active .rc-copy {
+  box-shadow: var(--press-down);
+}
+
+.rc-code {
+  padding: 14px 0 4px;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-align: center;
+}
+
+.rc-body .btn-primary {
+  margin-top: 2px;
 }
 
 /* ── a question before something final ── */

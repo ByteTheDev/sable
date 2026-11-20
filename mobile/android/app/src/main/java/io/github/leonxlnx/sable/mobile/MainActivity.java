@@ -7,6 +7,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(KeepAlivePlugin.class);
+        registerPlugin(FilesPlugin.class);
         super.onCreate(savedInstanceState);
         // The keyboard lifts the page's own bottom on its curve instead of shrinking the page at once.
         ImeLift.install(this, getBridge().getWebView());

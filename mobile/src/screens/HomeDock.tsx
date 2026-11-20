@@ -6,6 +6,7 @@ import { pushBack } from '@m/lib/back';
 import { conn } from '@m/lib/conn';
 import { dropFlight, launchFlight } from '@m/lib/flight';
 import { onKeyboard } from '@m/lib/keyboard';
+import { fit } from '@m/lib/fit';
 import { haptic } from '@m/lib/native';
 import { nav } from '@m/lib/nav';
 import { openFrom } from '@m/lib/open';
@@ -43,13 +44,8 @@ export function HomeDock({ covered }: { covered: boolean }) {
   const sendKey = useRef<HTMLButtonElement>(null);
   const open = focused || !!text.trim() || !!sheet;
 
-  const fit = () => {
-    const el = area.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
-  };
-  useEffect(fit, []);
+  const size = () => fit(area.current, 150);
+  useEffect(size, []);
   const update = (v: string) => {
     setText(v);
     try {
@@ -58,7 +54,7 @@ export function HomeDock({ covered }: { covered: boolean }) {
     } catch {
       /* private mode */
     }
-    requestAnimationFrame(fit);
+    requestAnimationFrame(size);
   };
 
   // The keyboard put away: the field lets go too.
@@ -117,6 +113,7 @@ export function HomeDock({ covered }: { covered: boolean }) {
   const modelLabel = c.models.find((m) => m.id === c.model)?.name;
   const mode = c.modes.find((m) => m.id === c.mode);
   const setup: SetupState = {
+    agent: c.agent ?? undefined,
     models: c.models,
     model: c.model,
     onModel: c.setModel,

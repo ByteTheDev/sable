@@ -115,7 +115,7 @@ if (!m.includes('android:scheme="sable"')) {
 m = m.replace('android:allowBackup="true"', 'android:allowBackup="false"');
 if (!m.includes('usesCleartextTraffic')) m = m.replace('android:supportsRtl="true"', 'android:supportsRtl="true"\n        android:usesCleartextTraffic="true"');
 if (!m.includes('windowSoftInputMode')) m = m.replace('android:launchMode="singleTask"', 'android:launchMode="singleTask"\n            android:windowSoftInputMode="adjustResize"');
-for (const perm of ['android.permission.CAMERA', 'android.permission.POST_NOTIFICATIONS', 'android.permission.VIBRATE', 'android.permission.FOREGROUND_SERVICE', 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE']) {
+for (const perm of ['android.permission.CAMERA', 'android.permission.POST_NOTIFICATIONS', 'android.permission.VIBRATE', 'android.permission.FOREGROUND_SERVICE', 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE', 'android.permission.REQUEST_INSTALL_PACKAGES']) {
   if (!m.includes(`${perm}"`)) m = m.replace('<uses-permission android:name="android.permission.INTERNET" />', `<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="${perm}" />`);
 }
 // The connection kept while a chat runs and the app is in the background (KeepAliveService.java).

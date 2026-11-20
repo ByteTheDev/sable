@@ -1,43 +1,36 @@
-import { animate, motion, useMotionValue, useTransform, type MotionValue } from 'motion/react';
+import { animate } from 'motion';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { pushBack } from '@m/lib/back';
 import { haptic } from '@m/lib/native';
-import { FLING, reduced, rubber, SPRING } from './motion';
+import { reduced, rubber } from './motion';
 
 export { SPRING } from './motion';
 
-/**
- * The screen under the newest open sheet steps back (a little smaller, rounded), as a page under a
- * card does: one transform on the app's layer, written per frame from the sheet's own position.
- */
-const open: MotionValue<number>[] = [];
-let unsub: (() => void) | null = null;
-function depthFollow() {
-  unsub?.();
-  unsub = null;
-  const app = document.querySelector<HTMLElement>('.app');
-  const top = open[open.length - 1];
-  if (!app) return;
-  if (!top) {
-    app.style.transform = '';
-    app.removeAttribute('data-depth');
-    return;
-  }
-  app.setAttribute('data-depth', '');
-  const write = (p: number) => {
-    const k = Math.max(0, Math.min(1, p));
-    app.style.transform = k > 0.001 ? `translate3d(0, ${(k * 8).toFixed(2)}px, 0) scale(${(1 - k * 0.045).toFixed(4)})` : '';
-  };
-  write(top.get());
-  unsub = top.on('change', write);
-}
+/** In, out and back: springs the compositor runs (WAAPI), so a busy page never holds a sheet up. */
+const RISE = { type: 'spring', stiffness: 420, damping: 40, mass: 0.9 } as const;
+const FALL = { type: 'spring', stiffness: 460, damping: 46, restDelta: 2 } as const;
+const BACK = { type: 'spring', stiffness: 380, damping: 34, mass: 0.9 } as const;
+type Spring = typeof RISE | typeof FALL | typeof BACK;
+
+/** Where a sheet's transform puts it now (mid-animation too). */
+const yOf = (el: HTMLElement) => {
+  const t = getComputedStyle(el).transform;
+  return t && t !== 'none' ? new DOMMatrixReadOnly(t).m42 : 0;
+};
+const at = (y: number) => `translate3d(0px, ${y.toFixed(1)}px, 0px)`;
 
 /**
- * A bottom sheet: frosted ink with grain over a dimmed screen, rising on a spring. It follows the
+ * A bottom sheet: opaque liquid glass over a dimmed screen, rising on a spring. It follows the
  * finger (from its grip, its title, or its list once that is scrolled to the top), rubber-bands
- * upward, and a flick or a long pull closes it with the finger's speed. Tap outside or press back
- * to close. `dismissable={false}` keeps it until an answer.
+ * upward, and a flick or a pull past a fifth of it (or 120 px) closes it with the finger's speed.
+ * Tap outside or press back to close. `dismissable={false}` keeps it until an answer.
+ *
+ * Speed: the sheet moves by its own transform only. Rising, falling and springing back are WAAPI
+ * animations (the compositor runs them while the page mounts what the sheet shows); under the finger
+ * the transform is written once per move. Nothing behind it moves: a screen that stepped back under
+ * the sheet made the WebView paint and raster the conversation again on every frame of a drag.
+ * The keyboard lifts a sheet only while a field inside it has the focus (sheets.css).
  */
 export function Sheet({
   open: isOpen,
@@ -60,11 +53,12 @@ export function Sheet({
 }) {
   const [mounted, setMounted] = useState(isOpen);
   const sheet = useRef<HTMLDivElement>(null);
+  const scrim = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
-  const y = useMotionValue(2000);
   const h = useRef(600);
-  // 1 open, 0 closed: drives the scrim and the screen behind.
-  const p = useTransform(y, (v) => 1 - Math.max(0, v) / Math.max(1, h.current));
+  const running = useRef<{ stop: () => void }[]>([]);
+  /** The finger's speed when it let go (px/s, down is positive): a fling that closes carries it. */
+  const fling = useRef(0);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   const dismiss = useRef(dismissable);
@@ -81,49 +75,75 @@ export function Sheet({
     if (isOpen && document.activeElement instanceof HTMLElement && document.activeElement.closest('.sheet') === null) document.activeElement.blur();
   }, [isOpen]);
 
+  const stop = () => {
+    running.current.forEach((a) => a.stop());
+    running.current = [];
+  };
+  const fade = (y: number) => Math.max(0, Math.min(1, 1 - Math.max(0, y) / Math.max(1, h.current)));
+  /** Springs to `to` from wherever it is, with the finger's speed. */
+  const go = (to: number, spring: Spring, velocity = 0) => {
+    const el = sheet.current;
+    const sc = scrim.current;
+    if (!el || !sc) return Promise.resolve(false);
+    stop();
+    const from = yOf(el);
+    const quick = reduced();
+    const a = animate(el, { transform: [at(from), at(to)] }, quick ? { duration: 0.12 } : { ...spring, velocity });
+    const b = animate(sc, { opacity: [fade(from), fade(to)] }, { duration: quick ? 0.12 : 0.26, ease: [0.2, 0.8, 0.2, 1] });
+    const mine = [a, b];
+    running.current = mine;
+    return a.finished.then(
+      () => {
+        if (running.current !== mine) return false;
+        running.current = [];
+        el.style.transform = at(to);
+        sc.style.opacity = String(fade(to));
+        return true;
+      },
+      () => false,
+    );
+  };
+
   // In and out on a spring from the sheet's own height.
   useLayoutEffect(() => {
     if (!mounted) return;
     const el = sheet.current;
-    if (!el) return;
-    h.current = el.offsetHeight || 600;
+    const sc = scrim.current;
+    if (!el || !sc) return;
     if (isOpen) {
-      if (y.get() > h.current) y.set(h.current);
-      open.push(p);
-      depthFollow();
-      const a = animate(y, 0, reduced() ? { duration: 0.12 } : SPRING);
-      return () => {
-        a.stop();
-        const i = open.indexOf(p);
-        if (i >= 0) open.splice(i, 1);
-        depthFollow();
-      };
+      h.current = el.offsetHeight || 600;
+      // Opening: from below its foot (or from where a close left it).
+      if (!running.current.length && yOf(el) > h.current) {
+        el.style.transform = at(h.current);
+        sc.style.opacity = '0';
+      }
+      void go(0, RISE);
+      return;
     }
-    // Closing: down from where it is, then gone.
-    open.push(p);
-    depthFollow();
-    const a = animate(y, h.current + 24, reduced() ? { duration: 0.12 } : { type: 'spring', stiffness: 520, damping: 50, restDelta: 2 });
-    void a.finished.then(() => setMounted(false));
+    // Closing: down from where it is, with the fling's speed, then gone.
+    let live = true;
+    void go(h.current + 24, FALL, Math.max(0, fling.current)).then((done) => done && live && setMounted(false));
+    fling.current = 0;
     return () => {
-      a.stop();
-      const i = open.indexOf(p);
-      if (i >= 0) open.splice(i, 1);
-      depthFollow();
+      live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, mounted]);
 
+  useEffect(() => () => stop(), []);
+
   // The finger: grip and title always drag; the list drags once it is at its top and pulled down.
   useEffect(() => {
     const el = sheet.current;
-    if (!el || !mounted) return;
+    const sc = scrim.current;
+    if (!el || !sc || !mounted) return;
     let startY = 0;
     let startX = 0;
     let from = 0;
+    let cur = 0;
     let mode: 'idle' | 'maybe' | 'drag' | 'scroll' = 'idle';
     let handle = false;
     let samples: { t: number; y: number }[] = [];
-    let spring: { stop: () => void } | null = null;
     const down = (e: TouchEvent) => {
       if (e.touches.length !== 1 || !dismiss.current) return;
       const t = e.target as HTMLElement;
@@ -132,7 +152,6 @@ export function Sheet({
       handle = !!t.closest('.sheet-grip, .sheet-head');
       startY = e.touches[0].clientY;
       startX = e.touches[0].clientX;
-      from = y.get();
       mode = 'maybe';
       samples = [{ t: performance.now(), y: startY }];
     };
@@ -149,14 +168,19 @@ export function Sheet({
           return;
         }
         mode = 'drag';
-        spring?.stop();
+        stop();
+        from = yOf(el);
         startY = cy;
       }
       e.preventDefault();
       const d = cy - startY + from;
-      y.set(d >= 0 ? d : rubber(d, 48));
-      samples.push({ t: performance.now(), y: cy });
-      if (samples.length > 6) samples.shift();
+      cur = d >= 0 ? d : rubber(d, 48);
+      el.style.transform = at(cur);
+      sc.style.opacity = String(fade(cur));
+      const now = performance.now();
+      samples.push({ t: now, y: cy });
+      // The speed is read over the last tenth of a second.
+      while (samples.length > 2 && now - samples[0].t > 100) samples.shift();
     };
     const up = () => {
       if (mode !== 'drag') {
@@ -167,40 +191,41 @@ export function Sheet({
       const a = samples[0];
       const b = samples[samples.length - 1];
       const v = a && b && b.t > a.t ? ((b.y - a.y) / (b.t - a.t)) * 1000 : 0;
-      const cur = y.get();
-      if (cur > h.current * 0.32 || (v > 650 && cur > 12)) {
+      // A fifth of it, or 120 px, or a flick down: it goes. Otherwise it springs back with the finger's speed.
+      if (cur > Math.min(h.current * 0.22, 120) || (v > 450 && cur > 8)) {
         haptic('tap');
+        fling.current = v;
         closeRef.current();
         return;
       }
-      spring = animate(y, 0, { ...FLING, velocity: v });
+      void go(0, BACK, v);
     };
     el.addEventListener('touchstart', down, { passive: true });
     el.addEventListener('touchmove', move, { passive: false });
     el.addEventListener('touchend', up, { passive: true });
     el.addEventListener('touchcancel', up, { passive: true });
     return () => {
-      spring?.stop();
       el.removeEventListener('touchstart', down);
       el.removeEventListener('touchmove', move);
       el.removeEventListener('touchend', up);
       el.removeEventListener('touchcancel', up);
     };
-  }, [mounted, y]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted]);
 
   if (!mounted) return null;
   // On the body, above every screen and its header (a screen's own layers would trap it under them).
   return createPortal(
     <div className="sheet-layer" role="presentation" data-closing={!isOpen || undefined}>
-      <motion.div className="sheet-scrim" style={{ opacity: p }} onClick={dismissable && isOpen ? onClose : undefined} />
-      <motion.div
+      <div ref={scrim} className="sheet-scrim" style={{ opacity: 0 }} onClick={dismissable && isOpen ? onClose : undefined} />
+      <div
         ref={sheet}
         className={`sheet ${className ?? ''}`}
         data-tall={tall || undefined}
         role="dialog"
         aria-modal="true"
         aria-label={label ?? (typeof title === 'string' ? title : undefined)}
-        style={{ y }}
+        style={{ transform: at(2000) }}
       >
         <div className="sheet-grip" aria-hidden>
           <span />
@@ -213,7 +238,7 @@ export function Sheet({
         <div className="sheet-body" ref={body}>
           {children}
         </div>
-      </motion.div>
+      </div>
     </div>,
     document.body,
   );

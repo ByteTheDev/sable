@@ -4,6 +4,7 @@ import type { PhoneChangedFile, PhoneChanges } from '@shared/protocol';
 import { stripWrappers } from '@shared/synthetic';
 import { clampToHunk, linesOf, locate, newCommentId, rangeLabel, type ReviewComment } from '@desk/features/review/model';
 import { plural } from '@desk/lib/format';
+import { fit } from '@m/lib/fit';
 import { pushBack } from '@m/lib/back';
 import { reloadChanges, reloadDiff, useChanges, useDiff, type ChangesScope } from '@m/lib/changes';
 import { dropComment, putComment, rewordComment, useComments } from '@m/lib/comments';
@@ -773,10 +774,7 @@ const CommentField = memo(function CommentField({
   onFocus: (f: boolean) => void;
 }) {
   useLayoutEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, MAX_FIELD)}px`;
+    fit(inputRef.current, MAX_FIELD);
   }, [text]);
   return (
     <textarea

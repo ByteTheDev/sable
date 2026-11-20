@@ -66,8 +66,13 @@
   --edge-2: inset 0 0 0 1px rgb(255 255 255 / 0.1);
   --lift: 0 18px 40px -22px rgb(0 0 0 / 0.9);
   --lift-2: 0 24px 54px -20px rgb(0 0 0 / 0.92), 0 6px 16px -10px rgb(0 0 0 / 0.6);
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.08 0 0 0 -0.035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  --grain-bg: var(--grain) 0 0 / 160px 160px;
+  /* No grain and no gradients on what floats or moves (tenth pass): on Android's WebView a layer that
+     paints a CSS gradient, an SVG image or a mask is painted and rastered again on every frame its
+     transform changes (a sheet under the finger was repainted 15 times in 0.7 s, the jump key on every
+     scrolled frame). The desktop's grain (an SVG noise) was not visible at a phone's density anyway.
+     The glass is drawn with box-shadows only: they move without a repaint. */
+  --grain: none;
+  --grain-bg: none;
   /* ── liquid glass and tactile: the desktop's tokens (src/styles/tokens.css), same values; keep them in sync ──
      One light, from the top and slightly left. What floats (the prompt bars, sheets, toasts, menus, the
      lines that float over a screen) wears a specular rim: a 1px ring brightest where the light meets the
@@ -76,11 +81,15 @@
   --rim-light: linear-gradient(180deg, rgb(255 255 255 / 0.085) 0, rgb(255 255 255 / 0.065) 10px, rgb(255 255 255 / 0.05) 40px, rgb(255 255 255 / 0.035) calc(100% - 24px), rgb(255 255 255 / 0.045) 100%);
   --rim-spec: linear-gradient(90deg, transparent 6%, rgb(255 255 255 / 0.075) 28%, rgb(255 255 255 / 0.02) 62%, transparent 92%);
   --rim-bounce: linear-gradient(270deg, transparent 4%, rgb(255 255 255 / 0.05) 22%, transparent 60%);
-  /* the edge's own thickness: a dark refraction line just inside the rim, a soft glow under the top edge */
-  --rim-inner: inset 0 0 0 1.5px rgb(0 0 0 / 0.16), inset 0 14px 18px -14px rgb(255 255 255 / 0.07), inset 0 0 16px 0 rgb(255 255 255 / 0.016);
-  /* light gathered under the top edge, as in thick glass */
-  --glass-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.028), rgb(255 255 255 / 0.01) 30px, transparent 64px);
-  /* the prompt bar's pane over the field: thinner toward its edges (two crossed plates over it, --pane-body) */
+  /* the phone's rim, as box-shadows (the desktop draws it as a masked 1px ring, which a phone repaints
+     whenever the surface moves): a faint ring all round and the light along the top edge */
+  --rim-ring: inset 0 1px 0 0 rgb(255 255 255 / 0.055), inset 0 0 0 1px rgb(255 255 255 / 0.05);
+  /* the edge's own thickness: a dark refraction line just inside the rim, a soft glow under the top edge
+     (it carries the sheen the desktop paints as a gradient) */
+  --rim-inner: inset 0 0 0 1.5px rgb(0 0 0 / 0.16), inset 0 16px 20px -14px rgb(255 255 255 / 0.075), inset 0 0 16px 0 rgb(255 255 255 / 0.016);
+  /* light gathered under the top edge: part of --rim-inner on the phone (a gradient would repaint as it moves) */
+  --glass-sheen: none;
+  /* the prompt bar's pane over the field (its light gathers at the rim: an inner glow, base.css "the panes") */
   --glass-pane: rgb(15 15 18 / 0.52);
   --glass-pane-lift: rgb(255 255 255 / 0.03);
   --glass-solid: rgb(22 22 25);
@@ -187,57 +196,45 @@ p {
 /* ── material: liquid glass ──
    For the few layers that float: the prompt bars (chat.css .composer, home.css .home-dock: the main
    panes, frosted), sheets, toasts, the long-press menu and the lines that float over a screen (opaque:
-   `.glass-liquid`; frosted: `.glass`). The parts, all static paint:
-   - the rim (::before): a 1px masked ring, brightest along the top edge left of centre, falling off
-     around the corners and down the sides, with a little bounce at the far bottom corner;
-   - the inner edge (--rim-inner) and a short sheen under the top edge (--glass-sheen): the pane's thickness;
+   `.glass-liquid`; frosted: `.glass`). The parts, all static paint and all of them box-shadows (a phone's
+   WebView paints a gradient, an SVG or a mask again on every frame its layer moves; a shadow it does not):
+   - the rim (--rim-ring): a faint 1px ring, brighter along the top edge;
+   - the inner edge and the light under the top edge (--rim-inner): the pane's thickness;
    - depth (--shadow-glass): a dark contact line that sharpens the rim, a near and a wide shadow.
-   What sits on glass (rows, text) stays flat. The rim never changes, so it is rastered once: never
-   animate it, a shadow or the sheen (fade a layer's opacity instead), and never put glass on what scrolls.
+   What sits on glass (rows, text) stays flat. Never animate a shadow (fade a layer's opacity instead).
    Blur only on the prompt bars and `.glass` (a phone GPU draws it again whenever what is under it moves). */
 .glass,
 .glass-liquid {
   position: relative;
   isolation: isolate;
-  box-shadow: var(--rim-inner), var(--shadow-glass);
+  box-shadow: var(--rim-ring), var(--rim-inner), var(--shadow-glass);
 }
 
 .glass {
-  background: var(--glass-sheen), var(--grain-bg), var(--glass);
+  background: var(--glass);
   -webkit-backdrop-filter: var(--blur-pane);
   backdrop-filter: var(--blur-pane);
 }
 
 .glass-liquid {
-  background: var(--glass-sheen), var(--grain-bg), var(--float-ink);
+  background: var(--float-ink);
 }
 
 /* The panes: the chat's prompt bar (chat.css .composer), home's new-chat bar (home.css .home-dock) and
-   the review pane at the foot of a chat's changes (changes.css .rpane), as the desktop's composer. A translucent ink pane with a backdrop blur, thinner toward its edges
-   (two crossed plates over a thin fill), so the field's light gathers at the rim; the rim (::before),
-   the inner edge and the sheen; a contact line and two shadows. Focus draws no ring: the pane lifts
-   (one layer under the content, faded in: a step lighter, a brighter top edge, a deeper shadow). Only
-   that layer's opacity ever moves. While what is under it moves, the pane goes opaque and stops
-   blurring (`--pane-fill: var(--glass-solid); --pane-body: transparent`). */
+   the review pane at the foot of a chat's changes (changes.css .rpane), as the desktop's composer: a
+   translucent ink pane with a backdrop blur whose light gathers at the rim (a soft inner glow: the
+   desktop's two crossed plates, as a shadow), the rim, the inner edge; a contact line and two shadows.
+   Focus draws no ring: the pane lifts (one layer under the content, faded in: a step lighter, a
+   brighter top edge, a deeper shadow). Only that layer's opacity ever moves. While what is under it
+   moves, the pane goes opaque and stops blurring (`--pane-fill: var(--glass-solid)`). */
 .composer,
 .home-dock,
 .rpane {
   --pane-fill: var(--glass-pane);
-  --pane-body: rgb(14 14 17 / 0.28);
   background-color: var(--pane-fill);
-  background-image:
-    var(--glass-sheen),
-    var(--grain),
-    linear-gradient(90deg, transparent, var(--pane-body) 26px, var(--pane-body) calc(100% - 26px), transparent),
-    linear-gradient(180deg, transparent, var(--pane-body) 20px, var(--pane-body) calc(100% - 20px), transparent);
-  background-size:
-    auto,
-    160px 160px,
-    auto,
-    auto;
   -webkit-backdrop-filter: var(--blur-pane);
   backdrop-filter: var(--blur-pane);
-  box-shadow: var(--rim-inner), var(--shadow-glass);
+  box-shadow: var(--rim-ring), inset 0 0 22px 0 rgb(255 255 255 / 0.022), var(--rim-inner), var(--shadow-glass);
   isolation: isolate;
 }
 
@@ -265,37 +262,6 @@ p {
   opacity: 1;
 }
 
-.glass::before,
-.glass-liquid::before,
-.toast::before,
-.sheet::before,
-.composer::before,
-.home-dock::before,
-.rpane::before,
-.peek-menu::before,
-.scanner-card::before,
-.pair-alt::before,
-.scanner-paste::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  padding: 1px;
-  border-radius: inherit;
-  background:
-    var(--rim-spec) top / 100% 1px no-repeat,
-    var(--rim-bounce) bottom / 100% 1px no-repeat,
-    var(--rim-light);
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#000 0 0) content-box exclude,
-    linear-gradient(#000 0 0);
-  pointer-events: none;
-}
-
 /* ── material: tactile ──
    For a few small controls only: the prompt bar's keys and chips, switches, segmented controls, the
    dial's knob and a chosen tile or tab. Raised a hair at rest (--press-up), set in when pressed or open
@@ -310,15 +276,6 @@ p {
   inset: 0;
   overflow: hidden;
   background: var(--bg);
-  transform-origin: 50% 50%;
-  /* its own layer from the start: a sheet stepping it back does not draw it again */
-  will-change: transform;
-}
-
-/* a sheet is open: the screen behind steps back (Sheet.tsx writes the transform) */
-.app[data-depth] {
-  border-radius: 26px;
-  will-change: transform;
 }
 
 .screen {
@@ -335,10 +292,6 @@ p {
   inset: 0;
   will-change: transform;
   box-shadow: -30px 0 60px -30px rgb(0 0 0 / 0.95);
-}
-
-.layer[data-grow] {
-  box-shadow: none;
 }
 
 .layer-body > .screen {
@@ -755,10 +708,10 @@ p {
   gap: 10px;
   padding: 12px 18px;
   border-radius: 22px;
-  /* liquid glass, opaque (a toast never blurs): the rim is its ::before */
+  /* liquid glass, opaque (a toast never blurs) */
   isolation: isolate;
-  background: var(--glass-sheen), var(--grain-bg), rgb(31 31 35);
-  box-shadow: var(--rim-inner), var(--shadow-glass);
+  background: rgb(31 31 35);
+  box-shadow: var(--rim-ring), var(--rim-inner), var(--shadow-glass);
   font-size: 14px;
   font-weight: 500;
   line-height: 1.4;
@@ -865,22 +818,9 @@ p {
   }
 }
 
-/* a screen's layer: the plate a chat's window opens from (the card's ink), and the screen itself */
-.layer-plate {
-  position: absolute;
-  inset: 0;
-  background: rgb(19 19 22);
-  opacity: 0;
-  pointer-events: none;
-}
-
+/* a screen's layer and the screen itself (it scales from the row a chat was opened from) */
 .layer-body {
   position: absolute;
   inset: 0;
   transform-origin: 50% 42%;
-}
-
-.layer-ghost {
-  pointer-events: none;
-  will-change: opacity;
 }

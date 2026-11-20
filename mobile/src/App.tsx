@@ -125,10 +125,14 @@ export function App() {
     };
   }, []);
 
-  // Data for chats that are no longer on screen is dropped (the snapshot reloads it).
+  // Data for chats that are no longer on screen is dropped (the snapshot reloads it), once the screen
+  // that showed it has left: dropped at once, the chat on its way out showed its skeleton for its last frames.
   useEffect(() => {
-    const open = new Set(stack.map(chatOf).filter(Boolean));
-    for (const id of Object.keys(getState().data)) if (!open.has(id)) closeSessionData(id);
+    const t = window.setTimeout(() => {
+      const open = new Set(nav.stack.map(chatOf).filter(Boolean));
+      for (const id of Object.keys(getState().data)) if (!open.has(id)) closeSessionData(id);
+    }, 900);
+    return () => clearTimeout(t);
   }, [stack]);
 
   const unpaired = state === 'unpaired' || (state === 'denied' && !getState().loaded);
@@ -197,22 +201,18 @@ function Screen({ route: r }: { route: Route }) {
   );
 }
 
-const W = () => window.innerWidth;
 const H = () => window.innerHeight;
-const inset = (o: Origin) => {
-  const { top, left, width, height } = o.rect;
-  return `inset(${top.toFixed(1)}px ${(W() - left - width).toFixed(1)}px ${(H() - top - height).toFixed(1)}px ${left.toFixed(1)}px round ${o.radius}px)`;
-};
-const FULL = 'inset(0px 0px 0px 0px round 0px)';
 
 /**
- * A screen over home. A chat grows out of the row (or card, or field) it was opened from: its
- * window opens from that rectangle while the conversation resolves inside it, and home steps back.
- * Going back it folds into its row again when that row is on screen; otherwise screens slide.
+ * A screen over home. A chat grows out of the row (or card, or field) it was opened from: it scales
+ * up from that row's place while it fades in, and home steps back. Going back it shrinks into its row
+ * again when that row is on screen; otherwise screens slide. Transform and opacity only, as WAAPI
+ * animations: the compositor runs them while the page mounts the conversation (the window that
+ * opened as a clip-path was drawn by the main thread, which was busy mounting it: the opening and the
+ * way back lost most of their frames on a phone).
  */
 function Layer({ route, index, covered, children }: { route: Route; index: number; covered: boolean; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
-  const plate = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const [present, safeToRemove] = usePresence();
   // Taken once (a development double run of the effect must not lose it).
@@ -225,36 +225,17 @@ function Layer({ route, index, covered, children }: { route: Route; index: numbe
   useLayoutEffect(() => {
     const el = ref.current;
     const b = body.current;
-    const pl = plate.current;
-    if (!el || !b || !pl) return;
+    if (!el || !b) return;
     const o = origin.current;
     if (reduced()) {
       animate(el, { opacity: [0, 1] }, { duration: 0.14 });
       return;
     }
     if (o) {
-      // The window opens out of what was tapped: at first it is that row (a copy of it on the card's ink),
-      // then the conversation resolves inside it as it grows.
-      el.dataset.grow = '';
-      const ghost = place(pl, o);
-      const a = animate(el, { clipPath: [inset(o), FULL] }, SPRING);
-      const dy = (o.rect.top + o.rect.height / 2 - H() / 2) * 0.24;
-      animate(pl, { opacity: [1, 0] }, { duration: 0.28, delay: 0.12, ease: 'easeOut' });
-      if (ghost) animate(ghost, { opacity: [1, 0] }, { duration: 0.1, ease: 'easeOut' });
-      animate(b, { opacity: [0, 1] }, { duration: 0.22, delay: 0.05, ease: 'easeOut' });
-      animate(b, { transform: [`translateY(${dy.toFixed(1)}px) scale(0.93)`, 'translateY(0px) scale(1)'] }, SPRING);
-      void a.finished.then(() =>
-        // After the animation has written its last frame: no clip may stay (even a full one makes
-        // the conversation's scrolling draw again every frame).
-        requestAnimationFrame(() => {
-          delete el.dataset.grow;
-          el.style.removeProperty('clip-path');
-          el.getAnimations().forEach((x) => x.cancel());
-          ghost?.remove();
-        }),
-      );
-      // The chat's field swells up as it opens (after its listeners are in).
-      requestAnimationFrame(() => fieldBeat('open'));
+      // Out of what was tapped: the screen grows from that row's place as it comes in.
+      b.style.transformOrigin = `50% ${(o.rect.top + o.rect.height / 2).toFixed(0)}px`;
+      animate(b, { transform: ['scale(0.9)', 'scale(1)'] }, SPRING);
+      animate(b, { opacity: [0, 1] }, { duration: 0.2, ease: 'easeOut' });
       return;
     }
     const dir = swapIn.current ?? 1;
@@ -269,6 +250,7 @@ function Layer({ route, index, covered, children }: { route: Route; index: numbe
     if (!b || !present || wasCovered.current === covered) return;
     wasCovered.current = covered;
     const n = nowOf(b);
+    b.style.transformOrigin = '';
     animate(b, { transform: [`scale(${n.scale})`, `scale(${covered ? 0.94 : 1})`], opacity: [n.opacity, covered ? 0.4 : 1] }, SPRING);
   }, [covered, present]);
 
@@ -277,23 +259,17 @@ function Layer({ route, index, covered, children }: { route: Route; index: numbe
   useEffect(() => {
     const el = ref.current;
     const b = body.current;
-    const pl = plate.current;
     if (present) {
       const going = leaving.current;
-      if (!going || !el || !b || !pl) return;
+      if (!going || !el || !b) return;
       leaving.current = null;
       going.forEach((a) => a.stop());
       el.style.pointerEvents = '';
-      pl.querySelectorAll('.layer-ghost').forEach((g) => g.remove());
-      void animate(el, { transform: 'translateX(0%)', clipPath: FULL, opacity: 1 }, SPRING).finished.then(() => {
-        delete el.dataset.grow;
-        el.style.removeProperty('clip-path');
-      });
-      animate(b, { transform: 'translateY(0px) scale(1)', opacity: 1 }, SPRING);
-      animate(pl, { opacity: 0 }, { duration: 0.12 });
+      animate(el, { transform: 'translateX(0%)', opacity: 1 }, SPRING);
+      animate(b, { transform: 'scale(1)', opacity: 1 }, SPRING);
       return;
     }
-    if (!el || !b || !pl) return void safeToRemove();
+    if (!el || !b) return void safeToRemove();
     el.style.pointerEvents = 'none';
     const list: { stop: () => void }[] = [];
     leaving.current = list;
@@ -311,17 +287,11 @@ function Layer({ route, index, covered, children }: { route: Route; index: numbe
     }
     const row = route.name === 'chat' ? rowOf(route.id) : null;
     if (row) {
-      // Folds back into its row: the conversation fades as the window closes on it, the row resolves where it lands.
-      el.dataset.grow = '';
-      const ghost = place(pl, row);
-      const fold = { ...SPRING, stiffness: 470 };
-      const a = go(animate(el, { clipPath: [FULL, inset(row)] }, fold));
-      const dy = (row.rect.top + row.rect.height / 2 - H() / 2) * 0.24;
-      go(animate(b, { transform: ['translateY(0px) scale(1)', `translateY(${dy.toFixed(1)}px) scale(0.93)`] }, fold));
-      go(animate(b, { opacity: [1, 0] }, { duration: 0.16, delay: 0.06, ease: 'easeIn' }));
-      go(animate(pl, { opacity: [0, 1] }, { duration: 0.16, delay: 0.04, ease: 'easeOut' }));
-      if (ghost) go(animate(ghost, { opacity: [0, 1] }, { duration: 0.12, delay: 0.16, ease: 'easeOut' }));
-      void a.finished.then(done);
+      // Back into its row: the screen shrinks toward the row's place and fades as home comes forward.
+      b.style.transformOrigin = `50% ${Math.min(H(), Math.max(0, row.rect.top + row.rect.height / 2)).toFixed(0)}px`;
+      const n = nowOf(b);
+      go(animate(b, { transform: [`scale(${n.scale})`, 'scale(0.9)'] }, { ...SPRING, stiffness: 470 }));
+      void go(animate(b, { opacity: [n.opacity, 0] }, { duration: 0.2, ease: 'easeIn' })).finished.then(done);
       return;
     }
     void go(animate(el, { transform: ['translateX(0%)', 'translateX(100%)'] }, { type: 'spring', stiffness: 520, damping: 50, restDelta: 1 })).finished.then(done);
@@ -330,23 +300,11 @@ function Layer({ route, index, covered, children }: { route: Route; index: numbe
 
   return (
     <div ref={ref} className="layer" style={{ zIndex: 10 + index }} data-route={route.name}>
-      <div ref={plate} className="layer-plate" aria-hidden />
       <div ref={body} className="layer-body">
         {children}
       </div>
     </div>
   );
-}
-
-/** A copy of what was tapped, where it was, on the plate the window opens from. */
-function place(plate: HTMLElement, o: Origin): HTMLElement | null {
-  if (!o.el) return null;
-  const g = o.el.cloneNode(true) as HTMLElement;
-  g.removeAttribute('data-chat');
-  g.classList.add('layer-ghost');
-  g.style.cssText = `position:absolute;margin:0;top:${o.rect.top}px;left:${o.rect.left}px;width:${o.rect.width}px;height:${o.rect.height}px;transform:none`;
-  plate.appendChild(g);
-  return g;
 }
 
 /** Another chat waits on you while a chat or settings covers home: one line at the top, a tap goes there. */

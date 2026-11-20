@@ -5,6 +5,7 @@ import { stripWrappers, syntheticOf } from '@shared/synthetic';
 import { formatDuration, formatTokens, plural, resetIn } from '@desk/lib/format';
 import { leadTitle } from '@desk/features/timeline/lead-in';
 import { useNow } from '@m/lib/useNow';
+import { cancelDownload, downloadKey, openDownload, startDownload, useDownload } from '@m/lib/downloads';
 import { conn } from '@m/lib/conn';
 import { diffLines, renderMarkdown } from '@m/lib/md';
 import { haptic, openExternal } from '@m/lib/native';
@@ -15,6 +16,7 @@ import { applyChildren, applyFull, fetchItem, getState, sessionData, setState, u
 import { claimFlight } from '@m/lib/flight';
 import { LINE, type FlowChunk, type Segment, type TurnGroup } from '@m/lib/turns';
 import { Icon, TOOL_ICON, type IconName } from '@m/ui/icons';
+import { FileGlyph, kindName } from '@m/ui/FileGlyph';
 import { PROVIDER_NAME, ProviderMark, Ring, StatusMark, Tiles } from '@m/ui/marks';
 import { REVEAL, reduced } from '@m/ui/motion';
 import { SynLine } from './Synthetic';
@@ -962,25 +964,11 @@ function fileSize(n?: number): string {
   return `${(n / KB / KB / KB).toFixed(1)} GB`;
 }
 
-const CODE_EXT = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'json', 'py', 'rs', 'go', 'java', 'kt', 'swift', 'c', 'cpp', 'h', 'cs', 'rb', 'php', 'sh', 'html', 'css', 'xml', 'yml', 'yaml', 'toml', 'sql']);
-function fileIcon(name: string): IconName {
-  const ext = name.split('.').pop()?.toLowerCase() ?? '';
-  if (ext === 'apk' || ext === 'aab') return 'android';
-  if (['zip', 'tar', 'gz', 'tgz', '7z', 'rar'].includes(ext)) return 'fileZip';
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic'].includes(ext)) return 'fileImage';
-  if (ext === 'pdf') return 'filePdf';
-  if (CODE_EXT.has(ext)) return 'fileCode';
-  return 'file';
-}
-const kindOf = (name: string) => {
-  const ext = name.includes('.') ? name.split('.').pop()!.toUpperCase() : '';
-  return ext.length <= 5 ? ext : '';
-};
-
 /**
- * Files the agent handed over (`share`): each a card (its kind as a plain glyph, name, size) with
- * Download. The desktop makes a one-file link for 15 minutes (`phone.fileLink`); Android's own
- * browser fetches it (an APK then offers to install).
+ * Files the agent handed over (`share`): one card, a row per file (its kind drawn as a page with an
+ * emblem, the name, the size and kind) with a round Download key. The download runs inside the app
+ * (lib/downloads.ts: Android's DownloadManager into Downloads/Sable): the key fills as a ring with the
+ * bytes counted under the name, and the file then opens from the row (an APK goes to the installer).
  */
 function ShareCards({ sid, it }: { sid: string; it: ToolItem }) {
   const files = it.detail.files ?? [];
@@ -989,47 +977,73 @@ function ShareCards({ sid, it }: { sid: string; it: ToolItem }) {
   return (
     <div className="share">
       {caption && <p className="share-caption">{caption}</p>}
-      {files.map((f, i) => (
-        <ShareCard key={`${f.path}:${i}`} sid={sid} itemId={it.id} index={i} name={f.name} size={f.size} />
-      ))}
+      <div className="share-card">
+        {files.map((f, i) => (
+          <ShareRow key={`${f.path}:${i}`} sid={sid} itemId={it.id} index={i} name={f.name} size={f.size} />
+        ))}
+      </div>
     </div>
   );
 }
 
-function ShareCard({ sid, itemId, index, name, size }: { sid: string; itemId: string; index: number; name: string; size?: number }) {
-  const [state, setState2] = useState<'idle' | 'busy' | 'done'>('idle');
-  const meta = [fileSize(size), kindOf(name)].filter(Boolean).join(' · ');
-  const go = async () => {
-    if (state === 'busy') return;
-    haptic('tap');
-    setState2('busy');
-    try {
-      const r = await conn.call('phone.fileLink', { sessionId: sid, itemId, index });
-      const url = conn.httpUrl(r.path);
-      if (!url) throw new Error('The computer is not connected');
-      openExternal(url);
-      haptic('success');
-      setState2('done');
-      window.setTimeout(() => setState2('idle'), 2400);
-    } catch (err) {
-      haptic('deny');
-      setState2('idle');
-      setState({ toast: { text: (err as Error).message, level: 'error', at: Date.now() } });
-    }
+function ShareRow({ sid, itemId, index, name, size }: { sid: string; itemId: string; index: number; name: string; size?: number }) {
+  const key = downloadKey(sid, itemId, index);
+  const d = useDownload(key);
+  const desktop = useStore((st) => st.desktop);
+  const busy = d.state === 'asking' || d.state === 'pending' || d.state === 'running' || d.state === 'paused';
+  const total = d.total ?? size;
+  const p = total && d.bytes !== undefined ? Math.min(1, d.bytes / total) : 0;
+  const apk = /\.(apk|aab|xapk)$/i.test(name);
+  const fail = (err: unknown) => {
+    haptic('deny');
+    setState({ toast: { text: (err as Error).message, level: 'error', at: Date.now() } });
   };
+  const get = () => {
+    haptic('tap');
+    void startDownload(key, { sid, itemId, index, name, size, from: desktop ? `From ${desktop}` : undefined }).catch(fail);
+  };
+  const open = () => {
+    haptic('tap');
+    void openDownload(key, name).catch(fail);
+  };
+  const meta =
+    d.state === 'failed'
+      ? (d.error ?? 'The download stopped.')
+      : busy && (d.state === 'asking' || !d.bytes)
+        ? 'Starting'
+        : busy && total
+          ? `${fileSize(d.bytes ?? 0)} of ${fileSize(total)}`
+          : d.state === 'done'
+            ? `${fileSize(total)} · Downloaded`
+            : [fileSize(size), kindName(name)].filter(Boolean).join(' · ');
   return (
-    <div className="share-card">
+    <div className="share-row" data-state={d.state}>
       <span className="share-glyph">
-        <Icon name={fileIcon(name)} size={24} />
+        <FileGlyph name={name} size={34} />
       </span>
       <span className="share-text">
         <span className="share-name">{name}</span>
-        {meta && <span className="share-meta num">{meta}</span>}
+        <span className="share-meta num" data-tone={d.state === 'failed' ? 'error' : undefined}>
+          {meta}
+        </span>
       </span>
-      <button type="button" className="share-get" aria-label={`Download ${name}`} disabled={state === 'busy'} onClick={() => void go()}>
-        {state === 'busy' ? <Ring size={14} /> : <Icon name={state === 'done' ? 'check' : 'download'} size={18} weight={state === 'done' ? 'bold' : 'regular'} />}
-        <span>{state === 'done' ? 'Opened' : 'Download'}</span>
-      </button>
+      {d.state === 'done' ? (
+        <button type="button" className="share-open" onClick={open} aria-label={`${apk ? 'Install' : 'Open'} ${name}`}>
+          {apk ? 'Install' : 'Open'}
+        </button>
+      ) : busy ? (
+        <button type="button" className="share-key" data-busy aria-label={`Stop downloading ${name}`} onClick={() => (haptic('tap'), void cancelDownload(key))}>
+          <svg className="share-ring" viewBox="0 0 40 40" aria-hidden data-wait={d.state === 'asking' || d.state === 'pending' || undefined}>
+            <circle cx="20" cy="20" r="17" className="share-ring-track" />
+            <circle cx="20" cy="20" r="17" className="share-ring-fill" pathLength={100} strokeDasharray={`${Math.max(2, p * 100)} 100`} />
+          </svg>
+          <span className="share-stop" />
+        </button>
+      ) : (
+        <button type="button" className="share-key" aria-label={`${d.state === 'failed' ? 'Try again' : 'Download'} ${name}`} onClick={get}>
+          <Icon name={d.state === 'failed' ? 'retry' : 'download'} size={19} />
+        </button>
+      )}
     </div>
   );
 }

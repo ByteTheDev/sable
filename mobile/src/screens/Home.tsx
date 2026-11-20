@@ -10,7 +10,7 @@ import { haptic } from '@m/lib/native';
 import { nav } from '@m/lib/nav';
 import { openFrom } from '@m/lib/open';
 import { homeFolder, openRace } from '@m/lib/race';
-import { getState, refresh, setState, useStore } from '@m/lib/store';
+import { getState, refresh, setState, useStore, type State } from '@m/lib/store';
 import { useNow } from '@m/lib/useNow';
 import { Field, fieldBeat, paletteFor } from '@m/ui/Field';
 import { Icon } from '@m/ui/icons';
@@ -67,7 +67,11 @@ function groupSessions(sessions: SessionMeta[], projects: Project[], order: stri
 }
 
 export function Home({ under }: { under: boolean }) {
-  const sessions = useStore((s) => s.sessions);
+  // Covered by a chat, home keeps the list it showed: a chat at work changes its line many times a
+  // second, and home (rows that glide when they reorder, measured on every change) followed each one
+  // under the conversation. It catches up as it comes forward.
+  const frozen = useRef<State['sessions'] | null>(null);
+  const sessions = useStore((s) => (under && frozen.current ? frozen.current : (frozen.current = s.sessions)));
   const projects = useStore((s) => s.projects);
   const folderOrder = useStore((s) => s.settings?.folderOrder);
   const defaultProvider = useStore((s) => s.settings?.defaultProvider);

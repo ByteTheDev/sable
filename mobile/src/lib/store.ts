@@ -154,6 +154,64 @@ function patchSession(id: string, patch: Partial<SessionMeta>) {
   setState({ sessions: { ...state.sessions, [id]: { ...s, ...patch } } });
 }
 
+// ── what the phone just asked for: a chat's model, effort, speed or permission mode ──
+// The choice shows at once (the desktop answers in a few hundred ms, the Claude agent later still); an
+// answer from before it (an older update of the same field) is not applied over it meanwhile. Without
+// this the effort dial went back to the old level when the finger let go and came forward again with
+// the desktop's answer, and two quick choices arrived as old, new, old, new.
+const INTENT_MS = 6000;
+const intents = new Map<string, { patch: Partial<SessionMeta>; until: number }>();
+
+const live = (id: string) => {
+  const i = intents.get(id);
+  if (i && i.until < Date.now()) intents.delete(id);
+  return intents.get(id);
+};
+
+/** Shows `patch` on the chat at once and holds it against older answers until the desktop confirms it. */
+export function intend(id: string, patch: Partial<SessionMeta>) {
+  const cur = live(id);
+  intents.set(id, { patch: { ...(cur?.patch ?? {}), ...patch }, until: Date.now() + INTENT_MS });
+  patchSession(id, patch);
+}
+
+/** The desktop refused: the chat shows `was` again (what it had before the choice). */
+export function undoIntent(id: string, was: Partial<SessionMeta>) {
+  const cur = live(id);
+  if (cur) {
+    for (const k of Object.keys(was) as (keyof SessionMeta)[]) delete cur.patch[k];
+    if (!Object.keys(cur.patch).length) intents.delete(id);
+  }
+  patchSession(id, was);
+}
+
+/** An update from the desktop without the fields that still wait for their answer (a confirmed field lets go). */
+function sieve(id: string, patch: Partial<SessionMeta>): Partial<SessionMeta> {
+  const cur = live(id);
+  if (!cur) return patch;
+  const out = { ...patch } as Record<string, unknown>;
+  const want = cur.patch as Record<string, unknown>;
+  for (const k of Object.keys(want)) {
+    if (!(k in out)) continue;
+    if (out[k] === want[k]) delete want[k];
+    else delete out[k];
+  }
+  if (!Object.keys(want).length) intents.delete(id);
+  return out as Partial<SessionMeta>;
+}
+
+/** A whole chat from the desktop (a snapshot, a list) with what the phone asked for still on top. */
+const withIntents = (s: SessionMeta): SessionMeta => {
+  const cur = live(s.id);
+  if (!cur) return s;
+  // What the desktop already shows lets go; the rest stays on top.
+  const theirs: Record<string, unknown> = {};
+  for (const k of Object.keys(cur.patch)) theirs[k] = (s as unknown as Record<string, unknown>)[k];
+  sieve(s.id, theirs as Partial<SessionMeta>);
+  const left = live(s.id);
+  return left ? { ...s, ...left.patch } : s;
+};
+
 type Tail = (SessionSnapshot | PhoneTail) & { cursor?: string };
 
 export function applySnapshot(snap: Tail, cached = false) {
@@ -168,7 +226,7 @@ export function applySnapshot(snap: Tail, cached = false) {
     else roots.push(it.id);
   }
   setState({
-    sessions: { ...state.sessions, [snap.session.id]: snap.session },
+    sessions: { ...state.sessions, [snap.session.id]: withIntents(snap.session) },
     data: {
       ...state.data,
       [snap.session.id]: {
@@ -275,7 +333,7 @@ export function applyEvent(e: BridgeEvent) {
     case 'session.added':
       return setState({ sessions: { ...state.sessions, [e.session.id]: e.session } });
     case 'session.updated':
-      return patchSession(e.id, e.patch);
+      return patchSession(e.id, sieve(e.id, e.patch));
     case 'session.removed': {
       const sessions = { ...state.sessions };
       delete sessions[e.id];
@@ -319,7 +377,7 @@ export function applyEvent(e: BridgeEvent) {
 export async function refresh(openIds: string[]) {
   const hello = await conn.call('app.hello', {});
   const sessions: Record<string, SessionMeta> = {};
-  for (const s of hello.sessions) sessions[s.id] = s;
+  for (const s of hello.sessions) sessions[s.id] = withIntents(s);
   const providers: State['providers'] = {};
   for (const p of hello.providers) providers[p.id] = p;
   setState({ sessions, providers, projects: hello.projects, settings: hello.settings, version: hello.version, desktop: conn.pairing?.desktop, loaded: true, fresh: true, listAt: Date.now() });
