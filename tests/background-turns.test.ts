@@ -84,11 +84,11 @@ const IDLE = { turnActive: false, status: 'idle', activity: undefined };
 describe('Claude Code: background agents and the turns they start', () => {
   it('the owner\'s chat: helpers end, a steer is answered in their turn, and the chat goes idle', async () => {
     const h = await claude();
-    const a = await h.send('Who is Luneri? Read their site and the press page.');
-    h.replay(a.uuid, 'Who is Luneri? Read their site and the press page.');
+    const a = await h.send('Who is Halvard? Read their site and the press page.');
+    h.replay(a.uuid, 'Who is Halvard? Read their site and the press page.');
     h.startHelper(1);
     h.startHelper(2);
-    h.text('Luneri is a small studio from Lisbon …');
+    h.text('Halvard is a small studio from Porto …');
     h.message(result([a.uuid]));
     expect(h.live()).toEqual(IDLE);
 
@@ -101,7 +101,7 @@ describe('Claude Code: background agents and the turns they start', () => {
     expect(h.pushed.at(-1)?.priority).toBe('next');
     h.replay(s.uuid, 'what are you still thinkin about????');
     h.helperDone(2);
-    h.text("Nothing. I'm finished, and the answer about Luneri above is complete.");
+    h.text("Nothing. I'm finished, and the answer about Halvard above is complete.");
     // The meta turn's result names the one client message it folded in, and only that.
     h.message(result([s.uuid]));
     expect(h.live()).toEqual(IDLE);

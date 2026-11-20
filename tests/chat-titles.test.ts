@@ -32,12 +32,12 @@ const item = (x: Partial<TimelineItem> & { type: TimelineItem['type'] }) => ({ i
 
 describe('the prompt', () => {
   it('holds the instructions, the first message and the start of the answer', () => {
-    const p = titlePrompt({ message: 'Wer ist Luneri? Lies ihre Seite.', answer: 'Luneri ist ein kleines Studio in Lissabon.' }, 'C:/work');
+    const p = titlePrompt({ message: 'Wer ist Halvard? Lies ihre Seite.', answer: 'Halvard ist ein kleines Studio in Porto.' }, 'C:/work');
     expect(p.system).toBe(TITLE_SYSTEM);
     expect(p.system).toMatch(/3 to 6 words, sentence case, no quotes, no trailing period/);
     expect(p.system).toMatch(/language of the person's message/);
-    expect(p.user).toContain('<message>\nWer ist Luneri? Lies ihre Seite.\n</message>');
-    expect(p.user).toContain('<answer>\nLuneri ist ein kleines Studio in Lissabon.\n</answer>');
+    expect(p.user).toContain('<message>\nWer ist Halvard? Lies ihre Seite.\n</message>');
+    expect(p.user).toContain('<answer>\nHalvard ist ein kleines Studio in Porto.\n</answer>');
     expect(p.cwd).toBe('C:/work');
   });
 
@@ -64,12 +64,12 @@ describe('the prompt', () => {
 
 describe('what comes back', () => {
   it('becomes a clean title', () => {
-    expect(cleanTitle('Luneri studio overview')).toBe('Luneri studio overview');
+    expect(cleanTitle('Halvard studio overview')).toBe('Halvard studio overview');
     expect(cleanTitle('"Refactor auth middleware."')).toBe('Refactor auth middleware');
-    expect(cleanTitle('Title: Plan a weekend in Lisbon')).toBe('Plan a weekend in Lisbon');
+    expect(cleanTitle('Title: Plan a weekend in Porto')).toBe('Plan a weekend in Porto');
     expect(cleanTitle('**Title:** Fix the flaky login test')).toBe('Fix the flaky login test');
     expect(cleanTitle('# Session expiry cleanup\n\nThis title names…')).toBe('Session expiry cleanup');
-    expect(cleanTitle('  „Wer ist Luneri“  ')).toBe('Wer ist Luneri');
+    expect(cleanTitle('  „Wer ist Halvard“  ')).toBe('Wer ist Halvard');
     expect(cleanTitle('fix the build on windows')).toBe('Fix the build on windows');
     expect(cleanTitle('Why does the build fail?')).toBe('Why does the build fail?');
     expect(cleanTitle('ログイン画面の修正。')).toBe('ログイン画面の修正');
@@ -222,7 +222,7 @@ describe('a chat named in the bridge', () => {
 describe('the Demo\'s pretend small model', () => {
   it('names a chat from the message\'s own words', () => {
     expect(demoTitle(titlePrompt({ message: 'hi, can you refactor the session module please', answer: '' }, '.').user)).toBe('Refactor the session module please');
-    expect(demoTitle(titlePrompt({ message: 'Plan a weekend trip to Lisbon in May.', answer: '' }, '.').user)).toBe('Plan a weekend trip to');
+    expect(demoTitle(titlePrompt({ message: 'Plan a weekend trip to Porto in May.', answer: '' }, '.').user)).toBe('Plan a weekend trip to');
   });
 });
 
