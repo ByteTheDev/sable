@@ -18,6 +18,7 @@ import type {
   UserItem,
 } from '../../shared/protocol';
 import type { ProviderSession } from '../providers/types';
+import { userText } from '../../shared/synthetic';
 
 export type Emit = (event: BridgeEvent) => void;
 
@@ -545,8 +546,9 @@ export function pendingPrompts(runtimes: Iterable<SessionRuntime>): PendingPromp
 }
 
 export function autoTitle(text: string): string {
+  // What the agent's harness writes in the person's place reads by its plain words, never as tags.
   const line =
-    text
+    userText(text)
       .replace(/```[\s\S]*?```/g, ' ')
       .split('\n')
       .map((l) => l.trim())

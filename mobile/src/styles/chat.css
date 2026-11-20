@@ -945,6 +945,178 @@
   white-space: nowrap;
 }
 
+/* What Claude Code wrote in the person's place (Synthetic.tsx): step-sized lines where a bubble would be. */
+.syn {
+  display: flex;
+  flex-direction: column;
+}
+
+.syn-line {
+  margin: 0 -10px;
+}
+
+.run-card .syn-line {
+  margin: 0;
+}
+
+/* several in a row (tasks finishing one after another) stack tightly; a command's output sits under it */
+.syn + .syn[data-role='notification'],
+.syn[data-role='notification'] + .syn[data-role='notification'] {
+  margin-top: -10px;
+}
+
+.syn + .syn[data-role='output'] {
+  margin-top: -15px;
+}
+
+.syn-line .step-line:disabled {
+  opacity: 1;
+}
+
+.syn-title {
+  flex-shrink: 0;
+  max-width: 62%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+
+.syn-sub {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-3);
+}
+
+.syn-time {
+  margin-left: auto;
+  padding-left: 4px;
+  flex-shrink: 0;
+  font-size: var(--t-xs);
+  color: var(--text-4);
+}
+
+.syn-mark {
+  color: var(--text-3);
+}
+
+.syn-line[data-outcome='failed'] .syn-mark {
+  color: var(--red);
+}
+
+.syn-line[data-outcome='stopped'] .syn-mark {
+  color: var(--text-4);
+}
+
+.syn-line[data-open] .syn-title {
+  color: var(--text);
+}
+
+/* "/model opus": the command as typed, its name a step brighter than its arguments */
+.syn-cmd {
+  max-width: none;
+  flex: 1;
+}
+
+.syn-cmd-name {
+  font-weight: 560;
+  color: var(--text-2);
+}
+
+.syn-cmd-args {
+  color: var(--text-3);
+}
+
+/* opened: under the title, past the mark */
+.syn-details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 10px 10px 37px;
+}
+
+.syn-md {
+  font-size: var(--t-sm);
+}
+
+.syn-facts {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.syn-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-height: 32px;
+  margin: -4px 0 -6px -8px;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  text-align: left;
+  transition: background-color 100ms;
+}
+
+.syn-file:active {
+  background-color: var(--fill-2);
+}
+
+.syn-file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}
+
+/* what a command printed: dim lines under its line, aligned with its words */
+.syn-out {
+  margin-left: 27px;
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.run-card .syn-out {
+  margin: 0 10px 8px 37px;
+}
+
+.syn-out-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.syn-out[data-mono] .syn-out-text {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.syn-out[data-error] .syn-out-text {
+  color: color-mix(in oklab, var(--red) 45%, var(--text-2));
+}
+
+.syn-more {
+  min-height: 32px;
+  margin: -2px 0 -6px -8px;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: var(--t-xs);
+  font-weight: 580;
+  color: var(--text-2);
+  transition: background-color 100ms;
+}
+
+.syn-more:active {
+  background-color: var(--fill-2);
+}
+
 /* ── answers ── */
 .md {
   font-size: var(--t-body);

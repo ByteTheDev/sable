@@ -19,6 +19,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { BridgeEvent, CaptureView, TimelineItem, ToolItem, TurnCapture } from '../../shared/protocol';
+import { syntheticOf } from '../../shared/synthetic';
 import type { App } from '../app';
 import { BrowserCapturer, CELL, findBrowser, type Capturer, type Picture } from './capture-browser';
 import { diffRegions, toPixels } from './capture-diff';
@@ -462,13 +463,26 @@ export class CaptureService {
   }
 }
 
-/** The message that started the latest turn (the timeline's turn key). */
+/**
+ * The message that started the latest turn (the timeline's turn key), read as the window groups
+ * turns (timeline/turns.ts): a notification the agent's harness wrote (a task finished) opens a
+ * turn only when none is open, and a command's output or a reminder never opens one.
+ */
 export function leadOf(items: readonly TimelineItem[]): string | undefined {
-  for (let i = items.length - 1; i >= 0; i--) {
-    const it = items[i];
-    if (it.type === 'user' && !it.parentId && !it.steered && it.state !== 'queued') return it.id;
+  let lead: string | undefined;
+  let open = false;
+  for (const it of items) {
+    if (it.parentId) continue;
+    if (it.type === 'user') {
+      if (it.steered || it.state === 'queued') continue;
+      const syn = syntheticOf(it);
+      // Inside a turn a notification joins it; a command's output or a summary never opens one.
+      if (syn && syn.role !== 'command' && (open || syn.role === 'output' || syn.role === 'summary')) continue;
+      lead = it.id;
+      open = true;
+    } else if (it.type === 'turn' || (it.type === 'notice' && (it.variant === 'interrupted' || !!it.until || !!it.agentSwitch))) open = false;
   }
-  return undefined;
+  return lead;
 }
 
 /** Local pages the turn names: its last words first, then what its commands printed, latest first. */

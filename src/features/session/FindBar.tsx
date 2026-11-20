@@ -1,3 +1,4 @@
+import { syntheticOf, userItemText } from '@shared/synthetic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { setFindMarks, stepMessage } from '@/features/timeline/nav-bus';
@@ -50,8 +51,12 @@ function sourcesOf(sessionId: string): { sources: FindSource[]; users: string[] 
     const item = data?.items[id];
     if (!item) continue;
     if (item.type === 'user') {
-      if (item.state !== 'queued') users.push(id);
-      if (item.text) sources.push({ id, text: item.text });
+      // Messages Claude Code wrote (notifications, command output) are searched by their plain words
+      // and are not stops for Alt+Up/Down, as on the conversation's map; a command the person ran is.
+      const s = syntheticOf(item);
+      if (item.state !== 'queued' && (!s || s.role === 'command')) users.push(id);
+      const words = userItemText(item);
+      if (words) sources.push({ id, text: words });
     } else if (item.type === 'text' && item.text) sources.push({ id, text: item.text });
   }
   return { sources, users };

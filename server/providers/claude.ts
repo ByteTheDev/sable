@@ -55,6 +55,7 @@ import type { Provider, ProviderContext, ProviderSession, WarmChoice } from './t
 import { claudePlan } from './plans';
 import { carryClaudeConversation } from '../accounts/handover';
 import { CONCISE_REPLIES_PROMPT } from '../../shared/protocol';
+import { parseSynthetic, syntheticLine } from '../../shared/synthetic';
 import { widgetServer } from './claude-widget';
 import { BROWSER_HINT, BROWSER_TOOL_IDS, browserTabEnabled } from './browser-tool';
 import { DEVICE_HINT, DEVICE_TOOL_IDS, deviceEnabled } from './device-tool';
@@ -1789,12 +1790,17 @@ class ClaudeSession implements ProviderSession {
       if (m.uuid && (this.chain.includes(m.uuid) || rt.items.some((i) => i.type === 'user' && i.providerId === m.uuid))) return;
       const text = replayText(m.message?.content);
       if (!text) return;
+      // Written by Claude Code in the person's place (a task finished, a command and its output):
+      // shown as a line (shared/synthetic.ts), never as a message from the Claude app.
+      const syn = parseSynthetic(text);
+      // A slash command Sable sent comes back in the CLI's own tags (`<command-name>/compact</command-name>…`).
+      const echo = syn?.role === 'command' ? syntheticLine(syn) : '';
       // One of ours under another uuid (a steer the CLI folded in): the same words, still waiting.
       for (const [uuid, id] of this.pendingUsers) {
         const mine = rt.get<UserItem>(id);
         // Sable may have sent more than the words (a summary before them, a line on the Browser tab, pictures).
         const words = mine?.text.trim() ?? '';
-        if (mine && (words === text.trim() || (words.length >= 12 && text.includes(words)))) {
+        if (mine && (words === text.trim() || (words.length >= 12 && text.includes(words)) || (!!echo && words === echo))) {
           this.pendingUsers.delete(uuid);
           if (m.uuid) this.chain.push(m.uuid);
           rt.taken(id, { providerId: m.uuid });
@@ -1804,7 +1810,7 @@ class ClaudeSession implements ProviderSession {
       // A message sent from elsewhere (Remote Control in the Claude app or on claude.ai): it belongs
       // in this conversation, and the turn it starts runs here too.
       if (m.uuid) this.chain.push(m.uuid);
-      rt.add<UserItem>({ type: 'user', text, state: 'sent', providerId: m.uuid, remote: true });
+      rt.add<UserItem>({ type: 'user', text, state: 'sent', providerId: m.uuid, ...(syn ? {} : { remote: true }) });
       // It gets a result of its own (or is folded into the running turn's): either way the turn waits for it.
       if (rt.turnActive) this.outstanding++;
       else {

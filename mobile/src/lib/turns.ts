@@ -1,4 +1,5 @@
 import type { TimelineItem } from '@shared/protocol';
+import { syntheticOf } from '@shared/synthetic';
 import { isLeadIn } from '@desk/features/timeline/lead-in';
 
 /**
@@ -17,6 +18,10 @@ import { isLeadIn } from '@desk/features/timeline/lead-in';
  *   i "Interrupted"   e an error notice   T turn end   F turn end with an error
  *   Z a line of its own that closes a turn left open: a /until loop's end, or a switch of agent
  *   x a check of a turn by the other agent (never part of a turn: shown under the turn it checks)
+ *   N a notification Claude Code wrote in the person's place (a task finished; shared/synthetic.ts):
+ *     a line that opens a turn, or in a running one a segment of its own
+ *   u such a message with nothing to show (a reminder): opens a turn between turns, left out when
+ *     nothing comes in it (a slash command opens a turn as a message does, U; what it printed is n)
  *   . nothing to show
  */
 
@@ -76,9 +81,13 @@ const shapes = new WeakMap<object, string>();
 
 function shapeRaw(item: TimelineItem): string {
   switch (item.type) {
-    case 'user':
+    case 'user': {
       if (item.steered) return 'S';
-      return item.state === 'queued' ? 'Q' : 'U';
+      if (item.state === 'queued') return 'Q';
+      const syn = syntheticOf(item);
+      if (!syn) return 'U';
+      return syn.role === 'notification' ? 'N' : syn.role === 'hidden' ? 'u' : syn.role === 'command' ? 'U' : 'n';
+    }
     case 'text':
       if (!item.streaming && !item.text.trim()) return '.';
       return isLeadIn(item.text, !!item.streaming) ? 'l' : 't';
@@ -253,6 +262,8 @@ interface Open {
   segs: RawSeg[];
   interrupted: boolean;
   failed: boolean;
+  /** Opened by a message with nothing to show (u): left out when nothing else comes in it. */
+  quiet?: boolean;
 }
 
 /**
@@ -273,6 +284,8 @@ export function groupTurns(ids: readonly string[], shape: string, busy: boolean,
     if (end) o.ids.push(end);
     const failed = failedEnd || o.failed;
     const state: TurnState = atEnd && !end && busy && !o.interrupted ? 'running' : failed ? 'failed' : o.interrupted ? 'interrupted' : 'done';
+    // A reminder or a caveat with nothing after it: nothing to show.
+    if (o.quiet && state !== 'running' && o.segs.length === 1 && o.segs[0].chars.every((c) => c === '.')) return;
     const key = o.ids[0];
     const last = o.segs.length - 1;
     const segments = o.segs.map((s, i) => buildSegment(s, i, key, failed && i === last, state === 'running' && i === last, i < last));
@@ -291,9 +304,29 @@ export function groupTurns(ids: readonly string[], shape: string, busy: boolean,
 
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
-    const ch = shape[i] ?? '.';
+    let ch = shape[i] ?? '.';
     if (ch === 'Q') {
       queued.push(id);
+      continue;
+    }
+    // A message with nothing to show: nothing inside a turn; between turns it opens one.
+    if (ch === 'u') {
+      if (open) ch = '.';
+      else {
+        open = { ids: [id], segs: [{ lead: id, steered: false, ids: [], chars: [] }], interrupted: false, failed: false, quiet: true };
+        continue;
+      }
+    }
+    // A notification: in a running turn a segment of its own (as a steered message), else a turn.
+    if (ch === 'N') {
+      const o = open as Open | null;
+      if (o && !o.interrupted) {
+        o.ids.push(id);
+        o.segs.push({ lead: id, steered: false, ids: [], chars: [] });
+        continue;
+      }
+      close(null, false, false);
+      open = { ids: [id], segs: [{ lead: id, steered: false, ids: [], chars: [] }], interrupted: false, failed: false };
       continue;
     }
     // A check runs beside the conversation: it never joins (or ends) the turn around it.

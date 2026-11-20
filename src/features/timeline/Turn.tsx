@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { TimelineItem, TurnItem, UserItem } from '@shared/protocol';
+import { syntheticLine, syntheticOf } from '@shared/synthetic';
 import { CopyButton } from '@/components/CopyButton';
 import { BeforeAfter } from '@/features/compare/BeforeAfter';
 import { LazyTip } from '@/components/LazyTip';
@@ -106,9 +107,17 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
   const errorShown = turn.segments.some((s) => s.errors.length > 0);
   const hasAnswer = turn.segments.some((s) => s.answer);
 
-  const retry = () => {
+  // What "Try again" sends: the turn's message, or a slash command as it was typed. A turn a
+  // notification opened (a background task finished) has nothing of the person's to send again.
+  const again = (): UserItem | undefined => {
     const all = items();
-    const user = turn.ids.map((id) => all[id]).find((it): it is UserItem => it?.type === 'user');
+    const user = turn.ids.map((id) => all[id]).find((it): it is UserItem => it?.type === 'user' && syntheticOf(it)?.role !== 'hidden');
+    const syn = syntheticOf(user);
+    if (!user || !syn) return user;
+    return syn.role === 'command' ? { ...user, text: syntheticLine(syn) } : undefined;
+  };
+  const retry = () => {
+    const user = again();
     if (user) void sendMessage(sessionId, user.text, user.attachments ?? []);
   };
 
@@ -118,7 +127,7 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
   if (end?.type === 'turn' && end.costUsd) parts.push(formatCost(end.costUsd));
   const breakdown = end?.type === 'turn' && (end.inputTokens || end.outputTokens) ? `${formatTokens(end.inputTokens)} tokens read, ${formatTokens(end.outputTokens)} written` : undefined;
 
-  const retryShown = failed && !limitHolds;
+  const retryShown = failed && !limitHolds && !!again();
   const errorShownHere = failed && end?.type === 'turn' && !!end.error && !errorShown;
   if (!previews.length && !retryShown && !errorShownHere && !hasAnswer && !parts.length && turn.state !== 'interrupted') return null;
 

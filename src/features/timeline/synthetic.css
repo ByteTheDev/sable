@@ -1,0 +1,197 @@
+/* What the agent's harness wrote in the person's place (Synthetic.tsx): quiet lines in the flow,
+   step-sized, where a message bubble would have stood. */
+
+/* A turn's air above it, as a message has, then the line itself. */
+.tl-item[data-t='user'][data-k='synthetic'] {
+  padding-top: 18px;
+  padding-bottom: 4px;
+  contain-intrinsic-size: auto 32px;
+}
+
+/* Several in a row (tasks finishing one after another) stack tightly. */
+.tl-item[data-k='synthetic'] + .tl-item[data-k='synthetic'] {
+  padding-top: 0;
+}
+
+/* What a command printed sits right under its line. */
+.tl-item[data-t='user'][data-k='synthetic'][data-role='output'] {
+  padding-top: 0;
+  padding-bottom: 6px;
+  contain-intrinsic-size: auto 24px;
+}
+
+/* One that just came in rises like a step, not like a sent message. */
+.tl-item[data-fresh][data-t='user'][data-k='synthetic'] > * {
+  animation-name: rise-in;
+  animation-duration: var(--d-3);
+}
+
+.syn-caret-slot {
+  width: 10px;
+  flex-shrink: 0;
+}
+
+.syn-time {
+  font-size: 11.5px;
+  color: var(--text-4);
+  transition: color var(--d-1) var(--ease);
+}
+
+.row-btn:not([data-static]):hover .syn-time {
+  color: var(--text-3);
+}
+
+/* A finished task's mark sits one tone back; a failed one is red (`.tool[data-status='error']`). */
+.syn-mark[data-outcome='done'] {
+  color: var(--text-3);
+}
+
+.syn-mark[data-outcome='stopped'] {
+  color: var(--text-4);
+}
+
+/* "/model opus": the command as typed, its name a step brighter than its arguments. */
+.syn-cmd {
+  max-width: none;
+}
+
+.syn-cmd-name {
+  font-weight: var(--w-medium);
+  color: var(--text-2);
+}
+
+.syn-cmd-args {
+  color: var(--text-3);
+}
+
+/* Opened: aligned with the title, past the mark. */
+.syn-details {
+  padding: 3px 1px 10px 24px;
+}
+
+.syn-result .md {
+  font-size: 13px;
+  line-height: 1.58;
+}
+
+.syn-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  min-width: 0;
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.syn-facts:first-child {
+  margin-top: 0;
+}
+
+.syn-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 22px;
+  margin: 0 -6px;
+  padding: 0 6px;
+  border-radius: var(--r-ctl-xs);
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-decoration: none;
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.syn-file > svg {
+  flex-shrink: 0;
+}
+
+.syn-file .path {
+  min-width: 0;
+}
+
+.syn-file .path-dir {
+  color: var(--text-4);
+}
+
+.syn-file:hover {
+  background-color: var(--fill-1);
+  color: var(--text-2);
+}
+
+.syn-file:active {
+  background-color: var(--fill-2);
+}
+
+.syn-file:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
+}
+
+/* What a command printed: dim lines under the line above, aligned with its words. */
+.syn-out {
+  padding-left: 24px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.syn-out-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.syn-out[data-mono] .syn-out-text {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.syn-out[data-error] .syn-out-text {
+  color: color-mix(in oklab, var(--red) 40%, var(--text-2));
+}
+
+/* A quiet link under cut text, on its left edge. */
+.syn-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  margin: 2px 0 0 -7px;
+  padding: 0 7px;
+  border-radius: var(--r-ctl-xs);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+  transition:
+    background-color var(--d-1) var(--ease),
+    color var(--d-1) var(--ease);
+}
+
+.syn-more svg {
+  color: var(--text-4);
+  transition: color var(--d-1) var(--ease);
+}
+
+.syn-more:hover {
+  background-color: var(--fill-1);
+  color: var(--text-2);
+}
+
+.syn-more:hover svg {
+  color: var(--text-2);
+}
+
+.syn-more:active {
+  background-color: var(--fill-2);
+}
+
+.syn-more:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
+}

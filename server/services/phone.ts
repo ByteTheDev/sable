@@ -30,6 +30,7 @@ import {
   type ToolResult,
   type WorkflowRun,
 } from '../../shared/protocol';
+import { partOfTurn, syntheticOf } from '../../shared/synthetic';
 import type { App } from '../app';
 import { cap, isSnapshot, lines } from '../core/trim';
 import { VERSION } from '../version';
@@ -278,7 +279,8 @@ export function phonePatch(patch: Partial<TimelineItem>): Partial<PhoneItem> | n
   return Object.keys(p).length ? (p as Partial<PhoneItem>) : null;
 }
 
-const turnStart = (it: TimelineItem) => it.type === 'user' && !it.steered;
+/** A message that opens a turn: not a steer, not a command's output or a reminder the agent's harness wrote. */
+const turnStart = (it: TimelineItem) => it.type === 'user' && !it.steered && !partOfTurn(syntheticOf(it));
 
 /**
  * One page of a conversation's root items, newest last: up to `limit` before `before` (or the

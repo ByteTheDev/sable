@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useReduc
 import { createPortal } from 'react-dom';
 import { DropdownMenu as RM } from 'radix-ui';
 import type { Attachment, QueuedMessage } from '@shared/protocol';
+import { stripWrappers, syntheticLine, syntheticOf } from '@shared/synthetic';
 import { beginHandoff, cancelHandoff, claimHandoff } from '@/features/home/handoff';
 import { Icon } from '@/icons';
 import { pathForFile } from '@/lib/desktop';
@@ -729,7 +730,14 @@ ${cur}` : draft.text, attachments: draft.attachments });
     const out: string[] = [];
     for (const id of d.roots) {
       const it = d.items[id];
-      if (it?.type === 'user' && it.text.trim()) out.push(it.text);
+      if (it?.type !== 'user' || !it.text.trim()) continue;
+      // What Claude Code wrote into the conversation comes back only as the command the person typed.
+      const s = syntheticOf(it);
+      if (s) {
+        if (s.role === 'command') out.push(syntheticLine(s));
+        continue;
+      }
+      out.push(stripWrappers(it.text));
     }
     return out;
   };

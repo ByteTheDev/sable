@@ -1,4 +1,5 @@
 import type { TimelineItem } from '@shared/protocol';
+import { syntheticOf } from '@shared/synthetic';
 import { changedSince, type ItemsRevision } from '@/state/revision';
 import { isLeadIn } from './lead-in';
 
@@ -10,6 +11,12 @@ import { isLeadIn } from './lead-in';
  * Each root item is reduced to one character (`shapeOf`):
  *   U  a sent message that starts a turn       Q  a queued message, not taken yet (floats to the end)
  *   S  a message steered into the running turn  t  assistant prose (an answer candidate)
+ *   N  a notification the agent's harness wrote in the person's place (a background task finished, a
+ *      message from another session; `shared/synthetic.ts`), shown as a line: it opens a turn, or
+ *      inside a running one a segment of its own, as a steered message does
+ *   u  such a message with nothing to show (a reminder, a caveat): between turns it opens one, so
+ *      the work after it folds as a turn's; a turn with nothing else in it is not shown
+ *      (a slash command opens a turn as a message does, `U`; what it printed is a notice, `n`)
  *   l  a lead-in: a one-line announcement of the next step ("Let me run the tests."), or a text
  *      still being written that may turn out one (see `lead-in.ts`): folded with the steps it
  *      announces, said in view when no step follows it
@@ -97,9 +104,13 @@ export interface TurnLayout {
 export function shapeOf(item: TimelineItem | undefined): string {
   if (!item) return '.';
   switch (item.type) {
-    case 'user':
+    case 'user': {
       if (item.steered) return 'S';
-      return item.state === 'queued' ? 'Q' : 'U';
+      if (item.state === 'queued') return 'Q';
+      const syn = syntheticOf(item);
+      if (!syn) return 'U';
+      return syn.role === 'notification' ? 'N' : syn.role === 'hidden' ? 'u' : syn.role === 'command' ? 'U' : 'n';
+    }
     case 'text':
       if (!item.streaming && !item.text.trim()) return '.';
       return isLeadIn(item.text, !!item.streaming) ? 'l' : 't';
@@ -191,6 +202,8 @@ interface Open {
   segs: { lead: string | null; steered: boolean; ids: string[]; chars: string[] }[];
   interrupted: boolean;
   failed: boolean;
+  /** Opened by a message with nothing to show (`u`): left out when nothing else comes in it. */
+  quiet?: boolean;
 }
 
 /** What may follow a lead-in for it to fold with the work it announces. */
@@ -370,6 +383,8 @@ function groupFrom(g: Grouping, ids: readonly string[], shape: string, busy: boo
     if (end) o.ids.push(end);
     const failed = failedEnd || o.failed;
     const state: TurnState = atEnd && !end && busy && !o.interrupted ? 'running' : failed ? 'failed' : o.interrupted ? 'interrupted' : 'done';
+    // A reminder or a caveat with nothing after it (a caveat before a command): nothing to show.
+    if (o.quiet && state !== 'running' && o.segs.length === 1 && o.segs[0].chars.every((c) => c === '.')) return;
     const key = o.ids[0];
     const last = o.segs.length - 1;
     const segments = o.segs.map((s, i) => buildSegment(s, i, key, failed && i === last, state === 'running' && i === last, i < last));
@@ -386,15 +401,37 @@ function groupFrom(g: Grouping, ids: readonly string[], shape: string, busy: boo
     groups.push({ kind: 'turn', key, segments, end, state, ids: o.ids });
   };
 
-  const start = (id: string, steered: boolean) => {
-    open = { ids: [id], chars: [], segs: [{ lead: id, steered, ids: [], chars: [] }], interrupted: false, failed: false };
+  const start = (id: string, steered: boolean, quiet = false) => {
+    open = { ids: [id], chars: [], segs: [{ lead: id, steered, ids: [], chars: [] }], interrupted: false, failed: false, ...(quiet ? { quiet } : {}) };
   };
 
   for (let i = from; i < ids.length; i++) {
     const id = ids[i];
-    const ch = shape[i] ?? '.';
+    let ch = shape[i] ?? '.';
     if (ch === 'Q') {
       queued.push(id);
+      continue;
+    }
+    // A message with nothing to show: nothing at all inside a turn; between turns it opens one, so
+    // the agent's work after it reads as a turn.
+    if (ch === 'u') {
+      if (open) ch = '.';
+      else {
+        start(id, false, true);
+        continue;
+      }
+    }
+    // A notification: the agent takes it at its next step, so in a running turn it opens a segment
+    // of its own (as a steered message does); otherwise it opens a turn.
+    if (ch === 'N') {
+      const o = open as Open | null;
+      if (o && !o.interrupted) {
+        o.ids.push(id);
+        o.segs.push({ lead: id, steered: false, ids: [], chars: [] });
+        continue;
+      }
+      close(null, false, false);
+      start(id, false);
       continue;
     }
     // A check runs beside the conversation: it never joins (or ends) the turn around it.

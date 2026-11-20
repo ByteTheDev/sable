@@ -19,6 +19,7 @@ import type {
   TimelineItem,
   Todo,
 } from '@shared/protocol';
+import { partOfTurn, syntheticOf } from '@shared/synthetic';
 import { conn, type ConnState } from './conn';
 
 /**
@@ -359,7 +360,8 @@ export async function openSession(id: string) {
   applySnapshot(snap);
 }
 
-const opensTurn = (it: TimelineItem | undefined) => it?.type === 'user' && !it.steered;
+/** A message that opens a turn (not a steer, not a command's output or a reminder Claude Code wrote). */
+const opensTurn = (it: TimelineItem | undefined) => it?.type === 'user' && !it.steered && !partOfTurn(syntheticOf(it));
 
 /**
  * The pages before the oldest one shown, newest first, back to the message that opened the

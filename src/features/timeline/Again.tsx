@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { UserItem } from '@shared/protocol';
+import { stripWrappers, syntheticOf } from '@shared/synthetic';
 import { rewindTo, sendMessage } from '@/state/actions';
 import { useStore } from '@/state/store';
 import { IconButton, Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/ui';
@@ -12,7 +13,8 @@ function useIsLast(sessionId: string, id: string): boolean {
     if (!data) return false;
     for (let i = data.roots.length - 1; i >= 0; i--) {
       const it = data.items[data.roots[i]];
-      if (it?.type === 'user' && it.state !== 'queued') return it.id === id;
+      // What the agent's harness wrote in the person's place (a task finished) is not theirs.
+      if (it?.type === 'user' && it.state !== 'queued' && !syntheticOf(it)) return it.id === id;
     }
     return false;
   });
@@ -38,6 +40,8 @@ export function MessageAgain({ item }: { item: UserItem }) {
   const [busy, setBusy] = useState(false);
 
   if (!canRewind || !idle || item.state === 'queued' || !item.text) return null;
+  // The words as the person wrote them, without a reminder the harness added.
+  const text = stripWrappers(item.text);
 
   const edit = async () => {
     if (busy) return;
@@ -49,11 +53,11 @@ export function MessageAgain({ item }: { item: UserItem }) {
     const st = useStore.getState();
     // Something already typed is kept under the message, not replaced by it.
     const typed = st.drafts[sessionId]?.text.trim() ? `\n\n${st.drafts[sessionId]?.text}` : '';
-    st.setDraft(sessionId, { text: item.text + typed, attachments: [...(item.attachments ?? []), ...(st.drafts[sessionId]?.attachments ?? [])] });
+    st.setDraft(sessionId, { text: text + typed, attachments: [...(item.attachments ?? []), ...(st.drafts[sessionId]?.attachments ?? [])] });
     requestAnimationFrame(() => {
       const field = document.querySelector<HTMLTextAreaElement>('.dock textarea');
       field?.focus();
-      field?.setSelectionRange(item.text.length, item.text.length);
+      field?.setSelectionRange(text.length, text.length);
     });
   };
 
@@ -61,7 +65,7 @@ export function MessageAgain({ item }: { item: UserItem }) {
     if (busy) return;
     setBusy(true);
     const ok = await rewindTo(sessionId, item.id, false);
-    if (ok) await sendMessage(sessionId, item.text, item.attachments ?? []);
+    if (ok) await sendMessage(sessionId, text, item.attachments ?? []);
     setBusy(false);
   };
 

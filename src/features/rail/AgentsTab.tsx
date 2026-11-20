@@ -1,5 +1,6 @@
 import { memo, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
 import type { ToolItem, WorkflowRun } from '@shared/protocol';
+import { userItemText } from '@shared/synthetic';
 import { ProviderMark, Ring } from '@/art/Logo';
 import { Collapse } from '@/components/Collapse';
 import { agentProvider, agentTask, isAgentLive, workflowGlance } from '@/features/timeline/agent-line';
@@ -143,7 +144,7 @@ function Heading({ label, fresh }: { label: string; fresh: boolean }) {
 /** The message whose turn started the agents under it: its first line (when it was sent shows on hover). */
 const GroupHeading = memo(function GroupHeading({ sessionId, user, fresh }: { sessionId: string; user: string; fresh: boolean }) {
   const item = useShown((s) => (user ? s.data[sessionId]?.items[user] : undefined));
-  const text = item?.type === 'user' ? promptLine(item.text) : 'Earlier';
+  const text = item?.type === 'user' ? promptLine(userItemText(item)) : 'Earlier';
   return (
     <div role="listitem" data-flip={`h:${user}`} className="agx-head" data-new={fresh || undefined} title={item ? `Sent ${clock(item.ts)}` : undefined}>
       <span className="agx-head-label truncate">{text}</span>

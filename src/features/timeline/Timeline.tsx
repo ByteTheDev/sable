@@ -1,3 +1,4 @@
+import { syntheticOf } from '@shared/synthetic';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Icon } from '@/icons';
@@ -315,7 +316,8 @@ export function Timeline({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     if (!lastId) return;
     const item = useStore.getState().data[sessionId]?.items[lastId];
-    if (item?.type === 'user' && live.current) {
+    // A notification Claude Code writes into the chat is not a send: a reader scrolled up stays put.
+    if (item?.type === 'user' && !syntheticOf(item) && live.current) {
       // The view travels to the message: it rises from behind the composer as the scroll catches up.
       stuck.current = true;
       setAway(false);

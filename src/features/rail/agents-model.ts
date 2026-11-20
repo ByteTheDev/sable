@@ -1,4 +1,5 @@
 import type { TimelineItem, ToolItem, WorkflowRun } from '@shared/protocol';
+import { partOfTurn, syntheticOf } from '@shared/synthetic';
 import { isAgentLive, workflowGlance } from '@/features/timeline/agent-line';
 
 /**
@@ -86,7 +87,8 @@ export function userIndex(): (t: Timeline | undefined) => readonly string[] {
   let scan: Scan<string> | undefined;
   return (t) => {
     if (!t) return NONE;
-    scan = grow(scan, t.roots, (id) => (t.items[id]?.type === 'user' ? id : undefined));
+    // A command's output or a reminder the harness wrote opens no turn: no heading of its own.
+    scan = grow(scan, t.roots, (id) => (t.items[id]?.type === 'user' && !partOfTurn(syntheticOf(t.items[id])) ? id : undefined));
     return scan.found;
   };
 }

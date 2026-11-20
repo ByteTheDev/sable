@@ -29,6 +29,7 @@ import {
   type UserItem,
 } from '../shared/protocol';
 import { normalizeBackdrop } from '../shared/backdrop';
+import { readableTitle } from '../shared/synthetic';
 import { Races, type Contender } from './core/race';
 import { laneSlug } from './services/git-lanes';
 import { SessionRuntime, autoTitle, pendingPrompts } from './core/runtime';
@@ -271,6 +272,9 @@ export class App {
       meta.capState = undefined;
       // An until loop does not outlive Sable: the session says so when it is opened.
       if (meta.until) this.untilLost.set(meta.id, meta.until), (meta.until = undefined);
+      // A chat titled from a message the agent's harness wrote (`<task-notification>`): its plain words.
+      const plain = meta.titleSource === 'user' ? meta.title : readableTitle(meta.title);
+      if (plain !== meta.title) meta.title = plain || 'New session';
       this.sessions.set(meta.id, this.makeRuntime(meta, true));
     }
     this.seedFolderOrder();
@@ -2365,7 +2369,14 @@ export class App {
       return { ok: true };
     });
 
-    this.register('history.list', ({ provider, cwd, limit, accountId }) => this.provider(provider, accountId).history(cwd, limit));
+    // Titles and previews made from a first message the agent's harness wrote read as plain words.
+    this.register('history.list', async ({ provider, cwd, limit, accountId }) =>
+      (await this.provider(provider, accountId).history(cwd, limit)).map((h) => ({
+        ...h,
+        title: readableTitle(h.title) || 'Untitled session',
+        ...(h.preview ? { preview: readableTitle(h.preview) || undefined } : {}),
+      })),
+    );
   }
 
   private disposed = false;

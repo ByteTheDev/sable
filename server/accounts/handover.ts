@@ -1,6 +1,7 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { TimelineItem } from '../../shared/protocol';
+import { parseSynthetic, stripWrappers, syntheticLine } from '../../shared/synthetic';
 
 /**
  * Carrying a conversation from one account of an agent to another. Both agents keep their
@@ -108,8 +109,16 @@ export function handoverText(items: TimelineItem[], opts: { skip?: string; maxCh
   for (const it of items) {
     if (it.parentId || it.id === opts.skip) continue;
     if (it.type === 'user') {
+      // What Claude Code wrote in the person's place, in plain words: a task that finished, a
+      // command they ran and what it printed. Reminders and caveats are left out.
+      const syn = parseSynthetic(it.text);
+      const line = syn ? syntheticLine(syn) : '';
+      if (syn && !line) continue;
       flushTools();
-      lines.push(`User: ${clip(it.text, 700)}`);
+      if (!syn) lines.push(`User: ${clip(stripWrappers(it.text), 700)}`);
+      else if (syn.role === 'command') lines.push(`User ran: ${clip(line, 300)}`);
+      else if (syn.role === 'output') lines.push(`Output: ${clip(line, 300)}`);
+      else lines.push(`Event: ${clip(line, 300)}`);
     } else if (it.type === 'text' && it.text.trim()) {
       flushTools();
       lines.push(`Agent: ${clip(it.text, 900)}`);

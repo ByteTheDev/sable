@@ -1,4 +1,5 @@
 import type { FileDiff, LimitHit, NoticeItem, ProviderId, TextItem, TimelineItem, ToolItem, ToolResult, UserItem } from '../../shared/protocol';
+import { partOfTurn, syntheticOf, userText } from '../../shared/synthetic';
 import type { AgentCall } from '../providers/agent-tool';
 import type { SessionRuntime } from './runtime';
 
@@ -62,10 +63,15 @@ export function turnSlice(items: TimelineItem[], turnId: string): TurnSlice | nu
     const it = items[i];
     if (it.parentId || isCheck(it)) continue;
     if (it.type === 'user') {
-      if (it.steered) {
+      // Read as the window groups turns (timeline/turns.ts): a notification the agent took (a task
+      // finished) joins the turn as a steered message does; a command's output or a reminder is
+      // only part of it.
+      const syn = syntheticOf(it);
+      if (it.steered || syn?.role === 'notification') {
         asks.push(it);
         continue;
       }
+      if (partOfTurn(syn)) continue;
       // Queued and not taken yet: not part of any turn so far.
       if (it.state === 'queued') continue;
       ended = true;
@@ -188,7 +194,7 @@ export function buildBrief(items: TimelineItem[], turnId: string, cwd: string, c
   if (!slice) return null;
   const edits = editsOf(items, slice.roots);
   const files = filesOf(edits, cwd);
-  const request = slice.asks.map((u, i) => (i === 0 ? u.text : `(Added while it worked) ${u.text}`)).join('\n\n');
+  const request = slice.asks.map((u, i) => (i === 0 ? userText(u.text) : `(Added while it worked) ${userText(u.text)}`)).join('\n\n');
   const answer = [...slice.roots].reverse().find((i): i is TextItem => i.type === 'text' && !!i.text.trim())?.text ?? '';
 
   const parts: string[] = [];

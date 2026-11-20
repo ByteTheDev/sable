@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { UserItem } from '@shared/protocol';
+import { stripWrappers } from '@shared/synthetic';
 import { CopyButton } from '@/components/CopyButton';
 import { Icon } from '@/icons';
 import { formatBytes } from '@/lib/format';
@@ -49,9 +50,11 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
   const queued = item.state === 'queued';
   const images = item.attachments?.filter((a) => a.kind === 'image' && a.dataUrl) ?? [];
   const files = item.attachments?.filter((a) => !(a.kind === 'image' && a.dataUrl)) ?? [];
-  // A review sent from the review bar: what was typed, then the comments as a short list.
-  const review = useMemo(() => parseReview(item.text), [item.text]);
-  const words = review ? review.lead : item.text;
+  // A review sent from the review bar: what was typed, then the comments as a short list. Wrappers
+  // the agent's harness added to the words (a reminder) are not shown.
+  const text = useMemo(() => stripWrappers(item.text), [item.text]);
+  const review = useMemo(() => parseReview(text), [text]);
+  const words = review ? review.lead : text;
   const long = isLongMessage(words);
 
   // The message sent from the composer (or a queue row) lands here: it flies in as this bubble and the two swap.
@@ -101,7 +104,7 @@ export const UserMessage = memo(function UserMessage({ item }: { item: UserItem 
       {actions && (
         <div className="user-actions">
           {!queued && <Stamp ts={item.ts} prefix={item.steered ? 'Steered' : undefined} className="user-stamp" />}
-          {item.text && <CopyButton text={item.text} label="Copy message" />}
+          {text && <CopyButton text={text} label="Copy message" />}
           <MessageAgain item={item} />
           {canRewind && idle && !queued && (
             <Popover open={open} onOpenChange={setOpen}>

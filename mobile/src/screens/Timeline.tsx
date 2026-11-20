@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { NoticeItem, PhoneItem, ProviderId, TextItem, ThinkingItem, TimelineItem, ToolItem, TurnItem, UntilCheck, UserItem } from '@shared/protocol';
+import { stripWrappers, syntheticOf } from '@shared/synthetic';
 import { formatDuration, formatTokens, plural, resetIn } from '@desk/lib/format';
 import { leadTitle } from '@desk/features/timeline/lead-in';
 import { useNow } from '@m/lib/useNow';
@@ -15,6 +16,7 @@ import { LINE, type FlowChunk, type Segment, type TurnGroup } from '@m/lib/turns
 import { Icon, TOOL_ICON, type IconName } from '@m/ui/icons';
 import { PROVIDER_NAME, ProviderMark, Ring, StatusMark, Tiles } from '@m/ui/marks';
 import { REVEAL, reduced } from '@m/ui/motion';
+import { SynLine } from './Synthetic';
 
 const useItem = <T extends TimelineItem>(sid: string, id: string | null | undefined) => useStore((s) => (id ? (sessionData(s, sid).items[id] as T | undefined) : undefined));
 
@@ -170,6 +172,8 @@ const StepRow = memo(function StepRow({ sid, id }: { sid: string; id: string }) 
   if (!it) return null;
   if (it.type === 'tool' && (it.kind === 'agent' || it.workflow || it.name === 'Workflow')) return <Block sid={sid} id={id} />;
   if (it.type === 'notice') return <div className="step-text step-note">{it.text}</div>;
+  // What a command printed, in the work: its line (shown by the bubble's own reading).
+  if (it.type === 'user') return <UserBubble sid={sid} id={id} />;
   return <Step sid={sid} id={id} />;
 });
 
@@ -420,10 +424,13 @@ const UserBubble = memo(function UserBubble({ sid, id, steered, queued }: { sid:
   if (!it) return null;
   // A failing `/until` check Sable sent back: the check's row, not a message.
   if (it.until?.check) return <CheckRow check={it.until.check} />;
+  // Written by Claude Code in the person's place (a task finished, a slash command): a line, not a bubble.
+  const syn = syntheticOf(it);
+  if (syn) return syn.role === 'hidden' ? null : <SynLine sid={sid} it={it} syn={syn} />;
   const images = it.attachments?.filter((a) => a.dataUrl && a.kind === 'image') ?? [];
   const files = it.attachments?.filter((a) => !(a.dataUrl && a.kind === 'image')) ?? [];
   const waitingSteer = steered && it.state === 'queued';
-  const words = review ? review.lead : it.text;
+  const words = review ? review.lead : stripWrappers(it.text);
   return (
     <div className="user-row" data-steered={steered || undefined} data-queued={queued || waitingSteer || undefined}>
       <div ref={ref} className="user-bubble" data-long={long && !open ? true : undefined} onClick={() => long && (haptic('select'), setOpen((v) => !v))}>
@@ -725,6 +732,8 @@ const Notice = memo(function Notice({ sid, id }: { sid: string; id: string }) {
   const accounts = useStore((s) => (provider ? s.providers[provider]?.accounts : undefined));
   const [busy, setBusy] = useState(false);
   if (!it) return null;
+  // What a command printed, standing for its turn: a line under the command's (Synthetic.tsx).
+  if ((it as TimelineItem).type === 'user') return <UserBubble sid={sid} id={id} />;
   // At a plan limit: carry on with the account the desktop suggests (the refused message goes again).
   const next = it.limit?.next && !it.limit.continuedWith ? accounts?.find((a) => a.id === it.limit!.next && a.auth.loggedIn) : undefined;
   if (it.limit) return <LimitCard sid={sid} it={it} next={next} went={it.limit.continuedWith ? (accounts?.find((a) => a.id === it.limit!.continuedWith)?.label ?? 'another account') : undefined} />;

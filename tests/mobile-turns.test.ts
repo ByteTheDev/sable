@@ -129,3 +129,40 @@ describe('a review message on the phone', async () => {
     expect(r?.more).toBe(true);
   });
 });
+
+describe("phone turns with what Claude Code writes in the person's place", () => {
+  const user = (text: string, extra: Record<string, unknown> = {}) => ({ id: 'x', ts: 0, type: 'user', text, state: 'sent', ...extra }) as TimelineItem;
+  const NOTE = '<task-notification>\n<status>completed</status>\n<summary>Agent "Review" completed</summary>\n<result>Two findings';
+
+  it('reads them as the desktop does, a message the phone got cut short too', () => {
+    expect(shapeOf(user(NOTE, { cut: true }))).toBe('N');
+    expect(shapeOf(user('<command-name>/model</command-name><command-args>opus</command-args>'))).toBe('U');
+    expect(shapeOf(user('<local-command-stdout>Set model to Opus 5.5</local-command-stdout>'))).toBe('n');
+    expect(shapeOf(user('<local-command-caveat>Caveat: x</local-command-caveat>'))).toBe('u');
+    expect(shapeOf(user('Build it'))).toBe('U');
+  });
+
+  it('opens a turn with a notification, stacks the next one, and gives one taken mid-turn a segment', () => {
+    const two = (s: string) => {
+      const { ids, shape } = spec(s);
+      return groupTurns(ids, shape, false).groups;
+    };
+    const g = two('U1 t2 T3 N4 N5 t6 T7');
+    expect(g).toHaveLength(2);
+    expect((g[1] as TurnGroup).segments.map((s) => s.answer)).toEqual([null, '6']);
+    const t = onlyTurn('U1 w2 N3 w4 t5 T6');
+    expect(t.segments.map((s) => s.answer)).toEqual([null, '5']);
+    expect(two('U1 w2 i3 N4 t5 T6')).toHaveLength(2);
+  });
+
+  it('shows a command with its output and nothing for the caveat before it', () => {
+    const { ids, shape } = spec('U1 t2 T3 u4 U5 n6 T7');
+    const { groups } = groupTurns(ids, shape, false);
+    expect(groups).toHaveLength(2);
+    expect(groups[1]).toMatchObject({ kind: 'turn', key: '5' });
+    const reminder = spec('U1 t2 T3 u4 w5 t6 T7');
+    expect(groupTurns(reminder.ids, reminder.shape, false).groups).toHaveLength(2);
+    const alone = spec('U1 t2 T3 u4');
+    expect(groupTurns(alone.ids, alone.shape, false).groups).toHaveLength(1);
+  });
+});

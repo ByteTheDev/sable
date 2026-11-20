@@ -1847,6 +1847,86 @@ const share: Scenario = async ({ s }) => {
   s.finish({ suggestion: 'Add a per-account login limit' });
 };
 
+// ─────────────────── what Claude Code writes in the person's place ───────────────────
+
+/** A task notification in Claude Code's own words (read back by shared/synthetic.ts). */
+function taskNote(o: { id: string; toolUseId: string; status: string; summary: string; outputFile?: string; result?: string; usage?: [tokens: number, tools: number, ms: number] }): string {
+  return [
+    '<task-notification>',
+    `<task-id>${o.id}</task-id>`,
+    `<tool-use-id>${o.toolUseId}</tool-use-id>`,
+    ...(o.outputFile ? [`<output-file>${o.outputFile}</output-file>`] : []),
+    `<status>${o.status}</status>`,
+    `<summary>${o.summary}</summary>`,
+    ...(o.result ? [`<result>${o.result}</result>`] : []),
+    ...(o.usage ? [`<usage>total_tokens: ${o.usage[0]}\ntool_uses: ${o.usage[1]}\nduration_ms: ${o.usage[2]}</usage>`] : []),
+    '</task-notification>',
+  ].join('\n');
+}
+
+const REVIEW_RESULT = `Two findings worth fixing, one that is fine as it is.
+
+1. **Login is rate limited per address, not per account.** \`src/auth/login.ts\` keys the limiter on \`req.ip\`; someone rotating addresses gets unlimited guesses at one account. Key it on the account as well.
+2. **Expired sessions still count.** \`SessionStore.size\` includes sessions past their expiry until the sweep runs, so the admin page overstates active users.
+3. Session expiry now lives in one place (\`src/auth/session.ts\`) and the cookie flags are right: \`HttpOnly\`, \`Secure\`, \`SameSite=Lax\`.
+
+Nothing else in the flow needs a change.`;
+
+/**
+ * Background work that finishes while the chat rests, and the commands the person runs in the
+ * agent's own terminal, as Claude Code puts them in the conversation: user messages in its tags
+ * (`<task-notification>`, `<command-name>`, `<local-command-stdout>`, a caveat, a reminder). The
+ * window shows them as quiet lines (timeline/Synthetic.tsx); a notification opens the agent's next turn.
+ */
+const notifications: Scenario = async ({ s }) => {
+  const tasks = path.join(tmpdir(), 'claude', 'relay-api', 'tasks');
+  const out = (id: string) => path.join(tasks, `${id}.output`);
+  await s.say("I'll build the installer and run the test suite in the background, and have an agent review the auth flow meanwhile.");
+  const background = async (id: string, command: string, description: string) => {
+    const t = await s.tool({ name: 'Bash', kind: 'bash', title: description, detail: { command, description, cwd: s.cwd }, input: { command, description, run_in_background: true } });
+    s.start(t);
+    await s.pause(120, 220);
+    s.complete(t, { text: `Command running in background with ID: ${id}. Output is being written to: ${out(id)}` });
+    return t;
+  };
+  const build = await background('b296xlpn0', 'npm run dist', 'Build the installer');
+  const tests = await background('bq81k2m4c', 'npm test', 'Run the test suite');
+  const spec = { subagent: 'general-purpose', description: 'Review the auth flow', prompt: 'Review the login and session code in src/auth for security and correctness problems. Report each finding with its file and a fix.', background: true };
+  const review = await s.tool({ name: 'Task', kind: 'agent', title: spec.description, detail: spec, input: { subagent_type: spec.subagent, description: spec.description, prompt: spec.prompt, run_in_background: true } });
+  s.start(review);
+  s.complete(review, { agent: { background: 'running' } });
+  await s.say('All three are running. I will pick each one up as it finishes.');
+  s.finish();
+
+  // Later, written in the person's place: each notification opens the agent's next turn.
+  const arrive = (text: string) => s.rt.add<UserItem>({ type: 'user', text, state: 'sent' });
+  await s.pause(1400, 1800);
+  arrive(taskNote({ id: 'b296xlpn0', toolUseId: build, status: 'completed', summary: 'Background command "Build the installer" completed (exit code 0)', outputFile: out('b296xlpn0') }));
+  await s.pause(400, 600);
+  await s.say('The installer built cleanly: `release/Relay-Setup-2.4.0.exe`, 92 MB.');
+  s.finish();
+
+  // Two at once: the agent takes them up together.
+  await s.pause(1600, 2000);
+  arrive(taskNote({ id: 'a71c2e9f', toolUseId: review, status: 'completed', summary: 'Agent "Review the auth flow" completed', result: REVIEW_RESULT, usage: [48_210, 17, 124_500] }));
+  s.patchTool(review, { result: { text: REVIEW_RESULT, agent: { background: 'done', tokens: 48_210, steps: 17, durationMs: 124_500 } } });
+  await s.pause(150, 250);
+  arrive(taskNote({ id: 'bq81k2m4c', toolUseId: tests, status: 'failed', summary: 'Background command "Run the test suite" failed with exit code 1', outputFile: out('bq81k2m4c') }));
+  await s.pause(400, 600);
+  await s.say('The review found two things worth fixing, and the test run failed on the second one: two tests in `tests/session.test.ts` count expired sessions. I will fix the expiry check first, then key the login limiter on the account.');
+  s.finish({ suggestion: 'Fix the expiry check in SessionStore.size' });
+
+  // The person switches the model and looks at the tree in the agent's own terminal.
+  await s.pause(1200, 1500);
+  arrive('<local-command-caveat>Caveat: The messages below were generated by the user while running local commands. DO NOT respond to these messages or otherwise consider them in your response unless the user explicitly asks you to.</local-command-caveat>');
+  arrive('<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>opus</command-args>');
+  arrive('<local-command-stdout>Set model to \u001b[1mOpus 5.5\u001b[22m</local-command-stdout>');
+  await s.pause(700, 900);
+  arrive('<bash-input>git status --short</bash-input>');
+  arrive('<bash-stdout> M src/auth/login.ts\n M src/auth/session.ts\n M tests/session.test.ts\n?? release/\n?? docs/expiry.md</bash-stdout><bash-stderr></bash-stderr>');
+  arrive('<system-reminder>\nThe user ran local commands in the terminal. Nothing to answer.\n</system-reminder>');
+};
+
 // ─────────────────────────────────── selection ──────────────────────────────────
 
 export const SCENARIOS = {
@@ -1885,6 +1965,7 @@ export const SCENARIOS = {
   untilSetup,
   untilFix,
   turnCheck,
+  notifications,
 } satisfies Record<string, Scenario>;
 export type ScenarioId = keyof typeof SCENARIOS;
 
@@ -1895,6 +1976,8 @@ const KEYWORDS: [RegExp, ScenarioId][] = [
   // Until green: Sable's message for a failing check, and the project to loop on (demo-until.ts).
   [/^The check `[^`]+` failed/, 'untilFix'],
   [/\buntil[\s-]+green\b/i, 'untilSetup'],
+  // Background tasks finishing and local commands, as Claude Code writes them in the person's place.
+  [/\bnotifications?\b/i, 'notifications'],
   // Before / after captures of a local page (demo-site.ts).
   [/\bbefore\s*\/?\s*after\b|\bbeforeafter\b/i, 'beforeafter'],
   // The Browser tab tools.
