@@ -15,6 +15,7 @@ import { changesOf } from './changes';
 import { canCheckWith, checkedAlready, checkerOf } from './check-turn';
 import { useItem, useTimeline } from './ctx';
 import type { TurnGroup } from './turns';
+import { stampParts } from './util';
 
 const textOf = (it: TimelineItem | undefined) => (it?.type === 'text' ? it.text.trim() : '');
 
@@ -130,6 +131,8 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
   const retryShown = failed && !limitHolds && !!again();
   const errorShownHere = failed && end?.type === 'turn' && !!end.error && !errorShown;
   if (!previews.length && !retryShown && !errorShownHere && !hasAnswer && !parts.length && turn.state !== 'interrupted') return null;
+  // When the turn ended: shown with the facts where the conversation is too narrow for the times in its margin (timeline.css).
+  const when = end?.type === 'turn' && end.ts ? stampParts(end.ts) : null;
 
   return (
     <div className="tl-item turn" data-state={turn.state}>
@@ -186,6 +189,12 @@ export const TurnFoot = memo(function TurnFoot({ turn }: { turn: TurnGroup }) {
             <LazyTip label={breakdown ?? parts.join(' · ')} side="top">
               <span className="turn-meta num">{parts.join(' · ')}</span>
             </LazyTip>
+          )}
+          {when && end && (
+            <time className="turn-meta turn-when num" data-after={parts.length > 0 || undefined} dateTime={new Date(end.ts).toISOString()}>
+              {when.day && <span className="stamp-day">{when.day}</span>}
+              {when.time}
+            </time>
           )}
         </span>
       </div>

@@ -34,3 +34,8 @@
   content: '·';
   margin-right: 6px;
 }
+
+/* After a turn, whose foot already leaves a line of air under the answer (as a quiet line, synthetic.css). */
+.tg + .tg > .tl-item[data-k='check']:first-child {
+  padding-top: 4px;
+}

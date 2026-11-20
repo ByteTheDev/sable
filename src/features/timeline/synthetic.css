@@ -26,9 +26,9 @@
   animation-duration: var(--d-3);
 }
 
+/* The times stand in one column on the reading column's edge (timeline.css, rows): no slot needed. */
 .syn-caret-slot {
-  width: 10px;
-  flex-shrink: 0;
+  display: none;
 }
 
 .syn-time {
@@ -194,4 +194,11 @@
 .syn-more:focus-visible {
   outline: var(--focus-w) solid var(--focus);
   outline-offset: var(--focus-inset);
+}
+
+/* After a turn, whose foot already leaves a line of air under the answer, a quiet line needs less
+   of its own than a message does. */
+.tg + .tg > .tl-item[data-k='synthetic']:first-child,
+.tg + .tl-item[data-k='synthetic'] {
+  padding-top: 4px;
 }

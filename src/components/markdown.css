@@ -538,6 +538,29 @@ a.md-file:focus-visible,
   margin-top: 1.05em;
 }
 
+/* A heading after a block opens its section with the same room as after a paragraph (the blocks'
+   own gap below would pull it up against the table or the code before it). */
+.md > :is(.md-tablewrap, .cb, .md-callout, .gw, .mm) + h1 {
+  margin-top: 1.9em;
+}
+
+.md > :is(.md-tablewrap, .cb, .md-callout, .gw, .mm) + h2 {
+  margin-top: 1.85em;
+}
+
+.md > :is(.md-tablewrap, .cb, .md-callout, .gw, .mm) + :is(h3, h4, h5, h6) {
+  margin-top: 1.45em;
+}
+
+/* A block right under its heading (a table, code, a note) stays with it, as a paragraph does. */
+.md > :is(h1, h2) + :is(.md-tablewrap, .cb, .md-callout) {
+  margin-top: 0.75em;
+}
+
+.md > :is(h3, h4, h5, h6) + :is(.md-tablewrap, .cb, .md-callout) {
+  margin-top: 0.6em;
+}
+
 /* Widgets and diagrams in an answer get room for their bar above. */
 .md > .gw,
 .md > .mm {

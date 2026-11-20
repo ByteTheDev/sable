@@ -236,6 +236,16 @@ button:hover > .row-caret {
   opacity: 0;
 }
 
+/* In the conversation a row's figures (a result, a time) end on the reading column's right edge,
+   in one column whether the row opens or not; the caret follows the words, as on the work line. */
+.tl .row-btn {
+  padding-right: 6px;
+}
+
+.tl .row-btn > .tool-meta {
+  order: 1;
+}
+
 .row-btn:hover > .row-caret,
 .row-btn:focus-visible > .row-caret,
 .row-btn[aria-expanded='true'] > .row-caret {
@@ -382,7 +392,7 @@ button:hover > .row-caret {
 .dev-chip.tool-server {
   position: absolute;
   top: 1.5px;
-  right: 16px;
+  right: 0;
   max-width: calc(100% - 120px);
   background-color: var(--panel-2);
   opacity: 0;
@@ -1184,11 +1194,11 @@ button:hover > .row-caret {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 10px 0 3px;
+  margin: 10px 0 6px;
 }
 
 .user-files:first-child {
-  margin-top: 3px;
+  margin-top: 6px;
 }
 
 .user-file {
@@ -1787,7 +1797,7 @@ button:hover > .row-caret {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  font-size: var(--t-small);
+  font-size: 12.5px;
   color: var(--text-3);
 }
 
@@ -2113,13 +2123,17 @@ button:hover > .row-caret {
   transition-duration: 110ms;
 }
 
-/* What the turn changed: a second, quiet control on the summary line that opens Changes. */
+/* What the turn changed: a second, quiet control on the summary line that opens Changes. It stands
+   at the line's far end, its figures on the column's edge over the steps' own (an edit's +30 -1),
+   so the changes of a long conversation read down one column. */
 .work-changes {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 26px;
-  padding: 0 9px 0 8px;
+  margin-left: auto;
+  margin-right: -6px;
+  padding: 0 6px 0 8px;
   border-radius: var(--r-ctl-sm);
   font-size: 12px;
   color: var(--text-3);
@@ -2241,17 +2255,35 @@ button:hover > .row-caret {
   transition: none;
 }
 
-/* A narrow conversation has no margin to spare: the time sits over the end of the first line. */
+/* The time a turn ended, among its facts under the answer: only where the margin has no room. */
+.turn-when {
+  display: none;
+}
+
+.turn-when > .stamp-day {
+  margin-right: 5px;
+  color: inherit;
+}
+
+/* After the tokens and the cost: the same quiet dot as between them. */
+.turn-when[data-after] {
+  margin-left: -3px;
+}
+
+.turn-when[data-after]::before {
+  content: '·';
+  margin-right: 3px;
+}
+
+/* A narrow conversation (the side panel open) has no margin to spare, and a time laid over the end
+   of a line hides words: the texts carry none, and the turn's foot gives the time with its facts. */
 @container tl (max-width: 880px) {
-  .stamp {
-    top: 10px;
-    left: auto;
-    right: var(--gutter);
-    flex-direction: row;
-    gap: 5px;
-    padding: 0 0 0 10px;
-    background-color: var(--sheet);
-    box-shadow: -10px 0 10px var(--sheet);
+  .tl-item > .stamp:not(.user-stamp) {
+    display: none;
+  }
+
+  .turn-when {
+    display: inline;
   }
 }
 
@@ -2275,7 +2307,7 @@ button:hover > .row-caret {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-3);
 }
 
@@ -2309,12 +2341,27 @@ button:hover > .row-caret {
   color: var(--text-3);
 }
 
-/* Copy and Fork: always under an answer, quiet at rest (the icons a step dimmer), full on hover. */
+/* Copy and Fork under an answer. The newest turn keeps them in view, quiet (the icons a step
+   dimmer); an earlier turn shows them while the pointer or the focus is in it, in their place (the
+   row keeps its height), so a long conversation is not ruled by a column of small icons. */
 .turn-acts {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   margin-left: -5px;
+  opacity: 0;
+  transition: opacity 90ms var(--ease);
+}
+
+.tg:hover .turn-acts,
+.turn-acts:focus-within,
+.turn-acts:has([data-copied], [data-state='open'], [data-state='delayed-open'], [data-state='instant-open']) {
+  opacity: 1;
+  transition: none;
+}
+
+.tl-content > .tg:last-child .turn-acts {
+  opacity: 1;
 }
 
 .turn-copy,
