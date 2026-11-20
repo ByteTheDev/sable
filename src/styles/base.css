@@ -221,23 +221,18 @@ kbd {
 
 /* ── scrollbars: thin, appear on hover ── */
 
-/* scrollbar-color is inherited: the scroller's direct children hold a value of their own, so the
-   hover change below restyles the scroller and its children, never the whole subtree. Scrollers
-   nested inside keep their own rules (.scroll, .hscroll, .vscroll); others show the hover tone. */
+/* A scroller nested in a .scroll that is not one itself gets the standard thin bar in the hover
+   tone (scrollbar-color is inherited, so it is set on the direct children only). */
 .scroll > * {
   scrollbar-color: var(--scrollbar) transparent;
 }
 
+/* Drawn with the ::-webkit-scrollbar parts only: Chromium ignores those once scrollbar-width or
+   scrollbar-color is set on the scroller, and Windows' own thin bar then draws arrow buttons that
+   sit in a glass pane's rounded corner. No buttons, and the track stops short of the corners. */
 .scroll {
   overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
   overscroll-behavior: contain;
-}
-
-.scroll:hover,
-.scroll:focus-within {
-  scrollbar-color: rgb(255 255 255 / 0.16) transparent;
 }
 
 .scroll::-webkit-scrollbar {
@@ -262,6 +257,16 @@ kbd {
 
 .scroll::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+.scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.scroll::-webkit-scrollbar-track {
+  margin-block: 8px;
 }
 
 /* ── shared keyframes ── */
