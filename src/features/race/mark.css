@@ -1,0 +1,68 @@
+/* ── Race: the header's mark (in a racing chat) and the title while the race view shows ── */
+
+.race-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 22px;
+  margin-left: 4px;
+  padding: 0 7px 0 6px;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  font-size: var(--t-small);
+  transition: background-color var(--d-1) var(--ease-out), color var(--d-1) var(--ease-out), scale var(--d-1) var(--ease-out);
+}
+
+.race-mark:hover {
+  background-color: var(--fill-1);
+  color: var(--text-2);
+}
+
+.race-mark:active {
+  scale: 0.97;
+}
+
+.race-mark:focus-visible {
+  outline: var(--focus-w, 2px) solid var(--focus);
+  outline-offset: 1px;
+}
+
+.race-glyph {
+  flex-shrink: 0;
+}
+
+/* The icon answers its control with one small move: the two lanes lean apart and come back. */
+.race-glyph-l,
+.race-glyph-r {
+  transition: transform var(--d-3) var(--ease-out);
+  transform-box: fill-box;
+}
+
+.race-mark:is(:hover, :focus-visible) .race-glyph-l {
+  transform: translateX(-0.6px);
+}
+
+.race-mark:is(:hover, :focus-visible) .race-glyph-r {
+  transform: translateX(0.6px);
+}
+
+.race-title-glyph {
+  display: inline-flex;
+  color: var(--text-2);
+}
+
+.race-title-task {
+  flex-shrink: 1;
+  min-width: 0;
+  font-weight: var(--w-medium);
+  letter-spacing: -0.005em;
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .race-glyph-l,
+  .race-glyph-r {
+    transition: none;
+  }
+}

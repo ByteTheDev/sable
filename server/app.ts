@@ -24,10 +24,13 @@ import {
   type RpcName,
   type SessionMeta,
   type SessionOptions,
+  type SessionSnapshot,
   type SpareWait,
   type UserItem,
 } from '../shared/protocol';
 import { normalizeBackdrop } from '../shared/backdrop';
+import { Races, type Contender } from './core/race';
+import { laneSlug } from './services/git-lanes';
 import { SessionRuntime, autoTitle, pendingPrompts } from './core/runtime';
 import { Store, type StoredAccount } from './core/store';
 import { DiskCache } from './core/cache';
@@ -193,6 +196,30 @@ export class App {
         return undefined;
       }
     },
+    persist: () => this.persistSessions(),
+    log: (...args) => this.log(...args),
+  });
+
+  /** Race: one task to two agents at once, each in a lane of its own (server/core/race.ts). */
+  private races = new Races({
+    get: (id) => {
+      const rt = this.sessions.get(id);
+      if (rt) this.hydrate(rt);
+      return rt;
+    },
+    contenders: (cwd, hint) => this.raceContenders(cwd, hint),
+    create: async (c, cwd, opts) => {
+      const snap = await this.createSession({ provider: c.provider, cwd, ...(c.model ? { model: c.model } : {}), accountId: c.accountId, ...(opts.mode ? { mode: opts.mode } : {}) }, { lane: { slug: opts.slug, detail: opts.detail } });
+      return this.runtime(snap.session.id);
+    },
+    remove: async (rt) => {
+      await this.call('session.close', { sessionId: rt.id, remove: true });
+    },
+    send: (rt, text) => this.deliver(rt, text),
+    stop: (rt) => this.stopForGood(rt),
+    forecast: (rt) => this.lanes.forecast(rt),
+    land: (rt, message) => this.lanes.land(rt, message),
+    discard: (rt) => this.lanes.discard(rt),
     persist: () => this.persistSessions(),
     log: (...args) => this.log(...args),
   });
@@ -1512,6 +1539,156 @@ export class App {
     };
   }
 
+  /**
+   * Ends whatever the session is doing and lets its agent go, so its folder can be removed: its turn,
+   * a message still waiting for the agent to start, an until loop, a turn check. The chat stays.
+   */
+  private async stopForGood(rt: SessionRuntime) {
+    this.until.closed(rt);
+    await this.checks.closed(rt);
+    rt.stopRequested = true;
+    rt.cancelPrompts();
+    const waiting = this.earlyWaiting.get(rt.id);
+    if (waiting?.length) {
+      for (const id of waiting) this.stoppedEarly.add(id);
+      this.earlyWaiting.delete(rt.id);
+    }
+    await this.opening.get(rt.id)?.catch(() => {});
+    await rt.handle?.close().catch(() => {});
+    rt.handle = undefined;
+    if (rt.turnActive) {
+      rt.settle('cancelled');
+      rt.endTurn();
+    } else if (rt.meta.status !== 'idle' && rt.meta.status !== 'error') rt.update({ status: 'idle', activity: undefined });
+  }
+
+  /**
+   * Who races in `cwd`: Claude Code against Codex where both are installed and signed in (last
+   * known), each with its default model and the account new chats of that agent use; else two
+   * models of the one agent that is (the Demo when asked for, or when no real agent is there).
+   */
+  private async raceContenders(cwd: string, hint?: ProviderId): Promise<Contender[] | { error: string }> {
+    const settings = this.store.state.settings;
+    const signedIn = this.otherAgents();
+    const pick: ProviderId[] = hint === 'demo' && this.providers.has('demo') ? ['demo'] : signedIn.length ? signedIn.slice(0, 2) : this.providers.has('demo') ? ['demo'] : [];
+    if (!pick.length) return { error: 'Sign in to Claude Code or Codex to race.' };
+    const name = (id: ProviderId) => this.providers.get(id)?.name ?? id;
+    if (pick.length === 2) return pick.map((id) => ({ provider: id, model: settings.defaultModels[id] ?? '', accountId: this.defaultAccountId(id), label: name(id), slug: id }));
+    // One agent: its default model against the next one its own picker offers.
+    const id = pick[0];
+    const accountId = this.defaultAccountId(id);
+    const caps = await this.call('provider.caps', { provider: id, cwd, ...(accountId === DEFAULT_ACCOUNT ? {} : { accountId }) }).catch(() => undefined);
+    const models = (caps?.models ?? []).filter((m) => m.picker !== false);
+    const firstId = settings.defaultModels[id] || models.find((m) => m.isDefault)?.id || models[0]?.id;
+    const first = models.find((m) => m.id === firstId) ?? models[0];
+    const head = (m: { name: string; description?: string }) => (m.description?.split(/\s+·\s+/)[0] ?? m.name).toLowerCase();
+    const second = first && models.find((m) => m.id !== first.id && m.name !== first.name && head(m) !== head(first));
+    if (!first || !second) return { error: `${name(id)} offers one model here, so there is nothing to race.` };
+    const side = (m: { id: string; name: string }): Contender => ({ provider: id, model: m.id, accountId, label: m.name, slug: laneSlug(m.name, 14) || m.id });
+    return [side(first), side(second)];
+  }
+
+  /**
+   * A new session (`session.create`). `lane`: it starts in a lane of its own, made before its agent
+   * starts, whatever the folder's state (a race); when the lane cannot be made the session is removed
+   * and this rejects.
+   */
+  private async createSession(p: RpcMethods['session.create']['params'], extra: { lane?: { slug: string; detail?: string } } = {}): Promise<SessionSnapshot> {
+    const settings = this.store.state.settings;
+    let accountId = p.accountId ?? this.defaultAccountId(p.provider);
+    this.provider(p.provider, accountId);
+    // An account past its cap: the session starts on the next one under its own (a resumed
+    // conversation stays where it lives).
+    const capStart = p.resume ? undefined : await this.underCapStart(p.provider, accountId, p.model ?? settings.defaultModels[p.provider]).catch(() => undefined);
+    if (capStart) accountId = capStart.to;
+    const provider = this.provider(p.provider, accountId);
+    // A chat without a folder gets a fresh folder of its own under the chats folder.
+    const cwd = p.chat ? makeChatFolder(this.chatsRoot(), p.chat.text) : p.cwd;
+    // The demo provider plays scripted sessions in made-up folders; real agents need a real one.
+    if (p.provider !== 'demo' && !isDir(path.resolve(cwd))) throw new Error(`Folder not found: ${path.resolve(cwd)}`);
+    const now = Date.now();
+    const meta: SessionMeta = {
+      id: randomUUID(),
+      provider: p.provider,
+      providerSessionId: p.resume,
+      cwd: path.resolve(cwd),
+      title: p.title ?? 'New session',
+      titleSource: p.title ? 'user' : 'auto',
+      model: p.model ?? settings.defaultModels[p.provider] ?? '',
+      effort: p.effort ?? settings.defaultEfforts[p.provider],
+      mode: p.mode ?? settings.defaultModes[p.provider] ?? 'default',
+      ...(p.ultracode ? { ultracode: true } : {}),
+      ...this.startSpeed(p.provider, accountId, cwd, p.model ?? settings.defaultModels[p.provider], p.speed ?? settings.defaultSpeeds?.[p.provider]),
+      ...(p.chat ? { chat: true } : {}),
+      status: 'starting',
+      createdAt: now,
+      updatedAt: now,
+      usage: { inputTokens: 0, outputTokens: 0, turns: 0 },
+    };
+    if (accountId !== DEFAULT_ACCOUNT) meta.accountId = accountId;
+    const options = withDefaultOptions(p.provider, p.options ?? settings.sessionOptions?.[p.provider]);
+    if (options && Object.keys(options).length) meta.options = { ...options };
+    const rt = this.makeRuntime(meta);
+    this.sessions.set(meta.id, rt);
+    if (capStart) rt.notice('info', capStart.line);
+    // Continue in the other agent: the first message carries a compact account of the source
+    // conversation (read from Sable's timeline; the source and its transcript stay untouched).
+    const source = p.handoverFrom ? this.sessions.get(p.handoverFrom) : undefined;
+    if (source) {
+      this.hydrate(source);
+      const summary = handoverText(withoutChecks(source.items), { from: this.provider(source.meta.provider, source.meta.accountId ?? DEFAULT_ACCOUNT).name });
+      if (summary) {
+        this.handovers.set(meta.id, summary);
+        rt.notice('info', `Continued from ${source.meta.title}`, 'It starts with a summary of that conversation');
+      }
+    }
+    // A chat's own folder is not one of the sidebar's folders; the chats group, new, goes on top.
+    if (!meta.chat) this.touchProject(meta.cwd);
+    else if (typeof this.store.state.chatsOrder !== 'number') {
+      this.store.state.chatsOrder = this.topPlace();
+      this.store.saveState();
+      this.emitProjects();
+    }
+    this.emit({ type: 'session.added', session: meta });
+    // A race: the lane is there before the agent starts in it, or there is no session.
+    if (extra.lane) {
+      const made = await this.lanes.enterNow(rt, extra.lane.slug, extra.lane.detail).catch((err: Error) => ({ ok: false, error: err.message }));
+      if (!made.ok) {
+        this.sessions.delete(meta.id);
+        this.store.deleteSession(meta.id);
+        this.emit({ type: 'session.removed', id: meta.id });
+        this.persistSessions();
+        throw new Error(made.error ?? 'Could not make the lane.');
+      }
+    }
+    // A folder another session is working in: the session starts in a lane of its own.
+    const opened = this.lanes.atStart(rt, p.title ?? p.chat?.text).then(() => provider.open(rt, { loadTranscript: !!p.resume })).then(
+      (handle) => {
+        // Closed while it was starting: let the agent go.
+        if (this.sessions.get(rt.id) !== rt) return void Promise.resolve(handle.close()).catch(() => {});
+        rt.handle = handle;
+        if (!this.delivering.has(rt.id)) rt.update({ status: 'idle' });
+        this.seedCaps(rt);
+        if (p.provider === 'claude' && meta.options?.remoteControl) void handle.setOptions?.(meta.options).catch((err) => rt.notice('error', 'Remote Control could not start', (err as Error).message));
+      },
+      (err) => rt.update({ status: 'error', lastError: (err as Error).message }),
+    );
+    this.opening.set(rt.id, opened);
+    void opened.finally(() => {
+      if (this.opening.get(rt.id) === opened) this.opening.delete(rt.id);
+      this.persistSessions();
+      // A chat started with `/spare` from home waited for its agent to be there.
+      if (rt.meta.spare) this.spare.poke();
+    });
+    // A slow start answers early (status "starting"): the UI opens the session and the first
+    // message shows at once, waiting in deliver() for the agent.
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([opened, new Promise<void>((r) => (timer = setTimeout(r, 1500)))]);
+    clearTimeout(timer);
+    this.persistSessions();
+    return rt.snapshot();
+  }
+
   private registerCore() {
     this.register('app.hello', () => this.state());
 
@@ -1849,90 +2026,7 @@ export class App {
     });
 
     // ── sessions ──
-    this.register('session.create', async (p) => {
-      const settings = this.store.state.settings;
-      let accountId = p.accountId ?? this.defaultAccountId(p.provider);
-      this.provider(p.provider, accountId);
-      // An account past its cap: the session starts on the next one under its own (a resumed
-      // conversation stays where it lives).
-      const capStart = p.resume ? undefined : await this.underCapStart(p.provider, accountId, p.model ?? settings.defaultModels[p.provider]).catch(() => undefined);
-      if (capStart) accountId = capStart.to;
-      const provider = this.provider(p.provider, accountId);
-      // A chat without a folder gets a fresh folder of its own under the chats folder.
-      const cwd = p.chat ? makeChatFolder(this.chatsRoot(), p.chat.text) : p.cwd;
-      // The demo provider plays scripted sessions in made-up folders; real agents need a real one.
-      if (p.provider !== 'demo' && !isDir(path.resolve(cwd))) throw new Error(`Folder not found: ${path.resolve(cwd)}`);
-      const now = Date.now();
-      const meta: SessionMeta = {
-        id: randomUUID(),
-        provider: p.provider,
-        providerSessionId: p.resume,
-        cwd: path.resolve(cwd),
-        title: p.title ?? 'New session',
-        titleSource: p.title ? 'user' : 'auto',
-        model: p.model ?? settings.defaultModels[p.provider] ?? '',
-        effort: p.effort ?? settings.defaultEfforts[p.provider],
-        mode: p.mode ?? settings.defaultModes[p.provider] ?? 'default',
-        ...(p.ultracode ? { ultracode: true } : {}),
-        ...this.startSpeed(p.provider, accountId, cwd, p.model ?? settings.defaultModels[p.provider], p.speed ?? settings.defaultSpeeds?.[p.provider]),
-        ...(p.chat ? { chat: true } : {}),
-        status: 'starting',
-        createdAt: now,
-        updatedAt: now,
-        usage: { inputTokens: 0, outputTokens: 0, turns: 0 },
-      };
-      if (accountId !== DEFAULT_ACCOUNT) meta.accountId = accountId;
-      const options = withDefaultOptions(p.provider, p.options ?? settings.sessionOptions?.[p.provider]);
-      if (options && Object.keys(options).length) meta.options = { ...options };
-      const rt = this.makeRuntime(meta);
-      this.sessions.set(meta.id, rt);
-      if (capStart) rt.notice('info', capStart.line);
-      // Continue in the other agent: the first message carries a compact account of the source
-      // conversation (read from Sable's timeline; the source and its transcript stay untouched).
-      const source = p.handoverFrom ? this.sessions.get(p.handoverFrom) : undefined;
-      if (source) {
-        this.hydrate(source);
-        const summary = handoverText(withoutChecks(source.items), { from: this.provider(source.meta.provider, source.meta.accountId ?? DEFAULT_ACCOUNT).name });
-        if (summary) {
-          this.handovers.set(meta.id, summary);
-          rt.notice('info', `Continued from ${source.meta.title}`, 'It starts with a summary of that conversation');
-        }
-      }
-      // A chat's own folder is not one of the sidebar's folders; the chats group, new, goes on top.
-      if (!meta.chat) this.touchProject(meta.cwd);
-      else if (typeof this.store.state.chatsOrder !== 'number') {
-        this.store.state.chatsOrder = this.topPlace();
-        this.store.saveState();
-        this.emitProjects();
-      }
-      this.emit({ type: 'session.added', session: meta });
-      // A folder another session is working in: the session starts in a lane of its own.
-      const opened = this.lanes.atStart(rt, p.title ?? p.chat?.text).then(() => provider.open(rt, { loadTranscript: !!p.resume })).then(
-        (handle) => {
-          // Closed while it was starting: let the agent go.
-          if (this.sessions.get(rt.id) !== rt) return void Promise.resolve(handle.close()).catch(() => {});
-          rt.handle = handle;
-          if (!this.delivering.has(rt.id)) rt.update({ status: 'idle' });
-          this.seedCaps(rt);
-          if (p.provider === 'claude' && meta.options?.remoteControl) void handle.setOptions?.(meta.options).catch((err) => rt.notice('error', 'Remote Control could not start', (err as Error).message));
-        },
-        (err) => rt.update({ status: 'error', lastError: (err as Error).message }),
-      );
-      this.opening.set(rt.id, opened);
-      void opened.finally(() => {
-        if (this.opening.get(rt.id) === opened) this.opening.delete(rt.id);
-        this.persistSessions();
-        // A chat started with `/spare` from home waited for its agent to be there.
-        if (rt.meta.spare) this.spare.poke();
-      });
-      // A slow start answers early (status "starting"): the UI opens the session and the first
-      // message shows at once, waiting in deliver() for the agent.
-      let timer: NodeJS.Timeout | undefined;
-      await Promise.race([opened, new Promise<void>((r) => (timer = setTimeout(r, 1500)))]);
-      clearTimeout(timer);
-      this.persistSessions();
-      return rt.snapshot();
-    });
+    this.register('session.create', (p) => this.createSession(p));
 
     this.register('session.snapshot', async ({ sessionId }) => {
       const rt = this.runtime(sessionId);
@@ -2126,6 +2220,14 @@ export class App {
     this.register('lane.discard', ({ sessionId }) => this.lanes.discard(this.loaded(sessionId)));
     this.register('lane.create', ({ sessionId }) => this.lanes.create(this.loaded(sessionId)));
     this.register('lane.open', ({ sessionId }) => this.lanes.open(this.runtime(sessionId)));
+    this.register('lane.diff', ({ sessionId }) => this.lanes.diff(this.runtime(sessionId)));
+
+    // Race (server/core/race.ts).
+    this.register('race.start', ({ cwd, task, provider, modes }) =>
+      this.races.start({ cwd: String(cwd ?? ''), task: typeof task === 'string' ? task : '', provider, modes: modes && typeof modes === 'object' ? modes : undefined }),
+    );
+    this.register('race.keep', ({ sessionId, message }) => this.races.keep(this.loaded(sessionId), typeof message === 'string' ? message : undefined));
+    this.register('race.discard', ({ sessionId }) => this.races.discardBoth(this.loaded(sessionId)));
 
     this.register('session.rename', ({ sessionId, title }) => {
       this.runtime(sessionId).update({ title: title.trim() || 'Untitled', titleSource: 'user' });
@@ -2156,6 +2258,8 @@ export class App {
         if (rt.meta.chat) removeEmptyChatFolder(this.chatsRoot(), rt.meta.cwd);
         // A deleted chat's lane goes too when it holds nothing to land (otherwise its branch keeps the work).
         void this.lanes.closed(rt);
+        // Its rival races no more.
+        this.races.closed(rt);
       }
       this.persistSessions();
       return { ok: true };

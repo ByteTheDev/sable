@@ -167,9 +167,13 @@ describe('lanes with two Demo sessions in one folder', { timeout: 180_000 }, () 
     const c = await app.call('session.create', { provider: 'demo', cwd: repo, mode: 'bypassPermissions' });
     await turn(c, 'until green');
     const full = meta(c.session.id).lane!;
+    const logs: string[] = [];
+    app.log = (...args: unknown[]) => void logs.push(args.join(' '));
     await app.call('session.close', { sessionId: b.session.id, remove: true });
     await app.call('session.close', { sessionId: c.session.id, remove: true });
     await until(() => !existsSync(empty.path), 'the empty lane to go');
+    // The full lane's check runs git in the folder a moment longer (Windows holds the folder meanwhile).
+    await until(() => logs.some((l) => l.startsWith('lane: kept with its work')), 'the full lane’s check');
     expect(existsSync(full.path)).toBe(true);
     expect(git(repo, 'branch', '--list', 'sable/*')).toContain(full.branch);
     expect(full.path.startsWith(lanes)).toBe(true);

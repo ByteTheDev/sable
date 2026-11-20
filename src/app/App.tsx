@@ -17,6 +17,8 @@ import { useActiveProvider, useHotkey } from '@/state/hooks';
 import { SessionAccount } from '@/features/accounts';
 import { WaitingCount } from '@/features/triage/WaitingCount';
 import { LaneMark } from '@/features/session/LaneMark';
+import { RaceMark, RaceTitle } from '@/features/race/RaceMark';
+import { raceKey } from '@/features/race/race';
 import { shallow } from 'zustand/shallow';
 import { useLaggedStore } from '@/lib/lagged';
 import { railTabAt } from '@/features/rail/tabs';
@@ -34,6 +36,8 @@ const loadSettings = () => import('@/features/settings/Settings');
 const loadPicker = () => import('@/features/projects/ProjectPicker');
 const loadRail = () => import('@/features/rail/Rail');
 const loadTriage = () => import('@/features/triage/Triage');
+const loadRace = () => import('@/features/race/RaceView');
+const RaceView = lazy(() => loadRace().then((m) => ({ default: m.RaceView })));
 const Palette = lazy(() => loadPalette().then((m) => ({ default: m.Palette })));
 const History = lazy(() => loadHistory().then((m) => ({ default: m.History })));
 const Settings = lazy(() => loadSettings().then((m) => ({ default: m.Settings })));
@@ -181,7 +185,9 @@ export function App() {
   // First run: the welcome takes over the window; the app behind it waits, inert.
   const onboarding = useOnboarding(!booting);
   const stageBody = useRef<HTMLDivElement>(null);
-  const viewKey = booting || onboarding ? null : (sessionId ?? 'home');
+  // The race view (features/race): both chats of a race side by side, while no session is open.
+  const raceId = useOpenRace(sessionId);
+  const viewKey = booting || onboarding ? null : (sessionId ?? (raceId ? `race:${raceId}` : 'home'));
   const viewMode = useViewMode(viewKey, stageBody);
   // The panel waits while the first message's composer glides to the dock: the session mounts
   // first, the panel opens once the card has landed (only read while the panel is meant to be open).
@@ -218,7 +224,7 @@ export function App() {
   useEffect(() => {
     if (!ready) return;
     const t = window.setTimeout(() => void loadSessionView().catch(() => {}), 600);
-    const warm = () => void Promise.all([loadPalette(), loadRail(), loadSettings(), loadHistory(), loadPicker(), loadTriage()]).catch(() => {});
+    const warm = () => void Promise.all([loadPalette(), loadRail(), loadSettings(), loadHistory(), loadPicker(), loadTriage(), loadRace()]).catch(() => {});
     const ric = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
     if (ric) ric(warm, { timeout: 4000 });
     else window.setTimeout(warm, 1500);
@@ -275,6 +281,10 @@ export function App() {
                   <motion.div key={viewKey} className="stage-view" custom={viewMode} variants={VIEW} initial="initial" animate="animate" exit="exit">
                     {sessionId ? (
                       <SessionPart part="SessionView" sessionId={sessionId} />
+                    ) : raceId ? (
+                      <Suspense fallback={null}>
+                        <RaceView raceId={raceId} />
+                      </Suspense>
                     ) : (
                       <Home />
                     )}
@@ -577,6 +587,11 @@ function TitleField({ id, title, onDone }: { id: string; title: string; onDone: 
   );
 }
 
+/** The race the stage shows: `ui.race` while no session is open and both of its chats are there. */
+function useOpenRace(sessionId: string | null): string | null {
+  return useStore((s) => (!sessionId && s.ui.race && raceKey(s, s.ui.race) ? s.ui.race : null));
+}
+
 /** Shows or hides the sidebar as it is drawn now: one stepped aside for the panel comes back by closing the panel. */
 function toggleSidebar(shown: boolean) {
   const { ui, setUi } = useStore.getState();
@@ -603,6 +618,7 @@ function Topbar({ panelShown }: { panelShown: boolean }) {
   // A session mounting does not build the bar's crumbs, account and switches in the same task, and
   // the first message from home lands before they are drawn (the meter subscribes itself).
   const session = useLaggedStore(selectBarSession, shallow, BAR_LAG);
+  const raceId = useOpenRace(session?.id ?? null);
   return (
     <header className="topbar">
       <IconButton icon="sidebar" label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} keys="mod+b" onClick={() => toggleSidebar(sidebarOpen)} />
@@ -631,11 +647,15 @@ function Topbar({ panelShown }: { panelShown: boolean }) {
                 <span className="truncate">{session.branch}</span>
               </span>
             )}
+            {/* A chat that races another: opens both side by side. */}
+            <RaceMark sessionId={session.id} />
             {/* The account, when its agent has several: opens "Continue with another account". */}
             <LaneMark key={session.id} sessionId={session.id} />
             <SessionAccount sessionId={session.id} />
           </span>
         </div>
+      ) : raceId ? (
+        <RaceTitle raceId={raceId} />
       ) : (
         <div className="grow" />
       )}

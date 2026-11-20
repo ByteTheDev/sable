@@ -1,0 +1,532 @@
+/* ── Race: two chats on one task, side by side ──
+   Two equal panels on the stage, each its chat (the conversation as the chat itself reads), with
+   its lane's verdict, files and "Keep this one" at its foot. The bar above holds the Chats and
+   Changes switch and "Discard both"; the composer floats below, as in a chat. Quiet at rest: Keep
+   turns solid ivory only on the column under the pointer or the keyboard. */
+
+.race {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 2px 16px 0;
+}
+
+.race-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  padding: 0 0 8px;
+}
+
+.race-bar-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.race-stage {
+  container: race / inline-size;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  /* The panels end a little above the composer's top edge. */
+  padding-bottom: calc(var(--race-dock-h, 92px) + 4px);
+}
+
+.race[data-decided] .race-stage {
+  padding-bottom: 16px;
+}
+
+.race-cols {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+/* ── a column ── */
+
+.race-col {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-xl);
+  background-color: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+  transition: opacity var(--d-4) var(--ease-out);
+}
+
+.race-col[data-outcome='dropped'] {
+  opacity: 0.5;
+}
+
+.race-col-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.race-col-head > svg {
+  flex-shrink: 0;
+}
+
+.race-col-name {
+  flex-shrink: 1;
+  min-width: 0;
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.race-col-model {
+  flex-shrink: 2;
+  min-width: 0;
+  font-size: var(--t-small);
+  color: var(--text-3);
+}
+
+.race-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  margin-left: 2px;
+  font-size: var(--t-small);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.race-state[data-tone='live'] {
+  color: var(--text-2);
+}
+
+.race-state[data-tone='wait'] {
+  color: var(--amber);
+}
+
+.race-state[data-tone='error'] {
+  color: var(--red-text);
+}
+
+.race-state[data-tone='done'] {
+  color: var(--text-2);
+}
+
+.race-col-acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* The chat itself. It ends a little above the foot (the timeline pads its end by --dock-h). */
+.race-col-body {
+  --dock-h: 22px;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The conversation's top fade is drawn in its surface's colour. */
+.race-col-body .tl::before {
+  background: linear-gradient(to bottom, var(--panel), transparent);
+}
+
+.race-col-body .tl-content {
+  padding-top: 18px;
+}
+
+/* A permission or a question the side waits on: above its foot, as above a chat's composer. */
+.race-col-prompts {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 10px;
+}
+
+.race-col-prompts:has(.pd-slot) {
+  padding-bottom: 10px;
+}
+
+/* ── the foot ── */
+
+.race-foot {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.race-verdict {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 20px;
+  margin: 0;
+  font-size: var(--t-small);
+  color: var(--text-2);
+}
+
+.race-verdict > svg {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.race-verdict[data-state='clean'] > svg {
+  color: var(--text-2);
+}
+
+/* What stops a keep waits on the person: the waiting tone, not an error. */
+.race-verdict:is([data-state='conflicts'], [data-state='blocked']) > svg {
+  color: var(--amber);
+}
+
+.race-verdict[data-state='loading'] {
+  color: var(--text-3);
+}
+
+.race-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+}
+
+.race-counts-files {
+  margin-right: 2px;
+}
+
+.race-files {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 0 0 20px;
+  list-style: none;
+}
+
+.race-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 22px;
+  font-size: var(--t-small);
+  color: var(--text-2);
+}
+
+.race-file > .path {
+  flex: 1;
+  min-width: 0;
+}
+
+.race-file-more {
+  color: var(--text-3);
+}
+
+.race-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+/* Keep is one fill step at rest; on the column under the pointer or the keys it is the view's one solid control. */
+.race-col:is(:hover, :focus-within) .race-keep:not([aria-disabled]) {
+  --btn-bg: var(--text);
+  color: var(--text-inverse);
+  font-weight: var(--w-semi);
+  box-shadow: none;
+}
+
+.race-col:is(:hover, :focus-within) .race-keep:not([aria-disabled]):hover {
+  background-color: #fff;
+}
+
+.race-col:is(:hover, :focus-within) .race-keep:not([aria-disabled]):active {
+  background-color: #e4e2dd;
+}
+
+.race-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.race-confirm-text {
+  min-width: 0;
+  margin-right: auto;
+  font-size: var(--t-small);
+  color: var(--text-2);
+}
+
+.race-bar .race-confirm-text {
+  margin-right: 4px;
+}
+
+.race-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--t-small);
+  color: var(--red-text);
+}
+
+.race-error > svg {
+  flex-shrink: 0;
+}
+
+.race-error-block {
+  align-items: flex-start;
+}
+
+.race-error-block > svg {
+  margin-top: 2px;
+}
+
+.race-error-files {
+  display: block;
+  color: var(--text-3);
+}
+
+.race-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-ui);
+  color: var(--text-2);
+}
+
+.race-result > .btn {
+  margin-left: 4px;
+}
+
+.race-empty {
+  margin: auto;
+  font-size: var(--t-body);
+  color: var(--text-3);
+}
+
+/* ── compare: both lanes file by file ── */
+
+.race-compare {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 330px) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.race-cmp-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: var(--r-xl);
+  background-color: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.race-cmp-list:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-inset);
+}
+
+.race-cmp-legend,
+.race-cmp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px 76px;
+  column-gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 0 8px;
+}
+
+.race-cmp-legend {
+  height: 26px;
+  justify-items: end;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+}
+
+.race-cmp-who {
+  max-width: 100%;
+  text-align: right;
+}
+
+.race-cmp-row {
+  height: 28px;
+  border-radius: var(--r-sm);
+  font-size: var(--t-small);
+  color: var(--text-2);
+  text-align: left;
+  transition: background-color var(--d-1) var(--ease), color var(--d-1) var(--ease);
+}
+
+.race-cmp-row:hover {
+  background-color: var(--fill-1);
+}
+
+.race-cmp-row[aria-selected='true'] {
+  background-color: var(--hl);
+  color: var(--text);
+}
+
+.race-cmp-row > .path {
+  min-width: 0;
+}
+
+.race-cmp-n {
+  justify-self: end;
+  display: inline-flex;
+  gap: 5px;
+  font-size: var(--t-micro);
+}
+
+.race-cmp-n > .race-counts {
+  margin-left: 0;
+}
+
+.race-cmp-none {
+  color: var(--text-4);
+}
+
+.race-cmp-panes {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.race-cmp-panes[data-same] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.race-cmp-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-xl);
+  background-color: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+
+.race-cmp-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  font-weight: var(--w-medium);
+}
+
+.race-cmp-head > svg {
+  flex-shrink: 0;
+}
+
+.race-cmp-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 8px;
+}
+
+/* ── the composer ── */
+
+.race-dock {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  padding-bottom: 18px;
+  pointer-events: none;
+}
+
+.race-dock > .composer {
+  width: min(var(--column), 100%);
+  pointer-events: auto;
+}
+
+.race-input {
+  overflow-y: auto;
+}
+
+/* The target sits in the toolbar like the composer's own chips: 28 px, round. */
+.race-target {
+  border-radius: var(--r-pill);
+}
+
+.race-target .seg-item {
+  border-radius: var(--r-pill);
+}
+
+.race-target .seg-pill {
+  border-radius: var(--r-pill);
+}
+
+.race-target-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 14em;
+}
+
+/* ── narrow stages ── */
+
+@container race (max-width: 880px) {
+  .race-compare {
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  }
+
+  .race-cmp-panes {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: minmax(0, 1fr);
+  }
+
+  .race-col-model {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .race-col {
+    transition: none;
+  }
+}

@@ -13,8 +13,9 @@ import { randomBytes } from 'node:crypto';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { LaneForecast, LaneLandResult, SessionLane } from '../../shared/protocol';
-import { gitError, repoRoot, runGit, type GitResult } from './git';
+import type { FileDiff, LaneForecast, LaneLandResult, SessionLane } from '../../shared/protocol';
+import { parseUnifiedDiff } from '../../shared/diff';
+import { capDiff, gitError, repoRoot, runGit, type GitResult } from './git';
 
 const T_FAST = 10_000;
 const T_TREE = 60_000;
@@ -374,4 +375,20 @@ export async function removeLane(lane: SessionLane, opts: { force?: boolean } = 
   const del = await runGit(lane.root, ['branch', opts.force ? '-D' : '-d', lane.branch], { timeoutMs: T_FAST });
   if (!ok(del) && (await branchExists(lane.root, lane.branch))) return { error: gitError(del, 'Could not remove the lane’s branch.') };
   return { ok: true };
+}
+
+/**
+ * What the lane would bring to the folder's branch, file by file: its working tree (uncommitted
+ * work included, through a snapshot) against the point where it meets that branch, so two lanes
+ * made from one folder compare file by file. Paths are repository-relative. Changes nothing.
+ */
+export async function laneDiff(lane: SessionLane): Promise<FileDiff[]> {
+  if (!isDir(lane.path)) return [];
+  const [target, snap] = await Promise.all([targetOf(lane.root), snapshotLane(lane.path)]);
+  if ('error' in snap) return [];
+  const mb = await runGit(lane.root, ['merge-base', 'error' in target ? lane.base : target.head, snap.commit], { timeoutMs: T_FAST });
+  const from = ok(mb) ? line(mb) : lane.base;
+  const d = await runGit(lane.root, ['diff', '--no-color', '--no-ext-diff', '-M', '--src-prefix=a/', '--dst-prefix=b/', from, snap.commit], { timeoutMs: T_TREE, maxBytes: 32_000_000 });
+  if (d.code !== 0 && !d.stdout) return [];
+  return parseUnifiedDiff(d.stdout).map((f) => capDiff(f.binary ? { ...f, hunks: [] } : f));
 }

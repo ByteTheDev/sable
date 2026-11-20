@@ -10,7 +10,7 @@ const fail = (err: unknown) => useStore.getState().toast((err as Error)?.message
 
 export function openSession(id: string) {
   const s = useStore.getState();
-  s.setUi({ activeSessionId: id });
+  s.setUi({ activeSessionId: id, race: null });
   if (!s.data[id]?.loaded) void loadSession(id).catch(fail);
   else if (s.sessions[id]?.unread) void bridge.call('session.update', { sessionId: id, patch: { unread: false } }).catch(() => {});
 }
@@ -61,13 +61,13 @@ export function showRailTab(tab: RailTab) {
 export function goHome(cwd?: string | null) {
   const s = useStore.getState();
   // A folder chosen for the next session ends "No folder".
-  s.setUi({ activeSessionId: null, ...(cwd !== undefined ? { homeCwd: cwd, homeChat: false } : {}) });
+  s.setUi({ activeSessionId: null, race: null, ...(cwd !== undefined ? { homeCwd: cwd, homeChat: false } : {}) });
 }
 
 /** Home with "No folder": the next session is a chat in a fresh folder of its own (made when it is sent). */
 export async function goHomeChat() {
   const s = useStore.getState();
-  s.setUi({ activeSessionId: null });
+  s.setUi({ activeSessionId: null, race: null });
   try {
     const { path } = await bridge.call('chats.prepare', {});
     useStore.getState().setUi({ homeChat: true, homeCwd: path });
@@ -124,7 +124,7 @@ export async function createSession(choice: NewSessionChoice): Promise<SessionMe
   try {
     const snap = await bridge.call('session.create', choice);
     applySnapshot(snap);
-    useStore.getState().setUi({ activeSessionId: snap.session.id });
+    useStore.getState().setUi({ activeSessionId: snap.session.id, race: null });
     return snap.session;
   } catch (err) {
     fail(err);
@@ -342,7 +342,7 @@ export async function forkAt(sessionId: string, itemId: string): Promise<Session
   try {
     const snap = await bridge.call('session.fork', { sessionId, itemId });
     applySnapshot(snap);
-    useStore.getState().setUi({ activeSessionId: snap.session.id });
+    useStore.getState().setUi({ activeSessionId: snap.session.id, race: null });
     return snap.session;
   } catch (err) {
     fail(err);

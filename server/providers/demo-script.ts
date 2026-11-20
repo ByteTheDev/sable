@@ -5,6 +5,7 @@
  * usage numbers moving. Every write checks the abort signal first, so an interrupt
  * stops a scenario at the very next step without leaking items into the timeline.
  */
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { SessionRuntime } from '../core/runtime';
 import type {
@@ -194,6 +195,26 @@ export class Script {
 
   get aborted() {
     return this.env.signal.aborted;
+  }
+
+  /**
+   * A session in a lane (a worktree Sable made for it, core/lanes.ts) gets its edits for real, so a
+   * lane or a race has work to compare, land or discard. Only ever inside that lane, and only where
+   * the file is missing or still reads as the script's `before` (a scenario that writes its own
+   * files for real, or a file of the person's, is left as it is).
+   */
+  private applyInLane(abs: string, content: string, before: string | null) {
+    const lane = this.rt.meta.lane;
+    if (!lane) return;
+    const rel = path.relative(path.resolve(lane.path), path.resolve(abs));
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return;
+    try {
+      if (existsSync(abs) && (before === null || readFileSync(abs, 'utf8') !== before)) return;
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, content);
+    } catch {
+      /* the scripted turn goes on */
+    }
   }
 
   abs(rel: string) {
@@ -655,6 +676,7 @@ export class Script {
     await this.gateEdit(id, `Edit ${posix(rel)}`, `the edit to \`${posix(rel)}\``, opts.description, { path: abs, oldText, newText }, diff);
     this.start(id);
     await this.pause(80, 200);
+    this.applyInLane(abs, after, before);
     this.complete(id, { diff: [diff], text: `Updated ${posix(rel)}: ${diff.additions} additions, ${diff.deletions} deletions` });
     return diff;
   }
@@ -675,6 +697,7 @@ export class Script {
     await this.gateEdit(id, `Create ${posix(rel)}`, `creating \`${posix(rel)}\``, opts.description, { path: abs, content }, diff);
     this.start(id);
     await this.pause(70, 160);
+    this.applyInLane(abs, content, null);
     this.complete(id, { diff: [diff], text: `Created ${posix(rel)} (${diff.additions} lines)` });
     return diff;
   }

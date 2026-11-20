@@ -17,9 +17,9 @@ import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
-import type { LaneForecast, LaneLandResult, SessionLane, ToolItem } from '../../shared/protocol';
+import type { FileDiff, LaneForecast, LaneLandResult, SessionLane, ToolItem } from '../../shared/protocol';
 import { repoRoot, runGit } from '../services/git';
-import { createLane, forecastLane, landLane, laneSlug, removeLane, renameLane } from '../services/git-lanes';
+import { createLane, forecastLane, landLane, laneDiff, laneSlug, removeLane, renameLane } from '../services/git-lanes';
 import type { SessionRuntime } from './runtime';
 
 export interface LaneHost {
@@ -288,6 +288,26 @@ export class Lanes {
     if ('error' in res) return { ok: false, error: res.error };
     this.say(rt, res.lane, null);
     return { ok: true, lane: res.lane };
+  }
+
+  /**
+   * A lane for a session that is about to start, whatever the folder's state and the setting (a
+   * race: each chat works in a lane of its own). Its agent must not have started yet. Says where
+   * the session works (`detail` under that line).
+   */
+  async enterNow(rt: SessionRuntime, slug: string, detail?: string): Promise<{ ok: boolean; error?: string; lane?: SessionLane }> {
+    if (rt.meta.lane) return { ok: true, lane: rt.meta.lane };
+    if (rt.meta.chat) return { ok: false, error: 'A chat without a folder has nothing to share.' };
+    const res = await this.once(rt, () => this.enter(rt, slug || randomBytes(2).toString('hex'), false));
+    if ('error' in res) return { ok: false, error: res.error };
+    rt.notice('info', `Working in lane ${res.lane.branch}`, detail);
+    return { ok: true, lane: res.lane };
+  }
+
+  /** What the session's lane would bring to the folder's branch, file by file (empty without a lane). */
+  async diff(rt: SessionRuntime): Promise<FileDiff[]> {
+    const lane = rt.meta.lane;
+    return lane ? laneDiff(lane) : [];
   }
 
   /** Opens the session's lane folder (only ever the lane's own path). */

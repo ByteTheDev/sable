@@ -186,7 +186,7 @@ function mapStatus(x: string, y: string): string {
 }
 
 /** Limits a parsed file diff to MAX_DIFF_LINES hunk lines, keeping headers consistent. */
-function capDiff(f: FileDiff): FileDiff {
+export function capDiff(f: FileDiff): FileDiff {
   let budget = MAX_DIFF_LINES;
   if (f.hunks.reduce((n, h) => n + h.lines.length, 0) <= budget) return f;
   const hunks: DiffHunk[] = [];

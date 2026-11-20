@@ -7,8 +7,10 @@ import { SECTIONS as SETTINGS_SECTIONS } from '@/features/settings/sections';
 import { openImport } from '@/features/history/History';
 import { goHome, interrupt, openSession, openSettings, switchAgent } from '@/state/actions';
 import { RAIL_TABS, railTabKeys } from '@/features/rail/tabs';
+import { getScripts, runScriptInPanel } from '@/features/rail/scripts-store';
 import { focusComposer } from '@/state/hooks';
 import { createLane } from '@/features/session/lane';
+import { openRace, raceFolder } from '@/features/race/race';
 import { useStore, type RailTab } from '@/state/store';
 
 export type PaletteGroup = 'Recent' | 'Sessions' | 'Projects' | 'Actions' | 'Commands' | 'Skills';
@@ -113,12 +115,26 @@ export function buildItems(opts: {
     }
   }
 
+  // Race: one task to two agents at once, each in a lane of its own made from this folder.
+  const racing = opts.active?.race && !opts.active.race.outcome ? opts.active.race : null;
+  if (racing) act('race:show', 'Show the race', 'compare', () => openRace(racing.id), { keywords: 'race side by side both agents compare' });
+  const raceCwd = opts.active ? raceFolder(opts.active, null) : ui().homeChat ? null : ui().homeCwd;
+  if (raceCwd && !racing) act('race', 'Race', 'compare', () => focusComposer('/race '), { sub: baseName(raceCwd), keywords: 'race two agents claude code codex both compare lanes worktree' });
+
   for (const p of opts.installed) {
     if (p === opts.homeProvider && !opts.activeId) continue;
     act(`provider:${p}`, `New session with ${PROVIDER_NAME[p]}`, 'compose', () => (setUi({ homeProvider: p }), goHome()), { sub: 'Switch provider', keywords: 'switch provider agent' });
   }
 
   act('shortcuts', 'Keyboard shortcuts', 'keyboard', () => openSettings('shortcuts'), { keywords: 'keys hotkeys bindings' });
+
+  // ── project scripts (run1): "Run dev" for the open session's folder, in its Terminal tab ──
+  if (opts.active) {
+    const { id: sid, cwd } = opts.active;
+    for (const sc of getScripts(cwd)?.scripts ?? []) {
+      act(`script:${sc.source}:${sc.name}`, `Run ${sc.name}`, 'play', () => runScriptInPanel(sid, cwd, sc), { sub: sc.run, keywords: `script terminal ${sc.command}` });
+    }
+  }
 
   if (opts.caps) {
     const seen = new Set<string>();

@@ -116,6 +116,8 @@ interface Ui {
   homeUltracode?: boolean;
   /** The triage deck (every waiting permission and question across sessions) is open. Not persisted. */
   triageOpen?: boolean;
+  /** The race view (features/race) shows this race while no session is open. Not persisted. */
+  race?: string | null;
 }
 
 export interface Store {

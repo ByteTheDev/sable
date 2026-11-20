@@ -421,6 +421,8 @@ export interface SessionMeta {
   until?: UntilState | null;
   /** The session works in a lane of its own (a git worktree on a branch of its own); `cwd` is inside it. Null once it landed or was discarded (patches travel as JSON). */
   lane?: SessionLane | null;
+  /** The chat races another on the same task (`SessionRace`). Null once its rival was deleted (patches travel as JSON). */
+  race?: SessionRace | null;
   /** The chat waits to start by itself: on spare quota, or at a limit's reset (`SpareWait`). Null once it started or was cancelled (patches travel as JSON). */
   spare?: SpareWait | null;
   /**
@@ -573,6 +575,34 @@ export interface LaneLandResult {
   how?: 'fast-forward' | 'rebase' | 'merge';
   commits?: number;
   target?: string;
+}
+
+/**
+ * Race (`server/core/race.ts`): one task given to two agents at once (Claude Code and Codex, or two
+ * models of one agent), each chat in a lane of its own made from the same folder. The person keeps
+ * one lane (it lands) and the other is discarded. Both chats carry the pairing; it is stored with
+ * the sessions, so a race survives a restart.
+ */
+export interface SessionRace {
+  id: string;
+  /** The other chat in the race. */
+  rival: string;
+  /** The chat's column: 0 left, 1 right. */
+  side: 0 | 1;
+  /** The task both were given. */
+  task: string;
+  /** The folder both lanes were made from. */
+  folder: string;
+  startedAt: number;
+  /** How the race ended for this chat: its lane landed (`kept`) or was discarded (`dropped`). Absent while it runs. */
+  outcome?: 'kept' | 'dropped';
+  endedAt?: number;
+}
+
+/** What `race.keep` answers: the land's result; once landed, whether the other lane went too (`warning` when it could not). */
+export interface RaceKeepResult extends LaneLandResult {
+  discarded?: boolean;
+  warning?: string;
 }
 
 /**
@@ -1881,6 +1911,19 @@ export interface RpcMethods {
   'lane.create': { params: { sessionId: string }; result: { ok: boolean; error?: string; lane?: SessionLane } };
   /** Opens the lane's folder in the system's file manager. */
   'lane.open': { params: { sessionId: string }; result: { ok: boolean; error?: string } };
+  /** What the lane would bring to the folder's branch, file by file (its uncommitted work included). Empty without a lane. */
+  'lane.diff': { params: { sessionId: string }; result: FileDiff[] };
+  /**
+   * Race (`SessionRace`): two new chats in `cwd` (a folder in a git repository), each in a new lane,
+   * both sent `task`. Claude Code against Codex where both are signed in, else two models of the
+   * agent that is (`provider: 'demo'` races two Demo models). `modes`: each agent's permission mode.
+   * Answers both chats, or why not (`error`).
+   */
+  'race.start': { params: { cwd: string; task: string; provider?: ProviderId; modes?: Partial<Record<ProviderId, string>> }; result: { ok: boolean; error?: string; raceId?: string; sessions?: SessionSnapshot[] } };
+  /** Keeps this chat's lane: it lands (refused with `conflicts` or `blocked`, nothing changed), then the rival's lane is discarded and its chat archived. */
+  'race.keep': { params: { sessionId: string; message?: string }; result: RaceKeepResult };
+  /** Discards both lanes of the race this chat is in; both chats are archived. */
+  'race.discard': { params: { sessionId: string }; result: { ok: boolean; error?: string } };
   /** Spare (`SpareWait`): queues a message held until there is spare quota (`/spare`). Answers the wait, or why not. */
   'spare.send': { params: { sessionId: string; text: string; attachments?: Attachment[] }; result: { ok: boolean; spare?: SpareWait; error?: string } };
   /** "Continue at reset": the chat's last limit notice continues on its account once its window resets. */

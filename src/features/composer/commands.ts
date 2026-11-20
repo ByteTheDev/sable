@@ -9,6 +9,7 @@ import { goHome, interrupt, openSettings, renameSession } from '@/state/actions'
 import { useStore } from '@/state/store';
 import { untilCommand } from './until';
 import { spareCommand } from './spare';
+import { raceCommand } from '@/features/race/race';
 
 /** Slash commands Sable handles itself, before anything reaches the agent. */
 
@@ -113,6 +114,12 @@ export const APP_COMMANDS: AppCommand[] = [
     description: 'Send when an account has quota that would go unused',
     argumentHint: '<message>',
     run: ({ sessionId }, arg) => void spareCommand(sessionId, arg),
+  },
+  {
+    name: 'race',
+    description: 'Give the task to two agents at once, each in a lane of its own',
+    argumentHint: '<task>',
+    run: ({ sessionId }, arg) => void raceCommand(sessionId, arg),
   },
   { name: 'stop', description: 'Stop the current turn', session: true, run: ({ sessionId }) => sessionId && void interrupt(sessionId) },
   { name: 'copy', description: 'Copy the last answer', session: true, run: ({ sessionId }) => sessionId && copyLastAnswer(sessionId) },
