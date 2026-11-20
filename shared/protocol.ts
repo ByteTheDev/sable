@@ -1623,7 +1623,11 @@ export type PhoneFrame =
   | { paired: { token: string; deviceId: string; desktop: string } }
   | { denied: string };
 
-/** What a paired phone may call: conversations, not the machine (no terminal, files, settings or accounts' sign-ins). */
+/**
+ * What a paired phone may call: conversations, not the machine (no terminal, files, settings or
+ * accounts' sign-ins). Besides these, the phone's own read-only methods (`PHONE_OWN_METHODS`), such
+ * as a chat's changes and their diffs, only for the chat's own folder.
+ */
 export const PHONE_METHODS = [
   'app.hello',
   'session.create',
@@ -1695,9 +1699,60 @@ export interface PhoneMethods {
    * plain name, no path separators, nothing hidden; never overwrites. Returns its path.
    */
   'phone.mkdir': { params: { parent: string; name: string }; result: { path: string } };
+  /**
+   * What a chat changed, read-only: the working tree of the chat's own folder (its lane's worktree
+   * when it has one), as the desktop's Changes tab lists it; the chat's own edits when that folder is
+   * not a git repository; or, with `items`, the edits of those steps (a turn's work, sub-agents'
+   * steps included). Capped for the phone.
+   */
+  'phone.changes': { params: { sessionId: string; items?: string[] }; result: PhoneChanges };
+  /**
+   * One file's diff from the same place, its lines capped. Only a file `phone.changes` lists for that
+   * chat now: no other path can be read this way.
+   */
+  'phone.diff': { params: { sessionId: string; path: string; items?: string[] }; result: PhoneDiff };
 }
 
-export const PHONE_OWN_METHODS = ['phone.tail', 'phone.item', 'phone.fileLink', 'phone.mkdir'] as const satisfies readonly (keyof PhoneMethods)[];
+export const PHONE_OWN_METHODS = ['phone.tail', 'phone.item', 'phone.fileLink', 'phone.mkdir', 'phone.changes', 'phone.diff'] as const satisfies readonly (keyof PhoneMethods)[];
+
+/** A changed file in a chat's Changes view on the phone. */
+export interface PhoneChangedFile {
+  /** Relative to the chat's folder, forward slashes. */
+  path: string;
+  /** Git's short status (M, A, D, R, ?, U); for edits outside a repository A, D, R or M. */
+  status: string;
+  additions: number;
+  deletions: number;
+  /** Outside a repository or in a turn: how many edits made it (the line numbers are the file's own only for one). */
+  edits?: number;
+  binary?: boolean;
+}
+
+/** What a chat changed, as the phone's Changes view lists it (`phone.changes`). */
+export interface PhoneChanges {
+  /** `tree`: the working tree of the chat's folder; `edits`: the chat's own edits (its folder is not a git repository); `turn`: the edits of the steps asked for. */
+  scope: 'tree' | 'edits' | 'turn';
+  /** The folder's branch (`tree`). */
+  branch?: string;
+  ahead?: number;
+  behind?: number;
+  /** In the order the desktop lists them, at most a few hundred. */
+  files: PhoneChangedFile[];
+  /** Files left out past the list's length. */
+  more?: number;
+  additions: number;
+  deletions: number;
+}
+
+/** One file's diff for the phone (`phone.diff`). */
+export interface PhoneDiff {
+  /** Null when there is nothing textual to show (a file that is gone, a change git cannot show). */
+  diff: FileDiff | null;
+  /** Its line numbers are the file's own (a git diff, or a single edit): a comment names them. */
+  numbered: boolean;
+  /** Only the first lines are here (the diff is longer than the phone gets). */
+  cut?: boolean;
+}
 
 /** `timeline.reset` as a phone gets it: the newest page, trimmed, with its cursor. */
 export interface PhoneReset {

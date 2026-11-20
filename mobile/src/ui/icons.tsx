@@ -78,6 +78,9 @@ export const ICON_NAMES = {
   scan: 'Scan',
   pencilLine: 'PencilSimpleLine',
   comment: 'ChatTeardropText',
+  diff: 'GitDiff',
+  branch: 'GitBranch',
+  wrap: 'ArrowUDownLeft',
 } as const;
 
 

@@ -1,0 +1,791 @@
+/*
+ * A chat's changes (screens/Changes.tsx) and its review (screens/Review.tsx). The list is a quiet
+ * screen with a large title that hands over to the bar, as Settings; the files are rows on an ink
+ * card. A diff reads edge to edge in Geist Mono on the ground: one gutter (the line's number after
+ * the change, before it for a removed line), the desktop's tints for added and removed lines only,
+ * the changed words a step stronger. Picked lines carry a veil and an ivory rule; a comment waits
+ * under its lines on a card one step lighter. The review pane at the foot is the composer's glass
+ * (base.css "the panes"); the review sheet is a sheet like the others.
+ */
+
+/* ── the list ── */
+.changes {
+  timeline-scope: --chg;
+}
+
+.changes .sub-head-title {
+  animation-timeline: --chg;
+}
+
+.changes .sub-head::before {
+  animation-timeline: --chg;
+}
+
+.changes .page-title {
+  margin-bottom: 8px;
+  animation-timeline: --chg;
+}
+
+.changes-scroll {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-timeline: --chg block;
+  padding: calc(var(--sat) + var(--bar-h)) 16px 28px;
+}
+
+.chg-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 24px;
+  margin: 0 6px 18px;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+
+.chg-meta-skel {
+  width: 46%;
+  height: 11px;
+}
+
+.chg-where {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+}
+
+.chg-where > svg {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.chg-where-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chg-ab {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.chg-totals {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.chg-totals .diffstat {
+  font-size: inherit;
+}
+
+.chg-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: var(--t-xs);
+  color: var(--text-2);
+}
+
+/* the files: one ink card, a row each (name over its folder), hairlines inset from the letters */
+.chg-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 12px 10px 16px;
+  text-align: left;
+  transition: background-color 100ms;
+}
+
+button.chg-row:active {
+  background: var(--fill-2);
+}
+
+.chg-row + .chg-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 46px;
+  right: 16px;
+  height: 1px;
+  background: var(--line);
+}
+
+/* the letter says it (monochrome); only a deletion keeps a hint of red, as on the desktop */
+.chg-letter {
+  width: 18px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.chg-letter[data-status='D'] {
+  color: color-mix(in oklab, var(--red) 70%, var(--text-3));
+}
+
+.chg-path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chg-name {
+  font-size: 15.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chg-dir {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chg-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.chg-edits {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.chg-notes {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--t-xs);
+  color: var(--text-2);
+}
+
+.chg-chev {
+  flex-shrink: 0;
+  margin-left: -2px;
+  color: var(--text-4);
+}
+
+.chg-more {
+  margin: 14px 8px 0;
+  text-align: center;
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+.chg-empty {
+  margin-top: 64px;
+}
+
+.chg-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.chg-row-skel {
+  pointer-events: none;
+}
+
+.chg-skel-letter {
+  width: 12px;
+  height: 12px;
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+
+.chg-path .skel {
+  height: 11px;
+}
+
+.chg-path .chg-skel-dir {
+  height: 9px;
+  margin-top: 4px;
+  opacity: 0.6;
+}
+
+/* ── one file's diff ── */
+.diff .sub-head::before {
+  /* the code scrolls under the bar from the first line */
+  opacity: 1;
+  animation: none;
+}
+
+.dhead-titles {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 2px;
+}
+
+.dhead-name {
+  font-size: 16px;
+  font-weight: 620;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dhead-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* the folder gives way first */
+.dhead-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dhead-word {
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+
+.dhead-sub .diffstat {
+  font-size: inherit;
+}
+
+/* wrapping long lines: a quiet switch (the glyph steps forward when on, no fill) */
+.dhead-wrap {
+  color: var(--text-4);
+}
+
+.dhead-wrap[aria-pressed='true'] {
+  background: none;
+  color: var(--text-2);
+}
+
+.diff-scroll {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: calc(var(--sat) + var(--bar-h) + 6px) 0 20px;
+}
+
+.dl {
+  /* the number column: the widest number, or a thin edge when the numbers are not the file's own */
+  --gut: 14px;
+  --syn: color-mix(in oklab, var(--text) 84%, var(--text-3));
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 19px;
+  color: var(--syn);
+  font-variant-ligatures: none;
+  tab-size: 2;
+  -webkit-text-size-adjust: none;
+}
+
+/* unwrapped: the lines scroll sideways, the numbers stay */
+.dl:not([data-wrap]) .dl-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.dl:not([data-wrap]) .dl-lines {
+  width: max-content;
+  min-width: 100%;
+}
+
+.dl[data-numbered] {
+  --gut: calc(var(--dig, 2) * 1ch + 20px);
+}
+
+/* unwrapped, code passes under the numbers: a hairline keeps them apart */
+.dl:not([data-wrap]) .dl-n {
+  box-shadow:
+    inset 2px 0 0 var(--row-edge),
+    inset -1px 0 0 var(--line-2);
+}
+
+/* wrapped: a block of rows off screen is not laid out or painted */
+.dl[data-wrap] .dl-chunk {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto calc(var(--n) * 19px);
+}
+
+.dl-row {
+  --row-bg: transparent;
+  --row-edge: transparent;
+  display: flex;
+  min-height: 19px;
+  background: var(--row-bg);
+}
+
+.dl-row[data-t='+'] {
+  --row-bg: var(--add-bg);
+  --row-edge: var(--green);
+}
+
+.dl-row[data-t='-'] {
+  --row-bg: var(--del-bg);
+  --row-edge: var(--red);
+}
+
+/* a file that is all new (or all gone) needs less tint: the edge already says it */
+.dl[data-status='added'] .dl-row[data-t='+'] {
+  --row-bg: color-mix(in oklab, var(--green) 5%, transparent);
+}
+
+.dl[data-status='deleted'] .dl-row[data-t='-'] {
+  --row-bg: color-mix(in oklab, var(--red) 5%, transparent);
+}
+
+/* the number: sticks while long lines scroll; opaque so code passes under it */
+.dl-n {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex-shrink: 0;
+  width: var(--gut);
+  padding: 0 6px 0 12px;
+  text-align: right;
+  color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+  background:
+    linear-gradient(var(--row-bg), var(--row-bg)),
+    var(--bg);
+  box-shadow: inset 2px 0 0 var(--row-edge);
+}
+
+.dl-row[data-t='+'] .dl-n {
+  color: color-mix(in oklab, var(--green) 48%, var(--text-4));
+}
+
+.dl-row[data-t='-'] .dl-n {
+  color: color-mix(in oklab, var(--red) 52%, var(--text-4));
+}
+
+.dl-s {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  color: var(--row-edge);
+  opacity: 0.75;
+}
+
+.dl-c {
+  flex: 1;
+  min-width: 0;
+  padding-right: 16px;
+  white-space: pre;
+}
+
+.dl[data-wrap] .dl-c {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dl-row[data-t='-'] .dl-c {
+  color: color-mix(in oklab, var(--syn) 80%, var(--red));
+}
+
+.dl-mark {
+  color: inherit;
+  border-radius: 3px;
+  padding: 1.5px 0;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  background: var(--add-bg-strong);
+}
+
+.dl-row[data-t='-'] .dl-mark {
+  background: var(--del-bg-strong);
+}
+
+/* lines between two hunks, unchanged */
+.dl-sep {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  margin: 6px 0;
+  padding: 0 14px;
+  font-family: var(--font);
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  border-block: 1px solid var(--line);
+  background-color: rgb(255 255 255 / 0.022);
+}
+
+.dl-chunk:first-child > .dl-sep:first-child {
+  margin-top: 0;
+}
+
+.dl:not([data-wrap]) .dl-sep,
+.dl:not([data-wrap]) .dl-note {
+  position: sticky;
+  left: 0;
+  width: 100vw;
+}
+
+/* picked lines: one light veil and an ivory rule down their left edge (as the desktop's) */
+.dl-row[data-sel] {
+  background:
+    linear-gradient(var(--fill-3) 0 0),
+    var(--row-bg);
+}
+
+.dl-row[data-sel] .dl-n {
+  color: var(--text);
+  background:
+    linear-gradient(var(--fill-3) 0 0),
+    linear-gradient(var(--row-bg), var(--row-bg)),
+    var(--bg);
+  box-shadow: inset 2px 0 0 var(--text-2);
+}
+
+.dl-row[data-noted] .dl-n {
+  color: var(--text-2);
+}
+
+/* a comment under its lines: its words on a card one step lighter, lined up with the code */
+.dl-note {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+
+.dl-note[data-fresh] {
+  animation: note-in 340ms var(--ease-out) both;
+}
+
+@keyframes note-in {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.dl-note-in {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dl-note-card {
+  display: block;
+  margin: 6px 14px 10px calc(var(--gut) + 16px);
+  padding: 10px 14px 11px;
+  border-radius: 14px;
+  background: var(--grain-bg), var(--ink-3);
+  box-shadow: var(--edge), 0 10px 24px -16px rgb(0 0 0 / 0.85);
+  font-family: var(--font);
+  font-size: 14.5px;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  transition: background-color 100ms, opacity 160ms, transform 100ms;
+}
+
+.dl-note-card:active {
+  background-color: var(--ink-4);
+  transform: scale(0.99);
+}
+
+.dl-note[data-editing] .dl-note-card {
+  opacity: 0.42;
+}
+
+.dl-note-range {
+  display: block;
+  margin-bottom: 3px;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.dl-cut {
+  margin: 22px 20px 6px;
+  text-align: center;
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+.dl-empty {
+  margin-top: 30vh;
+}
+
+.dl-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 14px 18px 0 58px;
+}
+
+.dl-skel .skel {
+  height: 9px;
+}
+
+/* ── the review pane at the foot (a glass pane, base.css "the panes") ── */
+.rfoot {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  padding: 0 10px calc(var(--sab) + 10px);
+  translate: 0 calc(-1 * var(--kb));
+  transition: translate var(--kb-ms) var(--ease-ime);
+}
+
+/* the last lines leave under a short fade, not cut at the pane's edge */
+.rfoot::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -30px;
+  height: 30px;
+  background: linear-gradient(rgb(7 7 8 / 0), rgb(7 7 8 / 0.9));
+  pointer-events: none;
+}
+
+.rpane {
+  position: relative;
+  padding: 6px;
+  border-radius: 26px;
+}
+
+.rp-form .rp-input {
+  padding: 10px 10px 6px;
+  min-height: 46px;
+}
+
+.rp-bar {
+  height: 44px;
+}
+
+.rp-count {
+  max-width: 70%;
+}
+
+.rp-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 44px;
+  font-size: 14px;
+  color: var(--text-3);
+}
+
+/* ── in the chat: the line above the prompt bar while comments wait ── */
+.rv-line {
+  padding: 0 9px 0 0;
+}
+
+.rv-line-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+  padding-left: 18px;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+}
+
+.rv-line-open > svg {
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+
+.rv-line-n {
+  color: var(--text-3);
+  font-weight: 450;
+}
+
+.rv-line .waiting-go {
+  transition: background-color 100ms, transform 100ms, opacity 100ms;
+}
+
+.rv-line .waiting-go:active {
+  background: var(--fill-4);
+  transform: scale(0.96);
+}
+
+.rv-line .waiting-go:disabled {
+  opacity: 0.45;
+}
+
+.changes-key .changes-dot {
+  top: 10px;
+  right: 9px;
+}
+
+/* a settled turn's change: its own quiet key beside the work line, to what it changed */
+.work:not([data-live]) {
+  align-items: center;
+}
+
+.work-changes {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 30px;
+  margin-left: 16px;
+  padding: 0 11px;
+  border-radius: var(--r-pill);
+  background-color: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background-color 100ms, transform 100ms;
+}
+
+/* a finger-sized target around the capsule */
+.work-changes::after {
+  content: '';
+  position: absolute;
+  inset: -7px -4px;
+}
+
+.work-changes:active {
+  background-color: var(--fill-3);
+  transform: scale(0.96);
+}
+
+/* ── the review sheet ── */
+.rvs-lead {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 18px;
+  background: rgb(0 0 0 / 0.32);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  font-size: var(--t-body);
+  line-height: 1.45;
+  resize: none;
+  outline: none;
+  transition: box-shadow 120ms;
+}
+
+.rvs-lead:focus {
+  box-shadow: inset 0 0 0 1px rgb(242 241 238 / 0.3);
+}
+
+.rvs-lead::placeholder {
+  color: var(--text-4);
+}
+
+.rvs-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: 20px;
+  background: rgb(255 255 255 / 0.03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+
+.rvs-item {
+  position: relative;
+  overflow: hidden;
+}
+
+.rvs-item + .rvs-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  background: var(--line);
+}
+
+.rvs-c {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 13px 6px 14px 16px;
+}
+
+.rvs-c-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.rvs-quote {
+  margin-top: 7px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: rgb(0 0 0 / 0.3);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-2);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rvs-quote[data-t='+'] {
+  background: var(--add-bg);
+}
+
+.rvs-quote[data-t='-'] {
+  background: var(--del-bg);
+}
+
+.rvs-text {
+  margin-top: 7px;
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rvs-x {
+  margin-top: -9px;
+  color: var(--text-3);
+}
+
+.rvs-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rvs-discard {
+  height: 44px;
+}

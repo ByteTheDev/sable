@@ -12,6 +12,7 @@ import './styles/home.css';
 import './styles/chat.css';
 import './styles/sheets.css';
 import './styles/screens.css';
+import './styles/changes.css';
 
 // For checks over DevTools (web builds made with VITE_SABLE_DEBUG=1 only).
 if (import.meta.env.VITE_SABLE_DEBUG) (window as unknown as { sable: unknown }).sable = { getState, setState, applyEvent, conn, nav, flightRate: setFlightRate };

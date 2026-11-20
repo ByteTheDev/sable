@@ -1,14 +1,39 @@
 import { useSyncExternalStore } from 'react';
 
-/** Screens over home: a chat, or settings. Home stays mounted underneath (its scroll is kept). */
-export type Route = { name: 'chat'; id: string } | { name: 'settings' };
+/**
+ * Screens over home: a chat, settings, and over a chat its changes and one file's diff (`items`: a
+ * turn's steps, for that turn's changes; `lead`: the message that opened it). Home stays mounted
+ * underneath (its scroll is kept).
+ */
+export type Route =
+  | { name: 'chat'; id: string }
+  | { name: 'settings' }
+  | { name: 'changes'; id: string; items?: string[]; lead?: string }
+  | { name: 'diff'; id: string; path: string; items?: string[] };
+
+/** The chat a screen belongs to (a chat, its changes, a diff of it). */
+export const chatOf = (r: Route | undefined): string | undefined => (r && r.name !== 'settings' ? r.id : undefined);
+
+/** A key that tells screens apart (a layer per screen). */
+export const routeKey = (r: Route): string =>
+  r.name === 'chat' ? `chat:${r.id}` : r.name === 'changes' ? `changes:${r.id}:${r.items?.[0] ?? ''}` : r.name === 'diff' ? `diff:${r.id}:${r.items?.[0] ?? ''}:${r.path}` : r.name;
+
+const strings = (v: unknown) => v === undefined || (Array.isArray(v) && v.every((x) => typeof x === 'string'));
+const valid = (r: Route | null | undefined): r is Route => {
+  if (!r || typeof r !== 'object') return false;
+  if (r.name === 'settings') return true;
+  if (typeof r.id !== 'string') return false;
+  if (r.name === 'chat') return true;
+  if (r.name === 'changes') return strings(r.items) && (r.lead === undefined || typeof r.lead === 'string');
+  return r.name === 'diff' && typeof r.path === 'string' && strings(r.items);
+};
 
 // The open screens survive Android closing the app in the background: the next start opens them again.
 const KEY = 'sable.nav';
 const load = (): Route[] => {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? '[]') as Route[];
-    return Array.isArray(v) ? v.filter((r) => r && (r.name === 'settings' || (r.name === 'chat' && typeof r.id === 'string'))).slice(-3) : [];
+    return Array.isArray(v) ? v.filter(valid).slice(-4) : [];
   } catch {
     return [];
   }
@@ -31,13 +56,13 @@ export const nav = {
   },
   push(r: Route) {
     const top = stack[stack.length - 1];
-    if (top && top.name === r.name && (r.name !== 'chat' || (top as { id: string }).id === r.id)) return;
-    stack = [...stack.filter((x) => !(x.name === r.name && (r.name !== 'chat' || (x as { id: string }).id === (r as { id: string }).id))), r];
+    if (top && routeKey(top) === routeKey(r)) return;
+    stack = [...stack.filter((x) => routeKey(x) !== routeKey(r) && (r.name === 'chat' || x.name !== r.name)), r];
     emit();
   },
-  /** Opens a chat on top of home (replacing any other open chat). */
+  /** Opens a chat on top of home (replacing any other open chat, and what was open over it). */
   chat(id: string) {
-    stack = [...stack.filter((x) => x.name !== 'chat'), { name: 'chat', id }];
+    stack = [...stack.filter((x) => x.name === 'settings'), { name: 'chat', id }];
     emit();
   },
   pop(): boolean {
@@ -45,6 +70,13 @@ export const nav = {
     stack = stack.slice(0, -1);
     emit();
     return true;
+  },
+  /** Back to the chat a screen over it belongs to (after a review went out from its changes). */
+  toChat(id: string) {
+    const at = stack.findIndex((r) => r.name === 'chat' && r.id === id);
+    if (at < 0 || at === stack.length - 1) return;
+    stack = stack.slice(0, at + 1);
+    emit();
   },
   reset() {
     stack = [];
@@ -58,9 +90,12 @@ export const nav = {
     stack = saved;
     listeners.forEach((l) => l());
   },
-  /** Drops chats the desktop no longer has. */
+  /** Drops chats the desktop no longer has, and what was open over them. */
   prune(exists: (id: string) => boolean) {
-    const next = stack.filter((r) => r.name !== 'chat' || exists(r.id));
+    const next = stack.filter((r) => {
+      const id = chatOf(r);
+      return !id || exists(id);
+    });
     if (next.length !== stack.length) {
       stack = next;
       emit();

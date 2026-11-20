@@ -10,6 +10,7 @@ import type { TimelineItem } from '@shared/protocol';
 // The phone imports the desktop's lead-in rules through its own alias.
 vi.mock('@desk/features/timeline/lead-in', async () => await import('../src/features/timeline/lead-in'));
 vi.mock('@desk/features/review/model', async () => await import('../src/features/review/model'));
+vi.mock('@desk/lib/word-diff', async () => await import('../src/lib/word-diff'));
 
 // Loaded by a path the root type check does not follow: the phone's module resolves `@desk` through its own config.
 type FlowChunk = { kind: 'text' | 'show'; id: string } | { kind: 'steps'; key: string; ids: string[] } | { kind: 'line' };
@@ -164,5 +165,63 @@ describe("phone turns with what Claude Code writes in the person's place", () =>
     expect(groupTurns(reminder.ids, reminder.shape, false).groups).toHaveLength(2);
     const alone = spec('U1 t2 T3 u4');
     expect(groupTurns(alone.ids, alone.shape, false).groups).toHaveLength(1);
+  });
+});
+
+describe("a comment on a diff from the phone's Changes view", async () => {
+  const model = await import('../src/features/review/model');
+  const ROWS = '../mobile/src/lib/diff-rows';
+  type Row = { t: ' ' | '+' | '-' | 'sep'; text: string; old?: number; neu?: number; marks?: [number, number][] };
+  const { diffRows, hunkIndex, rowNumber } = (await import(/* @vite-ignore */ ROWS)) as {
+    diffRows: (d: unknown) => { rows: Row[]; lines: number; digits: number };
+    hunkIndex: (rows: Row[], numbered: boolean) => number[];
+    rowNumber: (r: Row) => number | undefined;
+  };
+  // Two hunks of one file: a line changed near the top (one line added), one removed further down.
+  const diff = {
+    path: 'src/server/session.ts',
+    status: 'modified',
+    additions: 2,
+    deletions: 2,
+    hunks: [
+      { oldStart: 1, oldLines: 3, newStart: 1, newLines: 4, lines: [' import a;', "-const ttl = 30;", "+const ttl = 60;", '+const grace = 5;', ' '] },
+      { oldStart: 20, oldLines: 2, newStart: 21, newLines: 1, lines: [' function close() {', '-  log();'] },
+    ],
+  };
+
+  it('numbers each line as the gutter shows it, counts the gap in the same numbers and marks the changed words', () => {
+    const { rows, lines } = diffRows(diff);
+    expect(lines).toBe(7);
+    expect(rows.map((r) => (r.t === 'sep' ? r.text : `${r.t}${rowNumber(r)}`))).toEqual([' 1', '-2', '+2', '+3', ' 4', 'Lines 5–20 unchanged', ' 21', '-21']);
+    expect(rows[1].marks).toEqual([[12, 14]]);
+    expect(rows[2].marks).toEqual([[12, 14]]);
+  });
+
+  it('keeps a picked range inside its hunk and makes the desktop’s own review message', () => {
+    const { rows } = diffRows(diff);
+    const hunks = hunkIndex(rows, true);
+    // A first tap on line 2 (removed), a second past the gap: the range stops at the hunk's end.
+    expect(model.clampToHunk(hunks, 1, 7)).toBe(4);
+    const lines = model.linesOf(rows, 1, 3, true);
+    expect(model.rangeLabel(lines)).toBe('lines 2–3');
+    const text = model.reviewMessage([{ id: 'c1', scope: 'git:src/server/session.ts', path: 'src/server/session.ts', lines, text: 'Keep 30 for the CLI.', at: 1 }], 'One thing');
+    expect(text).toBe('One thing\n\nReview of your changes:\n\n1. src/server/session.ts, lines 2–3\n```diff\n-const ttl = 30;\n+const ttl = 60;\n+const grace = 5;\n```\nKeep 30 for the CLI.');
+    expect(model.parseReview(text)?.comments[0]).toMatchObject({ path: 'src/server/session.ts', range: 'lines 2–3', text: 'Keep 30 for the CLI.' });
+    // The comment finds its lines again after the diff is read anew.
+    expect(model.locate(diffRows(diff).rows, lines)).toEqual([1, 3]);
+  });
+
+  it('without the file’s own numbers: no gaps, one hunk, nothing numbered in the message', () => {
+    const { rows } = diffRows(diff);
+    const flat = hunkIndex(rows, false);
+    expect(new Set(flat.filter((h) => h >= 0))).toEqual(new Set([0]));
+    const lines = model.linesOf(rows, 6, 7, false);
+    expect(lines.every((l) => l.old === undefined && l.neu === undefined)).toBe(true);
+    expect(model.reviewMessage([{ id: 'c', scope: 'edits:x', path: 'x.ts', lines, text: 'Why?', at: 1 }])).toContain('1. x.ts\n```diff');
+  });
+
+  it('a deleted file counts its gaps in the numbers it had', () => {
+    const gone = { path: 'old.ts', status: 'deleted', additions: 0, deletions: 3, hunks: [{ oldStart: 4, oldLines: 3, newStart: 0, newLines: 0, lines: ['-a', '-b', '-c'] }] };
+    expect(diffRows(gone).rows.map((r) => (r.t === 'sep' ? r.text : `${r.t}${rowNumber(r)}`))).toEqual(['Lines 1–3 unchanged', '-4', '-5', '-6']);
   });
 });

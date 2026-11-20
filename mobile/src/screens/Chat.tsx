@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SessionMeta, ToolItem } from '@shared/protocol';
 import { baseName } from '@desk/lib/format';
+import { useComments } from '@m/lib/comments';
 import { conn } from '@m/lib/conn';
 import { onKeyboard } from '@m/lib/keyboard';
 import { haptic, openExternal } from '@m/lib/native';
@@ -16,6 +17,7 @@ import { IME_EASE, SNAP } from '@m/ui/motion';
 import { Sheet } from '@m/ui/Sheet';
 import { Composer } from './Composer';
 import { Prompts } from './Prompts';
+import { ReviewLine } from './Review';
 import { ItemRow, TurnView } from './Timeline';
 
 const PAGE = 24;
@@ -68,12 +70,15 @@ export function Chat({ id }: { id: string }) {
         onBack={() => nav.pop()}
         race={racing ? <RaceKey s={s} /> : undefined}
         right={
-          s.provider === 'claude' || s.provider === 'demo' || remoteOn ? (
-            <button type="button" className="icon-btn remote-btn" data-tone={s.remote?.tone ?? (remoteOn ? 'waiting' : 'off')} aria-label="Remote control" onClick={() => (haptic('tap'), setRemote(true))}>
-              <Icon name="link" size={20} />
-              {remoteOn && <i className="remote-dot" />}
-            </button>
-          ) : undefined
+          <>
+            <ChangesKey id={id} />
+            {(s.provider === 'claude' || s.provider === 'demo' || remoteOn) && (
+              <button type="button" className="icon-btn remote-btn" data-tone={s.remote?.tone ?? (remoteOn ? 'waiting' : 'off')} aria-label="Remote control" onClick={() => (haptic('tap'), setRemote(true))}>
+                <Icon name="link" size={20} />
+                {remoteOn && <i className="remote-dot" />}
+              </button>
+            )}
+          </>
         }
       />
       {loaded ? (
@@ -85,6 +90,7 @@ export function Chat({ id }: { id: string }) {
       )}
       <div className="chat-foot">
         <Prompts sid={id} />
+        <ReviewLine sid={id} />
         <Composer sid={id} />
       </div>
       <RemoteSheet id={id} open={remote} onClose={() => setRemote(false)} />
@@ -118,6 +124,17 @@ function ChatHead({ title, sub, status, mark, onBack, race, right }: { title: st
       {race}
       {right ?? (race ? null : <span className="icon-btn-spacer" />)}
     </header>
+  );
+}
+
+/** The chat's changes (its folder's working tree, or its own edits): a dot while review comments wait to be sent. */
+function ChangesKey({ id }: { id: string }) {
+  const waiting = useComments(id).length > 0;
+  return (
+    <button type="button" className="icon-btn changes-key" aria-label={waiting ? 'Changes, review comments waiting' : 'Changes'} onClick={() => (haptic('tap'), nav.push({ name: 'changes', id }))}>
+      <Icon name="diff" size={20} />
+      {waiting && <i className="remote-dot changes-dot" />}
+    </button>
   );
 }
 

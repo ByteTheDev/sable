@@ -8,6 +8,7 @@ import { useNow } from '@m/lib/useNow';
 import { conn } from '@m/lib/conn';
 import { diffLines, renderMarkdown } from '@m/lib/md';
 import { haptic, openExternal } from '@m/lib/native';
+import { nav } from '@m/lib/nav';
 import { putDraft } from '@m/lib/put-draft';
 import { readReview, type PhoneReview } from '@m/lib/review';
 import { applyChildren, applyFull, fetchItem, getState, sessionData, setState, useStore, type State } from '@m/lib/store';
@@ -259,17 +260,22 @@ function segmentSpan(items: Record<string, TimelineItem>, turn: TurnGroup, index
   return last - start;
 }
 
-/** "Worked 12s · 20 steps", and the change: the folded work of a settled segment. */
+/** "Worked 12s · 20 steps", and the change: the folded work of a settled segment. The change opens what it changed. */
 function WorkLine({ sid, seg, turn, index, open, onToggle, landed }: { sid: string; seg: Segment; turn: TurnGroup; index: number; open: boolean; onToggle?: () => void; landed: boolean }) {
-  const { span, add, del, thought } = useMemo(() => {
+  const { span, add, del, thought, edits, files } = useMemo(() => {
     const items = sessionData(getState(), sid).items;
     let a = 0;
     let d = 0;
+    const paths = new Set<string>();
+    // The steps that change files (and sub-agents, whose own steps may): the desktop gathers this segment's changes from them.
+    const steps: string[] = [];
     for (const id of seg.work) {
       const it = items[id];
-      if (it?.type === 'tool') for (const f of it.result?.diff ?? []) (a += f.additions), (d += f.deletions);
+      if (it?.type !== 'tool') continue;
+      for (const f of it.result?.diff ?? []) (a += f.additions), (d += f.deletions), paths.add(f.path);
+      if (it.kind === 'edit' || it.kind === 'write' || it.kind === 'agent') steps.push(id);
     }
-    return { span: segmentSpan(items, turn, index), add: a, del: d, thought: !seg.steps && seg.work.some((id) => items[id]?.type === 'thinking') };
+    return { span: segmentSpan(items, turn, index), add: a, del: d, thought: !seg.steps && seg.work.some((id) => items[id]?.type === 'thinking'), edits: steps, files: paths.size };
   }, [sid, turn, index, seg]);
   const took = span && span >= 1000 ? shortDuration(span) : '';
   return (
@@ -277,14 +283,24 @@ function WorkLine({ sid, seg, turn, index, open, onToggle, landed }: { sid: stri
       <button type="button" className="work-line" aria-expanded={open} onClick={onToggle}>
         <span className="work-title">{thought ? (took ? `Thought for ${took}` : 'Thought') : took ? `Worked ${took}` : 'Worked'}</span>
         {seg.steps > 0 && <span className="work-meta num">{plural(seg.steps, 'step')}</span>}
-        {(add > 0 || del > 0) && (
+        <Icon name="caretDown" size={12} weight="bold" className="work-caret" />
+      </button>
+      {(add > 0 || del > 0) && (
+        <button
+          type="button"
+          className="work-changes"
+          aria-label={`Changes in this turn: ${plural(files, 'file')}, ${add} added, ${del} removed`}
+          onClick={() => {
+            haptic('tap');
+            nav.push({ name: 'changes', id: sid, items: edits, ...(seg.lead ? { lead: seg.lead } : {}) });
+          }}
+        >
           <span className="diffstat num">
             {add > 0 && <span className="add">+{add}</span>}
             {del > 0 && <span className="del">−{del}</span>}
           </span>
-        )}
-        <Icon name="caretDown" size={12} weight="bold" className="work-caret" />
-      </button>
+        </button>
+      )}
     </div>
   );
 }

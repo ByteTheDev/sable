@@ -1,10 +1,25 @@
 /** The phone endpoint (server/services/phone.ts): pairing with approval, token hello, the allowlist, rate limits, revocation; the QR encoder; Claude's Remote Control default. */
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { PHONE_PATH, type Capabilities, type ModelInfo, type NoticeItem, type PhoneFrame, type PhoneStatus, type PhoneTail, type TextItem, type TimelineItem, type ToolItem, type UserItem } from '@shared/protocol';
+import {
+  PHONE_PATH,
+  type Capabilities,
+  type ModelInfo,
+  type NoticeItem,
+  type PhoneChanges,
+  type PhoneDiff,
+  type PhoneFrame,
+  type PhoneStatus,
+  type PhoneTail,
+  type TextItem,
+  type TimelineItem,
+  type ToolItem,
+  type UserItem,
+} from '@shared/protocol';
 import { App, withDefaultOptions } from '../server/app';
 import { DemoProvider } from '../server/providers/demo';
 import { capabilities } from '../server/providers/demo-catalog';
@@ -421,6 +436,145 @@ describe('a new folder from the phone', () => {
     expect(existsSync(path.join(home, '..', 'escape'))).toBe(false);
     // Only for phones.
     await expect(app.call('phone.mkdir' as never, { parent: home, name: 'y' } as never)).rejects.toThrow();
+    c.ws.close();
+  });
+});
+
+describe("a chat's changes from the phone", () => {
+  // The test's own git never refreshes the index either (that would move its time under the read-only check).
+  const git = (cwd: string, ...args: string[]) => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+    return r.stdout;
+  };
+  const numbered = (n: number, word = 'line') => Array.from({ length: n }, (_, i) => `${word} ${i + 1}`).join('\n') + '\n';
+
+  /** A repository with every kind of change: modified, deleted, untracked, a long one, a binary one; and a file beside it. */
+  function repoIn(home: string) {
+    const repo = path.join(home, 'repo');
+    mkdirSync(path.join(repo, 'src'), { recursive: true });
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.name', 'Test');
+    git(repo, 'config', 'user.email', 'test@example.com');
+    git(repo, 'config', 'core.autocrlf', 'false');
+    writeFileSync(path.join(repo, 'src', 'a.ts'), numbered(30));
+    writeFileSync(path.join(repo, 'old.txt'), 'one\ntwo\nthree\n');
+    writeFileSync(path.join(repo, 'keep.txt'), 'untouched\n');
+    writeFileSync(path.join(repo, 'big.txt'), 'start\n');
+    writeFileSync(path.join(repo, 'pic.bin'), Buffer.from([1, 2, 0, 3]));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init');
+    writeFileSync(path.join(repo, 'src', 'a.ts'), numbered(30).replace('line 12\n', 'line twelve\n').replace('line 20\n', ''));
+    rmSync(path.join(repo, 'old.txt'));
+    writeFileSync(path.join(repo, 'notes.md'), '# Notes\nfirst\n');
+    writeFileSync(path.join(repo, 'big.txt'), 'start\n' + numbered(5000, 'more'));
+    writeFileSync(path.join(repo, 'pic.bin'), Buffer.from([1, 2, 0, 3, 9, 9]));
+    writeFileSync(path.join(home, 'outside.txt'), 'not in the repository\n');
+    return repo;
+  }
+
+  it('lists the working tree of the chat’s folder and gives a listed file’s diff, capped, and nothing else', async () => {
+    const { app, port, home } = await setup();
+    const repo = repoIn(home);
+    const { c } = await pairPhone(app, port);
+    const created = (await c.call('session.create', { provider: 'demo', cwd: repo })) as { result: PhoneTail };
+    const id = created.result.session.id;
+    const before = git(repo, 'status', '--porcelain');
+    const indexAt = statSync(path.join(repo, '.git', 'index')).mtimeMs;
+
+    const list = (await c.call('phone.changes', { sessionId: id })) as { ok: boolean; result: PhoneChanges };
+    expect(list.ok).toBe(true);
+    expect(list.result.scope).toBe('tree');
+    expect(list.result.branch).toBe('main');
+    const by = new Map(list.result.files.map((f) => [f.path, f]));
+    expect([...by.keys()].sort()).toEqual(['big.txt', 'notes.md', 'old.txt', 'pic.bin', 'src/a.ts']);
+    expect(by.get('src/a.ts')).toMatchObject({ status: 'M', additions: 1, deletions: 2 });
+    expect(by.get('old.txt')).toMatchObject({ status: 'D', deletions: 3 });
+    expect(by.get('notes.md')).toMatchObject({ status: '?', additions: 2 });
+
+    const diff = async (p: string) => (await c.call('phone.diff', { sessionId: id, path: p })) as { ok: boolean; result: PhoneDiff; error?: string };
+    const a = await diff('src/a.ts');
+    expect(a.ok).toBe(true);
+    expect(a.result.numbered).toBe(true);
+    expect(a.result.cut).toBeUndefined();
+    expect(a.result.diff?.hunks.flatMap((h) => h.lines)).toContain('+line twelve');
+    const gone = await diff('old.txt');
+    expect(gone.result.diff?.status).toBe('deleted');
+    expect(gone.result.diff?.hunks[0].lines).toEqual(['-one', '-two', '-three']);
+    const fresh = await diff('notes.md');
+    expect(fresh.result.diff?.status).toBe('added');
+    const big = await diff('big.txt');
+    expect(big.result.cut).toBe(true);
+    expect(big.result.diff?.additions).toBe(5000);
+    expect(big.result.diff!.hunks.reduce((n, h) => n + h.lines.length, 0)).toBeLessThanOrEqual(3000);
+    expect(JSON.stringify(big.result).length).toBeLessThan(450_000);
+    expect((await diff('pic.bin')).result.diff?.binary).toBe(true);
+
+    // Only a file the folder's status lists: not a clean file, not a path out of the folder, not an absolute path, not another chat's.
+    for (const p of ['keep.txt', '../outside.txt', path.join(home, 'outside.txt'), path.join(repo, 'src', 'a.ts'), '', 'src/../../outside.txt']) {
+      const r = await diff(p);
+      expect(r.ok, p).toBe(false);
+    }
+    expect(((await c.call('phone.changes', { sessionId: 'nope' })) as { ok: boolean }).ok).toBe(false);
+    expect(((await c.call('phone.diff', { sessionId: 'nope', path: 'src/a.ts' })) as { ok: boolean }).ok).toBe(false);
+    // Read-only: the index and the tree are as they were.
+    expect(statSync(path.join(repo, '.git', 'index')).mtimeMs).toBe(indexAt);
+    expect(git(repo, 'status', '--porcelain')).toBe(before);
+    // Only for phones.
+    await expect(app.call('phone.changes' as never, { sessionId: id } as never)).rejects.toThrow();
+    await expect(app.call('phone.diff' as never, { sessionId: id, path: 'src/a.ts' } as never)).rejects.toThrow();
+    c.ws.close();
+  });
+
+  it('outside a repository: the chat’s own edits; with steps named, only theirs (sub-agents included)', async () => {
+    const { app, port, home } = await setup();
+    const plain = path.join(home, 'plain');
+    mkdirSync(plain);
+    const { c } = await pairPhone(app, port);
+    const created = (await c.call('session.create', { provider: 'demo', cwd: plain })) as { result: PhoneTail };
+    const id = created.result.session.id;
+    const rt = app.sessions.get(id)!;
+    const edit = (eid: string, file: string, hunk: { oldStart: number; lines: string[] }, extra: Partial<ToolItem> = {}) =>
+      rt.add({
+        id: eid,
+        type: 'tool',
+        name: 'Edit',
+        kind: 'edit',
+        title: 'Edit',
+        status: 'done',
+        detail: { path: file },
+        result: { diff: [{ path: file, status: 'modified', additions: hunk.lines.filter((l) => l[0] === '+').length, deletions: hunk.lines.filter((l) => l[0] === '-').length, hunks: [{ oldStart: hunk.oldStart, oldLines: 1, newStart: hunk.oldStart, newLines: 1, lines: hunk.lines }] }] },
+        ...extra,
+      } as never);
+    edit('e1', path.join(plain, 'x.ts'), { oldStart: 3, lines: ['-a', '+b'] });
+    edit('e2', path.join(plain, 'x.ts'), { oldStart: 9, lines: ['-c', '+d'] });
+    edit('e3', path.join(plain, 'y.ts'), { oldStart: 1, lines: ['-e', '+f'] });
+    rt.add({ id: 'ag', type: 'tool', name: 'Task', kind: 'agent', title: 'Helper', status: 'done', detail: {} } as never);
+    edit('e4', path.join(plain, 'sub', 'z.ts'), { oldStart: 2, lines: ['+g'] }, { parentId: 'ag' });
+
+    const all = (await c.call('phone.changes', { sessionId: id })) as { result: PhoneChanges };
+    expect(all.result.scope).toBe('edits');
+    expect(all.result.files.map((f) => [f.path, f.edits])).toEqual([
+      ['x.ts', 2],
+      ['y.ts', 1],
+      ['sub/z.ts', 1],
+    ]);
+    const x = (await c.call('phone.diff', { sessionId: id, path: 'x.ts' })) as { result: PhoneDiff };
+    expect(x.result.numbered).toBe(false);
+    expect(x.result.diff?.hunks).toHaveLength(2);
+    expect(((await c.call('phone.diff', { sessionId: id, path: 'y.ts' })) as { result: PhoneDiff }).result.numbered).toBe(true);
+
+    const turn = (await c.call('phone.changes', { sessionId: id, items: ['e2', 'ag', 'missing', 42] })) as { result: PhoneChanges };
+    expect(turn.result.scope).toBe('turn');
+    expect(turn.result.files.map((f) => [f.path, f.edits])).toEqual([
+      ['x.ts', 1],
+      ['sub/z.ts', 1],
+    ]);
+    expect(turn.result).toMatchObject({ additions: 2, deletions: 1 });
+    const tx = (await c.call('phone.diff', { sessionId: id, path: 'x.ts', items: ['e2', 'ag'] })) as { result: PhoneDiff };
+    expect(tx.result.numbered).toBe(true);
+    expect(tx.result.diff?.hunks[0].lines).toEqual(['-c', '+d']);
+    expect(((await c.call('phone.diff', { sessionId: id, path: 'y.ts', items: ['e2'] })) as { ok: boolean }).ok).toBe(false);
     c.ws.close();
   });
 });

@@ -5,8 +5,9 @@ import type { SessionMeta } from '@shared/protocol';
 import { goBack, pushBack } from '@m/lib/back';
 import { conn } from '@m/lib/conn';
 import { haptic, inForeground, keepAlive, notify, onAppState, onBackButton, onNotificationTap, onPairLink } from '@m/lib/native';
-import { nav, useNav, type Route } from '@m/lib/nav';
+import { chatOf, nav, routeKey, useNav, type Route } from '@m/lib/nav';
 import { rowOf, takeOrigin, type Origin } from '@m/lib/open';
+import { pruneComments } from '@m/lib/comments';
 import { takeSwap } from '@m/lib/race';
 import { closeSessionData, getState, hasCachedHome, loadCachedHome, refresh, setState, subscribeStore, useStore } from '@m/lib/store';
 import '@m/lib/keyboard';
@@ -21,6 +22,10 @@ import { prefs, Settings } from './screens/Settings';
 // The conversation (markdown, steps, composer) loads as its own chunk: home draws first, then it is fetched while idle.
 const loadChat = () => import('./screens/Chat');
 const Chat = lazy(() => loadChat().then((m) => ({ default: m.Chat })));
+// A chat's changes and a file's diff: their own chunk, fetched after the chat's.
+const loadChanges = () => import('./screens/Changes');
+const ChangesScreen = lazy(() => loadChanges().then((m) => ({ default: m.ChangesScreen })));
+const DiffScreen = lazy(() => loadChanges().then((m) => ({ default: m.DiffScreen })));
 
 /** Notifies when a turn ends or starts waiting on you while the app is in the background. */
 function watchTurns() {
@@ -48,14 +53,13 @@ function watchTurns() {
       if (ended && s.status === 'idle') {
         // The ring closes on the composer of the chat on screen (or on home's field).
         fieldBeat('done', [...document.querySelectorAll('.layer')].pop()?.querySelector('.composer') ?? document.querySelector('.home-dock'));
-        const top = nav.stack[nav.stack.length - 1];
-        if (inForeground() && top?.name === 'chat' && top.id === s.id) haptic('select');
+        if (inForeground() && chatOf(nav.stack[nav.stack.length - 1]) === s.id) haptic('select');
       }
       if (!waits && !ended) continue;
       if (waits && inForeground()) {
         // Waiting on you somewhere else than on screen: felt once, and said at the top when home is covered.
         const top = nav.stack[nav.stack.length - 1];
-        if (!(top?.name === 'chat' && top.id === s.id)) {
+        if (chatOf(top) !== s.id) {
           haptic('warning');
           if (top) setState({ attention: { id: s.id, at: Date.now() } });
         }
@@ -94,7 +98,10 @@ export function App() {
       conn.onOpen(() => {
         const open = nav.stack.filter((r) => r.name === 'chat').map((r) => (r as { id: string }).id);
         void refresh(open)
-          .then(() => nav.prune((id) => !!getState().sessions[id]))
+          .then(() => {
+            nav.prune((id) => !!getState().sessions[id]);
+            pruneComments((id) => !!getState().sessions[id]);
+          })
           .catch(() => {});
       }),
       onAppState((active) => (active ? conn.wake() : conn.sleep())),
@@ -104,7 +111,7 @@ export function App() {
       onNotificationTap((id) => nav.chat(id)),
     ];
     const stopWatch = subscribeStore(watchTurns());
-    const idle = window.setTimeout(() => void loadChat(), 400);
+    const idle = window.setTimeout(() => void loadChat().then(() => window.setTimeout(() => void loadChanges(), 800)), 400);
     // Back where it was: Android may have closed the app in the background.
     void conn.init().then(() => {
       // The list of chats as it was last time, at once; the desktop's answer replaces it.
@@ -120,7 +127,7 @@ export function App() {
 
   // Data for chats that are no longer on screen is dropped (the snapshot reloads it).
   useEffect(() => {
-    const open = new Set(stack.filter((r) => r.name === 'chat').map((r) => (r as { id: string }).id));
+    const open = new Set(stack.map(chatOf).filter(Boolean));
     for (const id of Object.keys(getState().data)) if (!open.has(id)) closeSessionData(id);
   }, [stack]);
 
@@ -153,14 +160,8 @@ export function App() {
         <Home under={!!top} />
         <AnimatePresence>
           {stack.map((r, i) => (
-            <Layer key={r.name === 'chat' ? `chat:${r.id}` : r.name} route={r} index={i} covered={i < stack.length - 1}>
-              {r.name === 'chat' ? (
-                <Suspense fallback={<div className="screen chat" />}>
-                  <Chat id={r.id} />
-                </Suspense>
-              ) : (
-                <Settings />
-              )}
+            <Layer key={routeKey(r)} route={r} index={i} covered={i < stack.length - 1}>
+              <Screen route={r} />
             </Layer>
           ))}
         </AnimatePresence>
@@ -177,6 +178,22 @@ export function App() {
       {launch === 'on' && <Launch onDone={() => setLaunch('done')} />}
       <Toast />
     </>
+  );
+}
+
+/** What a layer shows. */
+function Screen({ route: r }: { route: Route }) {
+  if (r.name === 'settings') return <Settings />;
+  if (r.name === 'chat')
+    return (
+      <Suspense fallback={<div className="screen chat" />}>
+        <Chat id={r.id} />
+      </Suspense>
+    );
+  return (
+    <Suspense fallback={<div className="screen changes" />}>
+      {r.name === 'changes' ? <ChangesScreen id={r.id} items={r.items} lead={r.lead} /> : <DiffScreen id={r.id} path={r.path} items={r.items} />}
+    </Suspense>
   );
 }
 
@@ -255,21 +272,41 @@ function Layer({ route, index, covered, children }: { route: Route; index: numbe
     animate(b, { transform: [`scale(${n.scale})`, `scale(${covered ? 0.94 : 1})`], opacity: [n.opacity, covered ? 0.4 : 1] }, SPRING);
   }, [covered, present]);
 
+  // The animations of a layer on its way out: the same screen opened again at once brings it back from where it is.
+  const leaving = useRef<{ stop: () => void }[] | null>(null);
   useEffect(() => {
-    if (present) return;
     const el = ref.current;
     const b = body.current;
     const pl = plate.current;
+    if (present) {
+      const going = leaving.current;
+      if (!going || !el || !b || !pl) return;
+      leaving.current = null;
+      going.forEach((a) => a.stop());
+      el.style.pointerEvents = '';
+      pl.querySelectorAll('.layer-ghost').forEach((g) => g.remove());
+      void animate(el, { transform: 'translateX(0%)', clipPath: FULL, opacity: 1 }, SPRING).finished.then(() => {
+        delete el.dataset.grow;
+        el.style.removeProperty('clip-path');
+      });
+      animate(b, { transform: 'translateY(0px) scale(1)', opacity: 1 }, SPRING);
+      animate(pl, { opacity: 0 }, { duration: 0.12 });
+      return;
+    }
     if (!el || !b || !pl) return void safeToRemove();
     el.style.pointerEvents = 'none';
+    const list: { stop: () => void }[] = [];
+    leaving.current = list;
+    const done = () => leaving.current === list && safeToRemove();
+    const go = <T extends { stop: () => void }>(a: T) => (list.push(a), a);
     if (reduced()) {
-      void animate(el, { opacity: 0 }, { duration: 0.12 }).finished.then(safeToRemove);
+      void go(animate(el, { opacity: 0 }, { duration: 0.12 })).finished.then(done);
       return;
     }
     // Replaced by its race rival: it leaves toward its own side while the rival comes in from the other.
     const swapOut = route.name === 'chat' ? takeSwap(route.id, 'out') : null;
     if (swapOut) {
-      void animate(el, { transform: ['translateX(0%)', `translateX(${-swapOut * 100}%)`] }, SPRING).finished.then(safeToRemove);
+      void go(animate(el, { transform: ['translateX(0%)', `translateX(${-swapOut * 100}%)`] }, SPRING)).finished.then(done);
       return;
     }
     const row = route.name === 'chat' ? rowOf(route.id) : null;
@@ -278,16 +315,16 @@ function Layer({ route, index, covered, children }: { route: Route; index: numbe
       el.dataset.grow = '';
       const ghost = place(pl, row);
       const fold = { ...SPRING, stiffness: 470 };
-      const a = animate(el, { clipPath: [FULL, inset(row)] }, fold);
+      const a = go(animate(el, { clipPath: [FULL, inset(row)] }, fold));
       const dy = (row.rect.top + row.rect.height / 2 - H() / 2) * 0.24;
-      animate(b, { transform: ['translateY(0px) scale(1)', `translateY(${dy.toFixed(1)}px) scale(0.93)`] }, fold);
-      animate(b, { opacity: [1, 0] }, { duration: 0.16, delay: 0.06, ease: 'easeIn' });
-      animate(pl, { opacity: [0, 1] }, { duration: 0.16, delay: 0.04, ease: 'easeOut' });
-      if (ghost) animate(ghost, { opacity: [0, 1] }, { duration: 0.12, delay: 0.16, ease: 'easeOut' });
-      void a.finished.then(safeToRemove);
+      go(animate(b, { transform: ['translateY(0px) scale(1)', `translateY(${dy.toFixed(1)}px) scale(0.93)`] }, fold));
+      go(animate(b, { opacity: [1, 0] }, { duration: 0.16, delay: 0.06, ease: 'easeIn' }));
+      go(animate(pl, { opacity: [0, 1] }, { duration: 0.16, delay: 0.04, ease: 'easeOut' }));
+      if (ghost) go(animate(ghost, { opacity: [0, 1] }, { duration: 0.12, delay: 0.16, ease: 'easeOut' }));
+      void a.finished.then(done);
       return;
     }
-    void animate(el, { transform: ['translateX(0%)', 'translateX(100%)'] }, { type: 'spring', stiffness: 520, damping: 50, restDelta: 1 }).finished.then(safeToRemove);
+    void go(animate(el, { transform: ['translateX(0%)', 'translateX(100%)'] }, { type: 'spring', stiffness: 520, damping: 50, restDelta: 1 })).finished.then(done);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [present]);
 
@@ -313,10 +350,10 @@ function place(plate: HTMLElement, o: Origin): HTMLElement | null {
 }
 
 /** Another chat waits on you while a chat or settings covers home: one line at the top, a tap goes there. */
-function Attention({ top }: { top?: { name: string; id?: string } }) {
+function Attention({ top }: { top?: Route }) {
   const attention = useStore((s) => s.attention);
   const s = useStore((st) => (attention ? st.sessions[attention.id] : undefined));
-  const show = !!attention && !!s && s.status === 'awaiting' && !!top && !(top.name === 'chat' && top.id === attention.id);
+  const show = !!attention && !!s && s.status === 'awaiting' && !!top && chatOf(top) !== attention.id;
   useEffect(() => {
     if (!attention) return;
     const t = setTimeout(() => setState({ attention: undefined }), 7000);

@@ -34,6 +34,7 @@ import { partOfTurn, syntheticOf } from '../../shared/synthetic';
 import type { App } from '../app';
 import { cap, isSnapshot, lines } from '../core/trim';
 import { VERSION } from '../version';
+import { PhoneChangesReader, stepIds } from './phone-changes';
 import { qrSvgPath } from './qr';
 
 /**
@@ -53,6 +54,8 @@ import { qrSvgPath } from './qr';
  * - Conversations reach a phone in pages (`phone.tail`, `phone.item`; a snapshot from any method
  *   is cut to its newest page), items trimmed to what the phone shows, and item events only for
  *   the conversations it has open, trimmed the same way. Frames over 1 KB are compressed.
+ * - A chat's changes and their diffs (`phone.changes`, `phone.diff`, phone-changes.ts): read-only,
+ *   named by the chat (never a folder or a path outside what its folder's status lists).
  */
 
 interface StoredPhone {
@@ -458,11 +461,14 @@ export class PhoneService {
   private live = new Map<string, Set<WebSocket>>();
   private saveTimer?: NodeJS.Timeout;
   private starting?: Promise<void>;
+  /** A chat's changes and diffs, read-only (`phone.changes`, `phone.diff`). */
+  private changes: PhoneChangesReader;
 
   constructor(
     private app: App,
     opts: PhoneOptions = {},
   ) {
+    this.changes = new PhoneChangesReader((sessionId) => this.app.call('session.snapshot', { sessionId }));
     this.file = opts.file ?? path.join(app.store.dir, 'phone.json');
     this.port = opts.port ?? PHONE_PORT;
     this.host = opts.host ?? process.env.SABLE_PHONE_HOST ?? '0.0.0.0';
@@ -894,6 +900,10 @@ export class PhoneService {
           result = await this.fileLink(String(raw.sessionId ?? ''), String(raw.itemId ?? ''), Number(raw.index ?? 0));
         } else if (own === 'phone.mkdir') {
           result = this.makeFolder(String(raw.parent ?? ''), String(raw.name ?? ''));
+        } else if (own === 'phone.changes') {
+          result = await this.changes.changes(String(raw.sessionId ?? ''), stepIds(raw.items));
+        } else if (own === 'phone.diff') {
+          result = await this.changes.diff(String(raw.sessionId ?? ''), typeof raw.path === 'string' ? raw.path : '', stepIds(raw.items));
         } else if (own === 'phone.tail' || own === 'phone.item') {
           const sessionId = String(raw.sessionId ?? '');
           // The session's own snapshot (loads it from disk the first time, marks it read), then trimmed.

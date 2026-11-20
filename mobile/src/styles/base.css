@@ -33,6 +33,11 @@
   --green: oklch(0.8 0.15 150);
   --claude: #d97757;
   --mint: oklch(0.84 0.13 160);
+  /* a change's lines, as the desktop's diff (src/styles/tokens.css --add-bg …) */
+  --add-bg: oklch(0.8 0.15 150 / 0.1);
+  --add-bg-strong: oklch(0.8 0.15 150 / 0.2);
+  --del-bg: oklch(0.71 0.175 24 / 0.1);
+  --del-bg-strong: oklch(0.71 0.175 24 / 0.2);
 
   --font: 'Inter Variable', 'Inter', system-ui, sans-serif;
   --mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
@@ -207,15 +212,16 @@ p {
   background: var(--glass-sheen), var(--grain-bg), var(--float-ink);
 }
 
-/* The panes: the chat's prompt bar (chat.css .composer) and home's new-chat bar (home.css .home-dock),
-   as the desktop's composer. A translucent ink pane with a backdrop blur, thinner toward its edges
+/* The panes: the chat's prompt bar (chat.css .composer), home's new-chat bar (home.css .home-dock) and
+   the review pane at the foot of a chat's changes (changes.css .rpane), as the desktop's composer. A translucent ink pane with a backdrop blur, thinner toward its edges
    (two crossed plates over a thin fill), so the field's light gathers at the rim; the rim (::before),
    the inner edge and the sheen; a contact line and two shadows. Focus draws no ring: the pane lifts
    (one layer under the content, faded in: a step lighter, a brighter top edge, a deeper shadow). Only
    that layer's opacity ever moves. While what is under it moves, the pane goes opaque and stops
    blurring (`--pane-fill: var(--glass-solid); --pane-body: transparent`). */
 .composer,
-.home-dock {
+.home-dock,
+.rpane {
   --pane-fill: var(--glass-pane);
   --pane-body: rgb(14 14 17 / 0.28);
   background-color: var(--pane-fill);
@@ -236,7 +242,8 @@ p {
 }
 
 .composer::after,
-.home-dock::after {
+.home-dock::after,
+.rpane::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -253,7 +260,8 @@ p {
 }
 
 .composer[data-focus]::after,
-.home-dock[data-focus]::after {
+.home-dock[data-focus]::after,
+.rpane[data-focus]::after {
   opacity: 1;
 }
 
@@ -263,6 +271,7 @@ p {
 .sheet::before,
 .composer::before,
 .home-dock::before,
+.rpane::before,
 .peek-menu::before,
 .scanner-card::before,
 .pair-alt::before,
