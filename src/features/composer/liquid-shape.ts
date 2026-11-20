@@ -73,6 +73,8 @@ export interface LiquidPlan {
   impact: { x: number; y: number };
   /** The drop's stretch when it lands (it still moves). */
   arrive: { sx: number; sy: number; vx: number; vy: number };
+  /** A hop (into a queue row): how far the drop's path bows up over the straight line at its top, px (0: a straight flight). */
+  arc: number;
   shifts: Shift[];
 }
 
@@ -84,8 +86,9 @@ export const SWELL = 206;
 export const SNAP = 252;
 /** A bead with no edge to part from (a queue row's words) swells and leaves sooner. */
 const FREE = { born: 96, swell: 176, snap: 196 };
-/** From touching down to the handover, and the handover itself. */
+/** From touching down to the handover (a thin queue row fills sooner), and the handover itself. */
 const SPREAD = 160;
+const SPREAD_ROW = 136;
 export const HAND = 90;
 const BEAD = 11;
 /** How far over the edge the drop's centre is when it leaves (its radius plus a gap the neck has crossed). */
@@ -143,8 +146,16 @@ export function linearEasing(ease: (u: number) => number, n = 24): string {
 const riseAt = (u: number) => 3 * u * (1 - u) * (1 - u) * LEAVE + 3 * u * u * (1 - u) * ARRIVE + u * u * u;
 const riseSpeed = (u: number) => 3 * LEAVE * (1 - u) * (1 - 3 * u) + 3 * ARRIVE * u * (2 - 3 * u) + 3 * u * u;
 
-/** How long the drop flies for a trip of `dist` px: as a thrown drop, with the root of the distance (a hop into the tray ~55 ms, above the dock ~80, from home ~130). */
+/** How long the drop flies for a trip of `dist` px: as a thrown drop, with the root of the distance (above the dock ~80 ms, from home ~130). */
 export const riseMs = (dist: number) => clamp(30 + 5.5 * Math.sqrt(dist), 48, 172);
+
+/**
+ * A queued message's drop has almost no way to go (the tray's new row sits right over the bar it
+ * rises from), so it hops: thrown up out of the parting neck, over the top of a small arc, and
+ * down into the row, which it hits still falling (the spread takes that fall). Constant gravity:
+ * the path is a parabola in time, as a thrown drop's is.
+ */
+export const HOP = { height: 26, ms: 120 };
 
 /** How far the drop is stretched along its speed (px/ms): longer and thinner, about the same area. */
 function stretch(v: number): { along: number; across: number } {
@@ -163,12 +174,16 @@ export function planLiquid(spec: LiquidSpec, shifts: Shift[] = []): LiquidPlan {
   const dx = impact.x - leave.x;
   const dy = impact.y - leave.y;
   const dist = Math.hypot(dx, dy);
-  const rise = riseMs(dist);
-  const v = (dist * riseSpeed(1)) / rise;
+  const arc = spec.kind === 'row' && spec.from.edge ? HOP.height : 0;
+  const rise = arc ? HOP.ms : riseMs(dist);
+  // Its speed as it touches down (px/ms): along the line, or down out of the hop's arc.
+  const vx = arc ? dx / rise : dist > 0.01 ? (dx / dist) * ((dist * riseSpeed(1)) / rise) : 0;
+  const vy = arc ? (dy + 4 * arc) / rise : dist > 0.01 ? (dy / dist) * ((dist * riseSpeed(1)) / rise) : 0;
+  const v = Math.hypot(vx, vy);
   const s = stretch(v);
-  const k = dist > 0.01 ? 1 / dist : 0;
+  const k = v > 0.0001 ? 1 / v : 0;
   const land = beats.snap + rise;
-  const hand = land + SPREAD;
+  const hand = land + (spec.kind === 'row' ? SPREAD_ROW : SPREAD);
   return {
     spec,
     r,
@@ -179,7 +194,8 @@ export function planLiquid(spec: LiquidSpec, shifts: Shift[] = []): LiquidPlan {
     leave,
     impact,
     // Vertical flights stretch tall; the stretch is kept per axis for the spread's start.
-    arrive: { sx: lerp(s.across, s.along, Math.abs(dx) * k), sy: lerp(s.across, s.along, Math.abs(dy) * k), vx: dx * k * v || 0, vy: dy * k * v || 0 },
+    arrive: { sx: lerp(s.across, s.along, Math.abs(vx) * k), sy: lerp(s.across, s.along, Math.abs(vy) * k), vx: vx || 0, vy: vy || 0 },
+    arc,
     shifts,
   };
 }
@@ -302,14 +318,23 @@ export function liquidAt(plan: LiquidPlan, t: number): LiquidFrame {
   // What is left on the edge sinks back as the drop leaves (the smooth union lets go by itself).
   if (from.edge && t < plan.snap + 60) f.edge = { y: from.y, k: r * 0.7 * (1 - smooth(plan.snap, plan.snap + 60, t)) };
   if (t < plan.land) {
-    const u = (t - plan.snap) / (plan.land - plan.snap);
-    const e = riseAt(u);
+    const span = plan.land - plan.snap;
+    const u = (t - plan.snap) / span;
     const L = plan.leave;
     const I = plan.impact;
     const dx = I.x + sh.x - L.x;
     const dy = I.y + sh.y - L.y;
+    if (plan.arc) {
+      // The hop: level speed across, constant gravity down (up over the top of the arc, then falling in).
+      const vx = dx / span;
+      const vy = (dy - 4 * plan.arc * (1 - 2 * u)) / span;
+      const s = stretch(Math.hypot(vx, vy));
+      f.drop = { x: L.x + dx * u, y: L.y + dy * u - 4 * plan.arc * u * (1 - u), r, sx: s.along, sy: s.across, ang: Math.atan2(vy, vx) };
+      return f;
+    }
+    const e = riseAt(u);
     const dist = Math.hypot(dx, dy) || 1;
-    const v = (dist * riseSpeed(u)) / (plan.land - plan.snap);
+    const v = (dist * riseSpeed(u)) / span;
     const s = stretch(v);
     f.drop = { x: L.x + dx * e, y: L.y + dy * e, r, sx: s.along, sy: s.across, ang: Math.atan2(dy, dx) };
     return f;
@@ -343,7 +368,8 @@ export function liquidBounds(plan: LiquidPlan, room = 90): { left: number; top: 
   const r = plan.r * 2;
   const left = Math.min(from.x - r * 2, plan.leave.x - r, to.left - 24) - 8;
   const right = Math.max(from.x + r * 2, plan.leave.x + r, to.left + to.width + 12) + 8;
-  const top = Math.min(plan.leave.y - r * 2, to.top - 24, from.y - r * 2) - room;
+  // A hop's arc tops out about its height (plus the drop) over the higher of its two ends.
+  const top = Math.min(plan.leave.y - r * 2, to.top - 24, from.y - r * 2, Math.min(plan.leave.y, plan.impact.y) - (plan.arc ?? 0) - r * 2) - room;
   const bottom = Math.max(from.y + 4, to.top + to.height + SHADOW.reach) + room;
   return { left: Math.floor(left), top: Math.floor(top), width: Math.ceil(right - left), height: Math.ceil(bottom - top) };
 }

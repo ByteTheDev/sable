@@ -14,6 +14,8 @@ Sable is a desktop app for working with coding agents. It runs the Claude Code a
 
 **The agent can answer with an interface.** Both agents get a `show_widget` tool. When a chart, a diagram, a small form or a simulation explains something better than prose, the agent draws it and it appears inline in the answer. Widgets run in a sandboxed frame with no network access and no access to Sable or your files. Answers also draw `mermaid` diagrams, preview `html` and `svg` code blocks, and lay out wide tables properly. Files the agent hands you show up as cards you can open.
 
+![An answer with two files handed over as cards](docs/files.png)
+
 **Your phone as a remote.** The Android app pairs with Sable by QR code and shows your chats, their live progress and everything that waits on you. Answer permissions and questions, send or steer messages, start new chats, and get a notification when a turn finishes or needs you. It talks to your computer directly over your home network (or [Tailscale](https://tailscale.com) when you are away); nothing goes through a server of ours.
 
 **Several accounts per agent, and their limits in view.** Add as many Claude Code or Codex accounts as you use and switch between them from the sidebar, which shows how much of each plan window is used. Set a cap per account ("use this one up to 90%"), and when a turn hits a cap or a plan limit, Sable continues the same conversation on the next account in your order. Spare quota that would expire unused can run queued work (`/spare`), and a chat stopped at a limit can continue by itself when the window resets.

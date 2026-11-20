@@ -97,6 +97,18 @@ interface Flight {
   bar: HTMLElement | null;
   /** The field closing to one line (left to finish whatever happens to the message). */
   barAnim: Animation | null;
+  /** The conversation making room for the message before its row exists (see `scrollAhead`). */
+  ahead: Ahead | null;
+  /** What is left of that motion once the row is there and the view is at its end. */
+  slide: { content: HTMLElement; anim: Animation } | null;
+}
+
+/** The conversation's content moving up ahead of a message, and how far it goes. */
+interface Ahead {
+  content: HTMLElement;
+  scroller: HTMLElement;
+  anim: Animation;
+  by: number;
 }
 
 /** What the composer keeps of a launch: the bridge's answer decides how the wait ends. */
@@ -182,6 +194,8 @@ const WAIT_REACH = 0.94;
 const CARD_SHARE = 0.8;
 /** The first message's card sits this far under the top of the stage (the conversation's top padding). */
 const FIRST_TOP = 56;
+/** A new message's card sits this far under the conversation's last row. */
+const LANDING_GAP = 26;
 /** The narrowest side padding of a conversation row (timeline.css `.tl-content --gutter`). */
 const MIN_GUTTER = 24;
 /** The bead forms this far in from the bar's right edge (clear of its corner's curve). */
@@ -269,7 +283,7 @@ function guessLanding(g: Geometry, w: number, h: number, first: boolean): { left
   if (g.contents !== 1 || !g.content) return null;
   const c = g.content;
   const right = columnEdges(c.left / z, c.width / z, g.column).right;
-  const after = g.lastBottom != null ? g.lastBottom / z + 26 : c.top / z + FIRST_TOP;
+  const after = g.lastBottom != null ? g.lastBottom / z + LANDING_GAP : c.top / z + FIRST_TOP;
   const y = Math.min(g.card ? g.card.top / z - 64 - h : after, after);
   const sc = g.scroller;
   if (sc && !(y >= sc.top / z && y + h <= (g.card ? g.card.top : sc.bottom) / z + 1)) return null;
@@ -514,6 +528,8 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
     home: { left: 0, top: 0, s0: 1 },
     bar,
     barAnim: null,
+    ahead: null,
+    slide: null,
   };
   // Where the card stands to show its words exactly on the field's (a refused message goes back there).
   const s0 = Math.min(1, m.size / CARD_FONT);
@@ -526,6 +542,8 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
   } else Object.assign(f, makeRowWords(source.text, null));
   f.el.style.visibility = 'hidden';
   document.body.appendChild(f.el);
+  // How far the conversation has to move up before the card's place is clear of its last lines.
+  let room = 0;
   if (bubble) {
     // Fractional: a width rounded down would wrap the last word.
     const size = f.el.getBoundingClientRect();
@@ -535,6 +553,8 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
     // No guess (a view changing under it): just above the bar, on the column's right; the row decides.
     const at = guess ?? { left: (cardR ? cardR.right / z : from.x + CORNER) - w, top: (cardR ? cardR.top / z : from.y) - 64 - h };
     f.box = { left: at.left, top: at.top, width: w, height: h, radii: [18, 18, 6, 18] };
+    // A steer lands while the view follows a running turn: that follower keeps it clear.
+    if (guess && !opts.first && !steer && g.lastBottom != null) room = g.lastBottom / z + LANDING_GAP - guess.top;
   } else {
     // The tray's newest row: just above the bar, inside the tray that unfolds behind it.
     const c = cardR ?? new DOMRect(from.x - 400, from.y, 434, 60);
@@ -578,14 +598,15 @@ export function launchFlight(source: Source, opts: { dest: FlightDest; steer?: b
   else f.timer = window.setTimeout(() => !f.target && abort(f), NO_CLAIM_MS);
   // Whatever happens on the way, nothing outlives this: the real message always shows.
   window.setTimeout(() => abort(f), bubble ? HOLD_MS + 2000 : MAX_LIFE_MS);
-  // A conversation row that mounted first (the bridge answered before this row left the tray).
+  // A conversation row that mounted first (the bridge answered before this row left the tray): the
+  // view already follows it. Otherwise the conversation makes room for the card now.
   if (bubble) {
     pruneUnclaimed(t0);
     const i = unclaimed.findIndex((u) => matches(f.key, u.key));
     if (i >= 0) {
       const u = unclaimed.splice(i, 1)[0];
       landInTimeline(u.root, u.key, { steer, late: true });
-    }
+    } else if (room > 0.5) scrollAhead(f, room);
   }
   if (import.meta.env.DEV) devHook();
   return { settle: (ok) => settle(f, ok) };
@@ -629,6 +650,87 @@ function armRest(f: Flight) {
     for (const p of f.pourEls) p.remove();
     f.pourEls = [];
   }, Math.max(0, poured));
+}
+
+/**
+ * The conversation makes room at the key. At the end of a long conversation the card lands where
+ * the view will be once it has followed the new row, just above the bar, which is over the last
+ * lines until the row mounts and the view scrolls (on a loaded machine, well after the card is
+ * there). So the content moves up by what the row needs, on the compositor, on the curve the view
+ * follows its end with (Timeline.tsx, `FOLLOW_W`); when the row mounts, `handOver` turns that lift
+ * into the scroll in one frame. It waits `AHEAD_WAIT` first: a row that comes that soon (an idle
+ * machine) is simply followed by the view, as it always was.
+ */
+const FOLLOW_W = 24;
+const followAt = (ms: number) => {
+  const v = (FOLLOW_W * Math.max(0, ms)) / 1000;
+  return 1 - (1 + v) * Math.exp(-v);
+};
+const AHEAD_MS = 300;
+const AHEAD_WAIT = 64;
+
+/** The content's own vertical offset as drawn now (CSS px). */
+const liftOf = (el: HTMLElement) => new DOMMatrixReadOnly(getComputedStyle(el).transform).m42 || 0;
+
+function scrollAhead(f: Flight, by: number) {
+  const contents = document.querySelectorAll<HTMLElement>('.tl-content');
+  const content = contents.length === 1 ? contents[0] : null;
+  const sc = content?.parentElement;
+  if (!content || !sc) return;
+  // Only from the end: a reader further up gets the end when the row comes, a view still gliding
+  // to its end must not be overtaken, and one message moves it at a time.
+  if (sc.scrollHeight - sc.clientHeight - sc.scrollTop > 2 || by > sc.clientHeight) return;
+  if (pending.some((p) => p.ahead?.content === content || p.slide?.content === content)) return;
+  const n = Math.ceil(AHEAD_MS / 16);
+  const frames: Keyframe[] = [];
+  for (let i = 0; i <= n; i++) frames.push({ offset: i / n, transform: `translateY(${(-by * (i === n ? 1 : followAt((AHEAD_MS * i) / n))).toFixed(2)}px)` });
+  const anim = fromKey(f, content, frames, { duration: AHEAD_MS, delay: AHEAD_WAIT });
+  if (anim) f.ahead = { content, scroller: sc, anim, by };
+}
+
+/** Takes the lift out of the flight's animations (it is no longer the message's to freeze or end). */
+function takeAhead(f: Flight): Ahead | null {
+  const a = f.ahead;
+  if (!a) return null;
+  f.ahead = null;
+  const i = f.all.indexOf(a.anim);
+  if (i >= 0) f.all.splice(i, 1);
+  return a;
+}
+
+/**
+ * The row is there: the content's lift becomes the scroll in the same frame, so nothing moves.
+ * Whatever the real row needs beyond the guess is the view's own follower's to scroll, as for any
+ * row (a transform cannot carry it: content drawn lower than the end only lengthens the scroller,
+ * and the follower would chase it). A lift that went further than the conversation now reaches
+ * settles back onto its end, still on the compositor (drawn higher, so the scroller is unchanged).
+ */
+function handOver(f: Flight) {
+  const a = takeAhead(f);
+  if (!a) return;
+  const lift = a.content.isConnected ? -liftOf(a.content) : 0;
+  a.anim.cancel();
+  if (lift < 0.5) return;
+  const sc = a.scroller;
+  const before = sc.scrollTop;
+  sc.scrollTop = before + lift;
+  const over = sc.scrollTop - before - lift;
+  if (over > -0.5) return;
+  const anim = play(a.content, [{ transform: `translateY(${over.toFixed(2)}px)` }, { transform: 'translateY(0px)' }], { duration: 240, easing: EASE_OUT });
+  if (!anim) return;
+  const slide = { content: a.content, anim };
+  f.slide = slide;
+  const off = () => f.slide === slide && (f.slide = null);
+  anim.finished.then(off, off);
+}
+
+/** No row is coming (refused, given up): the conversation goes back down where it was. */
+function releaseAhead(f: Flight) {
+  const a = takeAhead(f);
+  if (!a) return;
+  const y = a.content.isConnected ? liftOf(a.content) : 0;
+  a.anim.cancel();
+  if (Math.abs(y) > 0.5) play(a.content, [{ transform: `translateY(${y.toFixed(2)}px)` }, { transform: 'translateY(0px)' }], { duration: 260, easing: EASE_OUT });
 }
 
 /** The waiting state, from `at` ms after the key: the card at the waiting tone, a hairline filling along its lower edge. */
@@ -773,6 +875,7 @@ function goBack(f: Flight): Promise<void> {
   f.ending = true;
   window.clearTimeout(f.timer);
   window.clearTimeout(f.restTimer);
+  releaseAhead(f);
   drop(f);
   const shown = f.row ?? f.target;
   if (shown) shown.style.opacity = '';
@@ -828,7 +931,9 @@ function targetAt(f: Flight): { left: number; top: number; width: number; height
   if (!r.width) return null;
   const sc = f.dest === 'timeline' ? t.closest<HTMLElement>('.tl-content')?.parentElement : null;
   const gap = sc ? Math.max(0, sc.scrollHeight - sc.clientHeight - sc.scrollTop) : 0;
-  return { left: r.left / z, top: r.top / z - gap, width: r.width / z, height: r.height / z };
+  // The rest of the room-making motion still to come (the content is drawn that much lower now).
+  const slide = f.slide && f.slide.anim.playState === 'running' && f.slide.content.isConnected ? liftOf(f.slide.content) : 0;
+  return { left: r.left / z, top: r.top / z - gap - slide, width: r.width / z, height: r.height / z };
 }
 
 /** The liquid has run its course. With a target the real thing takes over; without one the card waits. */
@@ -866,6 +971,7 @@ function still(f: Flight) {
  */
 function land(f: Flight) {
   if (f.ending) return;
+  handOver(f);
   const to = targetAt(f);
   f.ending = true;
   window.clearTimeout(f.timer);
@@ -905,6 +1011,7 @@ function abort(f: Flight) {
   f.ending = true;
   window.clearTimeout(f.timer);
   window.clearTimeout(f.restTimer);
+  releaseAhead(f);
   const shown = f.row ?? f.target;
   if (shown) shown.style.opacity = '';
   f.liquid?.cancel();
@@ -1011,6 +1118,17 @@ export function landInTimeline(root: HTMLElement, text: string, opts: { steer?: 
   }
   const card = root.querySelector<HTMLElement>('.user-card');
   if (!card) return false;
+  // Its turn is new. Until a settled-looking turn has been drawn once it stands at its estimated
+  // height (timeline.css `.tg` content-visibility), which puts the conversation's end a few hundred
+  // px too far down for a frame or more (many under load): drawn in full while the message lands,
+  // so the end it is measured against is the real one. Its size is remembered by then.
+  const turn = root.closest<HTMLElement>('.tg');
+  if (turn) {
+    turn.style.contentVisibility = 'visible';
+    window.setTimeout(() => (turn.style.contentVisibility = ''), 3000);
+  }
+  // The conversation moved up for it: that lift becomes the scroll now, before anything is measured.
+  handOver(f);
   // A row that is not where a message belongs (off the column, out of reach, not laid out): the
   // message fades where it is and the row makes its own entrance.
   if (!certainTarget(card)) {
@@ -1121,7 +1239,7 @@ function devHook() {
       inAir: () => pending.length,
       easing: linearEasing(shiftEase),
       debug: () =>
-        pending.map((f) => ({ dest: f.dest, t: Math.round(performance.now() - f.t0), box: f.box, from: f.plan.spec.from, land: f.plan.land, hand: f.plan.hand, end: f.plan.end, shifts: f.plan.shifts, target: !!f.target, ending: f.ending, resting: f.resting, el: f.el.getBoundingClientRect().toJSON() })),
+        pending.map((f) => ({ dest: f.dest, t: Math.round(performance.now() - f.t0), box: f.box, from: f.plan.spec.from, land: f.plan.land, hand: f.plan.hand, end: f.plan.end, shifts: f.plan.shifts, target: !!f.target, ending: f.ending, resting: f.resting, el: f.el.getBoundingClientRect().toJSON(), ahead: f.ahead?.by ?? null, slide: !!f.slide })),
     };
 }
 

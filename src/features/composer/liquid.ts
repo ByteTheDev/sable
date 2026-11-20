@@ -8,11 +8,12 @@ import type { LiquidMessage, LiquidReply } from './liquid.worker';
  * of its own (liquid.worker.ts), so nothing here runs per frame and a busy main thread cannot hold
  * the drop.
  *
- * Two canvases, a short one (a message landing above the composer, a queued row) and a tall one
- * (the first message from home, a long message), are handed to the worker once, while the page is
- * idle, and the worker draws a clear frame into each straight away: a canvas only shows a worker's
- * frames once the page's main thread has taken in its surface, and right after a send that thread
- * is busy (a session mounting, a turn starting), so the surface must be in place before. A message
+ * Three canvases, a short one (a message landing above the composer), a tall one (the first
+ * message from home, a long message) and a wide one (a queued row), are handed to the worker
+ * once, while the page is idle, and the worker draws a clear frame into each straight away: a
+ * canvas only shows a worker's frames once the page's main thread has taken in its surface, and
+ * right after a send that thread is busy (a session mounting, a turn starting), so the surface
+ * must be in place before. A message
  * only moves its canvas into place (its position, which needs no new surface) and puts it in the
  * page; it is never resized for one. Sized to the flight, not the window: what the worker redraws
  * each frame, and the compositor with it, stays small. Where workers or OffscreenCanvas are
@@ -37,10 +38,16 @@ interface Slot {
 let slots: Slot[] = [];
 let preparing = false;
 
-/** The two canvases, in page px: wide enough for the widest card and its overshoot, as tall as the flights they take. */
+/**
+ * The canvases, in page px: wide enough for the widest card and its overshoot, as tall as the
+ * flights they take; the third holds a queue row (the reading column's width and its margins, a
+ * hop's height), which the others are too narrow for: drawn on the main thread instead, a row's
+ * ink got almost no frames on a loaded machine.
+ */
 const SHAPES = [
   { w: 700, h: 300 },
   { w: 700, h: 620 },
+  { w: 820, h: 180 },
 ];
 /** Room kept around a flight inside its canvas, above (late corrections) and below the bar's edge. */
 const ROOM_ABOVE = 60;

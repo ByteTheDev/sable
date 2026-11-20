@@ -44,9 +44,10 @@ describe('liquid beats', () => {
       expect(p.hand).toBeLessThan(p.end);
       let t = p.land;
       while (revealAt(p, t).o < 0.95) t += 2;
-      expect(t).toBeLessThanOrEqual(spec === home ? 440 : 390);
+      // A queued message hops into its row first (a little later, and it is not the conversation).
+      expect(t).toBeLessThanOrEqual(spec === home ? 440 : spec === row ? 420 : 390);
       // The card's own surface has taken over by about 600 ms.
-      expect(p.hand + 90).toBeLessThanOrEqual(spec === home ? 640 : 590);
+      expect(p.hand + 90).toBeLessThanOrEqual(spec === home ? 640 : spec === row ? 600 : 590);
     }
     expect(planLiquid(idle).snap).toBe(SNAP);
     // A longer trip flies a little longer, never much.
@@ -91,8 +92,23 @@ describe('liquid motion', () => {
     return { x: (s.left + s.right) / 2, y: (s.top + s.bottom) / 2 };
   };
 
+  it('hops into a queue row: up over the row, then down into it, landing as it falls', () => {
+    const p = planLiquid(row);
+    expect(p.arc).toBeGreaterThan(0);
+    expect(planLiquid(idle).arc).toBe(0);
+    let top = Infinity;
+    for (let t = p.snap; t < p.land; t += 2) top = Math.min(top, liquidAt(p, t).drop!.y);
+    // The top of the arc clears the row's top edge by more than the drop's radius.
+    expect(top).toBeLessThan(row.to.top - p.r);
+    // Falling (down the page) as it touches down, and the flight is long enough to read as a hop.
+    expect(p.arrive.vy).toBeGreaterThan(0.4);
+    expect(p.land - p.snap).toBeGreaterThanOrEqual(100);
+    // The spread takes the fall, but never spills past the row's bottom (the bar is right under it).
+    for (let t = p.land; t <= p.hand; t += 4) expect(sheetAt(p, t).bottom).toBeLessThan(row.to.top + row.to.height + 1);
+  });
+
   it('never jumps: the drop moves continuously through the break and the flight', () => {
-    for (const spec of [idle, home, free]) {
+    for (const spec of [idle, home, free, row]) {
       const p = planLiquid(spec);
       let prev = centre(spec, p.born);
       for (let t = p.born + 4; t < p.land; t += 4) {

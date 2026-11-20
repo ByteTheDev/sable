@@ -1932,8 +1932,10 @@ button:hover > .row-caret {
 }
 
 /* The live line stays in view while what the agent says grows past the top of the window: no
-   skipping, and nothing clips it. An ink band behind it hides what passes beneath; a short fade
-   under it shows only while it is stuck. */
+   skipping, and nothing clips it. While it is stuck an ink band behind it hides what passes
+   beneath and a short fade under it eases what passes below. In its place it draws no band: one
+   would cut a dark bar out of the field behind (the home field while a first message lands, the
+   session's light near the dock). */
 .tl-work[data-live] {
   content-visibility: visible;
   container-type: scroll-state;
@@ -1948,11 +1950,6 @@ button:hover > .row-caret {
   align-items: center;
   gap: 8px;
   min-height: 28px;
-}
-
-.tl-work[data-live] > .work-head {
-  background-color: var(--sheet);
-  box-shadow: 0 -14px 0 var(--sheet);
 }
 
 .work-fade {
@@ -1980,6 +1977,10 @@ button:hover > .row-caret {
   .work-fade,
   .work-band {
     opacity: 1;
+  }
+  .tl-work[data-live] > .work-head {
+    background-color: var(--sheet);
+    box-shadow: 0 -14px 0 var(--sheet);
   }
 }
 
