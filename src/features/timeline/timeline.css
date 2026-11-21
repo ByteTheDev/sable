@@ -1922,31 +1922,19 @@ button:hover > .row-caret {
   content-visibility: visible;
 }
 
-/* The answer reads at full strength; everything that led to it sits one step back. A report along
-   the way keeps the answer's place, so a text that stops being the newest never moves. */
+/* A report along the way keeps the answer's place, so a text that stops being the newest never moves. */
 .tl-item[data-answer],
 .tl-item[data-mid] {
   padding-top: 6px;
 }
 
-/* What the agent says along the way (a report between steps) reads one tone back from the answer;
-   a text that stops being the newest in front of the reader eases there over a moment. */
-.tl-item[data-mid] .md {
-  --md-fg: var(--text-2);
-}
-
-.tl-item[data-mid] .md :is(strong, h1, h2, h3, h4, .md-code, .md-link, .md-fileref, .md-callout-head) {
-  color: var(--text-2);
-}
+/* What the agent says along the way (a report between steps) reads at full strength like the
+   answer: the owner reads every word the agent writes; only its thinking sits back. */
 
 /* A settled turn's answer after the reports: a little more air, so the last word reads as the last
    word. Only once settled: while the turn runs, the newest text may still become a report. */
 .tg:not([data-state='running']) .tl-item[data-mid] + .tl-item[data-answer] {
   padding-top: 14px;
-}
-
-.tl-item[data-mid][data-settle] > .md {
-  animation: story-settle 700ms var(--ease) backwards;
 }
 
 /* The work line and everything after it in a segment: the box the live line sticks inside. */
@@ -2013,6 +2001,17 @@ button:hover > .row-caret {
     background-color: var(--sheet);
     box-shadow: 0 -14px 0 var(--sheet);
   }
+}
+
+/* Held at the top by a transform while the conversation glides down under it (a card left the
+   dock, Timeline.tsx): the same ground as when the layout holds it there. */
+.tl-work[data-live][data-held] > .work-head {
+  background-color: var(--sheet);
+  box-shadow: 0 -14px 0 var(--sheet);
+}
+
+.tl-work[data-live][data-held] .work-band {
+  opacity: 1;
 }
 
 /* One quiet line: "Worked 4m 12s · 23 steps". */
@@ -2164,12 +2163,6 @@ button:hover > .row-caret {
   background-color: var(--line-2);
   pointer-events: none;
   animation: fade-in var(--d-2) var(--ease) both;
-}
-
-@keyframes story-settle {
-  from {
-    color: var(--text);
-  }
 }
 
 .story > .tl-block:first-child {
