@@ -60,7 +60,18 @@ The screenshots use Sable's built-in Demo agent with its made-up project and acc
 
 Download `Sable-Setup-<version>.exe` from the [Releases page](https://github.com/Leonxlnx/sable/releases) and run it. It installs for your user only, with no admin prompt, and opens Sable when it finishes.
 
-Sable is Windows only for now. The installer is not code-signed, so Windows SmartScreen warns on first run: choose "More info", then "Run anyway". From 0.2.5 on, Sable updates itself: it checks the Releases page now and then, downloads a new version in the background, and shows "Restart to update" in the sidebar (also in Settings › About). Installing 0.2.5 itself is a manual download.
+The installer is not code-signed, so Windows SmartScreen warns on first run: choose "More info", then "Run anyway". From 0.2.5 on, Sable updates itself: it checks the Releases page now and then, downloads a new version in the background, and shows "Restart to update" in the sidebar (also in Settings › About). Installing 0.2.5 itself is a manual download.
+
+### macOS (experimental)
+
+Download `Sable-<version>-mac-arm64.dmg` (Apple silicon: M1 and later) or `Sable-<version>-mac-x64.dmg` (Intel) from the same release, open it and drag Sable onto Applications. The app is not notarized by Apple yet (it is signed ad hoc), so macOS blocks the first start:
+
+1. Open Sable from Applications once. macOS says it cannot verify the app. Choose "Done".
+2. Open System Settings › Privacy & Security, scroll to the message about Sable and choose "Open Anyway", then confirm. This is needed once per installed version.
+
+Or, in a terminal, once: `xattr -dr com.apple.quarantine /Applications/Sable.app`.
+
+On a Mac, Sable behaves like any Mac app: the traffic lights and a menu bar (Cmd+, for Settings, Cmd+Q quits), closing the window keeps it in the Dock with your agents still working, and Cmd takes the place of Ctrl in every shortcut. It finds Claude Code, Codex and your tools through your login shell, so what works in your terminal works in Sable. Updates work like on Windows ("Restart to update" swaps the app in place; if Sable cannot write to its folder, it shows the downloaded file instead). This build has not been tried on many Macs yet: if something is off, please open an issue with your macOS version and chip.
 
 Sable keeps its data in `~/.sable`. The uninstaller leaves that folder alone.
 
@@ -74,7 +85,7 @@ A newer APK installs over the old one and keeps the pairing.
 
 ## Requirements
 
-- Windows 10 or 11.
+- Windows 10 or 11, or a recent macOS (experimental; the minimum is the one of the bundled Electron).
 - Claude Code and/or the Codex CLI, installed and signed in. Sable uses their own sign-in and never sees your password or tokens: plan limits are asked of the agents themselves, and usage is counted from their transcripts.
 - For the phone app: Android 7 or newer.
 
@@ -88,7 +99,10 @@ pnpm dev                  # http://localhost:5173, with the bridge attached
 pnpm test                 # vitest
 pnpm typecheck
 pnpm desktop:dist         # Windows installer in release/
+pnpm desktop:dist:mac     # on a Mac: disk image and zip for this Mac's chip in release-mac/
 ```
+
+The Mac app can only be built on a Mac: the "macOS build" workflow (`.github/workflows/mac.yml`, started by hand from the Actions tab or by publishing a release) builds both chips on GitHub's Macs, checks the signature and the bundled agent, starts the app once and attaches the files to the release. Each chip builds natively because the Claude Code binary comes from the Agent SDK's package for that chip.
 
 `pnpm dev` runs on your real profile (`~/.sable`). For experiments, `node scripts/dev-test.mjs` starts the same server on a throwaway folder. `pnpm desktop:pack` builds `release/win-unpacked/Sable.exe` without an installer.
 
