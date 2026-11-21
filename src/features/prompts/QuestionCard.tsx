@@ -1,9 +1,11 @@
-import { useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { Question, QuestionRequest } from '@shared/protocol';
 import { Icon } from '@/icons';
 import { respondQuestion } from '@/state/actions';
 import { focusComposer } from '@/state/hooks';
+import { EASE_OUT, play } from '@/lib/motion';
+import { DOCK_GLIDE_MS } from '@/features/session/dock-glide';
 import { usePromptKeys } from './keys';
 
 interface Answer {
@@ -252,10 +254,31 @@ export function QuestionCard({ sessionId, req, more }: { sessionId: string; req:
     }
   });
 
+  // The next question is taller (more options): the card's upper edge used to jump there in one
+  // frame while the two questions crossfaded. It opens upward instead, its header riding the edge,
+  // in step with the task strip and the conversation above (SessionView.tsx, Timeline.tsx). Paint
+  // only: the card has its new size at once, nothing is laid out again. A shorter one is left as
+  // it is (there is nothing to draw above the new edge).
+  const card = useRef<HTMLElement>(null);
+  const seen = useRef({ step, tall: 0 });
+  useLayoutEffect(() => {
+    const el = card.current;
+    if (!el) return;
+    const was = seen.current;
+    const tall = el.offsetHeight;
+    seen.current = { step, tall };
+    const d = tall - was.tall;
+    if (was.step === step || !was.tall || d < 8) return;
+    const round = getComputedStyle(el).borderTopLeftRadius || '0px';
+    const timing = { duration: DOCK_GLIDE_MS, easing: EASE_OUT };
+    play(el, [{ clipPath: `inset(${d}px 0 0 0 round ${round} ${round} 0 0)` }, { clipPath: `inset(0 0 0 0 round ${round} ${round} 0 0)` }], timing);
+    play(el.querySelector('.qc-head'), [{ translate: `0 ${d}px` }, { translate: '0 0' }], timing);
+  });
+
   if (!q) return null;
 
   return (
-    <section className="pc qc glass-card" data-spot aria-label="Questions from the agent">
+    <section ref={card} className="pc qc glass-card" data-spot aria-label="Questions from the agent">
       <QuestionHead x={x}>{more > 0 && <span className="pc-more">{more} more waiting</span>}</QuestionHead>
 
       <QuestionPage x={x} onFieldEscape={() => focusComposer()} />

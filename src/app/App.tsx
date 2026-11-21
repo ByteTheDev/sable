@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ComponentType, type ReactNode, type RefObject } from 'react';
 import { AnimatePresence, cancelFrame, frame, motion, MotionConfig, type Variants } from 'motion/react';
 import { Launch, launchPlays } from '@/art/LaunchLayer';
 import { LogoMark, ProviderMark } from '@/art/Logo';
@@ -30,20 +30,55 @@ import { WindowControls } from './WindowControls';
 import './app.css';
 
 // Surfaces that are not part of the first paint load on demand (and are prefetched once idle).
-const loadPalette = () => import('@/features/palette/Palette');
-const loadHistory = () => import('@/features/history/History');
-const loadSettings = () => import('@/features/settings/Settings');
-const loadPicker = () => import('@/features/projects/ProjectPicker');
-const loadRail = () => import('@/features/rail/Rail');
-const loadTriage = () => import('@/features/triage/Triage');
+/**
+ * A surface that loads on demand. Once its chunk has loaded (it is warmed in idle time) the surface
+ * mounts in the same render: through React.lazy its first render would suspend even then, and a
+ * suspended boundary is revealed about 300 ms later, so the first Ctrl+K, Settings, History or side
+ * panel of a run opened a third of a second after the key. Decided once per mount, so a surface
+ * never switches between the two.
+ */
+function onDemand<M, P extends object>(load: () => Promise<M>, pick: (m: M) => ComponentType<P>) {
+  let mod: M | null = null;
+  let pending: Promise<M> | null = null;
+  const get = () =>
+    (pending ??= load().then(
+      (m) => (mod = m),
+      (err) => {
+        pending = null;
+        throw err;
+      },
+    ));
+  const Later = lazy(() => get().then((m) => ({ default: pick(m) as ComponentType<object> }))) as unknown as ComponentType<P>;
+  function Part(props: P) {
+    const [now] = useState(() => mod);
+    if (now) {
+      const Now = pick(now);
+      return <Now {...props} />;
+    }
+    return <Later {...props} />;
+  }
+  return { load: get, Part };
+}
+const palette = onDemand(() => import('@/features/palette/Palette'), (m) => m.Palette);
+const history = onDemand(() => import('@/features/history/History'), (m) => m.History);
+const settings = onDemand(() => import('@/features/settings/Settings'), (m) => m.Settings);
+const picker = onDemand(() => import('@/features/projects/ProjectPicker'), (m) => m.ProjectPicker);
+const rail = onDemand(() => import('@/features/rail/Rail'), (m) => m.Rail);
+const triage = onDemand(() => import('@/features/triage/Triage'), (m) => m.Triage);
+const loadPalette = palette.load;
+const loadHistory = history.load;
+const loadSettings = settings.load;
+const loadPicker = picker.load;
+const loadRail = rail.load;
+const loadTriage = triage.load;
+const Palette = palette.Part;
+const History = history.Part;
+const Settings = settings.Part;
+const ProjectPicker = picker.Part;
+const Rail = rail.Part;
+const Triage = triage.Part;
 const loadRace = () => import('@/features/race/RaceView');
 const RaceView = lazy(() => loadRace().then((m) => ({ default: m.RaceView })));
-const Palette = lazy(() => loadPalette().then((m) => ({ default: m.Palette })));
-const History = lazy(() => loadHistory().then((m) => ({ default: m.History })));
-const Settings = lazy(() => loadSettings().then((m) => ({ default: m.Settings })));
-const ProjectPicker = lazy(() => loadPicker().then((m) => ({ default: m.ProjectPicker })));
-const Rail = lazy(() => loadRail().then((m) => ({ default: m.Rail })));
-const Triage = lazy(() => loadTriage().then((m) => ({ default: m.Triage })));
 const LAZY_PART = {
   SessionView: lazy(() => loadSessionView().then((m) => ({ default: m.SessionView }))),
   SessionDock: lazy(() => loadSessionView().then((m) => ({ default: m.SessionDock }))),

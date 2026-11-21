@@ -453,6 +453,10 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
+  /* Only a wait that lasts is named: an answer that comes within a moment (the working tree of a
+     small folder takes about 60 ms) used to flash "Reading the working tree" for three frames
+     before the list. */
+  animation: fade-in 180ms var(--ease-out) 320ms backwards;
 }
 
 .rail-pane > .rail-scroll:first-child > :is(.rail-empty, .rail-loading):only-child {

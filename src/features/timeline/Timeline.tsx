@@ -10,6 +10,7 @@ import { navFeed } from './nav-bus';
 import { Navigator } from './Navigator';
 import { REVEAL_EVENT, type RevealDetail } from './reveal';
 import { TurnList } from './TurnView';
+import { DOCK_GLIDE_MS } from '@/features/session/dock-glide';
 import './timeline.css';
 
 /** Within this distance of the end, new content keeps the view pinned to it. */
@@ -199,18 +200,56 @@ export function Timeline({ sessionId }: { sessionId: string }) {
     const el = scroller.current;
     const inner = content.current;
     if (!el || !inner) return;
+    let pad = -1;
+    let wide = el.clientWidth;
     const ro = new ResizeObserver(() => {
+      // The view itself got another width (the window resized, the side panel moving): every line
+      // wraps again and the end moves by hundreds of pixels per frame. Gliding after it left the
+      // reader looking at some earlier part of the conversation until the resize stopped: the end
+      // is kept exactly instead.
+      const w = el.clientWidth;
+      const rewrapped = w !== wide;
+      wide = w;
+      // The dock got lower (a permission or question card left): the end padding shrinks with it
+      // and the browser clamps the scroll position, so the whole conversation used to drop by the
+      // card's height in one frame. It glides down instead: the drop is undone by a transform that
+      // runs out on the compositor. The live line, held at the top of the view while the card was
+      // there, stays put until its own place reaches it.
+      const padNow = parseFloat(getComputedStyle(inner).paddingBottom) || 0;
+      const less = pad - padNow;
+      const fell = lastTop.current - el.scrollTop;
+      if (pad >= 0 && less > 24 && fell > 8 && stuck.current && live.current) {
+        const d = Math.min(less, fell);
+        const head = inner.querySelector<HTMLElement>('.tl-work[data-live]');
+        const headTop = head?.getBoundingClientRect().top ?? 0;
+        const held = head ? el.getBoundingClientRect().top + (parseFloat(getComputedStyle(head).top) || 0) : 0;
+        const timing = { duration: DOCK_GLIDE_MS, easing: EASE_OUT };
+        if (play(inner, [{ translate: `0 ${-d}px` }, { translate: '0 0' }], timing) && head && headTop - d < held - 0.5) {
+          const reach = Math.min(1, Math.max(0, 1 - (headTop - held) / d));
+          const hold = play(head, [{ translate: `0 ${held - headTop + d}px`, offset: 0 }, { translate: '0 0', offset: reach }, { translate: '0 0', offset: 1 }], timing);
+          // Held by a transform, not by the layout: it keeps the ground it has while stuck, so the
+          // lines coming down pass under it.
+          if (hold) {
+            head.setAttribute('data-held', '');
+            const free = () => head.removeAttribute('data-held');
+            hold.finished.then(free, free);
+          }
+        }
+      }
+      pad = padNow;
       room.current = el.scrollHeight - el.clientHeight - el.scrollTop;
       glideTail();
       if (restoreTo.current !== null && restore()) return;
-      if (stuck.current) follow();
-      else setAway(el.scrollHeight - el.scrollTop - el.clientHeight > AWAY);
+      if (stuck.current) {
+        if (rewrapped) pin();
+        else follow();
+      } else setAway(el.scrollHeight - el.scrollTop - el.clientHeight > AWAY);
     });
     // Border box: the end padding follows the dock's height and must re-pin too.
     ro.observe(inner, { box: 'border-box' });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [follow, glideTail, restore]);
+  }, [follow, glideTail, pin, restore]);
 
   // Only the reader lets go of the end. Layout moving the scroll position (rows above built
   // or settling to their real height, scroll anchoring, the dock resizing) never does.

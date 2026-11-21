@@ -57,6 +57,13 @@
   pointer-events: none;
 }
 
+/* One session to another: the dissolve ends at the dock's upper edge. The band of light lies under
+   the conversation, so a veil over the whole stage covered it in the ground colour: the light
+   under the composer went out for about 100 ms on every change of chat and came back. */
+.stage-body[data-session-swap] > .veil {
+  bottom: calc(var(--dock-h, 126px) + 10px);
+}
+
 .stage-body[data-session-swap] > .stage-dock {
   z-index: 9;
 }

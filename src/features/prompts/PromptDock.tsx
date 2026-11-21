@@ -65,7 +65,7 @@ export function PromptDock({ sessionId }: { sessionId: string }) {
       <CardWarmup active={running} />
       <AnimatePresence initial={false}>
         {showTasks && (
-          <motion.div key="tasks" className="pd-slot" {...rise}>
+          <motion.div key="tasks" className="pd-slot" data-slot="tasks" {...rise}>
             <TaskStrip sessionId={sessionId} todos={todos} running={running} />
           </motion.div>
         )}
